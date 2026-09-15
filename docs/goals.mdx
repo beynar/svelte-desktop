@@ -1,0 +1,42 @@
+---
+title: Goals
+description: What "done" means — the 100% Svelte API bar, what's in scope, and the explicit non-goals.
+sidebar:
+  order: 3
+---
+
+## The bar
+
+The stated acceptance bar for this experiment:
+
+> **Use 100% of the Svelte API.** Not a narrow demo subset — the real language.
+
+Concretely, that means compiled Svelte 5 components must run unmodified: no Svelte fork, no compiler patches, no "supported subset" list. The compatibility burden lives entirely in the adapter layer (fake DOM + native bridge), never in Svelte itself.
+
+The [conformance suite](/conformance) is the living measure of that bar — currently **35/35 passing**.
+
+## In scope
+
+- **Svelte language + runtime**: runes, all block types, bindings, actions, attachments, transitions, snippets, stores, context, `<svelte:*>` elements, `{@html}`, `tick`, lifecycle.
+- **The DOM operations Svelte actually emits**: the fake DOM must be a faithful-enough DOM for `svelte/internal/client` to traverse.
+- **Browser APIs Svelte touches directly or through directives**: `FormData`, `MutationObserver`, `ResizeObserver`, `element.animate`, `getComputedStyle`, scroll APIs, window-level events — each adapted to the native environment where the concept exists.
+- **Remote-function DX**: `query` / `command` with refresh tracking — in-process, since the JS runtime *is* the native process.
+- **Bun capabilities** inside those functions: `bun:sqlite`, `Bun.serve`, FFI, filesystem.
+
+## Explicit non-goals
+
+- **SvelteKit-the-framework.** Routing, `+page.server.ts`, `load`, SSR/hydration, `$app/*` — that's browser machinery (URLs, history, HTML payloads) with no native analog. A native app-shell/router primitive is a separate design problem, tracked in the [roadmap](/roadmap).
+- **Arbitrary web component libraries.** Bits UI, shadcn-svelte, et al. sit on the CSS cascade and browser APIs (portals, `getBoundingClientRect`, focus traps, `IntersectionObserver`). They are *not* expected to work — see [limitations](/limitations).
+- **Hydration.** Mechanically possible (the HTML parser exists), but pointless — a native app has no SSR HTML payload to hydrate.
+- **Pixel-emulating a browser.** The goal is a *native* element vocabulary authored in Svelte — "Svelte Native," not "headless Chromium."
+
+## What success looks like
+
+| Milestone | Status |
+|---|---|
+| Svelte mounts + repaints via GPUI ops | ✅ done |
+| Real input (hit-test clicks, keystrokes, scroll) → Svelte events | ✅ done |
+| Remote functions + `bun:sqlite` round-trip | ✅ done |
+| 100% Svelte API conformance | 🟡 35/35 cases — suite keeps growing |
+| `svelte-gpuix` package + bundler plugin | ⬜ not started |
+| `.app` packaging (bun + `.node` + JS) | ⬜ not started |

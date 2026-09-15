@@ -1,0 +1,60 @@
+---
+title: Svelte, rendered natively
+description: A proof-of-concept that runs unmodified Svelte 5 compiled output against a fake DOM whose mutations become native GPUI operations. No webview, no Chromium, no real DOM.
+sidebar:
+  order: 1
+---
+
+**svelte-desktop** explores a single question: *can a Svelte app render to real native UI — GPUI, the Rust engine behind the Zed editor — while keeping Svelte's authoring model intact?*
+
+The answer so far is **yes, for the Svelte language** — verified by a 45-case conformance suite driven through real GPUI hit-testing, not synthetic DOM events.
+
+```txt
+.svelte file → svelte/compiler → compiled client JS
+                                    │
+                                    ▼
+                        fake DOM (gdom.ts)
+                                    │  createElement / setStyle /
+                                    ▼  setText / insertBefore / …
+                        gpuix applyBatch protocol
+                                    │
+                                    ▼
+                    GPUI (Rust) → Metal → native window
+```
+
+<CardGroup cols={2}>
+  <Card title="Inspiration" href="/inspiration" icon="lightbulb">
+    Why trade the DOM for GPUI at all.
+  </Card>
+  <Card title="Goals" href="/goals" icon="target">
+    The bar: 100% of the Svelte API — and explicit non-goals.
+  </Card>
+  <Card title="Architecture" href="/architecture" icon="cpu">
+    The fake-DOM seam, materialization, and the event loop.
+  </Card>
+  <Card title="Conformance" href="/conformance" icon="check-circle">
+    35/35 cases, each proven against painted pixels.
+  </Card>
+  <Card title="Limitations" href="/limitations" icon="alert-triangle">
+    The honest boundary — what does not carry over.
+  </Card>
+  <Card title="Roadmap" href="/roadmap" icon="map">
+    Work in progress toward a real svelte-gpuix package.
+  </Card>
+</CardGroup>
+
+## Status at a glance
+
+| | |
+|---|---|
+| Svelte runtime | **45/45 conformance cases pass** headless on `TestGpuixRenderer` |
+| Remote functions | `query` / `command` / `refreshAll` in-process, backed by `bun:sqlite` |
+| Live window | Works (`bun src/main.ts`), ~150 MB RSS |
+| Headless testing | Deterministic: real hit-testing, keystrokes, painted-text asserts |
+| Packaging | Not yet proven — see [Roadmap](/roadmap) |
+
+:::warning
+This is a research POC, not a library. The code lives in
+[`gpuix-poc/`](https://github.com/) inside this repo and is documented here as a
+spec for what a real `svelte-gpuix` package would need.
+:::

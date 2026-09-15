@@ -1,0 +1,87 @@
+---
+title: Roadmap
+description: Work in progress — from POC to a real svelte-gpuix package, and what's deliberately not vendored.
+sidebar:
+  order: 9
+---
+
+## Current WIP: conformance expansion
+
+The suite grew to **45/45** after a three-agent adversarial review (DOM
+correctness, Svelte API coverage, architecture/production risk) — that review
+drove the "Fixed" list in [limitations](/limitations) and left this ordered
+backlog:
+
+1. **Target-filtered event registration** — delegated types currently emit
+   `setEventListener` on every element; `focusin`/`keydown` backfill makes
+   every element a focusable tab stop.
+2. **Move semantics** — same-parent reorder should not destroy+recreate
+   native subtrees (needs a `moveBefore`/`insertBefore`-move op in gpuix, or
+   a fast-path detection).
+3. **Transition params** — `fly`/`slide`/`scale`/`blur` need real
+   `getComputedStyle` defaults; `draw` needs `getTotalLength`.
+4. **Media elements** — play/pause/paused/TimeRanges or a documented stub.
+5. **Live-renderer verification** — sync native reads inside event handlers
+   (`getElementBounds`, `getScrollOffset`) need a live-mode deadlock probe.
+6. **Packaging smoke test** — `otool -L` on the `.node` + a real
+   `bun build --compile` run before any distribution claim.
+
+Next fixtures on the list: `animate:flip`, `svelte/motion` (tweened/spring —
+note `prefersReducedMotion` needs a working `MediaQuery`, now unblocked by
+the subpath rewrite), `transition:fly`/`slide`/`scale`, `svelte:document`,
+`bind:contentRect`, `bind:focused`.
+
+## The package that falls out of this
+
+```
+svelte-gpuix/
+├── gdom.ts        fake DOM (as today)
+├── bridge.ts      gpuix ops + event dispatch
+├── render.ts      render(App, windowOpts) — mirrors @gpuix/react
+├── remote.js      query / command / refreshAll
+├── plugin.ts      bundler plugin (below)
+└── deps: svelte (peer, version-pinned), @gpuix/native
+```
+
+Deliberately **not vendored**: Svelte itself. The whole trick depends on the
+unmodified runtime traversing the fake tree — a fork would own unstable
+internals while gaining nothing. `svelte` stays a version-pinned peer dep, and
+the conformance suite is the insurance policy across minors.
+
+## The bundler plugin — three jobs
+
+<Steps>
+  <Step title="Compile .svelte / .svelte.js">
+    What `build.ts` does by hand today, as a real Vite/Bun plugin.
+  </Step>
+  <Step title="Alias svelte → client entry">
+    Under Bun, `import 'svelte'` resolves the server entry. The plugin aliases
+    it — replaces the `svelte-client.js` shim + post-compile rewrite.
+  </Step>
+  <Step title="Transform *.remote.ts">
+    Rewrite SvelteKit-style remote imports to in-process calls (or stand up an
+    embedded adapter-bun server and let real stubs hit loopback — the
+    Electrobun experiment proved that path).
+  </Step>
+</Steps>
+
+## Remaining surface area
+
+- **DOM depth**: selection, clipboard, IME, focus management, portals,
+  `document.activeElement`, observers on the live renderer's bounds source.
+- **Styling**: a real answer beyond scoped blocks — compile-time class table
+  or a native utility-style engine.
+- **A native component kit**: the element vocabulary exists; the idiomatic
+  `Button`/`List`/`TextField` layer doesn't.
+- **SvelteKit-shaped app shell**: router/navigation primitives designed for a
+  native window, since kit's own machinery doesn't port.
+
+## Packaging — unproven, and the real risk
+
+Target: single `.app`. Open questions:
+
+- Can `bun build --compile` carry the napi `.node` addon, or does the bundle
+  ship `bun` + addon + JS side by side (Electrobun's layout)?
+- gpuix resources and signing/notarization for the native lib.
+- Measure startup, memory, frame pacing, and binary size against the
+  [comparison](/comparison) numbers.

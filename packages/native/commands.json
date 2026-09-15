@@ -1,0 +1,17 @@
+{
+  "library": "native_core",
+  "version": 1,
+  "abi": "bun:ffi",
+  "commands": [
+    {"name": "add", "symbol": "nc_add", "kind": "scalar",
+     "args": [{"name": "a", "type": "i64"}, {"name": "b", "type": "i64"}],
+     "returns": "i64", "errors": []},
+    {"name": "wordCount", "symbol": "nc_word_count", "kind": "bytes-in",
+     "args": [{"name": "text", "type": "utf8"}],
+     "returns": "i64", "errors": {"-1": "null_pointer", "-2": "invalid_utf8", "-99": "panic"}},
+    {"name": "jsonTransform", "symbol": "nc_json_transform", "kind": "json-in-json-out",
+     "args": [{"name": "payload", "type": "utf8"}],
+     "returns": "json", "errors": {"null": "transform_failed_or_panic"},
+     "freeSymbol": "nc_free"}
+  ]
+}

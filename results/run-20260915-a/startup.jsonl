@@ -1,0 +1,7 @@
+{"bench":"startup","variant":"unpacked","napi_load_ms":12.2,"window_init_ms":276.2,"svelte_import_ms":300.1,"mounted_ms":348.2,"first_frame_ms":464.7,"steady_rss_mib":150.1,"run":1}
+{"bench":"startup","variant":"unpacked","napi_load_ms":11.9,"window_init_ms":267.7,"svelte_import_ms":288.7,"mounted_ms":330.9,"first_frame_ms":437.3,"steady_rss_mib":144.8,"run":2}
+{"bench":"startup","variant":"unpacked","napi_load_ms":14.6,"window_init_ms":282.9,"svelte_import_ms":301.4,"mounted_ms":347.0,"first_frame_ms":470.2,"steady_rss_mib":164.7,"run":3}
+{"bench":"startup","variant":"compiled-binary","napi_load_ms":428.5,"window_init_ms":728.3,"svelte_import_ms":733.0,"mounted_ms":801.2,"first_frame_ms":940.1,"steady_rss_mib":173.7,"run":1,"note":"napi delta = embedded .node extraction"}
+{"bench":"frames","variant":"compiled-binary","frames_in_3s":9,"p90_ms":5.54,"p99_ms":5.54,"max_ms":11.35,"note":"event-driven idle — no paint loop"}
+{"bench":"bun-sqlite","tx_insert_10k_ms":6.7,"inserts_per_s":1494163,"prepared_get_10k_ms":21.1,"sync_copy_40k_ms":8.7,"select_40k_objects_ms":5.5,"wal":true,"tx_rollback":true,"multi_conn_read":true}
+{"bench":"bun-worker","spawn_file_url":true,"blob_url":false,"sqlite_in_worker":true}

@@ -1,0 +1,229 @@
+---
+title: Architecture
+description: How unmodified Svelte compiled output ends up driving native GPUI elements — the fake-DOM seam, lazy materialization, the mutation protocol, and the event loop.
+sidebar:
+  order: 4
+---
+
+## The core idea
+
+Svelte has no host-config API like React's reconciler. It doesn't need one.
+
+Compiled Svelte output talks to **DOM objects**, and `svelte/internal/client`
+lazily captures DOM getters (`firstChild`, `nextSibling`, …) **from the global
+prototypes at first mount**. So the binding strategy is:
+
+<Steps>
+  <Step title="Install fake globals before mount">
+    `installGlobals()` puts `document`, `Node`, `Element`, `Text`, `Comment`,
+    `DocumentFragment` and friends on `globalThis` — before Svelte's runtime
+    initializes. Svelte's own cached getters become ours. Zero patching.
+  </Step>
+  <Step title="Parse template HTML into fake nodes">
+    `$.from_html` templates feed a mini HTML parser; each component instance
+    `cloneNode`s its subtree. Prototypes cost no native ops.
+  </Step>
+  <Step title="Materialize lazily into native ops">
+    Ops emit only when a subtree lands under the mounted root. Comment anchors
+    (`{#if}`/`{#each}` boundaries) stay pure-JS; `insertBefore` anchors resolve
+    forward to the next materialized sibling.
+  </Step>
+  <Step title="Feed native events back through Svelte">
+    GPUIX events resolve `elementId → fake node`, then dispatch into Svelte's
+    own `handle_event_propagation` with a synthesized `composedPath`. Real DOM
+    semantics — nothing reimplemented.
+  </Step>
+</Steps>
+
+## Module map
+
+<FileTree>
+
+- gpuix-poc/
+  - src/
+    - gdom.ts — the fake DOM: nodes, parser, events, styles, observers (~1.2k lines)
+    - native.ts — mutation sink: op queue, native-id registry, deferred calls
+    - qg-backend.ts — **second backend**: same ops → `@quickgui/native` retained tree (~350 lines)
+    - remote.svelte.js — in-process `query` / `command` / `refreshAll`
+    - server.ts — the "server" side: `bun:sqlite`-backed functions
+    - svelte-client.js — 2-line shim re-exporting Svelte's client entry
+    - conformance.ts — the 45-case headless suite (gpuix `TestGpuixRenderer`)
+    - conformance-qg.ts — the same 45 cases on a quickgui `RecordingHost`
+    - cases/ — one `.svelte` fixture per feature
+    - main.ts — live window entry (gpuix `GpuixRenderer`)
+    - main-qg.ts + qg-app.ts + qg-mount.ts — live window (quickgui: main-thread host + Bun worker app)
+    - test.ts / test2.ts — headless E2E (`TestGpuixRenderer`)
+  - build.ts — manual `svelte/compiler` pass → `src/gen/`
+
+</FileTree>
+
+## The mutation protocol
+
+Fake-DOM structural changes become JSON op batches on
+`renderer.applyBatch` — the same ops `@gpuix/react`'s reconciler emits:
+
+```ts
+emit('createElement', id, nativeTag);
+emit('setStyle', id, { display: 'flex', flexDirection: 'column' });
+emit('setText', id, node.data);
+emit('appendChild', parentId, childId);
+emit('setEventListener', id, 'click', true);
+emit('setCustomProp', id, 'value', text);
+emit('setRoot', rootId);
+```
+
+Elements map through a tag table — known GPUIX tags pass through, everything
+else degrades to `div`:
+
+```ts
+const GPUIX_TAGS = new Set([
+  'div', 'text', 'img', 'svg', 'canvas', 'input', 'textarea',
+  'anchored', 'code', 'diff', 'markdown', 'virtual-list',
+]);
+```
+
+`input[type=checkbox|radio]` is the one deliberate remap: gpuix's `input` is a
+text editor with no click event, so toggles become clickable `div` boxes with
+an activation behavior (click → toggle `checked` → dispatch `input` +
+`change`), which is what `bind:checked` / `bind:group` listen for.
+
+## The second backend: QuickGUI
+
+The op stream is backend-agnostic — proven by `qg-backend.ts`, which consumes
+the *same* ops through `@quickgui/native`'s retained-tree API instead of
+`applyBatch`. The mapping is mechanical:
+
+| our op | quickgui call |
+|---|---|
+| `createElement(id, tag)` | `new NativeNode(NativeNodeTag.X, "", id)` (closed 26-tag vocabulary; our `text` element = their `Text` node) |
+| `setText` | `replaceNativeText(node, v)` |
+| `setStyle` / `setCustomProp` | `setNativeProperty(node, PropertyCode[k], normalize(v))` — px→number, colors→`parseColor` |
+| `setEventListener` | `setNativeEventListener(node, type, cb)` — listener-presence flags (`ClickListener`, `FocusListener`…) |
+| `appendChild` / `insertBefore` | `insertNativeNode(parent, child, anchor)` — reparenting is a native **move**, not destroy+recreate |
+| `destroyElement` | `removeNativeNode(parent, child)` |
+| `setRoot` | `insertNativeNode(window.root, node)` |
+| `setWindowKeyEvents` | `keydown`/`keyup` listeners on the root (events bubble up) |
+
+Live mode matches their production model: `runHost()` owns AppKit on the main
+thread, the app + Svelte + our fake DOM run in a **Bun worker**, and `Window`
+itself is the `NativeNodeHost`. Headless mode needs no dylib at all — a pure-JS
+`RecordingHost` satisfies the host contract and the retained `NativeNode` tree
+is directly assertable.
+
+## The reentrancy rule
+
+:::danger
+**Never `applyBatch` inside the native event callback.** GPUI panics on
+reentrant `GpuixView` updates — events arrive on a ThreadsafeFunction while the
+view may be mid-update. This was found the hard way: a Rust abort, exit 134.
+:::
+
+All ops queue and flush on a **macrotask** (`setTimeout`, deliberately not
+`queueMicrotask`). Two deferral queues exist because of it:
+
+- `deferCall` — native calls safe at flush time.
+- `deferAfterRender` — calls needing a rendered frame, e.g. `focusElement`:
+  gpuix only creates a `FocusHandle` for an element that registered focus/key
+  listeners *and* has painted once.
+
+## Events, both directions
+
+DOM → native is a table; native → DOM is its inverse plus the window sentinel:
+
+```ts
+click → 'click'    mousedown → 'mouseDown'   input → 'change'
+keydown → 'keyDown'   scroll → 'scroll'   …
+windowKeyDown → 'keydown'   // sentinel elementId, routed to document listeners
+```
+
+Three subtleties the suite surfaced:
+
+1. **Backfill.** Svelte registers delegated types on `document` *after* the
+   tree materializes — when a new delegated type appears, `setEventListener`
+   ops go out for every already-live element.
+2. **Focus needs listeners.** A text `input` that never registers
+   focus/key listeners gets no `FocusHandle` — it's unfocusable, so it
+   receives no keystrokes. Materialization registers the full set.
+3. **`change` ≠ `change`.** gpuix fires `change` per edit; DOM semantics want
+   `input` then `change`. The bridge dispatches both, in browser order, with
+   `payload.value` applied to `e.target.value` first — which is what makes
+   `bind:value` work.
+
+## The class → style bridge
+
+Svelte compiles scoped `<style>` blocks to hashed class attributes +
+`append_styles` calls into `document.head`. The fake DOM honors that path:
+
+- `<style>` elements' `textContent` is parsed into a `class → {prop: value}`
+  registry keyed on the last class in each selector (Svelte's scope hash).
+- Setting `el.className` looks the classes up and merges them into the
+  element's style props → `setStyle` op → **scoped CSS actually paints**.
+
+This covers Svelte's own scoped styles — a real subset of CSS, not the
+cascade. See [limitations](/limitations).
+
+## The `svelte` client-entry seam
+
+One non-obvious fix: under Bun, `import { mount } from 'svelte'` resolves the
+**server** entry (no `browser` export condition) — `mount` throws
+`lifecycle_function_unavailable` and `setContext` silently no-ops.
+
+The POC fixes it two ways, both in `build.ts`: a post-compile rewrite of
+`from 'svelte'` → a client shim, plus a deep import into
+`svelte/src/index-client.js`. In a real package this is a bundler-plugin
+alias — see [roadmap](/roadmap).
+
+## The kit layer: SvelteKit semantics in-process
+
+`src/kit/` implements the kit *contract* without HTTP: file-based routes
+(`+page.svelte` / `+page.ts` / `+page.server.ts` / `+layout.*` / `+error.svelte`
+scanned by `build.ts` → a generated manifest), a `Router` owning the reactive
+`page`/`navigating` state, and `goto`/`invalidate`/`depends`/`redirect`/`error`
+with the same thrown-object protocol as `@sveltejs/kit`.
+
+```
+src/routes/**/+{page,layout}.{svelte,ts} + hooks.ts
+        ↓ build.ts scan + compile
+gen/routes/manifest.js — deduped layout levels + per-level +error boundaries
+        ↓
+Router.executeChain — hooks.handle wraps each navigation once
+        ↓ reactive router.levels
+Shell.svelte — recursive self-import renders layout>…>page via children
+```
+
+Fidelity details that mattered:
+
+- **`handle` wraps the navigation once**, like a real request — `locals` set
+  there are visible to every `*.server.ts` load in the chain (verified by
+  fixture).
+- **Layout persistence is data-level, not just visual.** The manifest dedupes
+  layout levels by directory so the same level object appears in sibling
+  routes; on navigation a kept layout's `load` does not re-run — matching kit,
+  where layouts only re-run when their *used* params change (tracked per-load
+  via a `Proxy` on `params`).
+- **Error boundaries are positional.** A throw at level N renders that level's
+  `+error.svelte` inside the layouts that already loaded — a dir's boundary
+  catches its page and deeper levels, never its own layout's failure.
+- `invalidate(key)` re-runs only levels whose `depends(key)` matched (or
+  whose `fetch` hit that URL — fetches are tracked per level) — and goes
+  back through `handle` (fresh request ⇒ fresh `locals`), which is the part
+  kit gets right and naive ports get wrong.
+- `<a href>` interception lives in gdom's dispatch path — an un-prevented
+  click on an anchor (or descendant) calls `goto` — so links work without a
+  URL bar. `<form>` works the same way: a submit-button click bubbles a
+  cancelable `submit` event carrying `.submitter`; the router's document
+  listener runs the matching `?/action` (or `use:enhance`'s pipeline first)
+  and lands the result on `page.form` via `applyAction` — then re-runs the
+  load chain on success, like kit's post-action invalidation.
+- `event.fetch` inside loads resolves `+server.ts` endpoints in-process
+  (method + params from the same pattern matcher) *before* falling through
+  `handleFetch` → real `fetch`. `event.request` is a real Bun `Request`.
+- Full segment syntax: `[...rest]`, `[[optional]]`, `[p=matcher]` (against
+  `src/params/*.ts`), `(group)` dirs. `hooks.reroute` remaps url→route-id;
+  `hooks.transport` encode→decode-round-trips custom classes in server data.
+- `page` is a facade over a `$state` store — `page.url` is stored as an href
+  string and rebuilt per read, because a `$state`-proxied `URL` silently
+  breaks `.search` (internal slots don't survive the proxy).
+- Navigations are coalesced by sequence token — a superseded `goto` abandons
+  before commit. `pushState`/`replaceState` write shallow history entries
+  that `back()` restores without running loads.

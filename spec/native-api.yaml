@@ -1,0 +1,268 @@
+# spec/native-api.yaml — V1 native API inventory (authoritative)
+# Status values:
+#   impl:    specified | bound | implemented | tested
+#   platform: darwin | linux | windows | none
+#   test:    tested | specified | untested | not_run | unsupported
+# Convention: unsupported ops MUST return {error:{code:"unsupported",reason}}
+# — never silently succeed. Async by default; dispose/unsubscribe explicit;
+# no raw pointers in the public API; no synchronous cross-process UI calls.
+version: 0.1.0
+meta:
+  backends:
+    gpuix: "@gpuix/native 0.7.0 (NAPI in-process)"
+    quickgui: "@quickgui/native 0.1.4-next.1 (bun:ffi dylib)"
+    bun: "Bun 1.4.0 process APIs"
+    native_core: "crates/native-core cdylib via generated bindings"
+  authority_note: >
+    Signatures below are the proposed $native contract. `upstream` records the
+    reference each entry was audited against (quickgui binding names are real
+    exports inspected in node_modules; electron/tauri names are API-surface
+    references only).
+
+surfaces:
+
+  app:
+    methods:
+      - {name: getInfo, sig: "getInfo(): {name, version, bundleId}", upstream: "electron app.getName/getVersion", impl: specified, test: untested, platform: darwin+linux+windows}
+      - {name: getPath, sig: "getPath(kind: 'home'|'appData'|'temp'|'exe'|'resources'|'logs'|'cache'): string", upstream: "electron app.getPath", impl: specified, test: untested, notes: "Bun/os provide most; resources path is ours"}
+      - {name: whenReady, sig: "whenReady(): Promise<void>", upstream: "electron app.whenReady", impl: implemented, test: tested, notes: "GpuixRenderer.init + first tick — measured ~440ms dev"}
+      - {name: activate, sig: "activate(steal?: boolean): void", upstream: "quickgui activateNativeApplication", impl: bound, test: untested, platform: darwin}
+      - {name: hide/unhide, sig: "hide(): void; unhide(): void", upstream: "quickgui hideNativeApplication", impl: bound, test: untested, platform: darwin}
+      - {name: quit, sig: "quit(): void; exit(code): void", upstream: "quickgui requestNativeQuit/exitNativeAppWithCode", impl: bound, test: untested, notes: "quitIntercept supported (setNativeQuitInterception)"}
+      - {name: relaunch, sig: "relaunch(): void", upstream: "electron app.relaunch", impl: specified, test: untested}
+      - {name: setActivationPolicy, sig: "setActivationPolicy('regular'|'accessory'|'prohibited')", upstream: "quickgui setNativeActivationPolicy", impl: bound, test: untested, platform: darwin}
+      - {name: isPackaged, sig: "isPackaged(): boolean", upstream: "quickgui nativeApplicationPackaged", impl: bound, test: untested}
+      - {name: onOpenFile/onOpenUrl, sig: "events", upstream: "electron open-file/open-url, quickgui DeepLink", impl: bound, test: untested, notes: "queue before JS ready"}
+
+  window:
+    methods:
+      - {name: create, sig: "create(opts: WindowOptions): Promise<WindowHandle>", upstream: "quickgui create_window FFI sym / electron BaseWindow", impl: bound, test: untested, notes: "gpuix single-window today; quickgui host supports allocate_window"}
+      - {name: list/current, sig: "getAll(): WindowHandle[]; getCurrent(): WindowHandle", impl: specified, test: untested}
+      - {name: show/hide/close/destroy, sig: "per handle", upstream: "quickgui performNativeWindowAction", impl: bound, test: untested}
+      - {name: focus, impl: bound, test: tested, notes: "focusElement + FocusHandle verified in overlay work"}
+      - {name: setTitle/setIcon, impl: bound, test: untested, upstream: "performNativeWindowImageAction"}
+      - {name: bounds, sig: "getBounds/setBounds(rect, animate?)", impl: specified, test: untested, notes: "logical+physical; scale factor from screen"}
+      - {name: minMaxSize, impl: specified, test: untested}
+      - {name: minimize/maximize/restore/fullscreen, impl: bound, test: untested, upstream: "WindowState normalized in quickgui"}
+      - {name: decorations/transparent/alwaysOnTop, impl: specified, test: untested}
+      - {name: onCloseRequested, sig: "event; preventDefault-able", impl: bound, test: untested, upstream: "quitInterception"}
+      - {name: events, sig: "resize|move|focus|blur|dpi-change|theme-change", impl: bound, test: tested, notes: "resize/dpi live via gpuix events; theme via Theme"}
+    status: {impl: bound, test: partial, platform: darwin}
+
+  windowState:
+    methods:
+      - {name: save/restore, sig: "save(handle): State; restore(handle, state)", impl: bound, test: untested, upstream: "quickgui WindowState/WindowRestoreState", notes: "atomic write to ~/.config/<app>/window-state.json; missing-monitor recovery: clamp to nearest display"}
+    status: {impl: bound, test: untested, platform: darwin}
+
+  screen:
+    methods:
+      - {name: getDisplays, sig: "getDisplays(): Display[]", upstream: "quickgui Screen", impl: bound, test: untested}
+      - {name: primary/nearest/matching, impl: bound, test: untested}
+      - {name: getCursorPosition, impl: bound, test: untested}
+      - {name: onChanged, sig: "hot-plug/config event", impl: bound, test: untested}
+    status: {impl: bound, test: untested, platform: darwin, notes: "fields: bounds, workArea, scaleFactor, refresh"}
+
+  dialog:
+    methods:
+      - {name: open, sig: "open({filters?, multiple?, directory?, parent?}): Promise<string[]|null>", upstream: "quickgui dialog.ts normalizeOpenDialogOptions", impl: bound, test: untested}
+      - {name: save, sig: "save({defaultPath?, filters?}): Promise<string|null>", impl: bound, test: untested}
+      - {name: message/confirm/error, sig: "alert({type,title,message,buttons}): Promise<index>", impl: bound, test: untested}
+    status: {impl: bound, test: untested, platform: darwin, notes: "cancel → null (typed, not throw)"}
+
+  menu:
+    methods:
+      - {name: setApplicationMenu, sig: "setApplicationMenu(MenuDefinition[])", upstream: "quickgui Menu + serializeNativeMenu", impl: bound, test: untested}
+      - {name: setWindowMenu/releaseWindowMenu, impl: bound, test: untested}
+      - {name: popupContext, sig: "popup(def, at?)", impl: bound, test: untested, notes: "in-app ContextMenu component already tested natively"}
+      - {name: items, sig: "action|role|separator|submenu|services|system; checked/radio/enabled/visible/accelerator", impl: bound, test: untested}
+    status: {impl: bound, test: untested, platform: darwin}
+
+  tray:
+    methods:
+      - {name: create, sig: "tray.create({icon, template?, tooltip?, title?, menu?}): TrayIcon", upstream: "quickgui Tray/TrayIcon class", impl: bound, test: untested}
+      - {name: events, sig: "click|double-click|right-click|drop", impl: bound, test: untested}
+      - {name: destroy, impl: bound, test: untested}
+    status: {impl: bound, test: untested, platform: darwin, notes: "linux DE-dependent → may return unsupported"}
+
+  clipboard:
+    methods:
+      - {name: readText/writeText, sig: "string", upstream: "quickgui Clipboard", impl: bound, test: untested}
+      - {name: readHTML/writeHTML, impl: bound, test: untested, platform: darwin}
+      - {name: readImage/writeImage, sig: "NativeImage", impl: bound, test: untested}
+      - {name: readFiles/writeFiles, impl: bound, test: untested}
+      - {name: readBookmark, impl: bound, test: untested, platform: darwin, notes: "macOS security-scoped bookmarks"}
+      - {name: formats/clear, impl: bound, test: untested}
+      - {name: onChanged, impl: specified, test: untested, notes: "poll-based; document wakeup cost; optional"}
+    status: {impl: bound, test: untested, platform: darwin}
+
+  shortcuts:
+    methods:
+      - {name: register/unregister/isRegistered, sig: "register(accel, id) → event onTrigger", upstream: "quickgui GlobalShortcut", impl: bound, test: untested}
+      - {name: appLocal, sig: "handled in-app via keydown + menu accelerators", impl: implemented, test: tested, notes: "menu accelerators route natively"}
+    status: {impl: bound, test: untested, platform: darwin, notes: "global shortcuts need accessibility perms on macOS for some chords"}
+
+  notifications:
+    methods:
+      - {name: isAvailable/permission, impl: bound, test: untested, upstream: "quickgui Notifications"}
+      - {name: notify, sig: "notify({title, body, actions?, attachments?, reply?}): Promise<NotificationResponse>", impl: bound, test: untested}
+      - {name: onAction/onClick/onClose, impl: bound, test: untested}
+      - {name: cancel/replace, impl: bound, test: untested}
+    status: {impl: bound, test: untested, platform: darwin, notes: "needs bundle id + signing for delivery; unsigned dev → likely denied"}
+
+  shell:
+    methods:
+      - {name: openExternal, sig: "openExternal(url): Promise<void> — validates scheme (https/mailto allowlist)", upstream: "quickgui Shell", impl: bound, test: untested}
+      - {name: openPath/revealPath/trash, impl: bound, test: untested}
+      - {name: beep, impl: bound, test: untested}
+    status: {impl: bound, test: untested, platform: darwin, notes: "restricted schemes: no file://, no javascript:"}
+
+  deepLink:
+    methods:
+      - {name: onUrl, sig: "queued delivery incl. argv-passed urls at launch", upstream: "quickgui DeepLink + urlsFromArguments", impl: bound, test: untested}
+      - {name: registerSchemes, sig: "package-time Info.plist; runtime on macOS limited", impl: specified, test: untested}
+    status: {impl: bound, test: untested, platform: darwin, notes: "pairs with singleInstance for running-app delivery; OAuth via loopback+deeplink"}
+
+  protocol:
+    methods:
+      - {name: registerInternal, sig: "app:// resource resolution → packaged assets, MIME by ext, scoped paths, traversal-proof", impl: specified, test: untested}
+      - {name: external registration, impl: specified, test: untested, notes: "distinct from internal resources; no transparent custom-scheme fetch promised"}
+    status: {impl: specified, test: untested}
+
+  singleInstance:
+    methods:
+      - {name: requestSingleInstanceLock, sig: "→ isPrimary; second-launch delivers {argv, cwd} event", upstream: "quickgui single-instance.ts", impl: bound, test: untested}
+      - {name: staleLock, sig: "detect pid-dead lock, acquire, audit event", impl: specified, test: untested}
+    status: {impl: bound, test: untested, platform: darwin}
+
+  autostart:
+    methods:
+      - {name: enable/disable/isEnabled, sig: "({args?, hidden?})", upstream: "quickgui AutoStart", impl: bound, test: untested, platform: darwin, notes: "SMAppService on macOS 13+; cleanup on test teardown required"}
+    status: {impl: bound, test: untested, platform: darwin}
+
+  theme:
+    methods:
+      - {name: get/set, sig: "'system'|'light'|'dark'", impl: implemented, test: tested, notes: "nkit Theme + macOS defaults read; persisted"}
+      - {name: onChanged, impl: implemented, test: tested}
+      - {name: accentColors/systemColors, impl: bound, test: untested, upstream: "quickgui Appearance/SystemPreferences"}
+      - {name: highContrast/reducedMotion/reducedTransparency, impl: implemented, test: tested, notes: "reduceMotion live; highContrast via SystemPreferences (bound, untested)"}
+    status: {impl: implemented, test: tested, platform: darwin}
+
+  system:
+    methods:
+      - {name: locale/languages, sig: "Bun os + SystemPreferences", impl: bound, test: untested}
+      - {name: keyboardLayout, impl: bound, test: untested, upstream: "quickgui KeyboardLayout"}
+      - {name: secureKeyboardEntry, impl: bound, test: untested, platform: darwin}
+      - {name: spellchecker, impl: bound, test: untested, upstream: "quickgui SpellChecker"}
+    status: {impl: bound, test: untested}
+
+  power:
+    methods:
+      - {name: onSuspend/onResume/onLock/onUnlock/onPowerSource, upstream: "quickgui PowerMonitor", impl: bound, test: untested}
+      - {name: blocker, sig: "new PowerAssertion(reason) → dispose()", impl: bound, test: untested, notes: "scoped release; auto-release on app quit"}
+      - {name: idleState, impl: bound, test: untested}
+      - {name: battery/thermal, impl: specified, test: untested, notes: "where OS exposes"}
+    status: {impl: bound, test: untested, platform: darwin}
+
+  secureStorage:
+    methods:
+      - {name: get/set/delete, sig: "scoped by service+key namespace", upstream: "quickgui SecureStorage + bun:secrets", impl: bound, test: untested}
+      - {name: isAvailable, sig: "keychain present/unlocked", impl: bound, test: untested}
+    status: {impl: bound, test: untested, platform: darwin, notes: "evaluate bun:secrets first; NO silent plaintext fallback; locked backend → typed error"}
+
+  permissions:
+    methods:
+      - {name: query/request/openSettings, sig: "(feature) → 'granted'|'denied'|'restricted'|'not-determined'|'unavailable'", upstream: "quickgui Permissions", impl: bound, test: untested}
+    status: {impl: bound, test: untested, platform: darwin, notes: "no fabricated uniform dialog; per-feature OS paths"}
+
+  capture:
+    methods:
+      - {name: getSources, sig: "screen/window thumbnails — user-mediated", impl: specified, test: untested, platform: darwin, notes: "ScreenCaptureKit; permission failure → typed error"}
+      - {name: captureStill, impl: specified, test: untested}
+      - {name: stream/systemAudio, impl: specified, test: untested, classification: "optional V1 package"}
+    status: {impl: specified, test: untested}
+
+  nativeImage:
+    methods:
+      - {name: fromBytes/fromPath, impl: bound, test: untested, upstream: "quickgui nativeImageSource/NativeImage"}
+      - {name: size/scale variants, impl: bound, test: untested}
+      - {name: template, impl: bound, test: untested, platform: darwin}
+      - {name: toPNG/toJPEG/resize, impl: specified, test: untested}
+      - {name: dispose, impl: specified, test: untested}
+    status: {impl: bound, test: untested}
+
+  dragDrop:
+    methods:
+      - {name: incoming, sig: "enter/over/leave/drop events; files/text/urls/mime", impl: specified, test: untested}
+      - {name: outgoing, sig: "startDrag({files?,text?,icon?})", impl: specified, test: untested}
+    status: {impl: specified, test: untested, notes: "file-access lifetime tied to drop event"}
+
+  updater:
+    methods:
+      - {name: check/download/install, sig: "progress events + cancel", upstream: "tauri updater model", impl: specified, test: untested}
+      - {name: verify, sig: "signed metadata + artifact sig, platform/arch/channel match", impl: specified, test: untested}
+    status: {impl: specified, test: untested, notes: "test keys only; no prod endpoint; store policy explicit"}
+
+  dock:
+    methods:
+      - {name: setBadge/getBadge, impl: bound, test: untested, platform: darwin, upstream: "quickgui dock fns"}
+      - {name: requestAttention/cancel, impl: bound, test: untested, platform: darwin}
+      - {name: setVisible, impl: bound, test: untested, platform: darwin}
+      - {name: setMenu, impl: specified, test: untested, platform: darwin}
+      - {name: progress/overlay, impl: specified, test: untested, platform: windows}
+    status: {impl: bound, test: untested}
+
+  recentDocuments:
+    methods:
+      - {name: add/clear/list, impl: specified, test: untested, notes: "macOS NSDocumentController recents; windows jumpList tasks/categories → unsupported on darwin"}
+    status: {impl: specified, test: untested}
+
+  fileAssociations:
+    methods:
+      - {name: declare, sig: "package-time Info.plist/CFBundleDocumentTypes; launch delivery via onOpenFile", impl: specified, test: untested}
+      - {name: query, impl: specified, test: untested, notes: "OS owns default-app choice; we cannot set it"}
+    status: {impl: specified, test: untested}
+
+  accessibility:
+    methods:
+      - {name: semanticTree, sig: "nodes with role/name/state/actions from nkit elements", impl: specified, test: untested, notes: "gpuix exposes role/label props partially — gap recorded in README"}
+      - {name: focus/nav, impl: implemented, test: tested, notes: "keyboard nav + FocusHandle verified"}
+      - {name: textSelection/IME, impl: implemented, test: partial, notes: "IME edge cases open"}
+      - {name: controlOtherApps, sig: "NOT in scope — requires accessibility permission; separate consent", impl: specified, test: untested}
+    status: {impl: partial, test: partial}
+
+  native:  # $native — generated Rust commands
+    methods:
+      - {name: add, sig: "add(a: bigint, b: bigint): bigint", impl: implemented, test: tested, evidence: "results/.../native-contract.jsonl"}
+      - {name: wordCount, sig: "wordCount(text): bigint — typed errors (invalid_utf8)", impl: implemented, test: tested}
+      - {name: jsonTransform, sig: "jsonTransform(json): json — heap out + nc_free", impl: implemented, test: tested}
+      - {name: contract, sig: "commands.json → codegen → bindings.ts; scalar/bytes-in/json-io kinds; NativeError; bigint i64; explicit buffer ownership; catch_unwind containment; dispose for handles", impl: implemented, test: tested}
+      - {name: async/cancellation/progress, sig: "NOT YET — design: command registry emits progress events; cancel stops awaiting, abort signaled via flag; never implies rollback", impl: specified, test: untested}
+      - {name: handles, sig: "opaque u64 handle registry + dispose; no pointers exposed", impl: specified, test: untested}
+    status: {impl: spike, test: tested, platform: darwin}
+
+  events:
+    methods:
+      - {name: subscribe/unsubscribe, sig: "typed channels, window-scoped, validated payloads, correlation ids", impl: implemented, test: tested, notes: "native→JS event payloads + delegated dispatch live; JS→native event channel specified"}
+    status: {impl: implemented, test: tested}
+
+  diagnostics:
+    methods:
+      - {name: logs, sig: "structured, redacted sinks", impl: bound, test: untested, upstream: "quickgui Metrics/CrashReporter"}
+      - {name: crashReports, sig: "bounded local artifacts, opt-in transport", impl: bound, test: untested}
+      - {name: jsErrors/panics, sig: "Bun error capture + NAPI/FFI failure propagation", impl: partial, test: tested, notes: "applyBatch errors propagate; panic containment in native-core"}
+      - {name: tracing, impl: specified, test: untested}
+    status: {impl: bound, test: partial}
+
+  capabilities:
+    methods:
+      - {name: manifest, sig: "machine-readable per-feature grants; backend enforces brokered calls", impl: specified, test: untested}
+      - {name: audit, sig: "grant/deny events", impl: specified, test: untested}
+    status: {impl: specified, test: untested, notes: "THREAT MODEL: does NOT sandbox Bun APIs app code can call directly; enforce only our own privileged bridge"}
+
+classification:
+  v1-core: [app, window, windowState, screen, dialog, menu, clipboard, shell, theme, system, protocol, singleInstance, native, events, diagnostics, capabilities]
+  optional-v1: [tray, shortcuts, notifications, deepLink, autostart, power, secureStorage, permissions, dock, recentDocuments, dragDrop, nativeImage]
+  future: [capture(stream), updater, fileAssociations, a11y-controlOtherApps]
+  bun-provided: [sqlite, fs, http/fetch, ws, crypto, workers, subprocess, secrets(eval)]
+  browser-specific: [webContents, dom-exec, devtools, extensions, html-print, drm-media, webrtc, cookies/sessions]
+  unsupported: [platform:linux+windows until built — every entry reports {code:'unsupported'} there]

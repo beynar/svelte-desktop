@@ -1,0 +1,11 @@
+{
+  "version": 3,
+  "sources": ["adapter-bun-side-effect:/Users/arnaud/code/svelte-desktop/app/.svelte-kit/output/server/chunks/paths.js?85204087d521f2b1", "../.svelte-kit/output/server/entries/pages/_page.svelte.js"],
+  "sourcesContent": [
+    "import \"./server.js\";\nexport {};\n\nSymbol.for('adapter-bun:60274d6d7f4202b');",
+    "import \"../../chunks/data.remote.js\";\nimport { t as resolve } from \"../../chunks/server.js\";\nimport { a as attr } from \"../../chunks/server2.js\";\nimport \"../../chunks/paths.js\";\n//#region src/routes/+page.svelte\nfunction _page($$renderer, $$props) {\n\t$$renderer.component(($$renderer) => {\n\t\t$$renderer.push(`<h1>SvelteKit 3 + Bun, embedded</h1> `);\n\t\t$$renderer.push(`<!--[!-->`);\n\t\t$$renderer.push(`<p>loading remote state…</p>`);\n\t\t$$renderer.push(`<!--]-->`);\n\t\t$$renderer.push(` <p><a${attr(\"href\", resolve(\"/about\"))}>client-side navigation → /about</a></p>`);\n\t});\n}\n//#endregion\nexport { _page as default };\n\n//# sourceMappingURL=_page.svelte.js.map"
+  ],
+  "mappings": ";;;;;;;;;;;;AAGA,OAAO,IAAI,6BAA6B;;;ACExC,SAAS,KAAK,CAAC,YAAY,SAAS;AAAA,EACnC,WAAW,UAAU,CAAC,gBAAe;AAAA,IACpC,YAAW,KAAK,uCAAuC;AAAA,IACvD,YAAW,KAAK,WAAW;AAAA,IAC3B,YAAW,KAAK,mCAA8B;AAAA,IAC9C,YAAW,KAAK,UAAU;AAAA,IAC1B,YAAW,KAAK,SAAS,KAAK,QAAQ,QAAQ,QAAQ,CAAC,gDAA2C;AAAA,GAClG;AAAA;",
+  "debugId": "29C03AFC60A9842164756E2164756E21",
+  "names": []
+}

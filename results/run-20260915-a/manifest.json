@@ -1,0 +1,16 @@
+{
+  "run_id": "run-20260915-a",
+  "date": "2026-09-15",
+  "host": {"os": "macOS 26.5.1", "arch": "arm64", "cpu": "Apple M4 Pro", "cores": 14, "ram_gib": 48},
+  "tools": {"bun": "1.4.0", "rustc": "1.94.0", "svelte": "5.57", "gpuix_native": "0.7.0", "quickgui_native": "0.1.4-next.1"},
+  "power_state": "AC assumed (laptop on desk, unverified)",
+  "files": {
+    "bridge.jsonl": "NAPI vs FFI call overhead; applyBatch vs batch size and payload; drainEvents idle cost",
+    "sqlite.jsonl": "bun:sqlite tx insert, prepared get, sync copy, select-all",
+    "native-contract.jsonl": "$native spike contract results",
+    "pipeline-bench.json": "bench.ts latest (mount/flip/retext/paint vs baseline.json)"
+  },
+  "startup": {"unpacked_first_frame_ms": [464.7, 437.3, 470.2], "compiled_first_frame_ms": 940.1, "steady_rss_mib": [150.1, 144.8, 164.7], "compiled_rss_mib": 173.7},
+  "packaging": {"app_server_mib": 64.6, "desktop_binary_mib": 82.6, "signed": false},
+  "notes": "3 startup runs unpacked + 1 compiled; bench deltas vs prior baseline.json; all single-machine M4 Pro"
+}

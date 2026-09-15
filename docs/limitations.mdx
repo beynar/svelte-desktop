@@ -1,0 +1,209 @@
+---
+title: Limitations
+description: The honest boundary — what doesn't carry over, what never will, and what's blocked upstream. Updated after a three-pass adversarial review.
+sidebar:
+  order: 7
+---
+
+This page is the living ledger. It was last updated after a three-agent
+adversarial review of the POC — the fixed column below is what that review
+*cost* the codebase; the open items are what's left.
+
+## Fixed by the adversarial review
+
+- `getBoundingClientRect` returned **always-zero** — a duplicate stub method
+  shadowed the real `_bounds()` impl. Real bounds now resolve through
+  `getElementBounds` (both renderers), with the automation tree as fallback.
+- **Scoped CSS never applied**: `build.ts` compiled with `css:'external'` and
+  discarded `out.css`, so `append_styles` was never emitted. Now `css:
+  'injected'` + `GElement.querySelector` + a rule-based class bridge —
+  verified end-to-end by the `stylecss` case asserting real layout bounds.
+- `innerHTML` appended instead of replacing; `{@html}` updates accumulated.
+- Native `focus`/`blur` arrived mislabeled as `focusin`/`focusout` — direct
+  `onfocus`/`onblur` listeners never fired. Now dual-dispatch.
+- `e.currentTarget` was never set; `isTrusted`, modifier keys, `clientX/Y`,
+  `repeat` all missing — now populated from the native payload.
+- `preventDefault()` was ignored for checkbox/radio activation; `el.click()`
+  skipped activation entirely.
+- `svelte/reactivity`, `svelte/store`, `svelte/legacy` resolved to **server**
+  entries under Bun — `SvelteMap` was a plain `Map`, non-reactive and silent.
+  `build.ts` now rewrites all four server-resolving subpaths.
+- `remote.svelte.js` queries leaked forever across unmounts — now pruned via
+  `$effect` teardown; `command.run` has a generation guard (last call wins,
+  not last to resolve); `refreshAll` snapshots the set.
+- Getter-only `defaultValue`/`defaultChecked`/`disabled`/`selected`/
+  `multiple`/`readOnly`/`type`/`name` threw TypeError on Svelte's
+  property-assignment paths — all now settable.
+- `dispatchEvent` didn't bubble and never set `target`; `new Event()` was a
+  bare class — both fixed (`GEventBase`/`GCustomEvent` installed).
+- HTML parser: no entity decoding, `>` inside quoted attrs truncated tags,
+  unterminated input could loop forever, `<style>`/`<script>` raw text
+  misparsed. All hardened.
+- `main.ts` diverged from the test path — never called `drainAfterRender`
+  (focus was dead in the live window) and dropped window-sentinel events.
+  Both fixed.
+- `applyBatch` failure discarded the op queue → JS/native desync. The queue
+  is now preserved on failure, and returned destroyed-ids are consumed.
+- `dematerialize` emitted `destroyElement` per descendant — double-destroy on
+  natively-cascaded ids. Now one op per subtree.
+
+## Still open — DOM/platform gaps
+
+| Area | Status |
+|---|---|
+| Node **moves** destroy + recreate natively | `{#each}` reorder loses focus/selection/scroll in moved subtrees; needs a `moveBefore` op upstream or a reorder fast-path. **Solved on the quickgui backend** — `insertNativeNode` reparents natively |
+| `<select>` semantics | Mounts + `bind:value` machinery runs; real popup/keyboard UX is app-authored |
+| Media bindings | `bind:paused`/`volume`/`currentTime` — no play/pause/TimeRanges; `<video>`/`<audio>` are stubs |
+| `bind:files` | No `FileList` source |
+| Transition *visuals* | `fade` verified; `fly`/`slide`/`scale`/`blur` compute against empty `getComputedStyle` defaults — mechanism works, params wrong. `draw` crashes (`getTotalLength`) |
+| `animate:flip` | Bounds are real now, but still untested |
+| Capture phase | `addEventListener(_,_,{capture})` ignored; `passive`/`signal` too |
+| `preventDefault` vs native behavior | JS flag only — can't stop a committed native edit or keypress |
+| Event fan-out | Delegated types register `setEventListener` on **every** element — including `focusin`/`keydown` → every element gets a `FocusHandle` → everything becomes a tab stop. Needs a target-filtered registration |
+| Focus management | `activeElement` tracked, but focus ring/tab order is unmanaged; no `blurElement` native op exists |
+| `<svelte:head>` content | Lands in `document.head`, never materializes (by design); `document.title` not wired to `setWindowTitle` |
+| `bind:innerWidth`/`scrollY` | Stubs — `innerWidth` static 800, scroll writes no-op; window `resize`/`scroll` events never delivered |
+| Spread attr removal | `attributes` is a `Map`, not `Attr[]` — Svelte's stale-attribute diff pass can't remove |
+| `change` timing | gpuix fires per edit (input+change dispatched each keystroke); DOM fires `change` on commit |
+| `scrollIntoView` index | Counts non-materialized siblings → can scroll to wrong item |
+| Contenteditable, selection, clipboard, IME | Not implemented |
+| Hydration | Machinery plausible; parser fidelity makes mismatches likely — treat as **unproven** |
+
+## Upstream-blocked (gpuix-side, not shim-side)
+
+- **Accessibility** — no role/label API in the napi surface; `aria-*` lands as
+  inert custom props. **Solved on the quickgui backend** — `AccessibilityLabel`,
+  `Role`, `TabIndex` are real `PropertyCode`s backed by AccessKit.
+- **Multi-window** — `GpuixRenderer.init()` owns one window. **Solved on
+  quickgui** — `new Window()` per renderer, `app.on('reopen')`, quit modes.
+- **Maturity** — 0.7.0, single author, vendored Zed submodule, macOS focus.
+  (quickgui is also pre-alpha single-author, but it's a funded product effort
+  with an actively pushed repo.)
+
+## Backend trade-offs (measured by the two-backend experiment)
+
+| | gpuix | quickgui |
+|---|---|---|
+| Layout readback | `getElementBounds` + `getScrollOffset` + automation tree — `bind:size`, `getBoundingClientRect`, `flip` measurement all work | **none exposed to JS** — all bounds-dependent APIs degrade |
+| Text editing | single-line `input`, no IME/undo | IME, selection, undo/redo, spell-check |
+| A11y | none | AccessKit roles/labels/actions |
+| Hover/focus styles | JS round-trip (`mouseenter` → setStyle) | native paint-only states (`HoverStyle` etc.) |
+| Node moves | destroy + recreate | native reparent |
+| Headless testing | `TestGpuixRenderer` — real hit-testing + paint buffer + scroll simulation | `RecordingHost` (pure JS) — asserts the retained tree; no automation API on JS side |
+| App model | Bun main thread | Bun **worker**; main thread owns AppKit |
+| Packaging | unproven | `quickgui build --sign --notarize` + updater |
+
+The takeaway: neither backend dominates — gpuix has the *testability and
+readback* surface, quickgui has the *product* surface (a11y, editing,
+packaging). The fake DOM doesn't care which is below.
+
+## Testing-fidelity caveats
+
+- `TestGpuixRenderer` can't see IME composition, real focus rings/tab order,
+  AppKit event ordering, window chrome, or vsync pacing.
+- The suite shares one `doc`+`renderer` across cases — `delegatedTypes` and
+  `classRules` persist (isolation improved via per-case `target.remove()`,
+  full isolation would reinstall globals per case).
+- `main.ts`'s `SHOT` mode calls `simulateClick` on the live renderer — the
+  known-panicking path (`main-kit.ts` SHOT is clean). Keep it headless.
+- `TestGpuixRenderer.simulateClick` hit-tests only within roughly the first
+  ~77% of the declared window height — clicks beyond it silently produce no
+  events. The kit suite uses a 3200px window to keep every fixture button in
+  range.
+
+## Kit-layer gaps (the in-process compatibility layer)
+
+The `src/kit/` runtime implements kit *semantics*, not kit-the-codebase —
+verified by `kit-conformance.ts` (49 cases). What exists:
+
+- file routes incl. `[param]`, `[...rest]`, `[[optional]]`, `[p=matcher]`,
+  `(group)` dirs; `src/params/*.ts` matchers; precedence is scored
+  (static > param > rest)
+- universal + server `load` chains with `parent()`/`event.data`/`depends`/
+  `setHeaders`; layout persistence (deduped level objects + **uses tracking** —
+  a level is reused only when the params/search/route/parent-data it actually
+  read haven't changed)
+- `depends(...)` variadic + `invalidate(key)` matching recorded `fetch` hrefs,
+  `depends` keys (relative URLs normalized), or a predicate `(url) => bool`;
+  `invalidateAll()` forces every level to rerun
+- `handle`/`init`/`handleError`/`handleFetch`/`reroute`/`transport` hooks —
+  `handle` wraps each navigation, invalidation, preload, error render, and
+  form action once, with shared `locals`; `handleError` gets `{event,status}`
+  and can shape the 500 body; `getRequestEvent()` resolves inside every hook
+- **navigation** — `goto`/`back`/`beforeNavigate`/`afterNavigate`/`onNavigate`
+  (returned fn awaited, auto-unsubscribed)/`navigating`
+  (`to`/`from`/`type`/`delta`/`complete`/`willUnload`)/`page` (`url`/`route`
+  — `id:null` on 404 —/`params`/`form`/`state`/`status`/`error`/`data`/
+  `shallow`); cancelled navigations can't kill an in-flight one; superseded
+  `goto`s are abandoned by sequence; nav types `enter`/`goto`/`link`/`form`/
+  `popstate`
+- **history** — real stack: first entry recorded, search/hash/state persist,
+  redirects push (not clobber), error renders commit entries, hash-only
+  navs don't rerun loads, `pushState`/`replaceState`/`page.state` with
+  shallow `back()` restore
+- `redirect`/`error`/`fail`/`isRedirect`/`isHttpError`/`isActionFailure`/
+  `invalid`/`isInvalidError` + positional `+error.svelte` boundaries
+- **form actions** — `?/named`, `page.form` (reset on navigation), GET forms
+  submit as navigation, cross-page `action="/other?/x"`, submitter
+  name/value in `FormData`, `form.reset()` after success, `use:enhance`
+  (cancel + `result.update()` + POST-only interception), `applyAction`,
+  `deserialize`; `<form>`/submit activation lives in gdom
+- **`+server.ts` endpoints** — `event.fetch` resolves them in-process before
+  `handleFetch`/real fetch, with full RequestEvent (`cookies`/`fetch`/
+  `setHeaders`/`getClientAddress`/`isDataRequest`/`isSubRequest`);
+  `event.fetch(Request)` preserves method/body/headers; endpoint
+  `error()`/`redirect()` become `Response`s; unmatched → 404 Response;
+  `HEAD` falls back to `GET`
+- **cookies** — per-request pending overlay over a committed jar (concurrent
+  requests can't see uncommitted writes), `maxAge`/path-lite honored,
+  `setHeaders` merges Set-Cookie into endpoint responses
+- **streaming** — promise fields in load data stay promises; `{#await}`
+  resolves them in place
+- `preloadData`/`preloadCode` — preloads run through `handle`+`reroute` like
+  a real request and don't commit
+- `$app/paths` (`resolve` incl. embedded params + query, `match()`,
+  `base`/`assets`/`asset`), `$app/environment`, `updated`
+- **`$app/server`** — `getRequestEvent()` via AsyncLocalStorage (survives
+  `await` inside loads/actions/hooks/endpoints/remote fns), `read(asset)` →
+  `Response`, `json`/`text`
+- **remote functions are real requests** — `query`/`command`/`form` calls go
+  through `hooks.handle` with a synthesized RequestEvent (`getRequestEvent()`,
+  `locals`, cookies all work inside); kit shapes: `query(fn)` → callable →
+  thenable resource (`current`/`loading`/`error`/`ready`/`refresh`/`set`/
+  `withOverride`), `command(fn)` → callable with `pending`/`updates()`,
+  `form(fn)` → spreadable `{method,action,'data-remote-form'}` with
+  `fields`/`result`/`pending`/`invalid`, plus `requested`/`prerender`
+- `refreshAll({includeLoadFunctions})` — remote queries + loads together;
+  remote calls trigger load invalidation like kit's remote mutations
+
+Still absent, honestly:
+
+- **`untrack` is `fn()`** — no reactivity-tracking boundary inside it
+- **request abort** — no `AbortSignal` wired into loads; superseded `goto`s
+  drop their commits but their loads still run to completion
+- cookie opts are partial — `maxAge`+path-lite enforced; `httpOnly`/
+  `sameSite`/`secure`/`domain` accepted, ignored; no `document.cookie`
+- `deserialize` is JSON-shaped, not devalue (bigint/Map/class round-trips
+  diverge)
+- **no hydration** — meaningless in a single process; the first render IS
+  the load result. `browser` is `true` by fiat.
+- **no service workers / prerendering / building artifacts** — nothing to
+  prerender *to*; `building=false` always. `$app/service-worker` and
+  `$app/manifest` intentionally absent; `$app/stores` (removed in kit 3)
+  not provided
+- `snapshot()`, `navigating.willUnload` is always `false` (nothing unloads
+  in-process), `updated.check()` is a stub
+- `handleError` lacks some of kit's finer event/status discrimination
+- remote `prerender()` is a thin wrapper (no prerender phase exists) and
+  `requested()` always returns `false`; remote `form()` `fields` implement
+  `as(type)`/`invalid()`/`issues()` — schema validation is a stub
+- `event.isSubRequest` is always `false`; `getClientAddress` returns a fixed
+  loopback-ish address
+
+## The ecosystem boundary, restated
+
+Svelte component libraries assume the browser platform, not just the Svelte
+language. Until CSS cascade and the observer/focus/portal APIs exist, the
+honest claim is: **Svelte syntax + reactivity against a native element
+vocabulary** — you'd author (or adopt) a gpuix-native component kit, not
+`npm i` a web one.

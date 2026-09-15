@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["../.svelte-kit/output/server/entries/fallbacks/error.svelte.js"],
+  "sourcesContent": [
+    "import { i as getContext, o as escape_html } from \"../../chunks/server2.js\";\n//#region node_modules/@sveltejs/kit/src/runtime/app/state/server.js\nfunction context() {\n\treturn getContext(\"__request__\");\n}\nvar page = {\n\tget data() {\n\t\treturn context().page.data;\n\t},\n\tget error() {\n\t\treturn context().page.error;\n\t},\n\tget form() {\n\t\treturn context().page.form;\n\t},\n\tget params() {\n\t\treturn context().page.params;\n\t},\n\tget route() {\n\t\treturn context().page.route;\n\t},\n\tget shallow() {\n\t\treturn context().page.shallow;\n\t},\n\tget state() {\n\t\treturn context().page.state;\n\t},\n\tget status() {\n\t\treturn context().page.status;\n\t},\n\tget url() {\n\t\treturn context().page.url;\n\t}\n};\n//#endregion\n//#region node_modules/@sveltejs/kit/src/runtime/components/error.svelte\nfunction Error$1($$renderer, $$props) {\n\t$$renderer.component(($$renderer) => {\n\t\t$$renderer.push(`<h1>${escape_html(page.status)}</h1> <p>${escape_html(page.error?.message)}</p>`);\n\t});\n}\n//#endregion\nexport { Error$1 as default };\n\n//# sourceMappingURL=error.svelte.js.map"
+  ],
+  "mappings": ";;;;;;;;;AAEA,SAAS,OAAO,GAAG;AAAA,EAClB,OAAO,WAAW,aAAa;AAAA;AAEhC,IAAI,OAAO;AAAA,MACN,IAAI,GAAG;AAAA,IACV,OAAO,QAAQ,EAAE,KAAK;AAAA;AAAA,MAEnB,KAAK,GAAG;AAAA,IACX,OAAO,QAAQ,EAAE,KAAK;AAAA;AAAA,MAEnB,IAAI,GAAG;AAAA,IACV,OAAO,QAAQ,EAAE,KAAK;AAAA;AAAA,MAEnB,MAAM,GAAG;AAAA,IACZ,OAAO,QAAQ,EAAE,KAAK;AAAA;AAAA,MAEnB,KAAK,GAAG;AAAA,IACX,OAAO,QAAQ,EAAE,KAAK;AAAA;AAAA,MAEnB,OAAO,GAAG;AAAA,IACb,OAAO,QAAQ,EAAE,KAAK;AAAA;AAAA,MAEnB,KAAK,GAAG;AAAA,IACX,OAAO,QAAQ,EAAE,KAAK;AAAA;AAAA,MAEnB,MAAM,GAAG;AAAA,IACZ,OAAO,QAAQ,EAAE,KAAK;AAAA;AAAA,MAEnB,GAAG,GAAG;AAAA,IACT,OAAO,QAAQ,EAAE,KAAK;AAAA;AAExB;AAGA,SAAS,OAAO,CAAC,YAAY,SAAS;AAAA,EACrC,WAAW,UAAU,CAAC,gBAAe;AAAA,IACpC,YAAW,KAAK,OAAO,YAAY,KAAK,MAAM,aAAa,YAAY,KAAK,OAAO,OAAO,OAAO;AAAA,GACjG;AAAA;",
+  "debugId": "1CA684E81EDEC2EF64756E2164756E21",
+  "names": []
+}

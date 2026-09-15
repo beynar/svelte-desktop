@@ -1,0 +1,3 @@
+{"ts":1789457074280,"bench":"sqlite-tx-insert-10k","ms":6.692708000000003}
+{"ts":1789457074310,"bench":"sqlite-sync-copy-40k","ms":8.685167}
+{"ts":1789457074316,"bench":"sqlite-select-50k-objects","ms":5.494791999999997}

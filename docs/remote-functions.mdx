@@ -1,0 +1,60 @@
+---
+title: Remote functions
+description: The SvelteKit remote-function model ported in-process — query, command, refresh tracking — with Bun APIs on the "server" side.
+sidebar:
+  order: 5
+---
+
+## The model
+
+SvelteKit's remote functions give you `query` (read, cached, refreshable),
+`command` (write, invalidates queries) and `form`. The POC ports that DX
+**in-process**: in a gpuix app there is no HTTP boundary — the "server" is the
+same Bun process the renderer lives in.
+
+`remote.svelte.js` is the whole implementation (~77 lines, runes-based):
+
+```ts
+const notes = query(getNotes);        // notes.current / .loading / .error
+await addNoteCmd.run('hello');        // command: pending / result / error
+                                      // → auto refreshAll() on success
+```
+
+- `query(fn)` — runs immediately, exposes `current`, `loading`, `error`, and
+  `refresh()`. Every live query registers in a module-level set.
+- `command(fn)` — exposes `run(arg)`, `pending`, `result`, `error`; a
+  successful run calls `refreshAll()`, re-running every registered query.
+- `refreshAll()` — manual invalidation, same as SvelteKit's.
+
+## The "server" side is just Bun
+
+`server.ts` is ordinary Bun code — the functions the remote layer calls:
+
+```ts
+import { Database } from 'bun:sqlite';
+
+export function getNotes() {
+  return db.query('SELECT id, text, created_at FROM notes ORDER BY id DESC').all();
+}
+export function addNote(text: string) { /* INSERT … */ }
+export function runtimeInfo() {
+  return `bun ${Bun.version} · ${process.platform}/${process.arch}`;
+}
+```
+
+`bun:sqlite`, `Bun.serve`, FFI, the filesystem — everything reachable, because
+it's the same process. The verified loop: click → `command.run` → sqlite
+INSERT → `refreshAll` → `query` re-runs → `{#each}` inserts the row → native
+repaint.
+
+## What this is not (yet)
+
+- **Not the real `.remote.ts` transform.** SvelteKit's plugin compiles remote
+  files into fetch stubs; here the call is a direct in-process invocation that
+  reproduces the API surface. Two paths forward, both in the
+  [roadmap](/roadmap): a bundler transform rewriting remote imports to
+  in-process calls, or an embedded adapter-bun server over loopback (which the
+  Electrobun experiment already proved works).
+- **No transport security boundary.** In-process means no serialization, no
+  auth check — `fn` just runs. If a loopback transport is ever adopted,
+  SvelteKit's wire format is the thing to copy, not invent.

@@ -1,0 +1,19 @@
+{
+  "name": "svelte-desktop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "blume dev",
+    "build": "blume build",
+    "doctor": "blume doctor",
+    "demo": "cd gpuix-poc && bun build.ts && bun src/main-showcase.ts",
+    "test": "cd gpuix-poc && bun src/conformance.ts && bun src/conformance-nkit.ts && bun src/kit-conformance.ts && bun src/conformance-qg.ts && bun src/smoke-pages.ts",
+    "bench": "cd gpuix-poc && bun src/bench.ts && bun src/mission-bridge.ts && bun src/mission-sqlite.ts",
+    "package": "cd gpuix-poc && bun build.ts && bun build --compile src/mission-startup.ts --outfile build/desktop-demo && cd ../app && bun run build",
+    "codegen": "bun packages/native/codegen.ts",
+    "report": "cat docs/recommendation.md"
+  },
+  "dependencies": {
+    "blume": "^1.6.5"
+  }
+}

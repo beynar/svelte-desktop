@@ -1,0 +1,11 @@
+{
+  "version": 3,
+  "sources": ["adapter-bun-side-effect:/Users/arnaud/code/svelte-desktop/app/.svelte-kit/output/server/chunks/paths.js?63bd4e4396c68692", "../.svelte-kit/output/server/entries/pages/about/_page.svelte.js"],
+  "sourcesContent": [
+    "import \"./server.js\";\nexport {};\n\nSymbol.for('adapter-bun:999644bcd08ebdec');",
+    "import { t as resolve } from \"../../../chunks/server.js\";\nimport { a as attr } from \"../../../chunks/server2.js\";\nimport \"../../../chunks/paths.js\";\n//#region src/routes/about/+page.svelte\nfunction _page($$renderer, $$props) {\n\t$$renderer.component(($$renderer) => {\n\t\t$$renderer.push(`<h1>about</h1> <p>SSR rendered, client-side routed, hydrated — inside a native webview.</p> <p><a${attr(\"href\", resolve(\"/\"))}>← back</a></p>`);\n\t});\n}\n//#endregion\nexport { _page as default };\n\n//# sourceMappingURL=_page.svelte.js.map"
+  ],
+  "mappings": ";;;;;;;;;;;AAGA,OAAO,IAAI,8BAA8B;;;ACCzC,SAAS,KAAK,CAAC,YAAY,SAAS;AAAA,EACnC,WAAW,UAAU,CAAC,gBAAe;AAAA,IACpC,YAAW,KAAK,yGAAoG,KAAK,QAAQ,QAAQ,GAAG,CAAC,uBAAkB;AAAA,GAC/J;AAAA;",
+  "debugId": "B89C493DC8C1835D64756E2164756E21",
+  "names": []
+}

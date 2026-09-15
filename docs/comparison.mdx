@@ -1,0 +1,39 @@
+---
+title: Comparison
+description: gpuix+Svelte against the alternatives — Electrobun+SvelteKit, Tauri, and Electron.
+sidebar:
+  order: 8
+---
+
+Both sides of this repo exist to make this comparison concrete: `app/` +
+`shell/` are a working SvelteKit-in-Electrobun build; `gpuix-poc/` is the
+native-renderer experiment.
+
+| | **gpuix + Svelte** | **Electrobun + SvelteKit** | **Tauri** | **Electron** |
+|---|---|---|---|---|
+| Renderer | **Native GPUI (GPU)** | WKWebView | System webview | Chromium |
+| Svelte fidelity | Language ✓ / browser platform ✗ | 100% real DOM | 100% | 100% |
+| JS runtime | Bun (in-proc) | Bun (in-proc) | Webview JS | Node + Chromium |
+| IPC / data layer | In-proc remote-fn pattern | Remote fns over loopback | `invoke` | `ipcRenderer` |
+| Memory (measured) | **~150 MB** | ~205 MB | ~80–150 MB | 300–500 MB |
+| Bundle (est.) | ~60 MB (bun + `.node`) | ~20 MB app | 5–15 MB | ~85 MB pkg |
+| Paint ceiling | **Zed-editor grade** | Safari-grade | webview | Chromium |
+| "npm i a svelte lib" | ❌ | ✅ | ✅ | ✅ |
+| Maturity | 0.7.0, solo author | v2, small | 2.x stable | Battleship |
+
+## How to read it
+
+- **gpuix is the only row where the UI isn't a webview.** That's the entire
+  point — native GPU text/layout at editor speed with Svelte authoring. You
+  trade the DOM's thirty years of semantics for a young element model.
+- **Electrobun is strictly safer for content/form-heavy apps**: full DOM,
+  full SvelteKit, remote functions for free, and it's already packaged.
+- The realistic endgame may be **hybrid** — gpuix for perf-critical surfaces,
+  or this fake-DOM approach matured into a real renderer package plus a
+  purpose-built native component set.
+
+## Verdict
+
+**GO** — with the ledger above. For a text/app-chrome-heavy tool (editor,
+terminal, dashboard) the native path is compelling. For anything that needs
+the web platform, the Electrobun build already works today.

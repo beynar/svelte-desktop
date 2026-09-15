@@ -1,0 +1,170 @@
+---
+title: Conformance
+description: The 35-case suite that measures the "100% Svelte API" bar — driven through real GPUI hit-testing, asserted on painted pixels.
+sidebar:
+  order: 6
+---
+
+## Methodology
+
+Each case is a standalone `.svelte` fixture in `src/cases/`, compiled by
+`build.ts`, mounted fresh into a `TestGpuixRenderer` (gpuix's GPU-backed
+offscreen renderer), **driven through real GPUI input** — `simulateClick` at
+automation-tree coordinates, `simulateKeystrokes`, `simulateScrollWheel` — and
+asserted on `getPaintedText()` / the retained tree. No synthetic DOM events;
+if a feature passes, the whole loop round-tripped through Rust.
+
+```sh
+cd gpuix-poc
+bun build.ts               # compile fixtures → src/gen/cases/
+bun src/conformance.ts      # → 45/45 pass (gpuix TestGpuixRenderer)
+bun src/conformance-qg.ts   # → 45/45 pass (quickgui RecordingHost, pure JS)
+bun src/kit-conformance.ts  # → 49/49 pass (kit layer: loads, hooks, nav)
+```
+
+:::warning
+Only the headless `TestGpuixRenderer` is used for gpuix testing.
+`simulateClick` on the live `GpuixRenderer` reenters GPUI mid-update and
+panics — the live window is for looking at, not driving.
+:::
+
+## Two backends, same cases
+
+`conformance-qg.ts` runs the identical fixture set through the QuickGUI
+backend. The differences are honest ones about *where assertions land*:
+
+- **Driving**: gpuix tests use real hit-testing (`simulateClick` at text
+  bounds). QuickGUI's JS host has no automation API (their `TestContext` is
+  Rust-side), so `conformance-qg` synthesizes events by invoking the wired
+  `NativeNode` listeners — the exact callbacks the Rust core calls live.
+- **Asserting**: `painted()`/`tree()` read the retained `NativeNode` tree
+  (text + tag structure) rather than a paint buffer.
+- **Layout-dependent cases** (`bindsize`, `stylecss`, `scroll`): quickgui
+  exposes **no JS-side layout readback** — no `getElementBounds`, no
+  `getScrollOffset`, no automation tree. Those cases assert the property
+  reached the native tree instead of a measured pixel result.
+
+## The matrix — 45/45
+
+| Case | Proves |
+|---|---|
+| `state` / `state-click` | `$state` rune; click → hit-test → re-render |
+| `derived` | `$derived` |
+| `ifelse` / `ifelse-click` | `{#if}`/`{#else}` anchors, toggling |
+| `each` / `each-reorder` / `key` | `{#each}` incl. keyed reorder, `{#key}` |
+| `await` | `{#await}` pending → resolved |
+| `bindvalue` | `bind:value` on a real native text input — keystrokes flow |
+| `bindchecked` / `bindgroup` | `bind:checked`, `bind:group` (checkbox/radio → clickable div + activation) |
+| `bindthis` | `bind:this` element refs |
+| `bindsize` | `bind:clientWidth` — real layout bounds via the automation tree + `ResizeObserver`-lite |
+| `bindinner` | `bind:innerHTML` + `MutationObserver`-lite |
+| `use` / `attach` | `use:` actions with update; `{@attach}` |
+| `fade` / `fade-out` | `transition:fade` — `element.animate` interpolating real native `setStyle` per rAF frame |
+| `classdir` | `class:` directive + scoped `<style>` reaching native paint |
+| `svelteelement` / `-swap` | `<svelte:element>` incl. dynamic tag swap to native `input` |
+| `boundary` | `<svelte:boundary>` error capture |
+| `head` | `<svelte:head>` → `document.head` |
+| `snippet` / `rawsnippet` | `{#snippet}`/`{@render}`; `createRawSnippet` (worked unmodified) |
+| `spread` | `{...props}` attribute spread |
+| `modifiers-once` | event modifiers (`once` fires exactly once) |
+| `store` / `context` | `svelte/store`; `setContext`/`getContext` |
+| `html` | `{@html}` through the mini parser |
+| `tick` | `tick()` post-flush semantics |
+| `windowkey` | `<svelte:window onkeydown>` → `setWindowKeyEvents` sentinel → `e.key` |
+| `formdata` | `new FormData(formEl)` collects inputs; append/read native Bun |
+| `scroll` | `scrollTo`/`onscroll` with real `getScrollOffset` |
+| `htmlupdate` | `{@html}` re-render *replaces* — no stale accumulation |
+| `entities` | `&amp;`/`&lt;` decode through the mini parser |
+| `stylecss` | scoped `<style>` reaches **native layout** (bounds assert, not just text) |
+| `preventdef` | `e.preventDefault()` in a click blocks checkbox activation |
+| `clickmethod` | `el.click()` triggers the same activation path as a native click |
+| `currenttarget` | `dispatchEvent` sets `target`/`currentTarget`, bubbles to document |
+| `selectbind` | `<select bind:value>` mounts — `options`/`selectedIndex`/`:checked` machinery |
+| `customelem` | hyphenated elements take the plain-element path (`customElements` guard) |
+| `defaultval` | `defaultValue`/`defaultChecked` property writes don't throw |
+| `unmount` | teardown + `target.remove()` between cases (isolation) |
+
+## The kit matrix — 49/49
+
+`kit-conformance.ts` drives `src/routes/` (a real file-based route tree)
+through the gpuix renderer:
+
+| Case | Proves |
+|---|---|
+| `boot` | `+layout.ts` + `+layout.server.ts` + `+page.ts` + `+page.server.ts` chain; `handle` ran **once** and set `locals`; `parent()` and `event.data` flow |
+| `link interception` | un-prevented `<a href>` click → `goto` → params render |
+| `goto()` | programmatic nav from a component |
+| `redirect()` | `redirect(302, '/')` thrown in `load` → lands home |
+| `layout persists` | `$state` inside `+layout.svelte` survives navigation (no remount) |
+| `invalidate(key)` | only `depends(key)` levels re-run — layout `load` provably skipped |
+| `error()` | expected `error(418)` → `+error.svelte` inside layout; skips `handleError` |
+| `unexpected throw` | → `handleError` called + 500 boundary |
+| `404` | unmatched route → `error 404` boundary |
+| `handleFetch` + endpoint | `fetch('/api/who')` intercepted by the hook; `fetch('/api/time')` resolves a real `+server.ts` `GET` — both inside a server load |
+| `beforeNavigate` | `cancel()` blocks the navigation |
+| `navigating`/`afterNavigate` | `to`/`from` payload shape; `navigating` clears after commit |
+| `back()` | history pop → previous route |
+| `[...rest]` | `/rest/a/b/c` → `params.path === 'a/b/c'` |
+| `[[optional]]` | `/opt` and `/opt/x` both match; absent → `undefined` |
+| `[param=matcher]` | `/hex/deadbeef` matches, `/hex/xyz` → 404 (matcher rejects) |
+| `(group)` | `(panel)/+layout.svelte` wraps `/gpage` — layout applies, no url segment |
+| `form actions` | default + `?/named` actions → `form` prop; `fail()` → status 400 + `form` data, no rerun; `redirect()` in action → navigates |
+| `use:enhance` | intercepts submit, runs the callback, still applies the action result |
+| `streaming` | un-awaited promise field in server data → `{#await}` resolves in place |
+| `transport` | `Money` instance encode→decode round-trips the server→client boundary |
+| `pushState` | `page.state` + url update, no loads; `back()` restores shallowly |
+| `preloadData` | runs the chain, returns `{type:'loaded',status,data}` — no commit |
+| `nav coalescing` | `goto('/slow')` superseded by `goto('/about')` → abandoned mid-load |
+| `reroute` | `/legacy` renders `/about`'s route, `page.url` keeps `/legacy` |
+| `$app/*` surface | `resolve()` (all segment kinds), `browser`/`building`/`updated`, `deserialize` |
+| `onNavigate` | callback before nav, returned fn after — auto-unsubscribed |
+| `$app/server` | `cookies` jar, `getClientAddress()`, `getRequestEvent()` inside loads AND remote fns, `read()` → `Response` |
+| `cookies` | `cookies.set` in an action persists to the shared jar → next load sees it |
+| `refreshAll` | remote queries + load functions refreshed together |
+| `goto` opts | `{state, invalidateAll}`; `disableScrollHandling`/`json`/`text`/`asset` |
+| `cancelled nav` | `beforeNavigate` cancel of nav B can't kill in-flight nav A; `navigating` clears |
+| history fidelity | `back()` restores url incl. `?search` and popped `state` |
+| uses tracking | a load that read `url.searchParams` reruns on search-only changes |
+| `event.fetch` | `Request` passthrough (method/body/headers); endpoint `error()` → `Response`; endpoint sees the cookie jar |
+| `invalidate(url)` | matches recorded fetch hrefs; predicate form `(url) => bool` |
+| GET form | submits as navigation (`?q=` lands on the target route), not an action |
+| submitter | clicked button's `name`/`value` reaches `formData` |
+| `enhance` `update()` | result callback's `update()` applies the action result |
+| remote `form()` | `{...form}` spreads `method`/`action`/`data-remote-form`; submit dispatches to the remote fn |
+| remote callables | `query(fn)`/`command(fn)` return kit-shaped callables — thenable resources, `pending` |
+| cross-page action | `action="/other?/x"` runs the target route's action, then navigates |
+| `page.form` reset | cleared on the next navigation |
+| hash-only nav | `page.url.hash` updates with no load rerun |
+| `navigating.complete` | a promise resolving with the navigation |
+| 404 `route.id` | unmatched routes set `page.route.id = null` |
+| `resolve()` | embedded params (`/file-[name].json`) + preserved query; `$app/paths` `match()` |
+| `getRequestEvent` in `handle` | resolves the request event; server `parent()` sees server data only |
+
+## What 45/45 + 49/49 does and doesn't mean
+
+<Badge variant="success">Proven</Badge> The Svelte **authoring** API surface:
+language features, runes, bindings, events, transitions, the tested browser
+APIs. The compiler/runtime seam is viable.
+
+<Badge variant="warning">Not proven</Badge> "Any Svelte code": untested DOM
+methods, elements without native mappings, untested browser APIs, and the
+kit APIs still outside the layer — cookies, request abort, real multi-window
+session semantics, service workers, prerendering. New features get added as
+fixtures, not assumed.
+
+## Adding a case
+
+<Steps>
+  <Step title="Write the fixture">
+    Drop `src/cases/thing.svelte` — a minimal component exercising the feature.
+  </Step>
+  <Step title="Register a driver">
+    Add `{ name, drive, expect }` to the cases array in `conformance.ts` —
+    `drive` uses `clickText`/`clickType`/`type`/`pump`, `expect` checks painted
+    text or the tree JSON.
+  </Step>
+  <Step title="Run">
+    `bun build.ts && bun src/conformance.ts`. If it fails, the gap is real —
+    implement it in the fake DOM, never in Svelte.
+  </Step>
+</Steps>

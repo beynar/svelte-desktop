@@ -1,0 +1,210 @@
+---
+title: Renderer reality check
+description: Honest status of the fake-DOM → gpuix CSS bridge — measured capability, the structural walls ahead, and the alternative we set aside.
+sidebar:
+  order: 8
+---
+
+Written after the shadcn + streamdown dashboard stress test and the CSS
+fidelity pass that followed it. This is the honest ledger, not the pitch.
+
+## The question on the table
+
+> Was mimicking Electron — a real DOM (webview) plus a native/Bun backend —
+> the right call, and is the fake-DOM → native-renderer path a rabbit hole?
+
+Short answer: **the instinct is half right.** The runtime work is renderer-
+agnostic and carries over either way. The *CSS translation layer* is the
+rabbit hole — it asymptotes and cannot reach web fidelity. The question is
+whether the product needs web fidelity at all.
+
+## What the engine can do today (measured, not claimed)
+
+- **Svelte 5 runes** — `$state`, `$derived`, effects, `{#each}`, `{#if}`,
+  `bind:`, actions, `use:`, transitions (mechanism), `{@html}` — 45/45
+  conformance cases on gpuix, 45/45 on quickgui.
+- **SvelteKit semantics** — routing, `load`, hooks, remote functions, forms,
+  invalidation, streaming — 49/49 cases on the in-process kit layer.
+- **Third-party Svelte packages mount** — svelte-streamdown streams real
+  markdown; vendored shadcn registry components render and respond to events.
+- **Interaction is real** — native hit-testing → DOM events → `onclick` →
+  re-render. Hover/active/focus CSS states now apply via native mouse/focus
+  events. `data-active` nav highlighting works.
+- **CSS bridge coverage** — class rules, `[attr]`/`:not([attr])` conditions,
+  custom properties (theme + element-scoped), `calc()`, shorthand expansion,
+  logical props, viewport units, multi-layer shadows, font stacks, bounded
+  text inheritance.
+
+Cost profile (measured on the 260 KB compiled theme, 1,821 rules, ~100
+elements; full suite: `bun src/bench.ts`, baseline in `bench/baseline.json`):
+
+| Stage | Cost | Frequency |
+|---|---|---|
+| `parseStyleSheet` | ~5 ms | once |
+| `applyClassStyles` | ~32 µs | per element restyle (class-indexed; was ~184 µs as a linear scan) |
+| Dashboard mount | ~137 ms | once |
+| Frame paint | ~5–11 ms | on demand — ≈90–160 fps capability, ~0 paints when idle |
+
+**Emulation overhead vs. raw gpuix ops** (same ~1,500-node tree, direct
+`applyBatch` vs. the fake-DOM path vs. Svelte on top):
+
+| scenario | raw | fake DOM | + Svelte |
+|---|---|---|---|
+| mount 500 rows | 17 ms | 135 ms (8×)* | 705 ms (41×)* |
+| restyle 500 rows | 0.5 ms | — | 143 ms (280×) |
+| retext 500 cells | 0.2 ms | — | 120 ms (600×) |
+
+\* these mount numbers were later shown to be contaminated by a live
+2,000-element tree inflating every applyBatch — clean-tree rerun: gdom+native
+≈ raw (~20 ms), +Svelte ≈ 25–30 ms. See the update below.
+
+The renderer itself is fast; the tax is *producing* ops in JS (~28 µs/op
+through the stack vs ~2 µs/op raw). Bulk updates — not mount — are where the
+emulation layer drops below a 16 ms frame budget.
+
+## Kit spike (`src/nkit/`) — svelai tokens on the native lane
+
+`View`/`Stack`/`Text`/`Button`/`Chip`/`Card` resolve svelai's CVA recipes
+(verbatim from `ai2`, incl. `bg-color`/`text-color-muted-readable`/`state-layer`
+and `group-data-[color=x]` conditionals) through a finite token table into
+`StyleDesc` — including **native `hover`/`active` sub-styles**, so `state-layer`
+costs zero JS per pointer event. The palette is svelai's own
+`generateColorPalette` output. No `theme.css`, no rule engine.
+
+Dropped-token audit across the whole button/chip/card surface: 7 tokens —
+`[&_svg]` icon sizing, `bg-clip-padding`, `focus-visible:ring-*` (no `focus`
+channel in `StyleDesc` — real gap), `translate-y-px`, `underline`. Everything
+else lands.
+
+Bench vs the class-path Svelte mount (same ~500-element tree, noisy machine):
+mount ~2× faster with **4× fewer ops** (6k vs 24.5k), variant flip ~5-10×
+faster, retext ~6× faster. Mount is now dominated by Svelte component +
+GElement construction, not styling; `resolveTokens` itself is ~25 µs/el —
+cacheable since recipes are static.
+
+## The structural walls — what does not shrink
+
+These are not bugs. They are properties of the model (flex-only styled-struct
+tree, no cascade, no inline flow) that each become a bespoke shim forever:
+
+1. **No out-of-flow positioning.** gpuix's style schema has no `position`,
+   no `z-index`, no `transform`. The only overlay primitive is the `anchored`
+   element type (`anchorTo` → another element). **This is the wall that
+   matters most**: shadcn's entire interactive layer — Select, DropdownMenu,
+   Tooltip, Popover, Dialog, Combobox, ContextMenu, HoverCard — is built on
+   `position: absolute` + transforms. Each one needs custom `anchored`
+   plumbing. There is no generic fix.
+2. **Selector machinery is a fraction of CSS.** Single compound + attr
+   conditions + three pseudos. No descendant/child/sibling combinators, no
+   `:has()`, no `:is()`/`:where()` with complex args, no `peer-*`/`group-*`.
+   The registry uses exactly these for real composition (menu-action padding,
+   collapsible states). Each dropped rule is a silent fidelity loss.
+3. **Text is approximate.** Row-wrap flex is not inline flow: no baseline
+   alignment, no shaping, no selection, no ellipsis/line-clamp, no
+   `::before`/`::marker` (list bullets vanish — visibly, in the dashboard).
+   Prose will never look right on this path; that's why the native
+   `<markdown>` element exists.
+4. **The CSS tail is infinite.** This dashboard alone cost ~15 distinct
+   translation fixes: escaped class names, `@media` unwrapping, nested-rule
+   hoisting, `@property` harvest, `svh` units, calc-in-shorthand tokenization,
+   multi-layer shadows, element-scoped vars, `:where()`, `:not()`, attr-change
+   restyling, text inheritance, font stacks, `overflow:auto`. The next
+   component kit brings the next ~15. There is no convergence point — every
+   feature is bespoke.
+5. **Grid, filters, transforms, real animation, container queries,
+   color-mix/relative colors** — unmapped or approximated.
+
+Precedent worth internalizing: **React Native, a funded Meta effort with a
+decade of work, still cannot render web CSS.** They replaced it with a native
+vocabulary instead. We are re-deriving that same wall.
+
+## Path length, honestly
+
+| Destination | Distance | Verdict |
+|---|---|---|
+| Dashboard that doesn't embarrass | here + 1–2 polish passes (icons are unicode glyphs, badge alignment, spacing) | done-ish |
+| shadcn component *set* usable | weeks–months; every overlay component needs `anchored` plumbing, every kit brings new selector/value gaps | painful, bounded only by giving up coverage |
+| Arbitrary web SvelteKit app renders faithfully | asymptote — never | the rabbit hole is real |
+| Native-vocabulary component kit (gpuix `markdown`/`code`/`diff`/`virtual-list`/`anchored` + curated styled components) | weeks | the engine is already good at this |
+
+## The path we set aside — and what survives either way
+
+The "electrobone" shape — system webview (WKWebView) for UI + Bun/native
+backend — is what Tauri ships. Its property: **the entire DOM/CSS problem
+vanishes on day one.** All of Svelte, all of shadcn, all web component kits,
+accessibility, selection, IME — free, forever. The cost: it's a webview. The
+"native render" story dies; the binary is a shell around Safari.
+
+Crucially, the work done so far is **not** wasted under that swap:
+
+- The kit runtime (49/49) runs on the fake DOM as a *contract* — it doesn't
+  know or care what paints it. Swap gdom's backend from gpuix-ops to a real
+  webview DOM and every case still holds.
+- The fake DOM remains valuable headless: tests, SSR-shaped rendering, the
+  kit layer — all renderer-independent.
+- The native primitives stay relevant inside a webview shell via bridge
+  (native windows/menus/dialogs) — the actual desktop value-add.
+
+## Recommendation
+
+Decide which product this is:
+
+- **"SvelteKit apps → mac app bundle, full ecosystem fidelity"** → go
+  webview. The kit runtime ports over; the renderer detour cost ~a week and
+  bought a definitive answer, which is what experiments are for.
+- **"Native-feel desktop apps authored in Svelte"** → stay, but *stop
+  translating arbitrary CSS*. Build a native component vocabulary —
+  `Markdown`, `Code`, `Diff`, `VirtualList`, `Anchored`, real form controls —
+  styled by a curated native style API. The fake DOM stays for structure,
+  events, and Svelte semantics; it stops pretending to be a browser.
+- **The trap**: continuing to chase CSS parity. The scorecard is not "how
+  many shadcn rules survived" — it's that popovers don't exist.
+
+The dashboard proved the DOM contract works end to end. What it can't prove
+is that web styling survives the trip — because structurally, it doesn't.
+
+## Update — the nkit build-out (post-verdict)
+
+We stopped translating CSS and built the native-vocabulary kit instead:
+**~35 svelai-shaped components** (`src/nkit/`) — buttons, inputs, tabs,
+accordion, sidebar, resizable, tree, table, virtual-list, select, menu,
+popover, dialog, toast, tooltip, hover-card, context-menu — themed by a
+**CVA-over-style-props** recipe system (`recipes/` → `StyleDesc`, no
+classnames). Showcase: one page per component with live variant controls.
+Verification: `conformance-nkit.ts` 28/28, legacy 45/45, quality gates
+45/45, all 24 showcase pages paint.
+
+What the build corrected in this document:
+
+- **Wall #1 is closed.** `anchored` turned out to be the full answer: it
+  anchors to its *parent element* natively (`side`/`align`/`gap`/`fit`/
+  `snapMargin` handle placement + collision), or to an absolute `position`
+  point for context menus. Popover/Menu/Select/ContextMenu/Dialog all work —
+  no per-component bespoke plumbing beyond one shared `Layer.svelte`.
+- **Outside-dismiss is native.** `mouseDownOutside` is emitted for elements
+  that own *both* the listener *and* a FocusHandle (a focusable element:
+  `tabIndex` + key/focus listeners), then bubbles to ancestors. `occlude` on
+  the anchored layer blocks hit-through. No backdrop element needed — the
+  page stays visible and painted under an open overlay (verified on
+  screenshot: trigger + panel both visible).
+- **The scary perf table was contaminated.** `kit:mount-500`'s ~380–700 ms
+  included a live 2,000-element tree inflating every applyBatch+layout pass.
+  Clean numbers: gdom+native lane ≈ raw (~18–20 ms), + Svelte ≈ 25–30 ms —
+  i.e. *browser-Svelte-speed with native paint*. The real residual tax is
+  restyle/retext volume (full `setStyle` re-emit per element vs a browser's
+  O(1) class flip), which `virtual-list` and native state styling absorb.
+- **The box is sealed, and now we know what that costs.** gpuix's element
+  vocabulary is compiled into `gpuix-native.*.node` — no registry API.
+  Component internals (a Button's box+text) must be built in JS as op
+  batches. A native `x-button` would collapse ~6 ops/component to ~1 and
+  make variant flips near-free. The escape hatch is the one gpuix itself
+  took: **vendor GPUI** (now standalone — `gpui 0.2.2` on crates.io,
+  published by zed-industries) and own the element registry. Spike
+  scaffolded in `native/` — blocked on ~10 GiB disk for the Rust dep tree,
+  not on anything architectural.
+- **Reentrancy is the renderer's one sharp edge.** `applyBatch` inside a
+  native event callback panics (`GpuixView already being updated`). All
+  mutations must go through the deferred flush (`emit()` → `setTimeout`) —
+  already enforced; a probe that dispatched synchronously inside the
+  callback reproduced the panic. Treat event handlers as intent-queueing,
+  never direct mutation.

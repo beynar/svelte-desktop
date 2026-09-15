@@ -1,0 +1,4 @@
+{"bench":"native-core-call-us","us":0.017572910000000004}
+{"contract":"add","ok":true}
+{"contract":"wordCount","ok":true}
+{"contract":"wordCount-invalid-utf8-errors","ok":true}

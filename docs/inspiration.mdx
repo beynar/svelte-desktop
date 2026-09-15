@@ -1,0 +1,37 @@
+---
+title: Inspiration
+description: Why render Svelte to GPUI instead of a webview — the performance argument, the precedent, and what came before this POC.
+sidebar:
+  order: 2
+---
+
+## The webview tax
+
+Every mainstream path to "web tech on the desktop" ships a browser engine:
+
+- **Electron** bundles Chromium — ~300–500 MB RSS before your app does anything.
+- **Tauri** uses the system webview — lighter, but still a webview: you inherit its rendering model, its quirks, and its ceiling.
+- **Electrobun** (the first experiment in this repo) runs SvelteKit in WKWebView with Bun doing native work over loopback — the full DOM, but Safari-grade paint.
+
+All of them answer "how do I put a web app in a window." The question here is different: **what if the UI wasn't a web page at all?**
+
+## GPUI is the interesting target
+
+GPUI is the UI framework extracted from the Zed editor — a retained-mode, GPU-accelerated Rust engine doing text layout and rendering at editor grade. `remorses/gpuix` exposes it to JavaScript through a napi-rs addon with an imperative `applyBatch` mutation protocol — the same shape React's reconciler already uses (`@gpuix/react` ships a custom `react-reconciler` host config).
+
+That raised the question this repo exists to answer: **React has a host-config API; Svelte doesn't. Can Svelte still drive this thing?**
+
+## Why Svelte specifically
+
+- Svelte compiles to imperative DOM operations — which is *almost* an abstract tree protocol already.
+- Svelte 5's runtime lazily captures DOM prototype getters at first mount (`init_operations`) — a seam you can install a fake DOM behind **without patching Svelte internals**.
+- SvelteKit remote functions (`query` / `command` / `form`) are the best data-loading DX in the ecosystem, and their client side is just a callable stub — the transport is swappable.
+- Bun is already gpuix's JS runtime — `bun:sqlite`, `Bun.serve`, FFI are all reachable in-process.
+
+## The motivating stack
+
+The end state this experiment is chasing:
+
+> A SvelteKit-*style* app — remote functions and Svelte DX — plus Bun's runtime capabilities, rendered by native GPUI, bundled as a single macOS binary.
+
+Earlier work in this repo proved the safer version: a real SvelteKit app (Svelte 5, remote functions, `bun:sqlite`) packaged inside an Electrobun shell — full DOM, `.app`/`.dmg` output, ~205 MB RSS. That build works, and it's the fallback. **gpuix-poc is the ambitious branch of the fork** — keep the authoring model, lose the webview.

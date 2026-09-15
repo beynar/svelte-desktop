@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["../.svelte-kit/output/server/nodes/3.js"],
+  "sourcesContent": [
+    "\n\nexport const index = 3;\nlet component_cache;\nexport const component = async () => component_cache ??= (await import('../entries/pages/about/_page.svelte.js')).default;\nexport const imports = [\"_app/immutable/nodes/3.B_nc_2wI.js\",\"_app/immutable/chunks/OhUZcmHJ.js\",\"_app/immutable/chunks/BBF8RMid.js\",\"_app/immutable/entry/payload.DSmR2FwN.js\",\"_app/immutable/chunks/CsWHYyEQ.js\"];\nexport const stylesheets = [];\nexport const fonts = [];\n"
+  ],
+  "mappings": ";;;;;;AAEO,IAAM,QAAQ;AACrB,IAAI;AACG,IAAM,YAAY,YAAY,qBAAqB,MAAa,sCAA2C;AAC3G,IAAM,UAAU,CAAC,sCAAqC,qCAAoC,qCAAoC,4CAA2C,mCAAmC;AAC5M,IAAM,cAAc,CAAC;AACrB,IAAM,QAAQ,CAAC;",
+  "debugId": "4FB1555C3FC2E2FA64756E2164756E21",
+  "names": []
+}
