@@ -7,7 +7,11 @@ sidebar:
 
 **svelte-desktop** explores a single question: *can a Svelte app render to real native UI — GPUI, the Rust engine behind the Zed editor — while keeping Svelte's authoring model intact?*
 
-The answer so far is **yes, for the Svelte language** — verified by a 45-case conformance suite driven through real GPUI hit-testing, not synthetic DOM events.
+The answer so far is **yes — and further than the language.** Svelte 5
+(45/45 cases), SvelteKit semantics (49/49 — routing, `load`, hooks, remote
+functions, forms, streaming), a ~45-component native kit (`nkit`, 30/30),
+two renderer backends, and a packaged `.app`/single binary that opens a real
+GPUI window. All verified by hit-testing, not synthetic DOM events.
 
 ```txt
 .svelte file → svelte/compiler → compiled client JS
@@ -33,13 +37,19 @@ The answer so far is **yes, for the Svelte language** — verified by a 45-case 
     The fake-DOM seam, materialization, and the event loop.
   </Card>
   <Card title="Conformance" href="/conformance" icon="check-circle">
-    35/35 cases, each proven against painted pixels.
+    45/45 Svelte · 30/30 nkit · 49/49 kit · 11/11 reliability.
+  </Card>
+  <Card title="Native layer" href="/native" icon="terminal">
+    Bun APIs, platform services, generated Rust bindings.
   </Card>
   <Card title="Limitations" href="/limitations" icon="alert-triangle">
     The honest boundary — what does not carry over.
   </Card>
+  <Card title="Shipping" href="/shipping" icon="package">
+    Single binary + .app — measured startup, real blockers.
+  </Card>
   <Card title="Roadmap" href="/roadmap" icon="map">
-    Work in progress toward a real svelte-gpuix package.
+    What's done, what's next, what's deliberately not vendored.
   </Card>
 </CardGroup>
 
@@ -47,14 +57,18 @@ The answer so far is **yes, for the Svelte language** — verified by a 45-case 
 
 | | |
 |---|---|
-| Svelte runtime | **45/45 conformance cases pass** headless on `TestGpuixRenderer` |
-| Remote functions | `query` / `command` / `refreshAll` in-process, backed by `bun:sqlite` |
-| Live window | Works (`bun src/main.ts`), ~150 MB RSS |
+| Svelte runtime | **45/45** headless on `TestGpuixRenderer`; same cases on the QuickGUI backend |
+| SvelteKit layer | **49/49** — routes/params/matchers, layouts, `load`, hooks, actions, `use:enhance`, remote `query`/`command`/`form`, streaming, `$app/*` |
+| nkit | **30/30** — ~45 themed native components + 25-page showcase |
+| Remote functions | Real request semantics: through `hooks.handle` with a synthesized RequestEvent — backed by `bun:sqlite` |
+| Live window | `bun src/main.ts`; median first tick **293 ms** over 20 packaged launches |
 | Headless testing | Deterministic: real hit-testing, keystrokes, painted-text asserts |
-| Packaging | Not yet proven — see [Roadmap](/roadmap) |
+| Packaging | **Works** — 82.6 MB single binary + `.app` bundle (`bun run package`) |
+| Multi-window | Functional on the QG backend; teardown segfault is a known blocker |
+| Platform | macOS arm64 only — no Windows/Linux claims |
 
 :::warning
-This is a research POC, not a library. The code lives in
-[`gpuix-poc/`](https://github.com/) inside this repo and is documented here as a
-spec for what a real `svelte-gpuix` package would need.
+This is a hardened research alpha, not a library. The code lives in
+`gpuix-poc/`; the [recommendation report](https://github.com/) is the honest
+release-blocker list. A real `svelte-gpuix` package is the [roadmap](/roadmap).
 :::

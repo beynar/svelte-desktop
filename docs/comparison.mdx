@@ -15,10 +15,12 @@ native-renderer experiment.
 | Svelte fidelity | Language ✓ / browser platform ✗ | 100% real DOM | 100% | 100% |
 | JS runtime | Bun (in-proc) | Bun (in-proc) | Webview JS | Node + Chromium |
 | IPC / data layer | In-proc remote-fn pattern | Remote fns over loopback | `invoke` | `ipcRenderer` |
-| Memory (measured) | **~150 MB** | ~205 MB | ~80–150 MB | 300–500 MB |
-| Bundle (est.) | ~60 MB (bun + `.node`) | ~20 MB app | 5–15 MB | ~85 MB pkg |
+| Memory (measured) | **~173 MB** packaged | ~205 MB | ~80–150 MB | 300–500 MB |
+| Bundle (measured) | **82.6 MB single binary** / .app | ~20 MB app | 5–15 MB | ~85 MB pkg |
+| First paint | ~293 ms median (n=20) | — | — | — |
 | Paint ceiling | **Zed-editor grade** | Safari-grade | webview | Chromium |
 | "npm i a svelte lib" | ❌ | ✅ | ✅ | ✅ |
+| SvelteKit surface | 49/49 in-process | 100% real | 100% | 100% |
 | Maturity | 0.7.0, solo author | v2, small | 2.x stable | Battleship |
 
 ## How to read it

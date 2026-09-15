@@ -71,11 +71,18 @@ adversarial review of the POC — the fixed column below is what that review
 
 ## Upstream-blocked (gpuix-side, not shim-side)
 
-- **Accessibility** — no role/label API in the napi surface; `aria-*` lands as
-  inert custom props. **Solved on the quickgui backend** — `AccessibilityLabel`,
-  `Role`, `TabIndex` are real `PropertyCode`s backed by AccessKit.
-- **Multi-window** — `GpuixRenderer.init()` owns one window. **Solved on
-  quickgui** — `new Window()` per renderer, `app.on('reopen')`, quit modes.
+- **Accessibility, platform side** — `role`/`aria-*` now flow to the native
+  retained tree as typed custom props (implicit tag→role map + value
+  coercion, verified via `getTreeJson`), and nkit authors semantics on 24+
+  components. **Still missing**: gpuix doesn't materialize them into
+  `NSAccessibilityElement`s — VoiceOver sees nothing yet. QuickGUI ships a
+  real AX subsystem (landmarks, style groups, display-preference queries) but
+  only for its own widget descriptors, which our generic elements aren't.
+- **Multi-window** — `GpuixRenderer.init()` owns one window. **Functional on
+  quickgui** — `new Window()` per renderer, independent Svelte trees,
+  close-one-keep-others all verified. **Blocker**: the Bun host segfaults on
+  worker exit while FFI callbacks are live — see
+  [native layer](/native).
 - **Maturity** — 0.7.0, single author, vendored Zed submodule, macOS focus.
   (quickgui is also pre-alpha single-author, but it's a funded product effort
   with an actively pushed repo.)
@@ -90,8 +97,9 @@ adversarial review of the POC — the fixed column below is what that review
 | Hover/focus styles | JS round-trip (`mouseenter` → setStyle) | native paint-only states (`HoverStyle` etc.) |
 | Node moves | destroy + recreate | native reparent |
 | Headless testing | `TestGpuixRenderer` — real hit-testing + paint buffer + scroll simulation | `RecordingHost` (pure JS) — asserts the retained tree; no automation API on JS side |
-| App model | Bun main thread | Bun **worker**; main thread owns AppKit |
-| Packaging | unproven | `quickgui build --sign --notarize` + updater |
+| App model | Bun main thread | Bun **worker**; main thread owns AppKit — worker-exit teardown segfaults |
+| Packaging | `bun build --compile` (82.6 MB, embedded `.node`) + `.app` script | `quickgui build --sign --notarize` + updater |
+| Services | — | full bound inventory; ~10 surfaces runtime-tested, rest `bound` |
 
 The takeaway: neither backend dominates — gpuix has the *testability and
 readback* surface, quickgui has the *product* surface (a11y, editing,

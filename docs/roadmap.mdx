@@ -1,35 +1,57 @@
 ---
 title: Roadmap
-description: Work in progress — from POC to a real svelte-gpuix package, and what's deliberately not vendored.
+description: What's done, the dependency-ordered queue, and what's deliberately not vendored.
 sidebar:
   order: 9
 ---
 
-## Current WIP: conformance expansion
+## Done since the POC
 
-The suite grew to **45/45** after a three-agent adversarial review (DOM
-correctness, Svelte API coverage, architecture/production risk) — that review
-drove the "Fixed" list in [limitations](/limitations) and left this ordered
-backlog:
+The adversarial-review backlog is mostly burned down. Checked off:
 
-1. **Target-filtered event registration** — delegated types currently emit
+- ✅ **Packaging** — `bun build --compile` embeds the `.node`; 82.6 MB binary
+  opens a real window, `.app` bundle via `scripts/package-app.ts`
+  ([shipping](/shipping)).
+- ✅ **Kit layer** — routing/loads/hooks/actions/remote-fns/streaming,
+  **49/49** cases (`src/kit/`).
+- ✅ **nkit** — ~45 themed components, 30/30 conformance, 25-page showcase.
+- ✅ **Bound services runtime-tested** — screen/clipboard/keyboard/power/
+  system-preferences verified live on the QG backend (28 spec entries).
+- ✅ **`$native` v2** — generated Rust bindings: opaque handles,
+  status+out-param contract, async completion, cancellation.
+- ✅ **Reliability suite** — 11/11: malformed batches rejected, 100k-op
+  batches, 1,000× mount/unmount, event storms, double-dispose.
+- ✅ **A11y transport** — implicit roles + typed `aria-*` reach the retained
+  native tree ([architecture](/architecture)).
+- ✅ **Multi-window** — two QG windows, independent trees, close-one-keep-
+  others. Functional.
+- ✅ **Startup statistics** — 20-launch sample, median 293 ms / p95 367 ms.
+- ✅ **git** — repo initialized, evidence committed.
+
+## The queue (dependency-ordered)
+
+1. **Worker-exit segfault** — the one true blocker. Repro:
+   `bun src/mission-qg-multiwin-main.ts` → PASS then host null-deref. Likely
+   an FFI notifier callback outliving the worker. Cheapest probe: host-side
+   `app.destroy()` before exit, or a dispatch guard after worker death.
+2. **gpuix AX materialization** — consume `role`/`aria-*` custom props into
+   `accessibilityElement` children. Transport is done; this is renderer work.
+   Biggest product gap.
+3. **Notifications/permissions bindings** — wrong kind strings today
+   (`unsupported` / unknown-kind); binding fix, not just testing.
+4. **Window-scoped services with a live window** — Appearance, parented
+   dialogs, menu/tray — extend the `mission-qg-app` pattern.
+5. **Target-filtered event registration** — delegated types still emit
    `setEventListener` on every element; `focusin`/`keydown` backfill makes
-   every element a focusable tab stop.
-2. **Move semantics** — same-parent reorder should not destroy+recreate
-   native subtrees (needs a `moveBefore`/`insertBefore`-move op in gpuix, or
-   a fast-path detection).
-3. **Transition params** — `fly`/`slide`/`scale`/`blur` need real
+   every element a tab stop.
+6. **Move semantics** — same-parent reorder destroys+recreates native
+   subtrees (QG backend reparents natively; gpuix needs a `moveBefore` op or
+   a fast-path).
+7. **Transition params** — `fly`/`slide`/`scale`/`blur` need real
    `getComputedStyle` defaults; `draw` needs `getTotalLength`.
-4. **Media elements** — play/pause/paused/TimeRanges or a documented stub.
-5. **Live-renderer verification** — sync native reads inside event handlers
-   (`getElementBounds`, `getScrollOffset`) need a live-mode deadlock probe.
-6. **Packaging smoke test** — `otool -L` on the `.node` + a real
-   `bun build --compile` run before any distribution claim.
-
-Next fixtures on the list: `animate:flip`, `svelte/motion` (tweened/spring —
-note `prefersReducedMotion` needs a working `MediaQuery`, now unblocked by
-the subpath rewrite), `transition:fly`/`slide`/`scale`, `svelte:document`,
-`bind:contentRect`, `bind:focused`.
+8. **Cross-platform evidence** — linux-x64/win-x64 NAPI targets exist but are
+   NOT_RUN; CI cross-build + manual checklist.
+9. **Signing/notarization/updater** — needs credentials; spec'd only.
 
 ## The package that falls out of this
 
@@ -69,19 +91,8 @@ the conformance suite is the insurance policy across minors.
 
 - **DOM depth**: selection, clipboard, IME, focus management, portals,
   `document.activeElement`, observers on the live renderer's bounds source.
-- **Styling**: a real answer beyond scoped blocks — compile-time class table
-  or a native utility-style engine.
-- **A native component kit**: the element vocabulary exists; the idiomatic
-  `Button`/`List`/`TextField` layer doesn't.
-- **SvelteKit-shaped app shell**: router/navigation primitives designed for a
-  native window, since kit's own machinery doesn't port.
-
-## Packaging — unproven, and the real risk
-
-Target: single `.app`. Open questions:
-
-- Can `bun build --compile` carry the napi `.node` addon, or does the bundle
-  ship `bun` + addon + JS side by side (Electrobun's layout)?
-- gpuix resources and signing/notarization for the native lib.
-- Measure startup, memory, frame pacing, and binary size against the
-  [comparison](/comparison) numbers.
+- **Styling**: scoped blocks + the nkit recipe system cover the authored-app
+  case; arbitrary web CSS stays a non-goal ([renderer verdict](/renderer-verdict)).
+- **Media elements** — play/pause/`TimeRanges` or a documented stub.
+- **Live-renderer verification** — sync native reads inside event handlers
+  (`getElementBounds`) need a live-mode deadlock probe.

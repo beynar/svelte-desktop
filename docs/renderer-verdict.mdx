@@ -208,3 +208,22 @@ What the build corrected in this document:
   already enforced; a probe that dispatched synchronously inside the
   callback reproduced the panic. Treat event handlers as intent-queueing,
   never direct mutation.
+
+## Update — mission hardening (post-nkit)
+
+The feasibility questions are now all answered with evidence:
+
+- **It packages.** `bun build --compile` embeds the `.node` — an 82.6 MB
+  binary opens the real window; `.app` bundling is scripted
+  ([shipping](/shipping)).
+- **It's reliable under abuse.** Malformed batches reject cleanly, 100k-op
+  batches apply in ~11 ms, 1,000 mount/unmount cycles cost 50 ms, event
+  storms are sub-ms — 11/11 checks.
+- **It multi-windows.** Two QuickGUI windows, two independent Svelte trees —
+  with one recorded lifecycle bug (host segfault on worker exit).
+- **It carries semantics.** Implicit roles + typed `aria-*` reach the native
+  retained tree; nkit authors real widget semantics. Platform AX
+  materialization is the open gap.
+- **The verdict stands.** Native-vocabulary component kit was the right call —
+  it's built, themed, and conformant (30/30). The walls list above is still
+  true for *arbitrary web CSS*; the product just stopped needing it.

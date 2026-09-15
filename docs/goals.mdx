@@ -13,7 +13,7 @@ The stated acceptance bar for this experiment:
 
 Concretely, that means compiled Svelte 5 components must run unmodified: no Svelte fork, no compiler patches, no "supported subset" list. The compatibility burden lives entirely in the adapter layer (fake DOM + native bridge), never in Svelte itself.
 
-The [conformance suite](/conformance) is the living measure of that bar — currently **35/35 passing**.
+The [conformance suite](/conformance) is the living measure of that bar — currently **45/45** on gpuix, **45/45** on the QuickGUI backend, plus **30/30** for the `nkit` component kit and **49/49** for the kit layer.
 
 ## In scope
 
@@ -25,7 +25,7 @@ The [conformance suite](/conformance) is the living measure of that bar — curr
 
 ## Explicit non-goals
 
-- **SvelteKit-the-framework.** Routing, `+page.server.ts`, `load`, SSR/hydration, `$app/*` — that's browser machinery (URLs, history, HTML payloads) with no native analog. A native app-shell/router primitive is a separate design problem, tracked in the [roadmap](/roadmap).
+- **SvelteKit-the-codebase.** Kit *semantics* turned out to port cleanly — `src/kit/` implements routing, `load`, hooks, actions, remote functions, streaming, `$app/*` in-process (49/49 cases). What's still out: kit's own build/SSR/prerender machinery, service workers, and hydration — none of which have a native analog worth emulating.
 - **Arbitrary web component libraries.** Bits UI, shadcn-svelte, et al. sit on the CSS cascade and browser APIs (portals, `getBoundingClientRect`, focus traps, `IntersectionObserver`). They are *not* expected to work — see [limitations](/limitations).
 - **Hydration.** Mechanically possible (the HTML parser exists), but pointless — a native app has no SSR HTML payload to hydrate.
 - **Pixel-emulating a browser.** The goal is a *native* element vocabulary authored in Svelte — "Svelte Native," not "headless Chromium."
@@ -36,7 +36,12 @@ The [conformance suite](/conformance) is the living measure of that bar — curr
 |---|---|
 | Svelte mounts + repaints via GPUI ops | ✅ done |
 | Real input (hit-test clicks, keystrokes, scroll) → Svelte events | ✅ done |
-| Remote functions + `bun:sqlite` round-trip | ✅ done |
-| 100% Svelte API conformance | 🟡 35/35 cases — suite keeps growing |
+| Remote functions + `bun:sqlite` round-trip | ✅ done — full request semantics via `handle` |
+| SvelteKit semantics in-process | ✅ 49/49 — see [limitations](/limitations) for the boundary |
+| Native component kit (`nkit`) | ✅ ~45 components, 30/30, themed |
+| 100% Svelte API conformance | 🟡 45/45 cases — suite keeps growing |
+| Multi-window | 🟡 functional on QG backend; teardown segfault open |
+| `.app` / single-binary packaging | ✅ done — 82.6 MB, `bun run package` |
 | `svelte-gpuix` package + bundler plugin | ⬜ not started |
-| `.app` packaging (bun + `.node` + JS) | ⬜ not started |
+| Platform accessibility materialization | ⬜ transport done; gpuix AX-tree gap open |
+| Signing / notarization / updater | ⬜ not started (needs credentials) |

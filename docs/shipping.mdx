@@ -1,0 +1,52 @@
+---
+title: Shipping
+description: Packaging the desktop app — what works today (single binary, .app bundle), measured startup, and the unsigned/unsigned-adjacent gaps.
+sidebar:
+  order: 11
+---
+
+The packaging question is **answered**: `bun build --compile` embeds the NAPI
+`.node` addon into one Mach-O — the result opens a real GPUI window and mounts
+the full showcase with no toolchain present.
+
+## What exists today
+
+| Artifact | Size | Status |
+|---|---|---|
+| `bun build --compile` binary | **82.6 MB** (79 MiB in `.app`) | ✅ opens real window, mounts showcase |
+| `.app` bundle | `Contents/{MacOS,Frameworks,Resources}` + `Info.plist` | ✅ `scripts/package-app.ts`, LaunchServices-tested |
+| SvelteKit server binary (sibling `app/`) | 64.6 MB | ✅ serves 200 in 55 ms, no toolchain |
+
+`bun run package` → `gpuix-poc/scripts/package-app.ts` produces the `.app`.
+
+## Startup — 20-launch sample (M4 Pro, Bun 1.4.0)
+
+`results/run-20260915-b/startup.jsonl` — compiled binary, n=20:
+
+| Metric | Median | P95 | Min | Max |
+|---|---|---|---|---|
+| First tick overall | **293 ms** | 367 ms | 245 ms | 367 ms |
+| Window init | 201 ms | 219 ms | — | — |
+| RSS | 172.6 MiB | — | — | 173.7 MiB |
+
+The embedded `.node` extracts to temp on first load (~430 ms of the earlier
+940 ms first-frame figure — subsequent measurements vary; keep raw samples,
+don't overclaim).
+
+## Known limits
+
+- **External `.node` doesn't resolve.** `--external @gpuix/native-darwin-arm64`
+  produces a smaller binary (64.6 MB, −18 MB) but runtime bare-specifier
+  resolution doesn't search execPath-relative `node_modules` — the module
+  stays embedded. Killing the extraction tax needs a Frameworks-dir lookup the
+  loader doesn't do today.
+- **Unsigned.** No signing, hardened runtime, or notarization — needs
+  credentials, out of scope so far. `quickgui build --sign --notarize` exists
+  upstream if the QG backend becomes primary.
+- **No updater.** Specified in the API inventory, not implemented.
+- **`Info.plist` capabilities** (URL schemes, file associations, notification
+  prerequisites) are generated but unverified against real entitlement flows.
+- **darwin-arm64 only.** Everything measured is this machine. gpui ships
+  linux-x64/win-x64 NAPI targets in the package — NOT_RUN, no claims made.
+- **Teardown segfault** on the multi-window path — see
+  [native layer](/native#multi-window--works-with-one-blocker).

@@ -1,0 +1,99 @@
+---
+title: Native layer
+description: The trusted-code surface — Bun APIs, QuickGUI platform services, and generated Rust bindings ($native). What runs, what's bound, what's untested.
+sidebar:
+  order: 10
+---
+
+Two native surfaces sit under the renderer: **Bun itself** (the app's runtime —
+filesystem, sqlite, network, workers, FFI are all reachable from app code) and
+**the platform service layer** (clipboard, dialogs, menus, screen, power…) plus
+**`$native`** — generated TypeScript bindings to your own Rust crates.
+
+The full per-method inventory with `specified` / `implemented` / `tested` /
+`unsupported` status lives in `spec/native-api.yaml`. This page is the summary.
+
+## Bun APIs — measured
+
+All verified in-process on Bun 1.4.0 (darwin-arm64, M4 Pro):
+
+| API | Result |
+|---|---|
+| `bun:sqlite` | WAL enabled; atomic rollback verified; **~1.49M tx inserts/s**; prepared gets ~2 µs; multi-connection reads work; 40k-row sync copy ~8.7 ms — worker offload is a policy choice, not a necessity |
+| `bun:ffi` | **13 ns/call** (vs 44 ns NAPI — both noise vs. a paint); drives `libquickgui_host.dylib` and `$native` cdylibs |
+| Workers | File-URL workers run fine incl. own sqlite connections; **Blob workers are rejected** (Bun limitation) |
+| `Bun.serve` | proven by the Electrobun sibling build (loopback transport) |
+| `bun build --compile` | embeds the `.node` addon — **82.6 MB single binary opens a real GPUI window** (see [shipping](/shipping)) |
+
+## Platform services — the QuickGUI inventory
+
+The bound service surface (each is an FFI symbol into `libquickgui_host.dylib`):
+Clipboard, Shell, Notifications, Menu, GlobalShortcut, Screen, Appearance,
+PowerMonitor, Permissions, SystemPreferences, Keyboard, SpellChecker, Tray,
+CrashReporter, Metrics, AutoStart, SecureStorage, DeepLink, dock/app controls,
+Dialogs.
+
+**Runtime-tested** (`mission-qg-app.ts`, `results/run-20260915-b/`):
+
+- ✅ `Screen.getAllDisplays` / `getPrimaryDisplay` / `getCursorScreenPoint`
+- ✅ `Clipboard.writeText` + `readText` round-trip, `availableFormats`
+- ✅ `SystemPreferences.getCurrent`, `Keyboard.getLayout`
+- ✅ `PowerMonitor.getState` / `getSystemIdleTime`
+- ✅ `Shell.openExternal('javascript:…')` correctly rejected by NSWorkspace
+  (positive open-URL calls were deliberately NOT_RUN)
+- ⚠️ `Appearance.getCurrent` needs an open `Window` context — fails without one
+- ❌ `Notifications.getPermissionStatus` → `"unsupported"`;
+  `Permissions.status('notifications')` → unknown permission kind (binding gap)
+
+Everything else in the inventory is **bound but untested** — the spec YAML is
+the ledger.
+
+## Multi-window — works, with one blocker
+
+Verified on the QuickGUI backend (`mission-qg-multiwin.ts`): two `Window`s with
+independent Svelte trees, closing one keeps the other alive, renderer cleanups
+run on close.
+
+:::danger
+**Process teardown segfaults.** Exiting the worker while the host still holds
+FFI notifier callbacks → null deref (@0x8) in the Bun host — reproduced with
+bare `process.exit` *and* after orderly window destroy. `app.destroy()` from a
+worker timer races the dispatch pump (post-destroy flush throws
+"app has been destroyed"). Crash-on-exit only — all work completes first — but
+it blocks production. Cheapest next probe: host-side `app.destroy()`.
+:::
+
+## `$native` — generated Rust bindings
+
+`packages/native/commands.json` is the registry; `codegen.ts` emits
+`bindings.ts` — typed TS over `bun:ffi` against `crates/native-core` (a ~390 KB
+cdylib built with plain `rustc`).
+
+```ts
+import { wordCount, jsonTransform, hasherNew, runTask } from '$native';
+wordCount('hello world');            // 2n — bigint i64 through FFI
+await runTask(…, { signal });        // async completion + cancellation
+```
+
+Contract rules the spike established (each learned from a real bug):
+
+- **Full-range return values can't use negative-as-error.** `hasherUpdate`
+  returns a valid negative `i64` FNV state — so the contract is *status return
+  + out-param*, never sentinel.
+- **`toArrayBuffer()` returns a view, not a copy.** Decode/copy before calling
+  the native free — reading after `nc_free` is silent garbage.
+- Out-params must be declared in the registry or the generated FFI signature
+  silently drops them (the `jsonTransform` `out_len` bug → `Unexpected EOF`).
+- Opaque `u64` handles + `dispose`; async via `JSCallback` + cancel flag
+  (cancel never implies rollback). ~18 ns/call.
+
+Worth moving to Rust: hashing, JSON/transform bulk work, image/text codecs,
+anything already expressed as `catch_unwind`-safe pure compute.
+
+## Security model — honest version
+
+`docs/security-model.md` has the full assessment. Short version: **app code is
+trusted** — Bun APIs are deliberately unrestricted. The brokered native bridge
+(gpuix ops, `$native`, platform services) is where a capability manifest would
+enforce grants — specified, not implemented. If you need a sandbox, that's the
+unsolved work, not the renderer.

@@ -47,6 +47,12 @@ it's the same process. The verified loop: click → `command.run` → sqlite
 INSERT → `refreshAll` → `query` re-runs → `{#each}` inserts the row → native
 repaint.
 
+Update (mission 2): the kit layer (`src/kit/`) now gives remote calls **real
+request semantics** — `query`/`command`/`form` go through `hooks.handle` with a
+synthesized RequestEvent, so `getRequestEvent()`, `locals`, and cookies work
+inside them, and successful mutations trigger load invalidation like kit's.
+The `.remote.ts` file transform is still the open piece (below).
+
 ## What this is not (yet)
 
 - **Not the real `.remote.ts` transform.** SvelteKit's plugin compiles remote
@@ -58,3 +64,6 @@ repaint.
 - **No transport security boundary.** In-process means no serialization, no
   auth check — `fn` just runs. If a loopback transport is ever adopted,
   SvelteKit's wire format is the thing to copy, not invent.
+- Remote `form()` `fields` implement `as(type)`/`invalid()`/`issues()` —
+  schema validation is a stub; `prerender()` is a thin wrapper;
+  `requested()` always returns `false`.

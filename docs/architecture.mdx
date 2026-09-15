@@ -41,19 +41,24 @@ prototypes at first mount**. So the binding strategy is:
 
 - gpuix-poc/
   - src/
-    - gdom.ts — the fake DOM: nodes, parser, events, styles, observers (~1.2k lines)
+    - gdom.ts — the fake DOM: nodes, parser, events, styles, observers, implicit-role/aria map
     - native.ts — mutation sink: op queue, native-id registry, deferred calls
     - qg-backend.ts — **second backend**: same ops → `@quickgui/native` retained tree (~350 lines)
+    - kit/ — in-process SvelteKit layer: Router, loads, hooks, actions, remote fns, `$app/*`
+    - nkit/ — ~45 themed native components + Theme/motion system (svelai-shaped)
     - remote.svelte.js — in-process `query` / `command` / `refreshAll`
     - server.ts — the "server" side: `bun:sqlite`-backed functions
     - svelte-client.js — 2-line shim re-exporting Svelte's client entry
-    - conformance.ts — the 45-case headless suite (gpuix `TestGpuixRenderer`)
-    - conformance-qg.ts — the same 45 cases on a quickgui `RecordingHost`
+    - conformance.ts / conformance-qg.ts / conformance-nkit.ts / kit-conformance.ts — the suites
+    - mission-*.ts — evidence probes: startup, sqlite, services, multiwin, reliability, a11y
     - cases/ — one `.svelte` fixture per feature
     - main.ts — live window entry (gpuix `GpuixRenderer`)
     - main-qg.ts + qg-app.ts + qg-mount.ts — live window (quickgui: main-thread host + Bun worker app)
-    - test.ts / test2.ts — headless E2E (`TestGpuixRenderer`)
-  - build.ts — manual `svelte/compiler` pass → `src/gen/`
+  - build.ts — manual `svelte/compiler` pass → `src/gen/` (incl. routes manifest)
+  - scripts/package-app.ts — `.app` bundle builder
+- packages/native/ — `commands.json` registry → `codegen.ts` → `bindings.ts` ($native)
+- crates/native-core/ — Rust cdylib behind $native (plain rustc, ~390 KB)
+- spec/native-api.yaml — per-method status inventory for the whole native surface
 
 </FileTree>
 
@@ -109,6 +114,51 @@ thread, the app + Svelte + our fake DOM run in a **Bun worker**, and `Window`
 itself is the `NativeNodeHost`. Headless mode needs no dylib at all — a pure-JS
 `RecordingHost` satisfies the host contract and the retained `NativeNode` tree
 is directly assertable.
+
+:::warning
+The QG worker/host split has one sharp edge: **worker exit while the host
+holds FFI notifier callbacks segfaults the Bun host** (null deref @0x8).
+Multi-window sessions must close windows and exit the host process together —
+`app.destroy()` from a worker timer races the dispatch pump. See
+[native layer](/native).
+:::
+
+## The transport decision — measured, not argued
+
+Two live transports exist in the tree, which made the architecture choice
+measurable:
+
+| Path | Mechanism | Call cost | Verdict |
+|---|---|---|---|
+| `@gpuix/native` | NAPI-RS addon, in-process | ~44 ns | **primary renderer** |
+| `@quickgui/native` | `bun:ffi` → `dlopen` + event-notifier callback | ~13 ns | services + multi-window |
+| `$native` | `bun:ffi` → your cdylib, generated bindings | ~18 ns | app-owned Rust code |
+
+A serialized sidecar was evaluated and rejected: at these overheads the
+deciding factors are lifecycle and packaging, both of which in-process wins.
+`applyBatch` itself is not the bottleneck — 10k ops ≈ 0.68 ms, a 10 MiB
+payload ≈ 1.9 ms, idle event drain ≈ 0.1 µs.
+
+## Accessibility metadata
+
+The DOM→native path carries semantics, not just paint:
+
+- **Implicit roles** — `gdom` maps tag (+`type`/`href`) → ARIA role at
+  materialization: `button`→button, `h1-6`→heading+`aria-level`,
+  `input[type=checkbox]`→checkbox, `a[href]`→link, `nav`/`main`/`table`…
+  An explicit `role` always wins; changing `type` re-derives it.
+- **Typed aria** — `aria-checked`/`aria-hidden`/… emit booleans,
+  `aria-level`/`aria-valuenow`/… emit numbers (not strings) into
+  `setCustomProp` — verified in the retained tree via `getTreeJson`.
+- **nkit authors semantics** — 24+ components emit `role`/`aria-*` themselves
+  (`Switch` → `role="switch" aria-checked`, `Slider` → `role="slider"
+  aria-valuenow/min/max`, `Tabs` → tablist/tab/tabpanel…).
+
+What this does **not** yet do: gpuix never materializes those props into the
+platform AX tree (`NSAccessibilityElement`). QuickGUI ships a full AX
+subsystem — landmarks, style groups, display-preference queries — but only
+for its own widget descriptors, which nkit doesn't emit. Transport done;
+platform materialization is the open gap (see [limitations](/limitations)).
 
 ## The reentrancy rule
 

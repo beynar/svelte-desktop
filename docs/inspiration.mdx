@@ -34,4 +34,9 @@ The end state this experiment is chasing:
 
 > A SvelteKit-*style* app — remote functions and Svelte DX — plus Bun's runtime capabilities, rendered by native GPUI, bundled as a single macOS binary.
 
+**That stack now exists and runs.** SvelteKit semantics in-process (49/49),
+`bun:sqlite` behind remote functions, native GPUI paint, and an 82.6 MB
+`bun build --compile` binary that opens a real window — plus a scripted `.app`
+bundle. What's left is hardening, not feasibility.
+
 Earlier work in this repo proved the safer version: a real SvelteKit app (Svelte 5, remote functions, `bun:sqlite`) packaged inside an Electrobun shell — full DOM, `.app`/`.dmg` output, ~205 MB RSS. That build works, and it's the fallback. **gpuix-poc is the ambitious branch of the fork** — keep the authoring model, lose the webview.
