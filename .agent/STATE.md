@@ -28,6 +28,17 @@ Chromium/WebView.
 - nkit: ~45 components, Theme system, motion/transitions, CVA-style recipes
 - Overlay system on real native anchored/mouseDownOutside path
 
+## Mission 2 status (2026-09-15)
+- git init done, initial commit 854d535
+- 20-launch startup sample: median 293ms, p95 367ms (results/run-20260915-b/)
+- QuickGUI live services: 28 inventory entries runtime-tested
+- .app packaging: scripts/package-app.ts, embedded .node (external unresolved — known limit)
+- $native v2: handles, status/out-param contract, async+cancel — green
+- Multi-window: PASS functionally; segfault-on-exit blocker documented
+- Reliability: 11/11 (malformed batches, 100k ops, 1k mount cycles, event storm)
+- a11y: implicit-role + typed-aria layer in gdom; transport verified, native AX
+  materialization still missing (custom props land in retained tree only)
+
 ## Running processes
 - none owned by this session
 

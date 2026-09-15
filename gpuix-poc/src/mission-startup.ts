@@ -3,9 +3,12 @@
  * `bun src/mission-startup.ts` — opens the real window, measures, exits.
  */
 const T0 = performance.now();
+const marks: Record<string, number> = {};
 const mark = (label: string) => {
+	const t = performance.now() - T0;
+	marks[label] = t;
 	const rss = process.memoryUsage.rss() / 1048576;
-	console.log(`${label.padEnd(24)} t=${(performance.now() - T0).toFixed(1)}ms  rss=${rss.toFixed(1)}MiB`);
+	console.log(`${label.padEnd(24)} t=${t.toFixed(1)}ms  rss=${rss.toFixed(1)}MiB`);
 };
 
 mark('process-ready');
@@ -44,9 +47,11 @@ const loop = () => {
 loop();
 mark('first-tick');
 
+const steadyMs = Number(process.env.STEADY_MS ?? 3000);
 setTimeout(() => {
-	mark('3s-steady');
+	mark(`${steadyMs}ms-steady`);
 	const s = (renderer as any).getDebugFrameOverlayStats?.();
 	console.log('frameStats:', JSON.stringify(s));
+	console.log('RESULT ' + JSON.stringify({ marks, rssMiB: process.memoryUsage.rss() / 1048576 }));
 	process.exit(0);
-}, 3000);
+}, steadyMs);

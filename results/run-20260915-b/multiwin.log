@@ -1,0 +1,25 @@
+window win-a mounted (total: 1)
+window win-b mounted (total: 2)
+window win-a closed
+multi-window probe: 2 mounted, win-a.closed=true, win-b.closed=false, cleanups=1
+window win-b closed
+PASS: multi-window lifecycle
+============================================================
+Bun v1.4.0 (34cbb9a40) macOS Silicon
+macOS v26.5.1
+CPU: neon fp aes crc32 atomics
+Args: "bun" "src/mission-qg-multiwin-main.ts"
+Features: jsc transpiler_cache(54) tsconfig workers_spawned workers_terminated 
+Builtins: "bun:ffi" "bun:main" "bun:sqlite" "node:async_hooks" "node:buffer" "node:fs" "node:path" 
+
+Elapsed: 11471ms | User: 284ms | Sys: 176ms
+RSS: 0.17 GB | Peak: 0.17 GB | Commit: 0.20 GB | Faults: 990 | Machine: 51.54 GB
+
+panic(main thread): Segmentation fault at address 0x8
+oh no: Bun has crashed. This indicates a bug in Bun, not your code.
+
+To send a redacted crash report to Bun's team,
+please file a GitHub issue using the link below:
+
+ https://bun.report/1.4.0/Ma134cbb9agzBggggC+74hqC_________mmj4mDmrovmDm/++MuvzjDu0kjD2ot+B2g85M_uqt4mDmrovmDA2AQ
+

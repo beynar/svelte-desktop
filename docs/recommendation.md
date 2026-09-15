@@ -163,7 +163,8 @@ server loads, hooks (handle/reroute/handleFetch/handleError), forms + actions
 query/command/form, invalidation tracking, nav cancellation/coalescing.
 Deliberate adaptations: "server" runs in-process (no HTTP hop in-window);
 no SSR/hydration (nothing to hydrate); history is in-app. Gaps: bind:files,
-a11y metadata depth, multi-window routing.
+platform-AX materialization (role/aria metadata now reaches the retained
+native tree but gpuix does not yet expose it to NSAccessibility — see §8).
 
 ## 6. What influenced the implementation
 
@@ -191,46 +192,75 @@ a11y metadata depth, multi-window routing.
   `nc_free` is use-after-free (silent garbage, caught only because output was
   asserted).
 - Static `s()` top-level calls → never restyle on theme flip (fixed: `$derived`).
+- Multi-window teardown: `process.exit` while the QuickGUI host still holds
+  FFI notifier callbacks → Bun segfault (null deref @0x8), reproduced with
+  both bare exit and after orderly window destroy. `app.destroy()` from a
+  timer races the host dispatch pump (post-destroy flush throws). Orderly
+  window close itself is clean — the crash is in worker-exit/FFI teardown.
+  Minimal repro: `bun src/mission-qg-multiwin-main.ts` → PASS then crash.
+- `bun build --compile --external` for the `.node` module → runtime bare-
+  specifier resolution does not search execPath-relative `node_modules`;
+  external native modules unsupported today. `.app` keeps the embedded
+  `.node` (one-time ~430 ms extraction).
 - Vendor-GPUI build: previously disk-blocked; now unblocked (29 GiB) but not
   needed for the decision — deferred.
 
 ## 8. Blockers & risks
 
-- **A11y depth**: gpuix exposes partial role/label props; full semantic tree
-  needs renderer work or element metadata — the biggest product gap.
-- **Multi-window**: gpuix path is single-window today; quickgui host supports
-  window allocation. V1 multi-window goes through the QG backend or waits.
+- **A11y platform materialization**: the JS→native transport is now complete
+  — implicit tag→role map + typed `aria-*` land in the retained tree
+  (`a11y-roles.log`), and nkit authors proper semantics on 24+ components.
+  Missing: gpuix does not materialize custom props into NSAccessibility
+  elements. QuickGUI ships a full AX subsystem (landmarks, style groups,
+  display-preference queries) but only for its own widget descriptors, which
+  nkit does not emit. Biggest remaining product gap; needs gpuix renderer work.
+- **Multi-window lifecycle**: functional on the QG backend (2 windows,
+  independent Svelte trees, close-one-keep-others, cleanups run — PASS).
+  Blocker: host segfault on worker exit (above). Also note `Appearance` and
+  other window-scoped services need a live window context.
 - **bun:ffi experimental**: mitigated by keeping the main renderer on NAPI;
-  FFI is for services/plugins only.
+  FFI is for services/plugins only. The teardown segfault is this class of
+  risk made concrete — FFI callback lifetime vs process exit.
 - **Unsigned binaries**: fine for dev; release needs credentials + hardened
   runtime + notarization checklist (untested by design).
-- **No git repo**: `.agent/` is the only history; recommend initializing git.
+- **Notifications/permissions**: `Notifications.getPermissionStatus` returns
+  `unsupported`; `Permissions.status("notifications")` fails with unknown
+  native permission kind. Needs binding work, not just testing.
 - **Cross-platform**: everything measured is darwin-arm64. gpui targets
   linux-x64/win-x64 exist in the NAPI package but are NOT_RUN.
+- **Resolved**: git repo initialized (854d535); `.app` packaging scripted;
+  bound QuickGUI services runtime-tested (28 entries flipped `bound`→`tested`);
+  $native v2 (handles/async/cancel) green; reliability suite 11/11.
 
 ## 9. Next-session queue (dependency-ordered)
 
-1. `git init` + first commit (protects all prior work).
-2. `.app` bundle experiment: Info.plist + .node in Frameworks (kills the
-   ~430 ms extraction tax), unsigned.
-3. Runtime-test the bound QuickGUI services one by one (clipboard, dialog,
-   screen first — they flip `bound`→`tested` cheaply).
-4. $native v2: async commands (promise-returning via JSCallback), opaque
-   handles + dispose, cancellation flag — then a real demo command in the
-   showcase (e.g., rust-side file hash for the import flow).
-5. Multi-window spike on the QG backend.
-6. A11y metadata pass: element→role map in gdom, expose to gpuix props.
-7. Reliability suite: malformed batches (done), oversized caps, 1000×
-   mount/unmount, child-crash, shutdown-during-work.
-8. Windows/Linux CI cross-build evidence (even if run untested).
+Done this mission: git init (854d535) · `.app` packaging script · 28
+bound-service runtime tests · $native v2 (handles/async/cancel) ·
+multi-window functional pass · a11y role/aria transport · reliability 11/11.
+
+1. **Fix worker-exit segfault** (multiwin blocker): repro
+   `mission-qg-multiwin-main.ts`; likely FFI notifier callback outliving the
+   worker — either guard host-side dispatch after worker death or order
+   `app.destroy()` before exit without racing the pump. Cheapest probe:
+   `app.destroy()` from the host side (not a worker timer).
+2. **gpuix AX materialization**: consume `role`/`aria-*` custom props into
+   `accessibilityElement` children — the biggest product gap now that
+   transport is done.
+3. Notifications/permissions binding fixes (wrong kind strings today).
+4. Window-scoped services with a live window (Appearance, dialogs parented
+   to a window, menu/tray) — extension of mission-qg-app pattern.
+5. Windows/Linux CI cross-build evidence (even if run untested).
+6. Updater + signing checklist (requires credentials — out of scope here).
 
 ## 10. Verdict
 
 Svelte + Bun + GPUI is **past the feasibility question** — it is a working
-system with measured, honest numbers: 450 ms first frame dev / 940 ms
-packaged, ~150 MiB idle, ~5.5 ms p90 real frames, event-driven idle, a
-49/49-case SvelteKit surface, a 45-component themed library, and a proven
-single-binary package. The remaining work is depth (a11y, multi-window,
-service runtime-tests, signing) — not architecture risk. Recommended
+system with measured, honest numbers: ~293 ms median first frame over 20
+launches (p95 367 ms), ~173 MiB packaged RSS, ~5.5 ms p90 real frames,
+event-driven idle, a 49/49-case SvelteKit surface, a 45-component themed
+library, an 11/11 reliability suite, functional multi-window, and a proven
+single-binary + `.app` package. The remaining work is depth — platform-AX
+materialization, worker-exit teardown, notification bindings, signing —
+plus one concrete lifecycle bug, not architecture risk. Recommended
 architecture: **Bun host + NAPI renderer, `bun:ffi` reserved for the service
 dylib and `$native` plugin spikes, Bun Workers for heavy compute.**

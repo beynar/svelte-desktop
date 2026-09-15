@@ -1,0 +1,9 @@
+button     {"role":"button"}
+h2         {"role":"heading","aria-level":2}
+checkbox   {"type":"checkbox","aria-checked":true,"role":"checkbox"}
+slider     {"aria-hidden":false,"aria-valuenow":42,"role":"slider"}
+a-nohref   undefined
+a-href     {"role":"link","href":"/x"}
+div-tab    {"role":"tab"}
+cb→range  {"aria-checked":true,"type":"range","role":"slider"}
+div role removed: undefined

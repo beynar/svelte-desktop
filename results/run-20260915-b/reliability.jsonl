@@ -1,0 +1,25 @@
+{"ts":1789460813892,"test":"malformed: not-an-array","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460813892,"test":"malformed: bad opcode","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460813892,"test":"malformed: map-not-tuple","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460813892,"test":"malformed: wrong arg type","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460813892,"test":"malformed: truncated","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460813910,"test":"oversized: 100k ops (3.2MB)","ok":true,"detail":"12.9ms"}
+{"ts":1789460836329,"test":"malformed: not-an-array","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460836329,"test":"malformed: bad opcode","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460836329,"test":"malformed: map-not-tuple","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460836329,"test":"malformed: wrong arg type","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460836329,"test":"malformed: truncated","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460836347,"test":"oversized: 100k ops (3.2MB)","ok":true,"detail":"14.7ms"}
+{"ts":1789460836404,"test":"1000x mount/unmount","ok":true,"detail":"55ms total"}
+{"ts":1789460836404,"test":"event storm 10k","ok":true,"detail":"0.5ms"}
+{"ts":1789460856180,"test":"malformed: not-an-array","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460856180,"test":"malformed: bad opcode","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460856180,"test":"malformed: map-not-tuple","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460856180,"test":"malformed: wrong arg type","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460856180,"test":"malformed: truncated","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789460856195,"test":"oversized: 100k ops (3.2MB)","ok":true,"detail":"10.9ms"}
+{"ts":1789460856246,"test":"1000x mount/unmount","ok":true,"detail":"50ms total"}
+{"ts":1789460856247,"test":"event storm 10k","ok":true,"detail":"0.5ms"}
+{"ts":1789460856247,"test":"double unmount","ok":true,"detail":""}
+{"ts":1789460856247,"test":"double flush","ok":true,"detail":""}
+{"ts":1789460856247,"test":"emit-during-dispatch deferred","ok":true,"detail":""}

@@ -49,3 +49,37 @@ pages all pass — worth silencing next session.
 
 **Not done (honest):** multi-window, a11y depth, updater, runtime-testing of
 bound quickgui services, signing, cross-platform builds, embedded-Bun spike.
+
+## 2026-09-15 (cont.) — Mission 2 tail: multiwin + reliability + a11y
+
+### Multi-window (QuickGUI backend) — results/run-20260915-b/multiwin.log
+- Fixed probe layering: runHost → worker → runApplication (same as mission-qg-app).
+- PASS: 2 windows, 2 independent Svelte trees, win-a closed at 1.2s → win-b kept
+  rendering, both renderer cleanups ran on close. `closed` flags correct.
+- BLOCKER (lifecycle): Bun host segfaults (null deref @0x8) when the worker exits
+  while the host still holds FFI notifier callbacks — reproduces both with bare
+  process.exit AND after orderly window destroy. Also: app.destroy() from a timer
+  races the host dispatch pump ("app has been destroyed" from post-destroy flush).
+  Single-window service probe exited cleanly; multiwin teardown does not.
+  Severity: crash-on-exit (after work completes) — alpha-acceptable, prod-blocking.
+
+### Reliability suite — src/mission-reliability.ts → results/.../reliability.jsonl
+11/11: 5 malformed batch shapes rejected w/ typed errors (no panic); 100k-op/3.2MB
+batch applies in ~11ms; 1000× mount/unmount 50ms (~50µs/cycle); 10k-event storm
+0.5ms; double unmount/flush safe; emit-during-dispatch deferred correctly.
+
+### Accessibility layer — gdom.ts implicit roles + typed aria
+- Discovery: QuickGUI dylib ships a full NSAccessibility subsystem
+  (QuickGuiAccessibilityState, AX landmark/style-group roles, display-preference
+  queries) fed by widget-descriptor labels — but its wire protocol carries ZERO
+  aria/role properties. gpuix backend: setCustomProp lands in retained tree
+  (verified via getTreeJson).
+- nkit already authors role/aria-* on 24+ components (slider/switch/dialog/tabs…).
+- Added: IMPLICIT_ROLE map (tag+type→role: button/link/heading/checkbox/slider/
+  textbox/list/table…), aria-level for h1-h6, ARIA_BOOL/ARIA_NUM typed coercion,
+  dynamic re-emit on type/href change, implicit re-emit on explicit-role removal.
+- Verified: src/mission-a11y.ts → results/.../a11y-roles.log — all cases correct.
+- Remaining gap: custom props reach the retained tree but gpuix does NOT yet map
+  them onto the platform AX tree (NSAccessibilityElement) — transport complete,
+  native AX materialization still missing. QuickGUI path would get AX for free
+  IF components were expressed as its descriptors — they aren't (nkit → gpuix).

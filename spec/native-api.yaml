@@ -36,7 +36,8 @@ surfaces:
 
   window:
     methods:
-      - {name: create, sig: "create(opts: WindowOptions): Promise<WindowHandle>", upstream: "quickgui create_window FFI sym / electron BaseWindow", impl: bound, test: untested, notes: "gpuix single-window today; quickgui host supports allocate_window"}
+      - {name: create, sig: "create(opts: WindowOptions): Promise<WindowHandle>", upstream: "quickgui create_window FFI sym / electron BaseWindow", impl: bound, test: tested, notes: "gpuix single-window; quickgui multi-window VERIFIED (2 wins, independent Svelte trees)"}
+      - {name: multi-window, sig: "N windows, independent renderers, close-one-keep-others", impl: implemented, test: tested, platform: darwin, evidence: "results/run-20260915-b/multiwin.log", notes: "BLOCKER: Bun host segfaults on worker exit while host holds FFI callbacks (null deref @0x8); app.destroy() from a timer races dispatch pump"}
       - {name: list/current, sig: "getAll(): WindowHandle[]; getCurrent(): WindowHandle", impl: specified, test: untested}
       - {name: show/hide/close/destroy, sig: "per handle", upstream: "quickgui performNativeWindowAction", impl: bound, test: untested}
       - {name: focus, impl: bound, test: tested, notes: "focusElement + FocusHandle verified in overlay work"}
@@ -56,11 +57,11 @@ surfaces:
 
   screen:
     methods:
-      - {name: getDisplays, sig: "getDisplays(): Display[]", upstream: "quickgui Screen", impl: bound, test: untested}
-      - {name: primary/nearest/matching, impl: bound, test: untested}
-      - {name: getCursorPosition, impl: bound, test: untested}
+      - {name: getDisplays, sig: "getDisplays(): Display[]", upstream: "quickgui Screen", impl: bound, test: tested}
+      - {name: primary/nearest/matching, impl: bound, test: tested}
+      - {name: getCursorPosition, impl: bound, test: tested}
       - {name: onChanged, sig: "hot-plug/config event", impl: bound, test: untested}
-    status: {impl: bound, test: untested, platform: darwin, notes: "fields: bounds, workArea, scaleFactor, refresh"}
+    status: {impl: bound, test: tested, platform: darwin, notes: "fields: bounds, workArea, scaleFactor, refresh"}
 
   dialog:
     methods:
@@ -86,12 +87,12 @@ surfaces:
 
   clipboard:
     methods:
-      - {name: readText/writeText, sig: "string", upstream: "quickgui Clipboard", impl: bound, test: untested}
+      - {name: readText/writeText, sig: "string", upstream: "quickgui Clipboard", impl: bound, test: tested}
       - {name: readHTML/writeHTML, impl: bound, test: untested, platform: darwin}
       - {name: readImage/writeImage, sig: "NativeImage", impl: bound, test: untested}
       - {name: readFiles/writeFiles, impl: bound, test: untested}
       - {name: readBookmark, impl: bound, test: untested, platform: darwin, notes: "macOS security-scoped bookmarks"}
-      - {name: formats/clear, impl: bound, test: untested}
+      - {name: formats/clear, impl: bound, test: tested, notes: "availableFormats verified: text/plain round-trip"}
       - {name: onChanged, impl: specified, test: untested, notes: "poll-based; document wakeup cost; optional"}
     status: {impl: bound, test: untested, platform: darwin}
 
@@ -103,7 +104,7 @@ surfaces:
 
   notifications:
     methods:
-      - {name: isAvailable/permission, impl: bound, test: untested, upstream: "quickgui Notifications"}
+      - {name: isAvailable/permission, impl: bound, test: tested, upstream: "quickgui Notifications"}
       - {name: notify, sig: "notify({title, body, actions?, attachments?, reply?}): Promise<NotificationResponse>", impl: bound, test: untested}
       - {name: onAction/onClick/onClose, impl: bound, test: untested}
       - {name: cancel/replace, impl: bound, test: untested}
@@ -111,7 +112,7 @@ surfaces:
 
   shell:
     methods:
-      - {name: openExternal, sig: "openExternal(url): Promise<void> — validates scheme (https/mailto allowlist)", upstream: "quickgui Shell", impl: bound, test: untested}
+      - {name: openExternal, sig: "openExternal(url): Promise<void> — validates scheme (https/mailto allowlist)", upstream: "quickgui Shell", impl: bound, test: tested}
       - {name: openPath/revealPath/trash, impl: bound, test: untested}
       - {name: beep, impl: bound, test: untested}
     status: {impl: bound, test: untested, platform: darwin, notes: "restricted schemes: no file://, no javascript:"}
@@ -143,14 +144,14 @@ surfaces:
     methods:
       - {name: get/set, sig: "'system'|'light'|'dark'", impl: implemented, test: tested, notes: "nkit Theme + macOS defaults read; persisted"}
       - {name: onChanged, impl: implemented, test: tested}
-      - {name: accentColors/systemColors, impl: bound, test: untested, upstream: "quickgui Appearance/SystemPreferences"}
+      - {name: accentColors/systemColors, impl: bound, test: tested, upstream: "quickgui Appearance/SystemPreferences"}
       - {name: highContrast/reducedMotion/reducedTransparency, impl: implemented, test: tested, notes: "reduceMotion live; highContrast via SystemPreferences (bound, untested)"}
     status: {impl: implemented, test: tested, platform: darwin}
 
   system:
     methods:
       - {name: locale/languages, sig: "Bun os + SystemPreferences", impl: bound, test: untested}
-      - {name: keyboardLayout, impl: bound, test: untested, upstream: "quickgui KeyboardLayout"}
+      - {name: keyboardLayout, impl: bound, test: tested, upstream: "quickgui KeyboardLayout"}
       - {name: secureKeyboardEntry, impl: bound, test: untested, platform: darwin}
       - {name: spellchecker, impl: bound, test: untested, upstream: "quickgui SpellChecker"}
     status: {impl: bound, test: untested}
@@ -159,7 +160,7 @@ surfaces:
     methods:
       - {name: onSuspend/onResume/onLock/onUnlock/onPowerSource, upstream: "quickgui PowerMonitor", impl: bound, test: untested}
       - {name: blocker, sig: "new PowerAssertion(reason) → dispose()", impl: bound, test: untested, notes: "scoped release; auto-release on app quit"}
-      - {name: idleState, impl: bound, test: untested}
+      - {name: idleState, impl: bound, test: tested}
       - {name: battery/thermal, impl: specified, test: untested, notes: "where OS exposes"}
     status: {impl: bound, test: untested, platform: darwin}
 
@@ -224,7 +225,7 @@ surfaces:
 
   accessibility:
     methods:
-      - {name: semanticTree, sig: "nodes with role/name/state/actions from nkit elements", impl: specified, test: untested, notes: "gpuix exposes role/label props partially — gap recorded in README"}
+      - {name: semanticTree, sig: "nodes with role/name/state/actions from nkit elements", impl: partial, test: partial, evidence: "results/run-20260915-b/a11y-roles.log", notes: "DONE: implicit tag→role map + typed aria-* → native customProps land in retained tree (getTreeJson-verified). MISSING: gpuix does not materialize them into the platform AX tree (NSAccessibilityElement); QuickGUI has full AX subsystem but only for its own descriptors, not our generic elements"}
       - {name: focus/nav, impl: implemented, test: tested, notes: "keyboard nav + FocusHandle verified"}
       - {name: textSelection/IME, impl: implemented, test: partial, notes: "IME edge cases open"}
       - {name: controlOtherApps, sig: "NOT in scope — requires accessibility permission; separate consent", impl: specified, test: untested}
@@ -236,8 +237,8 @@ surfaces:
       - {name: wordCount, sig: "wordCount(text): bigint — typed errors (invalid_utf8)", impl: implemented, test: tested}
       - {name: jsonTransform, sig: "jsonTransform(json): json — heap out + nc_free", impl: implemented, test: tested}
       - {name: contract, sig: "commands.json → codegen → bindings.ts; scalar/bytes-in/json-io kinds; NativeError; bigint i64; explicit buffer ownership; catch_unwind containment; dispose for handles", impl: implemented, test: tested}
-      - {name: async/cancellation/progress, sig: "NOT YET — design: command registry emits progress events; cancel stops awaiting, abort signaled via flag; never implies rollback", impl: specified, test: untested}
-      - {name: handles, sig: "opaque u64 handle registry + dispose; no pointers exposed", impl: specified, test: untested}
+      - {name: async/cancellation/progress, sig: "callback completion + cancel flag; tested incl. cancel path", impl: implemented, test: tested, notes: "v2: never implies rollback"}
+      - {name: handles, sig: "opaque u64 handle registry + dispose; status-return + out-params (full-range values never error-sentinel)", impl: implemented, test: tested}
     status: {impl: spike, test: tested, platform: darwin}
 
   events:

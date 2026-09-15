@@ -20,11 +20,43 @@ const NATIVE_ATTR: Record<string, string> = {
 	tabindex: 'tabIndex', autofocus: 'autoFocus', readonly: 'readOnly', maxlength: 'maxLength',
 };
 const nativeAttrName = (k: string) => NATIVE_ATTR[k.toLowerCase()] ?? k;
+const ARIA_BOOL = /^aria-(checked|selected|hidden|expanded|disabled|pressed|modal|required|readonly|multiline|busy|invalid|grabbed|current|atomic|live)$/;
+const ARIA_NUM = /^aria-(level|valuenow|valuemin|valuemax|setsize|posinset|colcount|rowcount|colindex|rowindex|colspan|rowspan|valuemaxchar)$/;
 const nativeAttrValue = (k: string, v: string) => {
 	const n = NATIVE_ATTR[k.toLowerCase()];
 	if (n === 'autoFocus') return v !== 'false';
 	if (n === 'tabIndex' || n === 'maxLength') { const f = parseInt(v, 10); return Number.isFinite(f) ? f : v; }
+	if (ARIA_BOOL.test(k)) return v === 'true' || v === '';
+	if (ARIA_NUM.test(k)) { const f = parseFloat(v); return Number.isFinite(f) ? f : v; }
 	return v;
+};
+
+/** tag (+ key attrs) → implicit ARIA role. Explicit `role` always wins. */
+const IMPLICIT_ROLE: Record<string, string> = {
+	a: 'link', nav: 'navigation', main: 'main', aside: 'complementary',
+	header: 'banner', footer: 'contentinfo', section: 'region', article: 'article',
+	button: 'button', select: 'combobox', textarea: 'textbox', option: 'option',
+	ul: 'list', ol: 'list', li: 'listitem', table: 'table', thead: 'rowgroup',
+	tbody: 'rowgroup', tr: 'row', form: 'form', fieldset: 'group',
+	progress: 'progressbar', img: 'img', figure: 'figure', dialog: 'dialog',
+};
+const implicitRole = (el: { tagName: string; attributes: Map<string, string> }): string | null => {
+	const tag = el.tagName.toLowerCase();
+	if (/^h[1-6]$/.test(tag)) return 'heading';
+	if (tag === 'th') return 'columnheader';
+	if (tag === 'td') return 'cell';
+	if (tag === 'input') {
+		const t = el.attributes.get('type') ?? 'text';
+		if (t === 'checkbox') return 'checkbox';
+		if (t === 'radio') return 'radio';
+		if (t === 'range') return 'slider';
+		if (t === 'button' || t === 'submit' || t === 'reset') return 'button';
+		if (t === 'search') return 'searchbox';
+		if (t === 'hidden') return null;
+		return 'textbox';
+	}
+	if (tag === 'a' && !el.attributes.has('href')) return null;
+	return IMPLICIT_ROLE[tag] ?? null;
 };
 /** Sentinel elementId for window-level key events delivered via setWindowKeyEvents. */
 export const WINDOW_EVENT_ID = 0x7fffff01;
@@ -1191,6 +1223,10 @@ export class GElement extends GNode {
 		if (!this.nativeId) return;
 		if (k !== 'class' && k !== 'style') {
 			emit('setCustomProp', this.nativeId, nativeAttrName(k), nativeAttrValue(k, v));
+			if ((k === 'type' || k === 'href') && !this.attributes.has('role')) {
+				const role = implicitRole(this);
+				if (role) emit('setCustomProp', this.nativeId, 'role', role);
+			}
 		}
 	}
 	getAttribute(k: string) {
@@ -1210,7 +1246,13 @@ export class GElement extends GNode {
 		} else {
 			applyClassStyles(this);
 		}
-		if (this.nativeId) emit('setCustomProp', this.nativeId, k, null);
+		if (this.nativeId) {
+			emit('setCustomProp', this.nativeId, k, null);
+			if (k === 'role') {
+				const role = implicitRole(this);
+				if (role) emit('setCustomProp', this.nativeId, 'role', role);
+			}
+		}
 	}
 	getAttributeNames() {
 		return [...this.attributes.keys()];
@@ -1794,6 +1836,13 @@ function materialize(node: GNode) {
 		}
 	}
 	if (el._customProps) for (const [k, v] of el._customProps) emit('setCustomProp', id, k, v);
+	if (!el.attributes.has('role')) {
+		const role = implicitRole(el);
+		if (role) {
+			emit('setCustomProp', id, 'role', role);
+			if (role === 'heading') emit('setCustomProp', id, 'aria-level', parseInt(el.tagName[1], 10));
+		}
+	}
 	for (const t of delegatedTypes) {
 		if (FOCUS_KEY_TYPES.has(t) && !isFocusable(el)) continue;
 		emitListener(el, t);

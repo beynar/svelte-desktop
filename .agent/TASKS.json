@@ -1,17 +1,174 @@
 {
-  "tasks": [
-    {"id":"t-discovery","pri":0,"status":"done","desc":"Repository+reference audit → docs/discovery.md, docs/sources.md","accept":"both files exist with real paths/versions/licenses","deps":[],"evidence":"docs/discovery.md, docs/sources.md"},
-    {"id":"t-spec","pri":0,"status":"done","desc":"spec/native-api.yaml — full V1 surface inventory with per-method status","accept":"every table row from brief §7 present with status fields","deps":["t-discovery"],"evidence":"spec/native-api.yaml (~30 surfaces, per-method impl/test/platform)"},
-    {"id":"t-bench-bridge","pri":1,"status":"done","desc":"Bridge benchmarks: NAPI vs FFI call overhead, applyBatch scaling, drain idle","accept":"results/<run>/raw-data.jsonl with real numbers","deps":[],"evidence":"results/run-20260915-a/bridge.jsonl — napi 44ns, ffi 13ns, 10k ops 0.68ms"},
-    {"id":"t-bench-startup","pri":1,"status":"done","desc":"Startup stages + RSS footprint of running app","accept":"measured timings + peak RSS recorded","deps":[],"evidence":"startup.jsonl — 450ms first frame dev / 940ms binary, ~150MiB idle"},
-    {"id":"t-sqlite","pri":1,"status":"done","desc":"bun:sqlite validation: tx/WAL/prepared/sync/worker","accept":"executable probe + recorded findings","deps":[],"evidence":"sqlite.jsonl + worker probe — WAL, rollback, 1.49M ins/s, worker conn"},
-    {"id":"t-package","pri":1,"status":"done","desc":"Packaging: app server binary (64.6MB, serves 200) + desktop --compile binary (82.6MB, real window)","accept":"binary builds+runs","deps":[],"evidence":"docs/packaging.md + startup.jsonl"},
-    {"id":"t-ffi-probe","pri":2,"status":"done","desc":"bun:ffi micro-probe vs NAPI call cost","accept":"measured","deps":[],"evidence":"bridge.jsonl — ffi 13ns vs napi 44ns"},
-    {"id":"t-qg-audit","pri":2,"status":"done","desc":"QuickGUI source audit at pinned commit","accept":"file paths+symbols recorded","deps":[],"evidence":"docs/quickgui-analysis.md"},
-    {"id":"t-native-spike","pri":1,"status":"done","desc":"$native generated bindings: crates/native-core cdylib + codegen + contract tests","accept":"scalar/bytes/json-io + typed errors + call cost","deps":[],"evidence":"packages/native/, native-contract.jsonl — 18ns/call"},
-    {"id":"t-report","pri":0,"status":"done","desc":"docs/recommendation.md final report per §14","accept":"all bullets addressed with evidence class","deps":["t-spec","t-bench-bridge"],"evidence":"docs/recommendation.md"},
-    {"id":"t-sveltekit-matrix","pri":2,"status":"done","desc":"SvelteKit compat matrix","accept":"feature table","deps":[],"evidence":"docs/sveltekit-compatibility.md — 49/49"},
-    {"id":"t-taskiface","pri":1,"status":"done","desc":"bun run test/bench/demo/package/codegen/report at repo root","accept":"all scripts run","deps":[],"evidence":"bun run test → all suites green"}
-  ],
-  "next": ["git init + commit", ".app bundle (Info.plist + Frameworks .node)", "runtime-test bound quickgui services (clipboard/dialog/screen first)", "$native v2: async+handles+cancel", "multi-window via QG backend", "a11y element→role map", "reliability suite", "cross-build CI evidence"]
+ "tasks": [
+  {
+   "id": "t-discovery",
+   "pri": 0,
+   "status": "done",
+   "desc": "Repository+reference audit \u2192 docs/discovery.md, docs/sources.md",
+   "accept": "both files exist with real paths/versions/licenses",
+   "deps": [],
+   "evidence": "docs/discovery.md, docs/sources.md"
+  },
+  {
+   "id": "t-spec",
+   "pri": 0,
+   "status": "done",
+   "desc": "spec/native-api.yaml \u2014 full V1 surface inventory with per-method status",
+   "accept": "every table row from brief \u00a77 present with status fields",
+   "deps": [
+    "t-discovery"
+   ],
+   "evidence": "spec/native-api.yaml (~30 surfaces, per-method impl/test/platform)"
+  },
+  {
+   "id": "t-bench-bridge",
+   "pri": 1,
+   "status": "done",
+   "desc": "Bridge benchmarks: NAPI vs FFI call overhead, applyBatch scaling, drain idle",
+   "accept": "results/<run>/raw-data.jsonl with real numbers",
+   "deps": [],
+   "evidence": "results/run-20260915-a/bridge.jsonl \u2014 napi 44ns, ffi 13ns, 10k ops 0.68ms"
+  },
+  {
+   "id": "t-bench-startup",
+   "pri": 1,
+   "status": "done",
+   "desc": "Startup stages + RSS footprint of running app",
+   "accept": "measured timings + peak RSS recorded",
+   "deps": [],
+   "evidence": "startup.jsonl \u2014 450ms first frame dev / 940ms binary, ~150MiB idle"
+  },
+  {
+   "id": "t-sqlite",
+   "pri": 1,
+   "status": "done",
+   "desc": "bun:sqlite validation: tx/WAL/prepared/sync/worker",
+   "accept": "executable probe + recorded findings",
+   "deps": [],
+   "evidence": "sqlite.jsonl + worker probe \u2014 WAL, rollback, 1.49M ins/s, worker conn"
+  },
+  {
+   "id": "t-package",
+   "pri": 1,
+   "status": "done",
+   "desc": "Packaging: app server binary (64.6MB, serves 200) + desktop --compile binary (82.6MB, real window)",
+   "accept": "binary builds+runs",
+   "deps": [],
+   "evidence": "docs/packaging.md + startup.jsonl"
+  },
+  {
+   "id": "t-ffi-probe",
+   "pri": 2,
+   "status": "done",
+   "desc": "bun:ffi micro-probe vs NAPI call cost",
+   "accept": "measured",
+   "deps": [],
+   "evidence": "bridge.jsonl \u2014 ffi 13ns vs napi 44ns"
+  },
+  {
+   "id": "t-qg-audit",
+   "pri": 2,
+   "status": "done",
+   "desc": "QuickGUI source audit at pinned commit",
+   "accept": "file paths+symbols recorded",
+   "deps": [],
+   "evidence": "docs/quickgui-analysis.md"
+  },
+  {
+   "id": "t-native-spike",
+   "pri": 1,
+   "status": "done",
+   "desc": "$native generated bindings: crates/native-core cdylib + codegen + contract tests",
+   "accept": "scalar/bytes/json-io + typed errors + call cost",
+   "deps": [],
+   "evidence": "packages/native/, native-contract.jsonl \u2014 18ns/call"
+  },
+  {
+   "id": "t-report",
+   "pri": 0,
+   "status": "done",
+   "desc": "docs/recommendation.md final report per \u00a714",
+   "accept": "all bullets addressed with evidence class",
+   "deps": [
+    "t-spec",
+    "t-bench-bridge"
+   ],
+   "evidence": "docs/recommendation.md"
+  },
+  {
+   "id": "t-sveltekit-matrix",
+   "pri": 2,
+   "status": "done",
+   "desc": "SvelteKit compat matrix",
+   "accept": "feature table",
+   "deps": [],
+   "evidence": "docs/sveltekit-compatibility.md \u2014 49/49"
+  },
+  {
+   "id": "t-taskiface",
+   "pri": 1,
+   "status": "done",
+   "desc": "bun run test/bench/demo/package/codegen/report at repo root",
+   "accept": "all scripts run",
+   "deps": [],
+   "evidence": "bun run test \u2192 all suites green"
+  },
+  {
+   "id": "t-multiwin",
+   "pri": 1,
+   "status": "done",
+   "desc": "Multi-window spike on QG backend: 2 windows, independent Svelte trees, close-one-keep-others",
+   "accept": "both windows mount+close cleanly",
+   "deps": [],
+   "evidence": "results/run-20260915-b/multiwin.log \u2014 PASS; teardown segfault recorded as blocker"
+  },
+  {
+   "id": "t-reliability",
+   "pri": 1,
+   "status": "done",
+   "desc": "Reliability suite: malformed batches, oversized, mount/unmount cycles, event storm, double-dispose",
+   "accept": "all checks pass",
+   "deps": [],
+   "evidence": "results/run-20260915-b/reliability.jsonl \u2014 11/11"
+  },
+  {
+   "id": "t-a11y-roles",
+   "pri": 1,
+   "status": "done",
+   "desc": "A11y element\u2192role map: implicit roles, typed aria coercion, native customProps transport",
+   "accept": "role/aria land in retained tree via getTreeJson",
+   "deps": [],
+   "evidence": "results/run-20260915-b/a11y-roles.log; gpuix AX materialization still open"
+  },
+  {
+   "id": "t-exit-segfault",
+   "pri": 0,
+   "status": "open",
+   "desc": "BLOCKER: Bun host segfaults on worker exit w/ live FFI callbacks (multiwin teardown)",
+   "accept": "clean exit after multi-window session",
+   "deps": [],
+   "evidence": "results/run-20260915-b/multiwin.log (PASS then crash @0x8)"
+  },
+  {
+   "id": "t-ax-materialize",
+   "pri": 1,
+   "status": "open",
+   "desc": "gpuix: materialize role/aria customProps into NSAccessibility elements",
+   "accept": "AX tree reflects nkit semantics (Accessibility Inspector)",
+   "deps": [
+    "t-a11y-roles"
+   ],
+   "evidence": "none \u2014 transport only"
+  }
+ ],
+ "next": [
+  "git init + commit",
+  ".app bundle (Info.plist + Frameworks .node)",
+  "runtime-test bound quickgui services (clipboard/dialog/screen first)",
+  "$native v2: async+handles+cancel",
+  "multi-window via QG backend",
+  "a11y element\u2192role map",
+  "reliability suite",
+  "cross-build CI evidence"
+ ]
 }

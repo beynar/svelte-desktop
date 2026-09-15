@@ -1,0 +1,13 @@
+{"ts":1789460054991,"probe":"Screen.getAllDisplays","ok":true,"result":[{"id":"1","name":"Built-in Retina Display","bounds":{"height":1329,"width":2056,"x":0,"y":0},"workArea":{"height":1290,"width":2056,"x":0,"y":39},"scaleFactor":2,"primary":true,"uuid":"37d8832a-2d66-02ca-b9f7-8f30a301b230","refreshRate":120}]}
+{"ts":1789460054992,"probe":"Screen.getPrimaryDisplay","ok":true,"result":{"id":"1","name":"Built-in Retina Display","bounds":{"height":1329,"width":2056,"x":0,"y":0},"workArea":{"height":1290,"width":2056,"x":0,"y":39},"scaleFactor":2,"primary":true,"uuid":"37d8832a-2d66-02ca-b9f7-8f30a301b230","refreshRate":120}}
+{"ts":1789460054997,"probe":"Screen.getCursorScreenPoint","ok":true,"result":{"x":844.109375,"y":1274.34375}}
+{"ts":1789460055015,"probe":"Clipboard.writeText+readText","ok":true,"result":"mission2-probe"}
+{"ts":1789460055030,"probe":"Clipboard.availableFormats","ok":true,"result":["text/plain"]}
+{"ts":1789460055030,"probe":"Appearance.getCurrent","ok":false,"error":"a native window API requires an open QuickGUI Window"}
+{"ts":1789460055045,"probe":"SystemPreferences.getCurrent","ok":true,"result":{"colorScheme":"dark","colors":{"accent":{"alpha":255,"blue":255,"green":122,"red":0},"highlight":{"alpha":255,"blue":209,"green":89,"red":0},"highlightText":{"alpha":255,"blue":255,"green":255,"red":255},"windowBackground":{"alpha":255,"blue":30,"green":30,"red":30},"windowText":{"alpha":216,"blue":255,"green":255,"red":255},"controlBackground":{"alpha":255,"blue":30,"green":30,"red":30},"controlText":{"alpha":216,"blue":255,"green":255,"red":255},"link":{"alpha":255,"blue":255,"green":156,"red":65}},"reduceMotion":false,"reduceTransparency":false,"increaseContrast":false,"differentiateWithoutColor":false,"invertColors":false,"screenReader":false,"switchControl":false}}
+{"ts":1789460055047,"probe":"Keyboard.getLayout","ok":true,"result":{"id":"com.apple.keylayout.French","name":"French"}}
+{"ts":1789460055047,"probe":"PowerMonitor.getState","ok":true,"result":{"source":"ac","thermalState":"nominal","battery":{"status":"full","chargePercent":100},"lowPowerMode":false}}
+{"ts":1789460055047,"probe":"PowerMonitor.getSystemIdleTime","ok":true,"result":0.002655416}
+{"ts":1789460055049,"probe":"Permissions.status(notifications)","ok":false,"error":"unknown native permission kind `notifications`"}
+{"ts":1789460055097,"probe":"Notifications.getPermissionStatus","ok":true,"result":"unsupported"}
+{"ts":1789460055143,"probe":"Shell.openExternal(javascript:)","ok":false,"error":"native platform operation failed: NSWorkspace rejected the URL"}

@@ -1,17 +1,31 @@
 {
   "library": "native_core",
-  "version": 1,
+  "version": 2,
   "abi": "bun:ffi",
   "commands": [
     {"name": "add", "symbol": "nc_add", "kind": "scalar",
      "args": [{"name": "a", "type": "i64"}, {"name": "b", "type": "i64"}],
-     "returns": "i64", "errors": []},
+     "returns": "i64", "errors": {}},
     {"name": "wordCount", "symbol": "nc_word_count", "kind": "bytes-in",
      "args": [{"name": "text", "type": "utf8"}],
      "returns": "i64", "errors": {"-1": "null_pointer", "-2": "invalid_utf8", "-99": "panic"}},
     {"name": "jsonTransform", "symbol": "nc_json_transform", "kind": "json-in-json-out",
      "args": [{"name": "payload", "type": "utf8"}],
      "returns": "json", "errors": {"null": "transform_failed_or_panic"},
-     "freeSymbol": "nc_free"}
+     "freeSymbol": "nc_free"},
+    {"name": "hasherNew", "symbol": "nc_hasher_new", "kind": "scalar",
+     "args": [], "returns": "u64", "errors": {}},
+    {"name": "hasherUpdate", "symbol": "nc_hasher_update", "kind": "handle-bytes",
+     "args": [{"name": "handle", "type": "u64"}, {"name": "data", "type": "utf8"}],
+     "returns": "i32", "errors": {"-1": "null_pointer", "-2": "unknown_handle"}},
+    {"name": "hasherFinish", "symbol": "nc_hasher_finish", "kind": "u64-out",
+     "args": [{"name": "handle", "type": "u64"}], "returns": "u64",
+     "errors": {"-1": "null_pointer", "-2": "unknown_handle"}},
+    {"name": "countAsync", "symbol": "nc_count_async", "kind": "async",
+     "args": [{"name": "n", "type": "u64"}],
+     "returns": "promise<i64>", "errors": {"0": "spawn_failed"}},
+    {"name": "cancel", "symbol": "nc_cancel", "kind": "scalar",
+     "args": [{"name": "taskId", "type": "u64"}], "returns": "i32",
+     "errors": {"-1": "unknown_task"}}
   ]
 }
