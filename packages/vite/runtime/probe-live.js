@@ -107,6 +107,17 @@ await sleep(1500); // intros settle
 	console.log(`  applyBatch: n=${batches} total=${batchMs.toFixed(1)}ms ops=${batchOps} (${(batchOps / Math.max(1, batches)).toFixed(1)}/batch)`);
 }
 
+// ── renderer frame duration (overlay stats) ──────────────────────────
+try {
+	renderer.setDebugFrameOverlay('hidden');
+	renderer.resetDebugFrameOverlayStats();
+	await sleep(2000);
+	console.log(`  overlay: ${JSON.stringify(renderer.getDebugFrameOverlayStats())}`);
+	renderer.setDebugFrameOverlay('off');
+} catch (e) {
+	console.log('  overlay stats:', e.message);
+}
+
 // ── scroll latency: inject → frame ───────────────────────────────────
 ticks.length = 0; tickAt.length = 0;
 const injects = [];
