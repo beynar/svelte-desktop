@@ -1,0 +1,2303 @@
+diff --git a/crates/agent_ui/src/message_editor.rs b/crates/agent_ui/src/message_editor.rs
+index fe10a36cb9..604d88d18c 100644
+--- a/crates/agent_ui/src/message_editor.rs
++++ b/crates/agent_ui/src/message_editor.rs
+@@ -1629,6 +1629,7 @@ impl MessageEditor {
+             directories: false,
+             multiple: true,
+             prompt: Some("Select Images".into()),
++            ..Default::default()
+         });
+ 
+         window
+diff --git a/crates/agent_ui/src/threads_archive_view.rs b/crates/agent_ui/src/threads_archive_view.rs
+index 09a3ea8c96..95f863b838 100644
+--- a/crates/agent_ui/src/threads_archive_view.rs
++++ b/crates/agent_ui/src/threads_archive_view.rs
+@@ -1260,6 +1260,7 @@ impl ProjectPickerDelegate {
+             directories: true,
+             multiple: false,
+             prompt: None,
++            ..Default::default()
+         });
+         cx.spawn_in(window, async move |this, cx| {
+             let Ok(Ok(Some(paths))) = paths_receiver.await else {
+diff --git a/crates/collab_ui/src/call_stats_modal.rs b/crates/collab_ui/src/call_stats_modal.rs
+index 99293bcd7f..4b0272873a 100644
+--- a/crates/collab_ui/src/call_stats_modal.rs
++++ b/crates/collab_ui/src/call_stats_modal.rs
+@@ -132,8 +132,11 @@ impl CallStatsModal {
+         let Some(report) = Self::report(cx) else {
+             return;
+         };
+-        let save_dialog =
+-            cx.prompt_for_new_path(&PathBuf::default(), Some("zed-call-diagnostics.json"));
++        let save_dialog = cx.prompt_for_new_path(
++            &PathBuf::default(),
++            Some("zed-call-diagnostics.json"),
++            Vec::new(),
++        );
+         cx.spawn(async move |_, cx| {
+             let Some(path) = save_dialog.await?? else {
+                 return anyhow::Ok(());
+diff --git a/crates/etw_tracing/etw_tracing.rs b/crates/etw_tracing/etw_tracing.rs
+index c58a44745c..69b4de3979 100644
+--- a/crates/etw_tracing/etw_tracing.rs
++++ b/crates/etw_tracing/etw_tracing.rs
+@@ -167,7 +167,8 @@ fn start_etw_recording(cx: &mut App, heap_pid: Option<u32>) {
+         show_etw_notification(cx, "ETW recording is already in progress");
+         return;
+     }
+-    let save_dialog = cx.prompt_for_new_path(&PathBuf::default(), Some("zed-trace.etl"));
++    let save_dialog =
++        cx.prompt_for_new_path(&PathBuf::default(), Some("zed-trace.etl"), Vec::new());
+     cx.spawn(async move |cx| {
+         let output_path = match save_dialog.await {
+             Ok(Ok(Some(path))) => path,
+diff --git a/crates/extensions_ui/src/extensions_ui.rs b/crates/extensions_ui/src/extensions_ui.rs
+index dbae10cbdd..a24e667b43 100644
+--- a/crates/extensions_ui/src/extensions_ui.rs
++++ b/crates/extensions_ui/src/extensions_ui.rs
+@@ -175,6 +175,7 @@ pub fn init(cx: &mut App) {
+                         directories: true,
+                         multiple: false,
+                         prompt: None,
++                        ..Default::default()
+                     },
+                     DirectoryLister::Local(
+                         workspace.project().clone(),
+diff --git a/crates/git_ui/src/clone.rs b/crates/git_ui/src/clone.rs
+index 61b6275eb9..b1306f1daa 100644
+--- a/crates/git_ui/src/clone.rs
++++ b/crates/git_ui/src/clone.rs
+@@ -19,6 +19,7 @@ pub fn clone_and_open(
+         directories: true,
+         multiple: false,
+         prompt: Some("Select as Repository Destination".into()),
++        ..Default::default()
+     });
+ 
+     window
+diff --git a/crates/gpui/src/app.rs b/crates/gpui/src/app.rs
+index a2c2affacd..58ff4d90fb 100644
+--- a/crates/gpui/src/app.rs
++++ b/crates/gpui/src/app.rs
+@@ -51,7 +51,7 @@ use crate::{
+     ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, ClipboardReadError,
+     CursorStyle, DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload, FocusHandle,
+     FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId,
+-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
++    Menu, MenuItem, OwnedMenu, PathPromptFilter, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+     PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
+     PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
+     ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
+@@ -1595,8 +1595,10 @@ impl App {
+         &self,
+         directory: &Path,
+         suggested_name: Option<&str>,
++        filters: Vec<PathPromptFilter>,
+     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+-        self.platform.prompt_for_new_path(directory, suggested_name)
++        self.platform
++            .prompt_for_new_path(directory, suggested_name, filters)
+     }
+ 
+     /// Reveals the specified path at the platform level, such as in Finder on macOS.
+@@ -1708,18 +1710,36 @@ impl App {
+                     }
+                 }
+             } else {
++                // Test executors and benches have no display link, so they draw
++                // eagerly here — a bare `update()` produces a frame. A
++                // `Production` app paces every draw through the platform frame
++                // callback instead; drawing eagerly here would render once per
++                // update at task speed rather than once per vsync. (This block
++                // can compile into a production binary when `test-support` is
++                // feature-unified in by another crate, so the cfg alone is not
++                // a sufficient gate.)
+                 #[cfg(any(test, feature = "test-support", feature = "bench"))]
+-                for window in self
+-                    .windows
+-                    .values()
+-                    .filter_map(|window| {
+-                        let window = window.as_deref()?;
+-                        window.invalidator.is_dirty().then_some(window.handle)
+-                    })
+-                    .collect::<Vec<_>>()
+                 {
+-                    self.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+-                        .unwrap();
++                    #[cfg(any(test, feature = "test-support"))]
++                    let draw_eagerly =
++                        cfg!(feature = "bench") || matches!(self.mode, GpuiMode::Test { .. });
++                    #[cfg(not(any(test, feature = "test-support")))]
++                    let draw_eagerly = true;
++
++                    if draw_eagerly {
++                        for window in self
++                            .windows
++                            .values()
++                            .filter_map(|window| {
++                                let window = window.as_deref()?;
++                                window.invalidator.is_dirty().then_some(window.handle)
++                            })
++                            .collect::<Vec<_>>()
++                        {
++                            self.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
++                                .unwrap();
++                        }
++                    }
+                 }
+ 
+                 if self.pending_effects.is_empty() {
+diff --git a/crates/gpui/src/app/test_context.rs b/crates/gpui/src/app/test_context.rs
+index 1dceee09d7..d4510f504d 100644
+--- a/crates/gpui/src/app/test_context.rs
++++ b/crates/gpui/src/app/test_context.rs
+@@ -1300,6 +1300,7 @@ mod tests {
+                 directories: true,
+                 multiple: true,
+                 prompt: None,
++                ..Default::default()
+             })
+         });
+         assert!(cx.did_prompt_for_paths());
+@@ -1326,6 +1327,7 @@ mod tests {
+                 directories: false,
+                 multiple: false,
+                 prompt: None,
++                ..Default::default()
+             })
+         });
+ 
+diff --git a/crates/gpui/src/debug_overlay.rs b/crates/gpui/src/debug_overlay.rs
+index 3b4a31cd32..5e714967d4 100644
+--- a/crates/gpui/src/debug_overlay.rs
++++ b/crates/gpui/src/debug_overlay.rs
+@@ -4,7 +4,7 @@
+ 
+ use crate::{
+     BorderStyle, Bounds, ContentMask, Corners, Edges, Hsla, Pixels, Quad, ScaledPixels, Scene,
+-    Size, point, rgba, size, transparent_black,
++    Size, TransformationMatrix, point, rgba, size, transparent_black,
+ };
+ use std::{collections::VecDeque, time::Duration};
+ 
+@@ -252,6 +252,7 @@ fn solid_quad(
+         border_color: transparent_black(),
+         corner_radii: Corners::default(),
+         border_widths: Edges::default(),
++        transformation: TransformationMatrix::unit(),
+     }
+ }
+ 
+diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
+index ff7e6c2980..03ed1d365c 100644
+--- a/crates/gpui/src/elements/div.rs
++++ b/crates/gpui/src/elements/div.rs
+@@ -1470,6 +1470,67 @@ pub trait StatefulInteractiveElement: InteractiveElement {
+         self
+     }
+ 
++    /// Mark this element as disabled (`aria-disabled`).
++    fn aria_disabled(mut self, disabled: bool) -> Self {
++        self.interactivity().aria.disabled = Some(disabled);
++        self
++    }
++
++    /// Mark this element as busy, e.g. while loading (`aria-busy`).
++    fn aria_busy(mut self, busy: bool) -> Self {
++        self.interactivity().aria.busy = Some(busy);
++        self
++    }
++
++    /// Hide this element from assistive technology (`aria-hidden`).
++    fn aria_hidden(mut self, hidden: bool) -> Self {
++        self.interactivity().aria.hidden = Some(hidden);
++        self
++    }
++
++    /// Mark this element as modal (`aria-modal`).
++    fn aria_modal(mut self, modal: bool) -> Self {
++        self.interactivity().aria.modal = Some(modal);
++        self
++    }
++
++    /// Mark this element as read-only (`aria-readonly`).
++    fn aria_read_only(mut self, read_only: bool) -> Self {
++        self.interactivity().aria.read_only = Some(read_only);
++        self
++    }
++
++    /// Mark this element as required input (`aria-required`).
++    fn aria_required(mut self, required: bool) -> Self {
++        self.interactivity().aria.required = Some(required);
++        self
++    }
++
++    /// Set a human-readable role description (`aria-roledescription`).
++    fn aria_role_description(mut self, description: impl Into<SharedString>) -> Self {
++        self.interactivity().aria.role_description = Some(description.into());
++        self
++    }
++
++    /// Set the live-region politeness (`aria-live`).
++    fn aria_live(mut self, live: accesskit::Live) -> Self {
++        self.interactivity().aria.live = Some(live);
++        self
++    }
++
++    /// Mark this element's value as invalid (`aria-invalid`).
++    fn aria_invalid(mut self, invalid: accesskit::Invalid) -> Self {
++        self.interactivity().aria.invalid = Some(invalid);
++        self
++    }
++
++    /// Declare that this element triggers a popup (`aria-haspopup`).
++    /// `aria-haspopup="true"` maps to `Menu` per the ARIA 1.2 alias.
++    fn aria_has_popup(mut self, has_popup: accesskit::HasPopup) -> Self {
++        self.interactivity().aria.has_popup = Some(has_popup);
++        self
++    }
++
+     /// Register a handler for an accessibility action on this element.
+     /// The handler is called when a screen reader requests the given action.
+     ///
+@@ -2055,6 +2116,16 @@ pub(crate) struct AriaProperties {
+     pub(crate) column_index: Option<usize>,
+     pub(crate) row_count: Option<usize>,
+     pub(crate) column_count: Option<usize>,
++    pub(crate) disabled: Option<bool>,
++    pub(crate) busy: Option<bool>,
++    pub(crate) hidden: Option<bool>,
++    pub(crate) modal: Option<bool>,
++    pub(crate) read_only: Option<bool>,
++    pub(crate) required: Option<bool>,
++    pub(crate) role_description: Option<SharedString>,
++    pub(crate) live: Option<accesskit::Live>,
++    pub(crate) invalid: Option<accesskit::Invalid>,
++    pub(crate) has_popup: Option<accesskit::HasPopup>,
+ }
+ 
+ /// The interactivity struct. Powers all of the general-purpose
+@@ -3087,7 +3158,16 @@ impl Interactivity {
+                     let is_hovered = !cx.has_active_drag() && hitbox.is_hovered(window);
+                     if is_hovered != *was_hovered.borrow() {
+                         let update_hover = update_hover.clone();
++                        let hitbox = hitbox.clone();
++                        let has_mouse_down = has_mouse_down.clone();
+                         window.defer(cx, move |window, cx| {
++                            // Re-check at execution time: the mouse may have moved
++                            // between prepaint and this deferred callback, in which
++                            // case the captured value is stale and could resurrect a
++                            // hover the leave transition already suppressed.
++                            let is_hovered = has_mouse_down.borrow().is_none()
++                                && !cx.has_active_drag()
++                                && hitbox.is_hovered(window);
+                             update_hover(is_hovered, window, cx);
+                         });
+                     }
+@@ -3515,6 +3595,37 @@ impl Interactivity {
+         if let Some(count) = self.aria.column_count {
+             node.set_column_count(count);
+         }
++        // accesskit flags are set/clear pairs — `aria-*="false"` clears.
++        if let Some(disabled) = self.aria.disabled {
++            if disabled { node.set_disabled() } else { node.clear_disabled() }
++        }
++        if let Some(busy) = self.aria.busy {
++            if busy { node.set_busy() } else { node.clear_busy() }
++        }
++        if let Some(hidden) = self.aria.hidden {
++            if hidden { node.set_hidden() } else { node.clear_hidden() }
++        }
++        if let Some(modal) = self.aria.modal {
++            if modal { node.set_modal() } else { node.clear_modal() }
++        }
++        if let Some(read_only) = self.aria.read_only {
++            if read_only { node.set_read_only() } else { node.clear_read_only() }
++        }
++        if let Some(required) = self.aria.required {
++            if required { node.set_required() } else { node.clear_required() }
++        }
++        if let Some(description) = &self.aria.role_description {
++            node.set_role_description(description.to_string());
++        }
++        if let Some(live) = self.aria.live {
++            node.set_live(live);
++        }
++        if let Some(invalid) = self.aria.invalid {
++            node.set_invalid(invalid);
++        }
++        if let Some(has_popup) = self.aria.has_popup {
++            node.set_has_popup(has_popup);
++        }
+         if !self.click_listeners.is_empty() {
+             node.add_action(accesskit::Action::Click);
+         }
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index e37ab998dd..d10ddb6dd7 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -201,6 +201,7 @@ pub trait Platform: 'static {
+         &self,
+         directory: &Path,
+         suggested_name: Option<&str>,
++        filters: Vec<PathPromptFilter>,
+     ) -> oneshot::Receiver<Result<Option<PathBuf>>>;
+     fn can_select_mixed_files_and_dirs(&self) -> bool;
+     fn reveal_path(&self, path: &Path);
+@@ -825,6 +826,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+     fn window_bounds(&self) -> WindowBounds;
+     fn content_size(&self) -> Size<Pixels>;
+     fn resize(&mut self, size: Size<Pixels>);
++    fn set_position(&self, _position: Point<Pixels>) {}
+     fn scale_factor(&self) -> f32;
+     fn appearance(&self) -> WindowAppearance;
+     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+@@ -849,6 +851,15 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+     fn request_attention(&self) {}
+     fn is_active(&self) -> bool;
+     fn is_hovered(&self) -> bool;
++    /// Whether the window is completely covered or otherwise not visible on
++    /// screen. An occluded window's drawable pool starves — the compositor
++    /// retires its frames late — so presenting to one stalls the main thread
++    /// in `nextDrawable` for tens of milliseconds. Callers should keep the
++    /// scene fresh (draws update bounds, hit tests, accessibility) but skip
++    /// the present.
++    fn is_occluded(&self) -> bool {
++        false
++    }
+     fn background_appearance(&self) -> WindowBackgroundAppearance;
+     fn set_title(&mut self, title: &str);
+     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
+@@ -2180,7 +2191,7 @@ pub enum TextRenderingMode {
+ }
+ 
+ /// The options that can be configured for a file dialog prompt
+-#[derive(Clone, Debug)]
++#[derive(Clone, Debug, Default)]
+ pub struct PathPromptOptions {
+     /// Should the prompt allow files to be selected?
+     pub files: bool,
+@@ -2190,6 +2201,24 @@ pub struct PathPromptOptions {
+     pub multiple: bool,
+     /// The prompt to show to a user when selecting a path
+     pub prompt: Option<SharedString>,
++    /// File type filters for the prompt, e.g. "Images" -> `["png", "jpg"]`.
++    ///
++    /// When empty, all file types are selectable. Multiple filters behave as a
++    /// union: a file is selectable when it matches any filter's extensions.
++    /// Currently only implemented on macOS.
++    pub filters: Vec<PathPromptFilter>,
++}
++
++/// A named file-type filter for a file dialog prompt.
++///
++/// `name` is the display label ("Images") and `extensions` are the filename
++/// extensions it accepts, without a leading dot ("png").
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub struct PathPromptFilter {
++    /// The display name of the filter, e.g. "Images".
++    pub name: SharedString,
++    /// The filename extensions, without a leading dot, e.g. "png".
++    pub extensions: Vec<SharedString>,
+ }
+ 
+ /// What kind of prompt styling to show
+diff --git a/crates/gpui/src/platform/test/platform.rs b/crates/gpui/src/platform/test/platform.rs
+index 86c2297d84..fd3de64250 100644
+--- a/crates/gpui/src/platform/test/platform.rs
++++ b/crates/gpui/src/platform/test/platform.rs
+@@ -437,6 +437,7 @@ impl Platform for TestPlatform {
+         &self,
+         directory: &std::path::Path,
+         _suggested_name: Option<&str>,
++        _filters: Vec<crate::PathPromptFilter>,
+     ) -> oneshot::Receiver<Result<Option<std::path::PathBuf>>> {
+         let (tx, rx) = oneshot::channel();
+         self.prompts
+diff --git a/crates/gpui/src/platform/visual_test.rs b/crates/gpui/src/platform/visual_test.rs
+index f6fcf734a5..26ec392bfb 100644
+--- a/crates/gpui/src/platform/visual_test.rs
++++ b/crates/gpui/src/platform/visual_test.rs
+@@ -8,7 +8,7 @@
+ use crate::ScreenCaptureSource;
+ use crate::{
+     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
+-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
++    Menu, MenuItem, OwnedMenu, PathPromptFilter, PathPromptOptions, Platform, PlatformDisplay,
+     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
+     TestDispatcher, WindowAppearance, WindowParams,
+ };
+@@ -154,6 +154,7 @@ impl Platform for VisualTestPlatform {
+         &self,
+         _directory: &Path,
+         _suggested_name: Option<&str>,
++        _filters: Vec<PathPromptFilter>,
+     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+         let (tx, rx) = oneshot::channel();
+         tx.send(Ok(None)).ok();
+diff --git a/crates/gpui/src/scene.rs b/crates/gpui/src/scene.rs
+index 122f7b2d7c..5e39416c9d 100644
+--- a/crates/gpui/src/scene.rs
++++ b/crates/gpui/src/scene.rs
+@@ -87,7 +87,7 @@ impl Scene {
+     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
+         let mut primitive = primitive.into();
+         let clipped_bounds = primitive
+-            .bounds()
++            .painted_bounds()
+             .intersect(&primitive.content_mask().bounds);
+ 
+         if clipped_bounds.is_empty() {
+@@ -257,6 +257,32 @@ impl Primitive {
+             Primitive::Surface(surface) => &surface.content_mask,
+         }
+     }
++
++    /// Bounds in painted space. Primitives with a shader-side transformation
++    /// report their layout bounds, so the matrix is applied here to keep
++    /// culling and layer ordering in the same coordinate space as content
++    /// masks. Paths transform their vertices on the CPU, and surfaces do not
++    /// transform — their stored bounds are already painted space.
++    pub fn painted_bounds(&self) -> Bounds<ScaledPixels> {
++        match self {
++            Primitive::Shadow(shadow) => shadow.transformation.apply_bounds_scaled(shadow.bounds),
++            Primitive::Quad(quad) => quad.transformation.apply_bounds_scaled(quad.bounds),
++            Primitive::Path(path) => path.bounds,
++            Primitive::Underline(underline) => {
++                underline.transformation.apply_bounds_scaled(underline.bounds)
++            }
++            Primitive::MonochromeSprite(sprite) => {
++                sprite.transformation.apply_bounds_scaled(sprite.bounds)
++            }
++            Primitive::SubpixelSprite(sprite) => {
++                sprite.transformation.apply_bounds_scaled(sprite.bounds)
++            }
++            Primitive::PolychromeSprite(sprite) => {
++                sprite.transformation.apply_bounds_scaled(sprite.bounds)
++            }
++            Primitive::Surface(surface) => surface.bounds,
++        }
++    }
+ }
+ 
+ #[cfg_attr(
+@@ -541,6 +567,7 @@ pub struct Quad {
+     pub border_color: Hsla,
+     pub corner_radii: Corners<ScaledPixels>,
+     pub border_widths: Edges<ScaledPixels>,
++    pub transformation: TransformationMatrix,
+ }
+ 
+ impl From<Quad> for Primitive {
+@@ -560,6 +587,7 @@ pub struct Underline {
+     pub color: Hsla,
+     pub thickness: ScaledPixels,
+     pub wavy: PaddedBool32,
++    pub transformation: TransformationMatrix,
+ }
+ 
+ impl From<Underline> for Primitive {
+@@ -583,6 +611,7 @@ pub struct Shadow {
+     /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
+     pub inset: u32,
+     pub pad: u32, // align to 8 bytes
++    pub transformation: TransformationMatrix,
+ }
+ 
+ impl From<Shadow> for Primitive {
+@@ -632,6 +661,16 @@ impl TransformationMatrix {
+         })
+     }
+ 
++    /// Move the origin by a point in `Pixels` space, for matrices that will be
++    /// applied to `Pixels` geometry (window-level transforms). Convert with
++    /// `scale_translation` before handing the matrix to a shader.
++    pub fn translate_pixels(mut self, point: Point<Pixels>) -> Self {
++        self.compose(Self {
++            rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
++            translation: [point.x.0, point.y.0],
++        })
++    }
++
+     /// Clockwise rotation in radians around the origin
+     pub fn rotate(self, angle: Radians) -> Self {
+         self.compose(Self {
+@@ -697,6 +736,89 @@ impl TransformationMatrix {
+         }
+         Point::new(output[0].into(), output[1].into())
+     }
++
++    /// Apply transformation to axis-aligned bounds, returning the smallest
++    /// axis-aligned bounds that contain the transformed corners. Exact for
++    /// translations, scales and skews along one axis; conservative for
++    /// rotations (the rotated rect does not fit an axis-aligned box).
++    pub fn apply_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
++        if *self == Self::unit() {
++            return bounds;
++        }
++        let corners = [
++            bounds.origin,
++            bounds.top_right(),
++            bounds.bottom_left(),
++            bounds.bottom_right(),
++        ];
++        let mut min = self.apply(corners[0]);
++        let mut max = min;
++        for corner in &corners[1..] {
++            let p = self.apply(*corner);
++            min.x = min.x.min(p.x);
++            min.y = min.y.min(p.y);
++            max.x = max.x.max(p.x);
++            max.y = max.y.max(p.y);
++        }
++        Bounds::from_corners(min, max)
++    }
++
++    /// Whether this matrix is the identity transformation.
++    pub fn is_unit(&self) -> bool {
++        *self == Self::unit()
++    }
++
++    /// Scale the translation component by the given factor, converting the
++    /// matrix between pixel units. The rotation/scale part is dimensionless
++    /// and unchanged. Used to move a matrix from `Pixels` space (logical
++    /// window coordinates) into `ScaledPixels` space (device coordinates)
++    /// before handing it to a shader.
++    pub fn scale_translation(&self, factor: f32) -> Self {
++        Self {
++            rotation_scale: self.rotation_scale,
++            translation: [self.translation[0] * factor, self.translation[1] * factor],
++        }
++    }
++
++    /// Apply transformation to a point in `ScaledPixels` space.
++    pub fn apply_scaled(&self, point: Point<ScaledPixels>) -> Point<ScaledPixels> {
++        let input = [point.x.0, point.y.0];
++        let mut output = self.translation;
++        for (i, output_cell) in output.iter_mut().enumerate() {
++            for (k, input_cell) in input.iter().enumerate() {
++                *output_cell += self.rotation_scale[i][k] * *input_cell;
++            }
++        }
++        Point::new(output[0].into(), output[1].into())
++    }
++
++    /// Apply transformation to axis-aligned bounds in `ScaledPixels` space,
++    /// returning the smallest axis-aligned bounds containing the transformed
++    /// corners. Conservative under rotation.
++    pub fn apply_bounds_scaled(
++        &self,
++        bounds: Bounds<ScaledPixels>,
++    ) -> Bounds<ScaledPixels> {
++        if *self == Self::unit() {
++            return bounds;
++        }
++        let corners = [
++            bounds.origin,
++            bounds.top_right(),
++            bounds.bottom_left(),
++            bounds.bottom_right(),
++        ];
++        let mut min = self.apply_scaled(corners[0]);
++        let mut max = min;
++        for corner in &corners[1..] {
++            let p = self.apply_scaled(*corner);
++            min.x = min.x.min(p.x);
++            min.y = min.y.min(p.y);
++            max.x = max.x.max(p.x);
++            max.y = max.y.max(p.y);
++        }
++        Bounds::from_corners(min, max)
++    }
+ }
+ 
+ impl Default for TransformationMatrix {
+@@ -755,6 +877,7 @@ pub struct PolychromeSprite {
+     pub content_mask: ContentMask<ScaledPixels>,
+     pub corner_radii: Corners<ScaledPixels>,
+     pub tile: AtlasTile,
++    pub transformation: TransformationMatrix,
+ }
+ 
+ impl From<PolychromeSprite> for Primitive {
+@@ -857,6 +980,21 @@ impl Path<Pixels> {
+         }
+     }
+ 
++    /// Apply a transformation to every vertex position and to the path's
++    /// bounds. Unlike primitive-level shader transformations this is exact
++    /// for any matrix, including rotations, because vertices are just points.
++    pub fn transformed(&mut self, transformation: TransformationMatrix) {
++        if transformation.is_unit() {
++            return;
++        }
++        for vertex in &mut self.vertices {
++            vertex.xy_position = transformation.apply(vertex.xy_position);
++        }
++        self.bounds = transformation.apply_bounds(self.bounds);
++        self.start = transformation.apply(self.start);
++        self.current = transformation.apply(self.current);
++    }
++
+     /// Move the start, current point to the given point.
+     pub fn move_to(&mut self, to: Point<Pixels>) {
+         self.contour_count += 1;
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+index 9150fdded9..dc4f9122d7 100644
+--- a/crates/gpui/src/style.rs
++++ b/crates/gpui/src/style.rs
+@@ -478,6 +478,10 @@ pub struct TextStyle {
+     /// How the text should be aligned within the element
+     pub text_align: TextAlign,
+ 
++    /// Extra spacing between glyphs, in pixels (CSS `letter-spacing`).
++    /// `None` leaves platform default tracking (0).
++    pub letter_spacing: Option<Pixels>,
++
+     /// The number of lines to display before truncating the text
+     pub line_clamp: Option<usize>,
+ }
+@@ -500,6 +504,7 @@ impl Default for TextStyle {
+             white_space: WhiteSpace::Normal,
+             text_overflow: None,
+             text_align: TextAlign::default(),
++            letter_spacing: None,
+             line_clamp: None,
+         }
+     }
+@@ -570,6 +575,7 @@ impl TextStyle {
+             background_color: self.background_color,
+             underline: self.underline,
+             strikethrough: self.strikethrough,
++            letter_spacing: self.letter_spacing.unwrap_or(px(0.)),
+         }
+     }
+ }
+diff --git a/crates/gpui/src/styled.rs b/crates/gpui/src/styled.rs
+index a24982a6ac..0fc7df3c72 100644
+--- a/crates/gpui/src/styled.rs
++++ b/crates/gpui/src/styled.rs
+@@ -2,7 +2,7 @@ use crate::{
+     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
+     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
+     FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent, Length,
+-    SharedString, StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow,
++    Pixels, SharedString, StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow,
+     TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
+ };
+ pub use gpui_macros::{
+@@ -742,6 +742,13 @@ pub trait Styled: Sized {
+         self
+     }
+ 
++    /// Sets extra spacing between glyphs (CSS `letter-spacing`) for this
++    /// element and its children.
++    fn letter_spacing(mut self, spacing: impl Into<Pixels>) -> Self {
++        self.text_style().letter_spacing = Some(spacing.into());
++        self
++    }
++
+     /// Sets the opacity of this element and its children.
+     fn opacity(mut self, opacity: f32) -> Self {
+         self.style().opacity = Some(opacity);
+diff --git a/crates/gpui/src/text_system.rs b/crates/gpui/src/text_system.rs
+index 3346389319..9840b7cd3c 100644
+--- a/crates/gpui/src/text_system.rs
++++ b/crates/gpui/src/text_system.rs
+@@ -231,6 +231,7 @@ impl TextSystem {
+                 &[FontRun {
+                     len: buffer.len(),
+                     font_id,
++                    letter_spacing: px(0.),
+                 }],
+             )
+             .width
+@@ -572,6 +573,7 @@ impl WindowTextSystem {
+                 let font_id = self.resolve_font(&run.font);
+                 if let Some(font_run) = font_runs.last_mut()
+                     && font_id == font_run.font_id
++                    && run.letter_spacing == font_run.letter_spacing
+                     && !decoration_changed
+                 {
+                     font_run.len += run_len_within_line;
+@@ -579,6 +581,7 @@ impl WindowTextSystem {
+                     font_runs.push(FontRun {
+                         len: run_len_within_line,
+                         font_id,
++                        letter_spacing: run.letter_spacing,
+                     });
+                 }
+ 
+@@ -686,6 +689,7 @@ impl WindowTextSystem {
+             let font_id = self.resolve_font(&run.font);
+             if let Some(font_run) = font_runs.last_mut()
+                 && font_id == font_run.font_id
++                && run.letter_spacing == font_run.letter_spacing
+                 && !decoration_changed
+             {
+                 font_run.len += run.len;
+@@ -693,6 +697,7 @@ impl WindowTextSystem {
+                 font_runs.push(FontRun {
+                     len: run.len,
+                     font_id,
++                    letter_spacing: run.letter_spacing,
+                 });
+             }
+         }
+@@ -720,6 +725,7 @@ impl WindowTextSystem {
+                 &[FontRun {
+                     len: buffer.len(),
+                     font_id,
++                    letter_spacing: px(0.),
+                 }],
+                 None,
+             )
+@@ -768,6 +774,7 @@ impl WindowTextSystem {
+             let font_id = self.resolve_font(&run.font);
+             if let Some(font_run) = font_runs.last_mut()
+                 && font_id == font_run.font_id
++                && run.letter_spacing == font_run.letter_spacing
+                 && !decoration_changed
+             {
+                 font_run.len += run.len;
+@@ -775,6 +782,7 @@ impl WindowTextSystem {
+                 font_runs.push(FontRun {
+                     len: run.len,
+                     font_id,
++                    letter_spacing: run.letter_spacing,
+                 });
+             }
+         }
+@@ -830,6 +838,7 @@ impl WindowTextSystem {
+             let font_id = self.resolve_font(&run.font);
+             if let Some(font_run) = font_runs.last_mut()
+                 && font_id == font_run.font_id
++                && run.letter_spacing == font_run.letter_spacing
+                 && !decoration_changed
+             {
+                 font_run.len += run.len;
+@@ -837,6 +846,7 @@ impl WindowTextSystem {
+                 font_runs.push(FontRun {
+                     len: run.len,
+                     font_id,
++                    letter_spacing: run.letter_spacing,
+                 });
+             }
+         }
+@@ -1013,6 +1023,8 @@ pub struct TextRun {
+     pub underline: Option<UnderlineStyle>,
+     /// The strikethrough style (if any)
+     pub strikethrough: Option<StrikethroughStyle>,
++    /// Extra per-glyph spacing (letter-spacing / tracking).
++    pub letter_spacing: Pixels,
+ }
+ 
+ #[cfg(all(target_os = "macos", test))]
+diff --git a/crates/gpui/src/text_system/line_layout.rs b/crates/gpui/src/text_system/line_layout.rs
+index e7362f71e5..3a92935008 100644
+--- a/crates/gpui/src/text_system/line_layout.rs
++++ b/crates/gpui/src/text_system/line_layout.rs
+@@ -877,6 +877,9 @@ fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
+ pub struct FontRun {
+     pub len: usize,
+     pub font_id: FontId,
++    /// Extra per-glyph spacing (letter-spacing / tracking). `px(0.)` is the
++    /// default; platforms that don't apply it ignore the field.
++    pub letter_spacing: Pixels,
+ }
+ 
+ trait AsCacheKeyRef {
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 3e550402b1..527d358d1d 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -45,7 +45,7 @@ use smallvec::SmallVec;
+ use std::{
+     any::{Any, TypeId},
+     borrow::Cow,
+-    cell::{Cell, RefCell},
++    cell::{BorrowMutError, Cell, RefCell},
+     cmp,
+     fmt::{Debug, Display},
+     hash::{Hash, Hasher},
+@@ -963,6 +963,7 @@ pub(crate) struct DeferredDraw {
+     rem_size: Pixels,
+     element: Option<AnyElement>,
+     absolute_offset: Point<Pixels>,
++    transformation: TransformationMatrix,
+     prepaint_range: Range<PrepaintStateIndex>,
+     paint_range: Range<PaintIndex>,
+ }
+@@ -1161,6 +1162,7 @@ pub struct Window {
+     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
+     pub(crate) rendered_entity_stack: Vec<EntityId>,
+     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
++    pub(crate) element_transform_stack: Vec<TransformationMatrix>,
+     pub(crate) element_opacity: f32,
+     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
+     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+@@ -1188,6 +1190,11 @@ pub struct Window {
+     active: Rc<Cell<bool>>,
+     hovered: Rc<Cell<bool>>,
+     pub(crate) needs_present: Rc<Cell<bool>>,
++    /// While set, `present()` is a no-op — draws still run so layout,
++    /// bounds listeners, and hit testing stay current, but no scene
++    /// reaches the screen. Used by forced synchronous layout passes whose
++    /// intermediate scene must never be presented.
++    pub(crate) present_suppressed_until: Option<Instant>,
+     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
+     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
+     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
+@@ -1578,9 +1585,9 @@ impl Window {
+                 let force_render =
+                     mem::take(&mut deferred_force_render) || request_frame_options.force_render;
+ 
+-                let thermal_state = handle
+-                    .update(&mut cx, |_, _, cx| cx.thermal_state())
+-                    .log_err();
++                let thermal_state = or_log_unless_borrowed(
++                    handle.update(&mut cx, |_, _, cx| cx.thermal_state()),
++                );
+ 
+                 // Throttle frame rate based on conditions:
+                 // - Thermal pressure (Serious/Critical): cap to ~60fps
+@@ -1606,11 +1613,9 @@ impl Window {
+                         // Don't lose a pending forced render to throttling.
+                         deferred_force_render |= force_render;
+                         // Deferred by throttling: ask demand-driven platforms to retry.
+-                        handle
+-                            .update(&mut cx, |_, window, _| {
+-                                window.platform_window.schedule_frame();
+-                            })
+-                            .log_err();
++                        or_log_unless_borrowed(handle.update(&mut cx, |_, window, _| {
++                            window.platform_window.schedule_frame();
++                        }));
+                         // The demand that entered this branch (a deferred forced
+                         // render or pending next-frame callbacks) is still
+                         // unserved; platforms that stop requesting frames for
+@@ -1621,15 +1626,15 @@ impl Window {
+                 }
+                 last_frame_time.set(Some(now));
+ 
+-                let pending_next_frame_callbacks = next_frame_callbacks.take();
+-                if !pending_next_frame_callbacks.is_empty() {
+-                    handle
+-                        .update(&mut cx, |_, window, cx| {
+-                            for callback in pending_next_frame_callbacks {
+-                                callback(window, cx);
+-                            }
+-                        })
+-                        .log_err();
++                // Take the callbacks inside the update: if the App borrow is
++                // contended they stay queued and run on a later frame instead
++                // of being dropped with the failed update.
++                if !next_frame_callbacks.borrow().is_empty() {
++                    or_log_unless_borrowed(handle.update(&mut cx, |_, window, cx| {
++                        for callback in window.next_frame_callbacks.take() {
++                            callback(window, cx);
++                        }
++                    }));
+                 }
+ 
+                 // Keep presenting if input was recently arriving at a high rate (>= 60fps).
+@@ -1641,34 +1646,30 @@ impl Window {
+ 
+                 if invalidator.is_dirty() || force_render {
+                     measure("frame duration", || {
+-                        handle
+-                            .update(&mut cx, |_, window, cx| {
+-                                if force_render {
+-                                    // Bypass cached view reuse so we don't replay stale
+-                                    // atlas tile references after a GPU device recovery.
+-                                    window.refresh();
+-                                }
+-                                let arena_clear_needed = window.draw(cx);
+-                                window.present();
+-                                arena_clear_needed.clear(cx);
+-                            })
+-                            .log_err();
++                        or_log_unless_borrowed(handle.update(&mut cx, |_, window, cx| {
++                            if force_render {
++                                // Bypass cached view reuse so we don't replay stale
++                                // atlas tile references after a GPU device recovery.
++                                window.refresh();
++                            }
++                            let arena_clear_needed = window.draw(cx);
++                            window.present();
++                            arena_clear_needed.clear(cx);
++                        }));
+                     })
+                 } else if needs_present {
+-                    handle
+-                        .update(&mut cx, |_, window, _| window.present())
+-                        .log_err();
++                    or_log_unless_borrowed(
++                        handle.update(&mut cx, |_, window, _| window.present()),
++                    );
+                 }
+ 
+-                handle
+-                    .update(&mut cx, |_, window, _| {
+-                        if window.invalidator.is_dirty()
+-                            || !window.next_frame_callbacks.borrow().is_empty()
+-                        {
+-                            window.platform_window.schedule_frame();
+-                        }
+-                    })
+-                    .log_err();
++                or_log_unless_borrowed(handle.update(&mut cx, |_, window, _| {
++                    if window.invalidator.is_dirty()
++                        || !window.next_frame_callbacks.borrow().is_empty()
++                    {
++                        window.platform_window.schedule_frame();
++                    }
++                }));
+ 
+                 // Platforms that stop requesting frames for idle windows only
+                 // deliver another request after a wakeup. If demand remains
+@@ -1681,20 +1682,86 @@ impl Window {
+             }
+         }));
+         invalidator.set_platform_waker(platform_window.frame_waker());
++        // AppKit may invoke these callbacks re-entrantly while the AppCell is
++        // already mutably borrowed (e.g. a synchronous AppKit call made inside
++        // `App::update`). A failed update would silently drop the notification,
++        // so retry it on the next turn of the foreground executor instead.
++        fn update_or_defer(
++            handle: AnyWindowHandle,
++            cx: &mut crate::AsyncApp,
++            update: impl Fn(AnyView, &mut Window, &mut App) + Copy + 'static,
++        ) {
++            // Borrow contention is transient on this single-threaded runtime —
++            // every App borrow is a synchronous scope that ends when the outer
++            // call returns — so a `BorrowMutError` re-queues on the next
++            // main-queue drain until the update lands. Retrying is unbounded
++            // because under re-entrant pumping (AppKit drains the main queue
++            // inside a nested runloop while a platform op holds the borrow)
++            // *every* drain can be contended for as long as the outer calls
++            // continue; a bound would only convert expected contention into
++            // dropped notifications. Any other error is terminal — closed
++            // window, quitting or released app — the notification has nowhere
++            // to go, so the retry stops there.
++            fn defer(
++                handle: AnyWindowHandle,
++                mut cx: crate::AsyncApp,
++                update: impl Fn(AnyView, &mut Window, &mut App) + Copy + 'static,
++            ) {
++                let foreground_executor = cx.foreground_executor().clone();
++                foreground_executor
++                    .spawn(async move {
++                        match handle.update(&mut cx, update) {
++                            Ok(_) => {}
++                            Err(error) if error.is::<BorrowMutError>() => {
++                                defer(handle, cx, update)
++                            }
++                            Err(error) => {
++                                log::debug!("dropping window callback: {error:#}")
++                            }
++                        }
++                    })
++                    .detach();
++            }
++
++            match handle.update(cx, update) {
++                Ok(_) => {}
++                Err(error) if error.is::<BorrowMutError>() => {
++                    defer(handle, cx.clone(), update)
++                }
++                Err(error) => log::debug!("dropping window callback: {error:#}"),
++            }
++        }
++
++        // Frame-path variant of the same contention rule: a contended
++        // `handle.update` loses at most one frame's work — the invalidator
++        // stays dirty and `wake_platform` below re-arms the frame source — so
++        // a `BorrowMutError` is skipped quietly while any other failure still
++        // logs.
++        fn or_log_unless_borrowed<T>(result: Result<T>) -> Option<T> {
++            match result {
++                Ok(value) => Some(value),
++                Err(error) if error.is::<BorrowMutError>() => None,
++                Err(error) => {
++                    log::error!("{error:#}");
++                    None
++                }
++            }
++        }
++
+         platform_window.on_resize(Box::new({
+             let mut cx = cx.to_async();
+             move |_, _| {
+-                handle
+-                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
+-                    .log_err();
++                update_or_defer(handle, &mut cx, |_, window, cx| {
++                    window.bounds_changed(cx)
++                });
+             }
+         }));
+         platform_window.on_moved(Box::new({
+             let mut cx = cx.to_async();
+             move || {
+-                handle
+-                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
+-                    .log_err();
++                update_or_defer(handle, &mut cx, |_, window, cx| {
++                    window.bounds_changed(cx)
++                });
+             }
+         }));
+         platform_window.on_appearance_changed(Box::new({
+@@ -1716,41 +1783,37 @@ impl Window {
+         platform_window.on_button_layout_changed(Box::new({
+             let mut cx = cx.to_async();
+             move || {
+-                handle
+-                    .update(&mut cx, |_, window, cx| window.button_layout_changed(cx))
+-                    .log_err();
++                update_or_defer(handle, &mut cx, |_, window, cx| {
++                    window.button_layout_changed(cx)
++                });
+             }
+         }));
+         platform_window.on_active_status_change(Box::new({
+             let mut cx = cx.to_async();
+             move |active| {
+-                handle
+-                    .update(&mut cx, |_, window, cx| {
+-                        window.active.set(active);
+-                        window.modifiers = window.platform_window.modifiers();
+-                        window.capslock = window.platform_window.capslock();
+-                        window
+-                            .activation_observers
+-                            .clone()
+-                            .retain(&(), |callback| callback(window, cx));
+-
+-                        window.bounds_changed(cx);
+-                        window.refresh();
+-
+-                        SystemWindowTabController::update_last_active(cx, window.handle.id);
+-                    })
+-                    .log_err();
++                update_or_defer(handle, &mut cx, move |_, window, cx| {
++                    window.active.set(active);
++                    window.modifiers = window.platform_window.modifiers();
++                    window.capslock = window.platform_window.capslock();
++                    window
++                        .activation_observers
++                        .clone()
++                        .retain(&(), |callback| callback(window, cx));
++
++                    window.bounds_changed(cx);
++                    window.refresh();
++
++                    SystemWindowTabController::update_last_active(cx, window.handle.id);
++                });
+             }
+         }));
+         platform_window.on_hover_status_change(Box::new({
+             let mut cx = cx.to_async();
+             move |active| {
+-                handle
+-                    .update(&mut cx, |_, window, _| {
+-                        window.hovered.set(active);
+-                        window.refresh();
+-                    })
+-                    .log_err();
++                update_or_defer(handle, &mut cx, move |_, window, _| {
++                    window.hovered.set(active);
++                    window.refresh();
++                });
+             }
+         }));
+         platform_window.on_input({
+@@ -1856,6 +1919,7 @@ impl Window {
+             text_style_stack: Vec::new(),
+             rendered_entity_stack: Vec::new(),
+             element_offset_stack: Vec::new(),
++            element_transform_stack: Vec::new(),
+             content_mask_stack: Vec::new(),
+             element_opacity: 1.0,
+             requested_autoscroll: None,
+@@ -1882,6 +1946,7 @@ impl Window {
+             active,
+             hovered,
+             needs_present,
++            present_suppressed_until: None,
+             input_rate_tracker,
+             #[cfg(feature = "profiler")]
+             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
+@@ -1998,6 +2063,25 @@ impl Window {
+         subscription
+     }
+ 
++    /// Registers a callback to be invoked when the window bounds change.
++    ///
++    /// This fires for both moves and resizes; inspect `window.bounds()` in the
++    /// callback to distinguish them.
++    pub fn observe_window_bounds(
++        &self,
++        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
++    ) -> Subscription {
++        let (subscription, activate) = self.bounds_observers.insert(
++            (),
++            Box::new(move |window, cx| {
++                callback(window, cx);
++                true
++            }),
++        );
++        activate();
++        subscription
++    }
++
+     /// Replaces the root entity of the window with a new one.
+     pub fn replace_root<E>(
+         &mut self,
+@@ -2533,6 +2617,11 @@ impl Window {
+         self.platform_window.resize(size);
+     }
+ 
++    /// Set the position of the window in the global coordinate space.
++    pub fn set_position(&mut self, position: Point<Pixels>) {
++        self.platform_window.set_position(position);
++    }
++
+     /// Returns whether or not the window is currently fullscreen
+     pub fn is_fullscreen(&self) -> bool {
+         self.platform_window.is_fullscreen()
+@@ -3081,8 +3170,33 @@ impl Window {
+         self.invalidator.replace_views(views);
+     }
+ 
++    /// Suppresses presentation until `deadline` — draws still run so
++    /// layout, bounds listeners, and hit testing stay current, but no
++    /// scene reaches the screen. A forced synchronous layout pass uses
++    /// this to keep its intermediate (un-styled) frame off the display;
++    /// callers clear it early via `clear_present_suppression` once the
++    /// follow-up state has landed.
++    pub fn suppress_presents_until(&mut self, deadline: Instant) {
++        self.present_suppressed_until = Some(deadline);
++    }
++
++    /// Ends a `suppress_presents_until` hold immediately.
++    pub fn clear_present_suppression(&mut self) {
++        self.present_suppressed_until = None;
++    }
++
+     #[profiling::function]
+     fn present(&mut self) {
++        // Suppressed presents are deferred, not dropped: re-arm
++        // needs_present so a later tick retries — covers callers like
++        // present_cached_frame that arrive with the flag already clear.
++        if let Some(deadline) = self.present_suppressed_until {
++            if Instant::now() < deadline {
++                self.needs_present.set(true);
++                return;
++            }
++            self.present_suppressed_until = None;
++        }
+         #[cfg(feature = "profiler")]
+         let _foreground_turn = profiler::journal::foreground_turn();
+         #[cfg(feature = "profiler")]
+@@ -3380,7 +3494,15 @@ impl Window {
+             traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
+ 
+             for deferred_draw_ix in traversal_order {
+-                let (element, parent_node, current_view, rem_size, absolute_offset, prepaint_range) = {
++                let (
++                    element,
++                    parent_node,
++                    current_view,
++                    rem_size,
++                    absolute_offset,
++                    transformation,
++                    prepaint_range,
++                ) = {
+                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
+                     self.element_id_stack
+                         .clone_from(&deferred_draw.element_id_stack);
+@@ -3392,6 +3514,7 @@ impl Window {
+                         deferred_draw.current_view,
+                         deferred_draw.rem_size,
+                         deferred_draw.absolute_offset,
++                        deferred_draw.transformation,
+                         deferred_draw.prepaint_range.clone(),
+                     )
+                 };
+@@ -3402,7 +3525,9 @@ impl Window {
+                     self.with_rendered_view(current_view, |window| {
+                         window.with_rem_size(Some(rem_size), |window| {
+                             window.with_absolute_element_offset(absolute_offset, |window| {
+-                                element.prepaint(window, cx);
++                                window.with_element_transformation(transformation, |window| {
++                                    element.prepaint(window, cx);
++                                });
+                             });
+                         });
+                     });
+@@ -3442,11 +3567,14 @@ impl Window {
+ 
+             let paint_start = self.paint_index();
+             let content_mask = deferred_draw.content_mask;
++            let transformation = deferred_draw.transformation;
+             if let Some(element) = deferred_draw.element.as_mut() {
+                 self.with_rendered_view(deferred_draw.current_view, |window| {
+                     window.with_content_mask(content_mask, |window| {
+                         window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+-                            element.paint(window, cx);
++                            window.with_element_transformation(transformation, |window| {
++                                element.paint(window, cx);
++                            });
+                         });
+                     })
+                 })
+@@ -3523,6 +3651,7 @@ impl Window {
+                     priority: deferred_draw.priority,
+                     element: None,
+                     absolute_offset: deferred_draw.absolute_offset,
++                    transformation: deferred_draw.transformation,
+                     prepaint_range: deferred_draw.prepaint_range.clone(),
+                     paint_range: deferred_draw.paint_range.clone(),
+                 }),
+@@ -3649,7 +3778,13 @@ impl Window {
+     ) -> R {
+         self.invalidator.debug_assert_paint_or_prepaint();
+         if let Some(mask) = mask {
+-            let mask = mask.intersect(&self.content_mask());
++            // Masks live in window space like the transformed primitive
++            // positions they clip, so a mask declared inside a transformed
++            // element follows the same matrix.
++            let mask = ContentMask {
++                bounds: self.element_transformation().apply_bounds(mask.bounds),
++            }
++            .intersect(&self.content_mask());
+             self.content_mask_stack.push(mask);
+             let result = f(self);
+             self.content_mask_stack.pop();
+@@ -3691,6 +3826,43 @@ impl Window {
+         result
+     }
+ 
++    /// Obtain the transformation currently applied to elements, or the unit
++    /// matrix when no transformation is active. This method should only be
++    /// called during element drawing.
++    pub fn element_transformation(&self) -> TransformationMatrix {
++        self.element_transform_stack
++            .last()
++            .copied()
++            .unwrap_or_default()
++    }
++
++    /// Invoke the given function with a transformation applied to all painted
++    /// primitives and hitboxes inside it, like a CSS `transform`. The given
++    /// transformation is composed after any already-active transformation, so
++    /// nested transformed elements multiply correctly.
++    ///
++    /// Layout is unaffected: primitives keep their layout bounds and the
++    /// matrix is applied in the vertex shader, so this may be called during
++    /// both the prepaint (hitboxes, content masks) and paint phases of
++    /// element drawing.
++    pub fn with_element_transformation<R>(
++        &mut self,
++        transformation: TransformationMatrix,
++        f: impl FnOnce(&mut Self) -> R,
++    ) -> R {
++        self.invalidator.debug_assert_paint_or_prepaint();
++
++        if transformation.is_unit() {
++            return f(self);
++        };
++
++        let composed = self.element_transformation().compose(transformation);
++        self.element_transform_stack.push(composed);
++        let result = f(self);
++        self.element_transform_stack.pop();
++        result
++    }
++
+     pub(crate) fn with_element_opacity<R>(
+         &mut self,
+         opacity: Option<f32>,
+@@ -4029,6 +4201,7 @@ impl Window {
+             priority,
+             element: Some(element),
+             absolute_offset,
++            transformation: self.element_transformation(),
+             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
+             paint_range: PaintIndex::default()..PaintIndex::default(),
+         });
+@@ -4077,6 +4250,7 @@ impl Window {
+         let opacity = self.element_opacity();
+         let element_bounds = self.cover_bounds(bounds);
+         let element_corner_radii = corner_radii.scale(scale_factor);
++        let transformation = self.element_transformation().scale_translation(scale_factor);
+         for shadow in shadows {
+             if shadow.inset {
+                 continue;
+@@ -4093,6 +4267,7 @@ impl Window {
+                 element_corner_radii,
+                 inset: 0,
+                 pad: 0,
++                transformation,
+             });
+         }
+     }
+@@ -4113,6 +4288,7 @@ impl Window {
+         let opacity = self.element_opacity();
+         let element_bounds = self.cover_bounds(bounds);
+         let element_corner_radii = corner_radii.scale(scale_factor);
++        let transformation = self.element_transformation().scale_translation(scale_factor);
+         for shadow in shadows {
+             if !shadow.inset {
+                 continue;
+@@ -4138,6 +4314,7 @@ impl Window {
+                 element_corner_radii,
+                 inset: 1,
+                 pad: 0,
++                transformation,
+             });
+         }
+     }
+@@ -4205,6 +4382,7 @@ impl Window {
+             corner_radii: quad.corner_radii.scale(self.scale_factor()),
+             border_widths: snapped_border_widths,
+             border_style: quad.border_style,
++            transformation: self.element_transformation().scale_translation(self.scale_factor()),
+         };
+ 
+         if !quad.background.is_transparent() {
+@@ -4270,6 +4448,9 @@ impl Window {
+         path.content_mask = content_mask;
+         let color: Background = color.into();
+         path.color = color.opacity(opacity);
++        // Paths have no shader-side transformation, so vertices are moved on
++        // the CPU — exact for rotations, which bounds transforms cannot do.
++        path.transformed(self.element_transformation());
+         self.next_frame
+             .scene
+             .insert_primitive(path.scale(scale_factor));
+@@ -4307,6 +4488,7 @@ impl Window {
+             color: style.color.unwrap_or_default().opacity(element_opacity),
+             thickness,
+             wavy: style.wavy.into(),
++            transformation: self.element_transformation().scale_translation(scale_factor),
+         });
+     }
+ 
+@@ -4337,6 +4519,7 @@ impl Window {
+             thickness: self.snap_stroke(style.thickness),
+             color: style.color.unwrap_or_default().opacity(opacity),
+             wavy: false.into(),
++            transformation: self.element_transformation().scale_translation(scale_factor),
+         });
+     }
+ 
+@@ -4401,6 +4584,7 @@ impl Window {
+             };
+             let content_mask = self.snapped_content_mask();
+ 
++            let transformation = self.element_transformation().scale_translation(scale_factor);
+             if subpixel_rendering {
+                 self.next_frame.scene.insert_primitive(SubpixelSprite {
+                     order: 0,
+@@ -4409,7 +4593,7 @@ impl Window {
+                     content_mask,
+                     color: color.opacity(element_opacity),
+                     tile,
+-                    transformation: TransformationMatrix::unit(),
++                    transformation,
+                 });
+             } else {
+                 self.next_frame.scene.insert_primitive(MonochromeSprite {
+@@ -4419,7 +4603,7 @@ impl Window {
+                     content_mask,
+                     color: color.opacity(element_opacity),
+                     tile,
+-                    transformation: TransformationMatrix::unit(),
++                    transformation,
+                 });
+             }
+         }
+@@ -4502,6 +4686,7 @@ impl Window {
+                 content_mask,
+                 tile,
+                 opacity,
++                transformation: self.element_transformation().scale_translation(scale_factor),
+             });
+         }
+         Ok(())
+@@ -4566,7 +4751,10 @@ impl Window {
+             content_mask,
+             color: color.opacity(element_opacity),
+             tile,
+-            transformation,
++            transformation: self
++                .element_transformation()
++                .scale_translation(self.scale_factor())
++                .compose(transformation),
+         });
+ 
+         Ok(())
+@@ -4716,6 +4904,9 @@ impl Window {
+             corner_radii,
+             tile: sub_tile,
+             opacity,
++            transformation: self
++                .element_transformation()
++                .scale_translation(self.scale_factor()),
+         });
+         Ok(())
+     }
+@@ -4922,6 +5113,10 @@ impl Window {
+         self.invalidator.debug_assert_prepaint();
+ 
+         let content_mask = self.content_mask();
++        // Pointer input must land where the element is actually painted, so
++        // hitboxes follow the active element transformation (conservative
++        // axis-aligned approximation under rotation).
++        let bounds = self.element_transformation().apply_bounds(bounds);
+         let mut id = self.next_hitbox_id;
+         self.next_hitbox_id = self.next_hitbox_id.next();
+         let identity = (!self.element_id_stack.is_empty())
+diff --git a/crates/gpui_apple/src/shaders.metal b/crates/gpui_apple/src/shaders.metal
+index b2dba48709..efdeaee31b 100644
+--- a/crates/gpui_apple/src/shaders.metal
++++ b/crates/gpui_apple/src/shaders.metal
+@@ -20,6 +20,7 @@ float4 distance_from_clip_rect(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                                Bounds_ScaledPixels clip_bounds);
+ float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                                Bounds_ScaledPixels clip_bounds, TransformationMatrix transformation);
++float2 inverse_transform_point(float2 p, TransformationMatrix t);
+ float corner_dash_velocity(float dv1, float dv2);
+ float dash_alpha(float t, float period, float length, float dash_velocity,
+                  float antialias_threshold);
+@@ -74,9 +75,9 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
+   float2 unit_vertex = unit_vertices[unit_vertex_id];
+   Quad quad = quads[quad_id];
+   float4 device_position =
+-      to_device_position(unit_vertex, quad.bounds, viewport_size);
+-  float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
+-                                                 quad.content_mask.bounds);
++      to_device_position_transformed(unit_vertex, quad.bounds, quad.transformation, viewport_size);
++  float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, quad.bounds,
++                                                 quad.content_mask.bounds, quad.transformation);
+   float4 border_color = hsla_to_rgba(quad.border_color);
+ 
+   GradientColor gradient = prepare_fill_color(
+@@ -101,7 +102,11 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
+                               constant Quad *quads
+                               [[buffer(QuadInputIndex_Quads)]]) {
+   Quad quad = quads[input.quad_id];
+-  float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
++  // SDFs and gradient fills are evaluated in the quad's local space, so the
++  // device-space fragment position is inverse-mapped through the painted
++  // transformation. Identity matrices round-trip exactly.
++  float2 local_position = inverse_transform_point(input.position.xy, quad.transformation);
++  float4 background_color = fill_color(quad.background, local_position, quad.bounds,
+     input.background_solid, input.background_color0, input.background_color1);
+ 
+   bool unrounded = quad.corner_radii.top_left == 0.0 &&
+@@ -120,7 +125,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
+ 
+   float2 size = float2(quad.bounds.size.width, quad.bounds.size.height);
+   float2 half_size = size / 2.0;
+-  float2 point = input.position.xy - float2(quad.bounds.origin.x, quad.bounds.origin.y);
++  float2 point = local_position - float2(quad.bounds.origin.x, quad.bounds.origin.y);
+   float2 center_to_point = point - half_size;
+ 
+   // Signed distance field threshold for inclusion of pixels. 0.5 is the
+@@ -482,9 +487,10 @@ vertex ShadowVertexOutput shadow_vertex(
+   }
+ 
+   float4 device_position =
+-      to_device_position(unit_vertex, bounds, viewport_size);
++      to_device_position_transformed(unit_vertex, bounds, shadow.transformation, viewport_size);
+   float4 clip_distance =
+-      distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
++      distance_from_clip_rect_transformed(unit_vertex, bounds, shadow.content_mask.bounds,
++                                          shadow.transformation);
+   float4 color = hsla_to_rgba(shadow.color);
+ 
+   return ShadowVertexOutput{
+@@ -499,11 +505,12 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
+                                 [[buffer(ShadowInputIndex_Shadows)]]) {
+   Shadow shadow = shadows[input.shadow_id];
+ 
++  float2 local_position = inverse_transform_point(input.position.xy, shadow.transformation);
+   float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
+   float2 size = float2(shadow.bounds.size.width, shadow.bounds.size.height);
+   float2 half_size = size / 2.;
+   float2 center = origin + half_size;
+-  float2 point = input.position.xy - center;
++  float2 point = local_position - center;
+   float corner_radius;
+   if (point.x < 0.) {
+     if (point.y < 0.) {
+@@ -521,7 +528,7 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
+ 
+   float alpha;
+   if (shadow.blur_radius == 0.) {
+-    float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
++    float distance = quad_sdf(local_position, shadow.bounds, shadow.corner_radii);
+     alpha = saturate(0.5 - distance);
+   } else {
+     // The signal is only non-zero in a limited range, so don't waste samples
+@@ -546,7 +553,7 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
+     // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
+     // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
+     alpha = 1. - alpha;
+-    float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
++    float element_distance = quad_sdf(local_position, shadow.element_bounds,
+                                       shadow.element_corner_radii);
+     alpha *= saturate(0.5 - element_distance);
+   }
+@@ -576,9 +583,11 @@ vertex UnderlineVertexOutput underline_vertex(
+   float2 unit_vertex = unit_vertices[unit_vertex_id];
+   Underline underline = underlines[underline_id];
+   float4 device_position =
+-      to_device_position(unit_vertex, underline.bounds, viewport_size);
+-  float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
+-                                                 underline.content_mask.bounds);
++      to_device_position_transformed(unit_vertex, underline.bounds,
++                                     underline.transformation, viewport_size);
++  float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, underline.bounds,
++                                                 underline.content_mask.bounds,
++                                                 underline.transformation);
+   float4 color = hsla_to_rgba(underline.color);
+   return UnderlineVertexOutput{
+       device_position,
+@@ -599,7 +608,7 @@ fragment float4 underline_fragment(UnderlineFragmentInput input [[stage_in]],
+     float2 origin =
+         float2(underline.bounds.origin.x, underline.bounds.origin.y);
+ 
+-    float2 st = ((input.position.xy - origin) / underline.bounds.size.height) -
++    float2 st = ((inverse_transform_point(input.position.xy, underline.transformation) - origin) / underline.bounds.size.height) -
+                 float2(0., 0.5);
+     float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.height;
+     float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.height;
+@@ -697,9 +706,10 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
+   float2 unit_vertex = unit_vertices[unit_vertex_id];
+   PolychromeSprite sprite = sprites[sprite_id];
+   float4 device_position =
+-      to_device_position(unit_vertex, sprite.bounds, viewport_size);
+-  float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds,
+-                                                 sprite.content_mask.bounds);
++      to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
++  float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
++                                                 sprite.content_mask.bounds,
++                                                 sprite.transformation);
+   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
+   return PolychromeSpriteVertexOutput{
+       device_position,
+@@ -721,7 +731,8 @@ fragment float4 polychrome_sprite_fragment(
+                                              input.tile_position)
+                       : atlas_texture.sample(linear_sampler, input.tile_position);
+   float distance =
+-      quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
++      quad_sdf(inverse_transform_point(input.position.xy, sprite.transformation),
++               sprite.bounds, sprite.corner_radii);
+ 
+   float4 color = sample;
+   if (sprite.grayscale) {
+@@ -1035,6 +1046,25 @@ float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bo
+   return float4(device_position, 0., 1.);
+ }
+ 
++// Map a device-space point back into the primitive's local (pre-transform)
++// space, inverting to_device_position_transformed's matrix. Fragment shaders
++// evaluate SDFs and gradients in local space, so primitives painted under a
++// transformation keep correctly shaped corners and borders. The identity
++// matrix inverts exactly, so this is safe to call unconditionally.
++float2 inverse_transform_point(float2 p, TransformationMatrix t) {
++  float2 q = p - float2(t.translation[0], t.translation[1]);
++  float a = t.rotation_scale[0][0];
++  float b = t.rotation_scale[0][1];
++  float c = t.rotation_scale[1][0];
++  float d = t.rotation_scale[1][1];
++  float det = a * d - b * c;
++  if (abs(det) < 1e-8) {
++    return q;
++  }
++  float inv_det = 1.0 / det;
++  return float2((d * q.x - b * q.y) * inv_det, (-c * q.x + a * q.y) * inv_det);
++}
++
+ 
+ float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
+                         constant Size_DevicePixels *atlas_size) {
+diff --git a/crates/gpui_linux/src/linux/platform.rs b/crates/gpui_linux/src/linux/platform.rs
+index 53dec5dca9..e9fdf3761e 100644
+--- a/crates/gpui_linux/src/linux/platform.rs
++++ b/crates/gpui_linux/src/linux/platform.rs
+@@ -25,7 +25,8 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
+ use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
+ use gpui::{
+     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+-    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
++    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptFilter, PathPromptOptions,
++    Platform,
+     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+     PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
+     WindowButtonLayout, WindowParams,
+@@ -462,11 +463,12 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
+         &self,
+         directory: &Path,
+         suggested_name: Option<&str>,
++        _filters: Vec<PathPromptFilter>,
+     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+         let (done_tx, done_rx) = oneshot::channel();
+ 
+         #[cfg(not(any(feature = "wayland", feature = "x11")))]
+-        let _ = (done_tx.send(Ok(None)), directory, suggested_name);
++        let _ = (done_tx.send(Ok(None)), directory, suggested_name, _filters);
+ 
+         #[cfg(any(feature = "wayland", feature = "x11"))]
+         let identifier = self.inner.window_identifier();
+diff --git a/crates/gpui_macos/src/display_link.rs b/crates/gpui_macos/src/display_link.rs
+index 5387cb6e35..7ce8034547 100644
+--- a/crates/gpui_macos/src/display_link.rs
++++ b/crates/gpui_macos/src/display_link.rs
+@@ -267,6 +267,12 @@ impl WindowFrameSource {
+             unsubscribe(display_id, subscriber_id);
+         }
+     }
++
++    /// Whether the source is subscribed to a display link — that is, whether
++    /// the callback will fire at the display's next vsync.
++    pub(crate) fn is_running(&self) -> bool {
++        self.registration.is_some()
++    }
+ }
+ 
+ impl Drop for WindowFrameSource {
+diff --git a/crates/gpui_macos/src/platform.rs b/crates/gpui_macos/src/platform.rs
+index 91dba60497..0fd48816f3 100644
+--- a/crates/gpui_macos/src/platform.rs
++++ b/crates/gpui_macos/src/platform.rs
+@@ -32,7 +32,8 @@ use dispatch2::DispatchQueue;
+ use futures::channel::oneshot;
+ use gpui::{
+     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+-    KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
++    KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptFilter, PathPromptOptions,
++    Platform,
+     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+     PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowKind,
+     WindowParams, popup::PopupNotSupportedError,
+@@ -271,10 +272,18 @@ impl MacPlatform {
+         platform
+     }
+ 
+-    /// Processes pending AppKit work without waiting for new events.
++    /// Processes pending AppKit work, then keeps the runloop servicing
++    /// sources for up to `wait_seconds`.
++    ///
++    /// `NSApplication::run` services the runloop continuously; an embedded
++    /// pump that only dequeues NSEvents leaves mach-port sources — AX MIG
++    /// attribute writes, timers, wakes — unserviced between ticks, so
++    /// external clients (window managers) block until the next poll. A
++    /// positive budget makes each call behave like a bounded `NSApp.run`
++    /// slice: sources dispatch on arrival.
+     ///
+     /// Returns `false` after the application receives its termination callback.
+-    pub fn pump_events(&self) -> bool {
++    pub fn pump_events(&self, wait_seconds: f64) -> bool {
+         assert_main_thread("MacPlatform::pump_events");
+ 
+         {
+@@ -285,7 +294,11 @@ impl MacPlatform {
+                     panic!("pump_events requires Platform::run first")
+                 }
+                 MacPlatformMode::Embedded(EmbeddedLifecycle::Running) => {
+-                    panic!("pump_events must not run re-entrantly")
++                    // A nested pump (e.g. re-entered through a dispatched
++                    // source) unwinding across the FFI boundary would abort;
++                    // the outer call is already pumping, so just ignore it.
++                    log::error!("pump_events re-entered; ignoring nested call");
++                    return true;
+                 }
+                 MacPlatformMode::Embedded(EmbeddedLifecycle::Launched) => {
+                     state.mode = MacPlatformMode::Embedded(EmbeddedLifecycle::Running);
+@@ -296,7 +309,7 @@ impl MacPlatform {
+ 
+         unsafe {
+             let pool = NSAutoreleasePool::new(nil);
+-            pump_app_nonblocking();
++            pump_app(wait_seconds);
+             pool.drain();
+         }
+ 
+@@ -621,10 +634,11 @@ fn assert_main_thread(operation: &str) {
+     );
+ }
+ 
+-unsafe fn pump_app_nonblocking() {
++unsafe fn pump_app(wait_seconds: f64) {
+     unsafe {
+-        // NSApplication::run sleeps until the next display-link wake, which
+-        // blocks embedded hosts. Drain only work that is ready now.
++        // Drain work that is ready now, then let the runloop keep servicing
++        // sources for the remaining budget. `returnAfterSourceHandled` stays
++        // false so the whole budget is covered rather than one source.
+         let app: id = msg_send![APP_CLASS, sharedApplication];
+         let distant_past: id = msg_send![class!(NSDate), distantPast];
+         let mode = kCFRunLoopDefaultMode as id;
+@@ -642,7 +656,7 @@ unsafe fn pump_app_nonblocking() {
+             let _: () = msg_send![app, sendEvent: event];
+         }
+         let _: () = msg_send![app, updateWindows];
+-        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, 1);
++        CFRunLoopRunInMode(kCFRunLoopDefaultMode, wait_seconds.max(0.0), 0);
+     }
+ }
+ 
+@@ -1010,6 +1024,7 @@ impl Platform for MacPlatform {
+                     panel.setCanChooseDirectories_(options.directories.to_objc());
+                     panel.setCanChooseFiles_(options.files.to_objc());
+                     panel.setAllowsMultipleSelection_(options.multiple.to_objc());
++                    set_panel_file_type_filters(panel, &options.filters);
+ 
+                     panel.setCanCreateDirectories(true.to_objc());
+                     panel.setResolvesAliases_(false.to_objc());
+@@ -1052,6 +1067,7 @@ impl Platform for MacPlatform {
+         &self,
+         directory: &Path,
+         suggested_name: Option<&str>,
++        filters: Vec<PathPromptFilter>,
+     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+         let directory = directory.to_owned();
+         let suggested_name = suggested_name.map(|s| s.to_owned());
+@@ -1063,6 +1079,7 @@ impl Platform for MacPlatform {
+                     let path = ns_string(directory.to_string_lossy().as_ref());
+                     let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
+                     panel.setDirectoryURL(url);
++                    set_panel_file_type_filters(panel, &filters);
+ 
+                     if let Some(suggested_name) = suggested_name {
+                         let name_string = ns_string(&suggested_name);
+@@ -1782,6 +1799,33 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
+     })))
+ }
+ 
++/// Applies file-type filters to an `NSOpenPanel`/`NSSavePanel`.
++///
++/// Uses `allowedFileTypes` (deprecated since macOS 12, but still functional)
++/// rather than `allowedContentTypes` (`[UTType]`): it accepts raw extension
++/// strings, while `UTType.typeWithFilenameExtension:` returns nil for
++/// extensions without a registered UTI (e.g. "rs"), which would silently drop
++/// those filters. Multiple filters are unioned into a single allowed list.
++unsafe fn set_panel_file_type_filters(panel: id, filters: &[PathPromptFilter]) {
++    if filters.is_empty() {
++        return;
++    }
++    unsafe {
++        let allowed_types = filters
++            .iter()
++            .flat_map(|filter| filter.extensions.iter())
++            .map(|extension| ns_string(extension))
++            .collect::<Vec<id>>();
++        if allowed_types.is_empty() {
++            return;
++        }
++        let _: () = msg_send![
++            panel,
++            setAllowedFileTypes: NSArray::arrayWithObjects(nil, &allowed_types)
++        ];
++    }
++}
++
+ #[link(name = "Carbon", kind = "framework")]
+ unsafe extern "C" {
+     pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
+diff --git a/crates/gpui_macos/src/text_system.rs b/crates/gpui_macos/src/text_system.rs
+index fbc48864ce..77a75bede5 100644
+--- a/crates/gpui_macos/src/text_system.rs
++++ b/crates/gpui_macos/src/text_system.rs
+@@ -22,7 +22,7 @@ use core_text::{
+         kCTFontWidthTrait,
+     },
+     line::CTLine,
+-    string_attributes::kCTFontAttributeName,
++    string_attributes::{kCTFontAttributeName, kCTKernAttributeName},
+ };
+ use font_kit::{
+     font::Font as FontKitFont,
+@@ -567,6 +567,15 @@ impl MacTextSystemState {
+                         kCTFontAttributeName,
+                         &font.native_font().clone_with_font_size(font_size.into()),
+                     );
++                    if run.letter_spacing != px(0.) {
++                        // kCTKernAttributeName adds this many points to every
++                        // glyph's advance in the range — CSS letter-spacing.
++                        string.set_attribute(
++                            cf_range,
++                            kCTKernAttributeName,
++                            &CFNumber::from(f32::from(run.letter_spacing)),
++                        );
++                    }
+                 }
+                 break_ligature = !break_ligature;
+             }
+@@ -777,7 +786,7 @@ mod tests {
+         let mut style = FontRun {
+             font_id,
+             len: line.len(),
+-        };
++            letter_spacing: px(0.) };
+ 
+         let layout = fonts.layout_line(line, px(16.), &[style]);
+         assert_eq!(layout.len, line.len());
+@@ -798,11 +807,12 @@ mod tests {
+             FontRun {
+                 len: "\u{feff}".len(),
+                 font_id,
++                letter_spacing: px(0.),
+             },
+             FontRun {
+                 len: "ab".len(),
+                 font_id,
+-            },
++                letter_spacing: px(0.) },
+         ];
+         let layout = fonts.layout_line(line, px(16.), font_runs);
+         assert_eq!(layout.len, line.len());
+@@ -820,8 +830,8 @@ mod tests {
+ 
+         let text = "hello world";
+         let font_runs = &[
+-            FontRun { font_id, len: 5 }, // "hello"
+-            FontRun { font_id, len: 6 }, // " world"
++            FontRun { font_id, len: 5, letter_spacing: px(0.) }, // "hello"
++            FontRun { font_id, len: 6, letter_spacing: px(0.) }, // " world"
+         ];
+ 
+         let layout = fonts.layout_line(text, px(16.), font_runs);
+@@ -841,12 +851,12 @@ mod tests {
+         // Test with different font runs - should not insert ZWNJ
+         let font_id2 = fonts.font_id(&font("Times")).unwrap_or(font_id);
+         let font_runs_different = &[
+-            FontRun { font_id, len: 5 }, // "hello"
++            FontRun { font_id, len: 5, letter_spacing: px(0.) }, // "hello"
+             // " world"
+             FontRun {
+                 font_id: font_id2,
+                 len: 6,
+-            },
++                letter_spacing: px(0.) },
+         ];
+ 
+         let layout2 = fonts.layout_line(text, px(16.), font_runs_different);
+@@ -870,15 +880,15 @@ mod tests {
+         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+ 
+         let text = "hello";
+-        let font_runs = &[FontRun { font_id, len: 5 }];
++        let font_runs = &[FontRun { font_id, len: 5, letter_spacing: px(0.) }];
+         let layout = fonts.layout_line(text, px(16.), font_runs);
+         assert_eq!(layout.len, text.len());
+ 
+         let text = "abc";
+         let font_runs = &[
+-            FontRun { font_id, len: 1 }, // "a"
+-            FontRun { font_id, len: 1 }, // "b"
+-            FontRun { font_id, len: 1 }, // "c"
++            FontRun { font_id, len: 1, letter_spacing: px(0.) }, // "a"
++            FontRun { font_id, len: 1, letter_spacing: px(0.) }, // "b"
++            FontRun { font_id, len: 1, letter_spacing: px(0.) }, // "c"
+         ];
+         let layout = fonts.layout_line(text, px(16.), font_runs);
+         assert_eq!(layout.len, text.len());
+diff --git a/crates/gpui_macos/src/window.rs b/crates/gpui_macos/src/window.rs
+index faf27e036b..b69e5671ba 100644
+--- a/crates/gpui_macos/src/window.rs
++++ b/crates/gpui_macos/src/window.rs
+@@ -635,6 +635,13 @@ struct MacWindowState {
+     accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
+     // The parent window if this window is a sheet (Dialog kind)
+     sheet_parent: Option<id>,
++    // Set by set_frame_size when the resize did not come from a user
++    // edge-drag. External resizes arrive far faster than the scene can be
++    // re-rendered, and each resize callback draws synchronously — so
++    // drawable-size updates and the resize callback are deferred to the
++    // next display-link step or displayLayer delivery and applied once at
++    // the latest size.
++    resize_pending: bool,
+ }
+ 
+ impl MacWindowState {
+@@ -784,6 +791,34 @@ impl MacWindowState {
+         }
+     }
+ 
++    /// When a coalesced programmatic resize is waiting, applies the drawable
++    /// size for the *current* content size and returns the resize callback
++    /// plus its arguments. Callers invoke the callback after dropping the
++    /// state lock, then store it back. Returns `None` when no resize is
++    /// pending or no resize callback is registered.
++    fn take_pending_resize(
++        &mut self,
++    ) -> Option<(
++        Box<dyn FnMut(Size<Pixels>, f32)>,
++        Size<Pixels>,
++        f32,
++    )> {
++        // Without a callback the window does not draw, so the drawable size is
++        // irrelevant; leave the flag set and it auto-resolves once a callback
++        // registers.
++        if !self.resize_pending || self.resize_callback.is_none() {
++            return None;
++        }
++        self.resize_pending = false;
++        let scale_factor = self.scale_factor();
++        let content_size = self.content_size();
++        let drawable_size = content_size.to_device_pixels(scale_factor);
++        self.renderer.update_drawable_size(drawable_size);
++        self.resize_callback
++            .take()
++            .map(|callback| (callback, content_size, scale_factor))
++    }
++
+     fn is_maximized(&self) -> bool {
+         fn rect_to_size(rect: NSRect) -> Size<Pixels> {
+             let NSSize { width, height } = rect.size;
+@@ -833,7 +868,18 @@ impl MacWindowState {
+ 
+     fn bounds(&self) -> Bounds<Pixels> {
+         let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
+-        let screen = unsafe { NSWindow::screen(self.native_window) };
++        // `NSWindow.screen` is nil before the window is ordered in — report
++        // the real frame relative to the primary screen rather than a
++        // default rect, or hidden windows lose their true position/size.
++        let mut screen = unsafe { NSWindow::screen(self.native_window) };
++        if screen == nil {
++            unsafe {
++                let screens = NSScreen::screens(nil);
++                if cocoa::foundation::NSArray::count(screens) > 0 {
++                    screen = cocoa::foundation::NSArray::objectAtIndex(screens, 0);
++                }
++            }
++        }
+         if screen == nil {
+             return Bounds::new(point(px(0.), px(0.)), gpui::DEFAULT_WINDOW_SIZE);
+         }
+@@ -930,8 +976,11 @@ impl MacWindow {
+                     style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+                 }
+             } else {
+-                style_mask = NSWindowStyleMask::NSTitledWindowMask
+-                    | NSWindowStyleMask::NSFullSizeContentViewWindowMask;
++                // No titlebar = no chrome at all: borderless drops the theme
++                // frame — server-drawn background, border, and rounded
++                // corners — so only what the content paints is visible.
++                // Panels stay key-capable via canBecomeKeyWindow → YES.
++                style_mask = NSWindowStyleMask::NSBorderlessWindowMask;
+             }
+ 
+             let native_window: id = match kind {
+@@ -1065,6 +1114,7 @@ impl MacWindow {
+                 closed: Arc::new(AtomicBool::new(false)),
+                 accesskit_adapter: None,
+                 sheet_parent: None,
++                resize_pending: false,
+             })));
+ 
+             (*native_window).set_ivar(
+@@ -1366,6 +1416,37 @@ impl PlatformWindow for MacWindow {
+             .detach();
+     }
+ 
++    fn set_position(&self, position: Point<Pixels>) {
++        let native_window = self.0.lock().native_window;
++        unsafe {
++            // `NSWindow.screen` is nil for windows that haven't been ordered
++            // in yet (hidden/staged) — fall back to the primary screen so the
++            // call isn't silently dropped, matching `window_screen`'s policy
++            // in the platform ops.
++            let mut screen = NSWindow::screen(native_window);
++            if screen == nil {
++                let screens = NSScreen::screens(nil);
++                if cocoa::foundation::NSArray::count(screens) > 0 {
++                    screen = cocoa::foundation::NSArray::objectAtIndex(screens, 0);
++                }
++            }
++            if screen == nil {
++                return;
++            }
++            let screen_frame = NSScreen::frame(screen);
++            // `setFrameTopLeftPoint:` takes the top-left corner in screen
++            // coordinates, which are bottom-left origin — flip y relative to
++            // the window's own screen, mirroring `bounds`. The state lock is
++            // released before this call: `windowDidMove` fires synchronously
++            // and its delegate re-locks `self.0`.
++            let top_left = NSPoint::new(
++                screen_frame.origin.x + position.x.as_f32() as f64,
++                screen_frame.origin.y + screen_frame.size.height - position.y.as_f32() as f64,
++            );
++            NSWindow::setFrameTopLeftPoint_(native_window, top_left);
++        }
++    }
++
+     fn merge_all_windows(&self) {
+         let native_window = self.0.lock().native_window;
+         extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {
+@@ -1624,6 +1705,17 @@ impl PlatformWindow for MacWindow {
+         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
+     }
+ 
++    fn is_occluded(&self) -> bool {
++        unsafe {
++            !self
++                .0
++                .lock()
++                .native_window
++                .occlusionState()
++                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
++        }
++    }
++
+     // is_hovered is unused on macOS. See Window::is_window_hovered.
+     fn is_hovered(&self) -> bool {
+         false
+@@ -2792,6 +2884,10 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
+     lock.renderer.update_drawable_size(drawable_size);
+ 
+     if let Some(mut callback) = lock.resize_callback.take() {
++        // This delivery absorbs a coalesced resize waiting for the
++        // display-link pump; without a callback to deliver it, the flag is
++        // left set so take_pending_resize can resolve it later.
++        lock.resize_pending = false;
+         let content_size = lock.content_size();
+         let scale_factor = lock.scale_factor();
+         drop(lock);
+@@ -2963,6 +3059,26 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
+         let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
+     }
+ 
++    let in_live_resize: BOOL = unsafe { msg_send![lock.native_window, inLiveResize] };
++    if in_live_resize == NO {
++        // AX writes and programmatic setFrame arrive far faster than the
++        // scene can render, and the resize callback draws synchronously —
++        // handling each inline serializes the client and leaves the window
++        // repainting stale sizes long after the writes stop. Flag the
++        // resize and let the display-link pump deliver it once, at the
++        // latest size. Restarting an already-running link would churn a
++        // CVDisplayLink stop/start per AX write, so only arm it once.
++        lock.resize_pending = true;
++        if lock
++            .frame_source
++            .as_ref()
++            .is_none_or(|frame_source| !frame_source.is_running())
++        {
++            lock.start_display_link();
++        }
++        return;
++    }
++
+     let scale_factor = lock.scale_factor();
+     let drawable_size = new_size.to_device_pixels(scale_factor);
+     lock.renderer.update_drawable_size(drawable_size);
+@@ -2979,6 +3095,42 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
+ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
+     let window_state = unsafe { get_window_state(this) };
+     let mut lock = window_state.lock();
++
++    if let Some((mut resize_callback, content_size, scale_factor)) = lock.take_pending_resize()
++    {
++        drop(lock);
++        resize_callback(content_size, scale_factor);
++        lock = window_state.lock();
++        lock.resize_callback = Some(resize_callback);
++    }
++
++    // User edge-drags stay synchronous: AppKit already paces live-resize
++    // notifications to vsync, and rendering each keeps content crisp.
++    // Programmatic resizes (window managers, AX scripts) arrive far faster
++    // than vsync, so once the pending resize above is delivered their render
++    // is deferred to the display-link step: it happens once per frame at the
++    // latest size instead of blocking every AX write.
++    let in_live_resize: BOOL = unsafe { msg_send![lock.native_window, inLiveResize] };
++    if in_live_resize == NO {
++        if lock
++            .frame_source
++            .as_ref()
++            .is_none_or(|frame_source| !frame_source.is_running())
++        {
++            lock.start_display_link();
++        }
++        if lock
++            .frame_source
++            .as_ref()
++            .is_some_and(|frame_source| frame_source.is_running())
++        {
++            return;
++        }
++        // The link cannot pace a step while the window is occluded or has no
++        // screen, so fall through and render synchronously rather than
++        // dropping the frame.
++    }
++
+     if let Some(mut callback) = lock.request_frame_callback.take() {
+         lock.renderer.set_presents_with_transaction(true);
+         lock.stop_display_link();
+@@ -2997,6 +3149,14 @@ extern "C" fn step(view: *mut c_void) {
+     let window_state = unsafe { get_window_state(&*view) };
+     let mut lock = window_state.lock();
+ 
++    if let Some((mut resize_callback, content_size, scale_factor)) = lock.take_pending_resize()
++    {
++        drop(lock);
++        resize_callback(content_size, scale_factor);
++        lock = window_state.lock();
++        lock.resize_callback = Some(resize_callback);
++    }
++
+     if let Some(mut callback) = lock.request_frame_callback.take() {
+         drop(lock);
+         callback(Default::default());
+diff --git a/crates/gpui_web/src/platform.rs b/crates/gpui_web/src/platform.rs
+index 2b14bd17bc..63c7d38b5e 100644
+--- a/crates/gpui_web/src/platform.rs
++++ b/crates/gpui_web/src/platform.rs
+@@ -9,7 +9,8 @@ use futures::channel::oneshot;
+ use gpui::{
+     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardReadError,
+     ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor, Image, ImageFormat,
+-    Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
++    Keymap, Menu, MenuItem, PathPromptFilter, PathPromptOptions, Platform, PlatformDisplay,
++    PlatformKeyboardLayout,
+     PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task, ThermalState,
+     WindowAppearance, WindowKind, WindowParams, popup::PopupNotSupportedError,
+ };
+@@ -440,6 +441,7 @@ impl Platform for WebPlatform {
+         &self,
+         _directory: &Path,
+         _suggested_name: Option<&str>,
++        _filters: Vec<PathPromptFilter>,
+     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+         let (sender, receiver) = oneshot::channel();
+         sender
+diff --git a/crates/gpui_windows/src/platform.rs b/crates/gpui_windows/src/platform.rs
+index 9147ce51f2..8eff8945da 100644
+--- a/crates/gpui_windows/src/platform.rs
++++ b/crates/gpui_windows/src/platform.rs
+@@ -624,6 +624,7 @@ impl Platform for WindowsPlatform {
+         &self,
+         directory: &Path,
+         suggested_name: Option<&str>,
++        _filters: Vec<PathPromptFilter>,
+     ) -> Receiver<Result<Option<PathBuf>>> {
+         let directory = directory.to_owned();
+         let suggested_name = suggested_name.map(|s| s.to_owned());
+diff --git a/crates/miniprofiler_ui/src/miniprofiler_ui.rs b/crates/miniprofiler_ui/src/miniprofiler_ui.rs
+index a2926ef23a..e8ac3a2fe8 100644
+--- a/crates/miniprofiler_ui/src/miniprofiler_ui.rs
++++ b/crates/miniprofiler_ui/src/miniprofiler_ui.rs
+@@ -601,6 +601,7 @@ impl Render for ProfilerWindow {
+                                         let path = cx.prompt_for_new_path(
+                                             &active_path,
+                                             Some("performance_profile.miniprof.json"),
++                                            Vec::new(),
+                                         );
+ 
+                                         cx.background_spawn(async move {
+diff --git a/crates/project_panel/src/project_panel.rs b/crates/project_panel/src/project_panel.rs
+index 5b35531fa2..6a61bc6a33 100644
+--- a/crates/project_panel/src/project_panel.rs
++++ b/crates/project_panel/src/project_panel.rs
+@@ -3651,6 +3651,7 @@ impl ProjectPanel {
+             directories: true,
+             multiple: false,
+             prompt: Some("Download".into()),
++            ..Default::default()
+         });
+ 
+         let fs = self.fs.clone();
+diff --git a/crates/recent_projects/src/recent_projects.rs b/crates/recent_projects/src/recent_projects.rs
+index c26d7537b5..296e47af5e 100644
+--- a/crates/recent_projects/src/recent_projects.rs
++++ b/crates/recent_projects/src/recent_projects.rs
+@@ -299,6 +299,7 @@ pub fn init(cx: &mut App) {
+                     directories: true,
+                     multiple: false,
+                     prompt: None,
++                    ..Default::default()
+                 },
+                 DirectoryLister::Local(
+                     workspace.project().clone(),
+@@ -2084,6 +2085,7 @@ fn open_local_project(
+                 directories: true,
+                 multiple: true,
+                 prompt: None,
++                ..Default::default()
+             },
+             DirectoryLister::Local(
+                 workspace.project().clone(),
+diff --git a/crates/workspace/src/workspace.rs b/crates/workspace/src/workspace.rs
+index 82ee3f6e7d..d30dcb7616 100644
+--- a/crates/workspace/src/workspace.rs
++++ b/crates/workspace/src/workspace.rs
+@@ -799,6 +799,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
+                     directories: true,
+                     multiple: true,
+                     prompt: None,
++                    ..Default::default()
+                 },
+                 action.create_new_window.unwrap_or_else(|| {
+                     matches!(
+@@ -819,6 +820,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
+                     directories,
+                     multiple: true,
+                     prompt: None,
++                    ..Default::default()
+                 },
+                 true,
+                 cx,
+@@ -3188,7 +3190,7 @@ impl Workspace {
+                     })
+                     .or_else(std::env::home_dir)
+                     .unwrap_or_else(|| PathBuf::from(""));
+-                cx.prompt_for_new_path(&relative_to, suggested_name.as_deref())
++                cx.prompt_for_new_path(&relative_to, suggested_name.as_deref(), Vec::new())
+             })?;
+             let abs_path = match abs_path.await? {
+                 Ok(path) => path,
+@@ -3985,6 +3987,7 @@ impl Workspace {
+                 directories: true,
+                 multiple: true,
+                 prompt: None,
++                ..Default::default()
+             },
+             DirectoryLister::Project(self.project.clone()),
+             window,
+diff --git a/crates/zed/src/zed.rs b/crates/zed/src/zed.rs
+index b460196dd4..2ee18c5863 100644
+--- a/crates/zed/src/zed.rs
++++ b/crates/zed/src/zed.rs
+@@ -1088,6 +1088,7 @@ fn register_actions(
+                     directories: true,
+                     multiple: true,
+                     prompt: None,
++                    ..Default::default()
+                 },
+                 action.create_new_window.unwrap_or_else(|| {
+                     matches!(
+@@ -1109,6 +1110,7 @@ fn register_actions(
+                     directories,
+                     multiple: true,
+                     prompt: None,
++                    ..Default::default()
+                 },
+                 true,
+                 window,
+@@ -1137,6 +1139,7 @@ fn register_actions(
+                     directories: true,
+                     multiple: true,
+                     prompt: None,
++                    ..Default::default()
+                 },
+                 DirectoryLister::Project(workspace.project().clone()),
+                 window,
