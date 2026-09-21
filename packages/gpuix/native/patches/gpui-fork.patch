@@ -1674,8 +1674,21 @@ index 5387cb6e35..7ce8034547 100644
  }
  
  impl Drop for WindowFrameSource {
+diff --git a/crates/gpui_macos/src/gpui_macos.rs b/crates/gpui_macos/src/gpui_macos.rs
+index 1ee1872994..bb18e253a2 100644
+--- a/crates/gpui_macos/src/gpui_macos.rs
++++ b/crates/gpui_macos/src/gpui_macos.rs
+@@ -56,6 +56,8 @@ pub(crate) use window::*;
+ pub(crate) use text_system::*;
+ 
+ pub use platform::MacPlatform;
++#[doc(hidden)]
++pub use platform::signal_ts_event_pending;
+ 
+ trait BoolExt {
+     fn to_objc(self) -> BOOL;
 diff --git a/crates/gpui_macos/src/platform.rs b/crates/gpui_macos/src/platform.rs
-index 91dba60497..0fd48816f3 100644
+index 91dba60497..4f0ceb5067 100644
 --- a/crates/gpui_macos/src/platform.rs
 +++ b/crates/gpui_macos/src/platform.rs
 @@ -32,7 +32,8 @@ use dispatch2::DispatchQueue;
@@ -1731,11 +1744,24 @@ index 91dba60497..0fd48816f3 100644
              pool.drain();
          }
  
-@@ -621,10 +634,11 @@ fn assert_main_thread(operation: &str) {
+@@ -621,10 +634,24 @@ fn assert_main_thread(operation: &str) {
      );
  }
  
 -unsafe fn pump_app_nonblocking() {
++/// NAPI ThreadsafeFunction events queue onto the embedder's JS loop, which
++/// can only deliver them once `tick()` returns control. A full-budget
++/// runloop wait would hide them for the whole wait — rAF-driven animation
++/// then lands a vsync late every cycle and locks onto every other frame at
++/// 120Hz. The emit side sets this after queueing; the sliced pump below
++/// breaks out so the next JS turn can drain the queue ~immediately.
++static TS_EVENT_PENDING: AtomicBool = AtomicBool::new(false);
++
++/// Set by the embedder right after queueing a ThreadsafeFunction event.
++pub fn signal_ts_event_pending() {
++    TS_EVENT_PENDING.store(true, Ordering::Release);
++}
++
 +unsafe fn pump_app(wait_seconds: f64) {
      unsafe {
 -        // NSApplication::run sleeps until the next display-link wake, which
@@ -1746,16 +1772,31 @@ index 91dba60497..0fd48816f3 100644
          let app: id = msg_send![APP_CLASS, sharedApplication];
          let distant_past: id = msg_send![class!(NSDate), distantPast];
          let mode = kCFRunLoopDefaultMode as id;
-@@ -642,7 +656,7 @@ unsafe fn pump_app_nonblocking() {
+@@ -642,7 +669,22 @@ unsafe fn pump_app_nonblocking() {
              let _: () = msg_send![app, sendEvent: event];
          }
          let _: () = msg_send![app, updateWindows];
 -        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, 1);
-+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, wait_seconds.max(0.0), 0);
++        // Slice the wait so a TSFN event queued mid-wait ends the pump early.
++        // Sources are still serviced for the whole budget — the slices only
++        // bound how long a pending JS event waits for delivery.
++        const SLICE_SECONDS: f64 = 0.0005;
++        let mut remaining = wait_seconds.max(0.0);
++        while remaining > 0.0 {
++            if TS_EVENT_PENDING.swap(false, Ordering::AcqRel) {
++                break;
++            }
++            CFRunLoopRunInMode(
++                kCFRunLoopDefaultMode,
++                remaining.min(SLICE_SECONDS),
++                0,
++            );
++            remaining -= SLICE_SECONDS;
++        }
      }
  }
  
-@@ -1010,6 +1024,7 @@ impl Platform for MacPlatform {
+@@ -1010,6 +1052,7 @@ impl Platform for MacPlatform {
                      panel.setCanChooseDirectories_(options.directories.to_objc());
                      panel.setCanChooseFiles_(options.files.to_objc());
                      panel.setAllowsMultipleSelection_(options.multiple.to_objc());
@@ -1763,7 +1804,7 @@ index 91dba60497..0fd48816f3 100644
  
                      panel.setCanCreateDirectories(true.to_objc());
                      panel.setResolvesAliases_(false.to_objc());
-@@ -1052,6 +1067,7 @@ impl Platform for MacPlatform {
+@@ -1052,6 +1095,7 @@ impl Platform for MacPlatform {
          &self,
          directory: &Path,
          suggested_name: Option<&str>,
@@ -1771,7 +1812,7 @@ index 91dba60497..0fd48816f3 100644
      ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
          let directory = directory.to_owned();
          let suggested_name = suggested_name.map(|s| s.to_owned());
-@@ -1063,6 +1079,7 @@ impl Platform for MacPlatform {
+@@ -1063,6 +1107,7 @@ impl Platform for MacPlatform {
                      let path = ns_string(directory.to_string_lossy().as_ref());
                      let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
                      panel.setDirectoryURL(url);
@@ -1779,7 +1820,7 @@ index 91dba60497..0fd48816f3 100644
  
                      if let Some(suggested_name) = suggested_name {
                          let name_string = ns_string(&suggested_name);
-@@ -1782,6 +1799,33 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
+@@ -1782,6 +1827,33 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
      })))
  }
  

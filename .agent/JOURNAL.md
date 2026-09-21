@@ -2553,3 +2553,37 @@ NSRunningApplication.activate fails.
 Gates: cargo --lib 324/324 · bun test 271/271 · probes green
 (probe-anim-loop now ~114 batches/s — pump no longer caps cadence).
 gpui-fork.patch re-exported; dylib deployed+signed; dev stack restarted.
+
+## 120Hz rAF cadence — the two-hop latency fix
+
+Reported: motion page CSS anims pinned at ~62 paint/s on the 120Hz
+ProMotion display. probe-drift.js (new live sampler: fps/gaps/tick/JS
+turn/applyBatch/heap/DOM-walk every N s) found the lock:
+
+- emit→dispatch: ~0.1ms after the sliced-pump change (see below)
+- dispatch→applyBatch: ~6.1ms — the setTimeout(flush,0) hop in emit()
+  fired a full host-loop period late → setStyle ops landed past the next
+  vsync EVERY cycle → stable every-other-vsync draw cadence (60Hz).
+
+Two fixes, both needed:
+
+1. gpui_macos pump: CFRunLoopRunInMode budget is now sliced at 0.5ms and
+   breaks on TS_EVENT_PENDING — set by the crate's event callback right
+   after tsf.call (renderer.rs event_callback_for_view →
+   gpui_macos::signal_ts_event_pending). tick() returns ~immediately so
+   Bun delivers the queued event on the next turn. (A bare
+   CFRunLoopWakeUp/main-queue post can't break the wait —
+   returnAfterSourceHandled=false covers the whole budget; CFRunLoopStop
+   would risk killing nested AppKit waits like menu tracking.)
+
+2. gdom.ts dispatchPayload: renamed to dispatchPayloadInner + wrapper
+   that runs nativeBridge.flush() in a finally. TSFN deliveries are
+   clean macrotasks (Rust never on the stack) — ops queued by rAF steps
+   or listeners applyBatch in the same turn. emit()'s setTimeout stays
+   as fallback for contexts without that guarantee.
+
+Result on the real window: 120fps, frame-gap p50 8.3ms, ~121 batches/s
+(probe-anim-loop agrees: 114→119). Verified safe: cargo 324/324,
+bun test 289/289, probes green.
+
+gpui-fork.patch re-exported (now 2344 lines); dylib deployed+signed.
