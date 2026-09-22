@@ -191,6 +191,7 @@ thread_local! {
     /// alternately never clobber each other's mirrors.
     static SCROLL_HANDLES: RefCell<HashMap<u64, (u32, gpui::ScrollHandle)>> =
         RefCell::new(HashMap::new());
+
     static VIRTUAL_LIST_STATES: RefCell<HashMap<u64, (u32, gpui::ListState)>> =
         RefCell::new(HashMap::new());
     /// Virtual-list scrolls queued for the next `GpuixView::render`, applied
@@ -5472,23 +5473,30 @@ impl MemoKey {
     }
 }
 
-/// A subtree that may stand as a cached leaf this frame, plus the size the
-/// leaf's non-definite axes are pinned to.
+/// A subtree that may stand as a cached leaf this frame, plus which axes
+/// need a size pin because the leaf never measures content.
 struct MemoCandidate {
     key: MemoKey,
-    /// Measured border-box width/height for a content-sized axis. The leaf
-    /// never measures content, so the pin is what its layout would have been.
-    pin_w: Option<f32>,
-    pin_h: Option<f32>,
+    /// Content-sized axes — the leaf needs its border box pinned on these.
+    pin_w: bool,
+    pin_h: bool,
 }
 
 /// One memoized subtree: the entity whose cached view stands in for it, the
-/// key its recorded state was produced under, and the parent context its own
-/// render must be seeded with.
+/// key its recorded state was produced under, the parent context its own
+/// render must be seeded with, and the measured pin.
+///
+/// `pin` is `None` whenever the last emit rendered live for a box change —
+/// the next matching-key frame measures `bounds_tracker` and freezes the
+/// value here. While cached the recorded box is whatever the boundary
+/// tracker's most recent paint wrote, so re-reading it every frame would
+/// feed layout back into itself; freezing is what keeps a cached subtree
+/// stable.
 struct MemoEntry {
     entity: gpui::Entity<GpuixSubtree>,
     key: MemoKey,
     inherited: Inherited,
+    pin: Option<(Option<f32>, Option<f32>)>,
 }
 
 /// Entity standing in for one retained subtree. Its render re-enters the root
@@ -5510,6 +5518,57 @@ impl gpui::Render for GpuixSubtree {
         root.update(cx, |root, cx| root.build_memo_subtree(id, window, cx))
             .unwrap_or_else(|_| gpui::Empty.into_any_element())
     }
+}
+
+/// The cached leaf is a pure positioning shell: it owns the outer box
+/// (position, margins, size, flex-item props, transform, opacity) while the
+/// subtree's boundary root rebuilds every interior decoration — padding,
+/// borders, background, overflow, children layout. The subtree root is laid
+/// out as a root at the leaf's painted bounds, so padding on the leaf would
+/// never inset the child anyway; keeping it inner keeps the recorded
+/// padding box identical between live and cached frames.
+fn leaf_shell_style(style: &StyleDesc) -> StyleDesc {
+    let mut shell = style.clone();
+    shell.display = None;
+    shell.flex_direction = None;
+    shell.flex_wrap = None;
+    shell.align_items = None;
+    shell.align_content = None;
+    shell.justify_content = None;
+    shell.gap = None;
+    shell.row_gap = None;
+    shell.column_gap = None;
+    shell.grid_template_columns = None;
+    shell.grid_template_rows = None;
+    shell.grid_column_min = None;
+    shell.grid_row_min = None;
+    shell.padding = None;
+    shell.padding_top = None;
+    shell.padding_right = None;
+    shell.padding_bottom = None;
+    shell.padding_left = None;
+    shell.background = None;
+    shell.background_color = None;
+    shell.border_width = None;
+    shell.border_top_width = None;
+    shell.border_right_width = None;
+    shell.border_bottom_width = None;
+    shell.border_left_width = None;
+    shell.border_color = None;
+    shell.border_radius = None;
+    shell.border_top_left_radius = None;
+    shell.border_top_right_radius = None;
+    shell.border_bottom_right_radius = None;
+    shell.border_bottom_left_radius = None;
+    shell.box_shadow = None;
+    shell.overflow = None;
+    shell.overflow_x = None;
+    shell.overflow_y = None;
+    shell.transform = None;
+    shell.transform_origin = None;
+    // Compounds — one owner only.
+    shell.opacity = None;
+    shell
 }
 
 /// The element's painted padding box plus its borders — what the leaf's
@@ -5551,37 +5610,12 @@ fn memo_key(
     if is_absolute(style) || style.visibility.as_deref() == Some("hidden") {
         return None;
     }
-    let w_def = w_definite(ctx.slot, style);
-    let h_def = h_definite(ctx.slot, style);
-    let natural = if w_def && h_def {
-        None
-    } else {
-        // bounds_tracker records the padding box; the leaf needs the border
-        // box, so the element's own borders go back on. Read the live map,
-        // not the previous-frame snapshot: at emit time it already holds
-        // last frame's painted boxes, so a resize is seen one frame sooner.
-        Some(crate::automation::get_bounds(element.id)?)
-    };
-    let pin_w = (!w_def).then(|| {
-        border_box_axis(
-            natural.unwrap().width as f32,
-            style.border_width,
-            style.border_left_width,
-            style.border_right_width,
-        )
-    });
-    let pin_h = (!h_def).then(|| {
-        border_box_axis(
-            natural.unwrap().height as f32,
-            style.border_width,
-            style.border_top_width,
-            style.border_bottom_width,
-        )
-    });
+    let pin_w = !w_definite(ctx.slot, style);
+    let pin_h = !h_definite(ctx.slot, style);
     let parent = element.parent.and_then(|id| ctx.tree.elements.get(&id));
     // The parent's churn only matters when a pin exists to protect: a leaf
     // with both axes definite lays out the same box regardless of siblings.
-    let (layout_epoch, parent_bounds) = if natural.is_some() {
+    let (layout_epoch, parent_bounds) = if pin_w || pin_h {
         (
             element
                 .parent
@@ -5594,7 +5628,7 @@ fn memo_key(
     } else {
         (0, None)
     };
-    Some(MemoCandidate {
+    let cand = MemoCandidate {
         key: MemoKey {
             revision: element.subtree_revision,
             layout_epoch,
@@ -5604,7 +5638,8 @@ fn memo_key(
         },
         pin_w,
         pin_h,
-    })
+    };
+    Some(cand)
 }
 
 /// Invisible sibling painted right after a cached subtree view. When the view
@@ -5738,10 +5773,46 @@ pub(crate) fn build_element(
     };
     if let Some((style, cand)) = memo {
         let inherited = ctx.inherited.clone();
+        // bounds_tracker records the padding box; the pin needs the border
+        // box, so the element's own borders go back on.
+        let measure_pin = |style: &StyleDesc| {
+            if !cand.pin_w && !cand.pin_h {
+                return Some((None, None));
+            }
+            crate::automation::get_bounds(id).map(|natural| {
+                (
+                    cand.pin_w.then(|| {
+                        border_box_axis(
+                            natural.width as f32,
+                            style.border_width,
+                            style.border_left_width,
+                            style.border_right_width,
+                        )
+                    }),
+                    cand.pin_h.then(|| {
+                        border_box_axis(
+                            natural.height as f32,
+                            style.border_width,
+                            style.border_top_width,
+                            style.border_bottom_width,
+                        )
+                    }),
+                )
+            })
+        };
         let entry = ctx.memo_views.entry(id);
         let emit = match entry {
             std::collections::hash_map::Entry::Occupied(entry) if entry.get().key == cand.key => {
-                Some(entry.get().entity.clone())
+                match entry.get().pin {
+                    Some(pin) => Some((entry.get().entity.clone(), pin)),
+                    // First stable frame after a live re-measure: read the
+                    // freshly painted box, freeze it, emit pinned.
+                    None => measure_pin(style).map(|pin| {
+                        let entry = entry.into_mut();
+                        entry.pin = Some(pin);
+                        (entry.entity.clone(), pin)
+                    }),
+                }
             }
             entry => {
                 let entity = cx.new(|_| GpuixSubtree {
@@ -5760,26 +5831,43 @@ pub(crate) fn build_element(
                         entity: entity.clone(),
                         key: cand.key.clone(),
                         inherited: inherited.clone(),
+                        pin: None,
                     }),
                 };
                 entry.entity = entity.clone();
                 entry.key = cand.key;
                 entry.inherited = inherited;
-                // When the offered box or the subtree moved, the pin is stale:
-                // emit live for one frame so bounds_tracker re-measures the
-                // natural size. An inherited-only change keeps the pin, so the
-                // fresh entity can go straight on stage.
-                same_box.then_some(entity)
+                if !same_box {
+                    // The offered box or the subtree moved: render live this
+                    // frame so bounds_tracker re-measures the natural size;
+                    // the pin picks it up on the next matching-key frame.
+                    entry.pin = None;
+                    None
+                } else {
+                    match entry.pin {
+                        // An inherited-only change keeps the measured box —
+                        // the fresh entity goes straight on stage.
+                        Some(pin) => Some((entity, pin)),
+                        None => measure_pin(style).map(|pin| {
+                            entry.pin = Some(pin);
+                            (entity, pin)
+                        }),
+                    }
+                }
             }
         };
-        if let Some(entity) = emit {
+        if let Some((entity, (pin_w, pin_h))) = emit {
             use gpui::Styled as _;
-            let mut leaf = apply_styles(gpui::StyleRefinement::default(), style);
-            if let Some(w) = cand.pin_w {
-                leaf = leaf.w(gpui::px(w));
+            let mut leaf = apply_styles(gpui::StyleRefinement::default(), &leaf_shell_style(style));
+            if let Some(w) = pin_w {
+                // The pin doubles as the shrink floor: taffy can't measure a
+                // cached view's content, so `min-width: auto` floors at zero
+                // and a crowded flex row would squeeze the leaf below its
+                // measured box.
+                leaf = leaf.w(gpui::px(w)).min_w(gpui::px(w));
             }
-            if let Some(h) = cand.pin_h {
-                leaf = leaf.h(gpui::px(h));
+            if let Some(h) = pin_h {
+                leaf = leaf.h(gpui::px(h)).min_h(gpui::px(h));
             }
             return (
                 entity.cached(leaf).into_any_element(),
