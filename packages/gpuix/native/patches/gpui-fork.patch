@@ -1953,10 +1953,41 @@ index fbc48864ce..77a75bede5 100644
          let layout = fonts.layout_line(text, px(16.), font_runs);
          assert_eq!(layout.len, text.len());
 diff --git a/crates/gpui_macos/src/window.rs b/crates/gpui_macos/src/window.rs
-index faf27e036b..b69e5671ba 100644
+index faf27e036b..3b0d527504 100644
 --- a/crates/gpui_macos/src/window.rs
 +++ b/crates/gpui_macos/src/window.rs
-@@ -635,6 +635,13 @@ struct MacWindowState {
+@@ -71,11 +71,29 @@ use std::{
+         Arc, Weak,
+         atomic::{AtomicBool, Ordering},
+     },
+-    time::Duration,
++    time::{Duration, Instant},
+ };
+ 
+ const WINDOW_STATE_IVAR: &str = "windowState";
+ 
++/// A programmatic resize is "hot" for this long after the last write —
++/// pending applies are deferred across the gap so a write burst doesn't pay
++/// a draw per vsync.
++const RESIZE_SETTLE: Duration = Duration::from_millis(48);
++
++fn resize_debug() -> bool {
++    static DEBUG: AtomicBool = AtomicBool::new(false);
++    static INIT: AtomicBool = AtomicBool::new(false);
++    if !INIT.swap(true, Ordering::AcqRel) {
++        DEBUG.store(std::env::var_os("SGFX_RESIZE_DEBUG").is_some(), Ordering::Release);
++    }
++    DEBUG.load(Ordering::Acquire)
++}
++/// Upper bound on deferral during a sustained write storm: the pending
++/// resize is applied at least this often so the window still tracks the
++/// gesture instead of freezing until it ends.
++const RESIZE_INTERVAL: Duration = Duration::from_millis(64);
++
+ static mut WINDOW_CLASS: *const Class = ptr::null();
+ static mut PANEL_CLASS: *const Class = ptr::null();
+ static mut VIEW_CLASS: *const Class = ptr::null();
+@@ -635,6 +653,20 @@ struct MacWindowState {
      accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
      // The parent window if this window is a sheet (Dialog kind)
      sheet_parent: Option<id>,
@@ -1967,10 +1998,17 @@ index faf27e036b..b69e5671ba 100644
 +    // next display-link step or displayLayer delivery and applied once at
 +    // the latest size.
 +    resize_pending: bool,
++    // Time of the last programmatic set_frame_size / pending-resize
++    // application. A storm of AX writes fills the main runloop with
++    // per-vsync draws and each queued write then blocks behind one —
++    // take_pending_resize waits out the burst (RESIZE_SETTLE) but still
++    // re-applies at RESIZE_INTERVAL so the window tracks the gesture.
++    resize_last_write: Option<Instant>,
++    resize_last_apply: Option<Instant>,
  }
  
  impl MacWindowState {
-@@ -784,6 +791,34 @@ impl MacWindowState {
+@@ -784,6 +816,68 @@ impl MacWindowState {
          }
      }
  
@@ -1992,11 +2030,45 @@ index faf27e036b..b69e5671ba 100644
 +        if !self.resize_pending || self.resize_callback.is_none() {
 +            return None;
 +        }
++        // While writes are still arriving, applying the resize costs a
++        // drawable-pool realloc plus a bounds_changed → draw → nextDrawable
++        // pass on this runloop — and every queued AX write (Swish) blocks
++        // behind it. Defer to a quiet gap, but never longer than
++        // RESIZE_INTERVAL so the window keeps tracking a sustained gesture.
++        // A fully occluded window skips the tracking applies entirely:
++        // nextDrawable can stall ~50ms on the occluded presentation queue
++        // and nobody can see the intermediate sizes anyway.
++        let hot = self
++            .resize_last_write
++            .is_some_and(|at| at.elapsed() < RESIZE_SETTLE);
++        let visible = unsafe {
++            self.native_window
++                .occlusionState()
++                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
++        };
++        let overdue = visible
++            && self
++                .resize_last_apply
++                .is_none_or(|at| at.elapsed() >= RESIZE_INTERVAL);
++        if hot && !overdue {
++            return None;
++        }
++        if resize_debug() {
++            eprintln!(
++                "[resize] apply (hot={} overdue={} visible={})",
++                hot, overdue, visible
++            );
++        }
 +        self.resize_pending = false;
++        self.resize_last_apply = Some(Instant::now());
 +        let scale_factor = self.scale_factor();
 +        let content_size = self.content_size();
 +        let drawable_size = content_size.to_device_pixels(scale_factor);
++        let t1 = Instant::now();
 +        self.renderer.update_drawable_size(drawable_size);
++        if resize_debug() {
++            eprintln!("[resize] drawable_size {:.1}ms", t1.elapsed().as_secs_f64() * 1000.0);
++        }
 +        self.resize_callback
 +            .take()
 +            .map(|callback| (callback, content_size, scale_factor))
@@ -2005,7 +2077,7 @@ index faf27e036b..b69e5671ba 100644
      fn is_maximized(&self) -> bool {
          fn rect_to_size(rect: NSRect) -> Size<Pixels> {
              let NSSize { width, height } = rect.size;
-@@ -833,7 +868,18 @@ impl MacWindowState {
+@@ -833,7 +927,18 @@ impl MacWindowState {
  
      fn bounds(&self) -> Bounds<Pixels> {
          let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
@@ -2025,7 +2097,7 @@ index faf27e036b..b69e5671ba 100644
          if screen == nil {
              return Bounds::new(point(px(0.), px(0.)), gpui::DEFAULT_WINDOW_SIZE);
          }
-@@ -930,8 +976,11 @@ impl MacWindow {
+@@ -930,8 +1035,11 @@ impl MacWindow {
                      style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
                  }
              } else {
@@ -2039,15 +2111,17 @@ index faf27e036b..b69e5671ba 100644
              }
  
              let native_window: id = match kind {
-@@ -1065,6 +1114,7 @@ impl MacWindow {
+@@ -1065,6 +1173,9 @@ impl MacWindow {
                  closed: Arc::new(AtomicBool::new(false)),
                  accesskit_adapter: None,
                  sheet_parent: None,
 +                resize_pending: false,
++                resize_last_write: None,
++                resize_last_apply: None,
              })));
  
              (*native_window).set_ivar(
-@@ -1366,6 +1416,37 @@ impl PlatformWindow for MacWindow {
+@@ -1366,6 +1477,37 @@ impl PlatformWindow for MacWindow {
              .detach();
      }
  
@@ -2085,7 +2159,7 @@ index faf27e036b..b69e5671ba 100644
      fn merge_all_windows(&self) {
          let native_window = self.0.lock().native_window;
          extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {
-@@ -1624,6 +1705,17 @@ impl PlatformWindow for MacWindow {
+@@ -1624,6 +1766,17 @@ impl PlatformWindow for MacWindow {
          unsafe { self.0.lock().native_window.isKeyWindow() == YES }
      }
  
@@ -2103,7 +2177,7 @@ index faf27e036b..b69e5671ba 100644
      // is_hovered is unused on macOS. See Window::is_window_hovered.
      fn is_hovered(&self) -> bool {
          false
-@@ -2792,6 +2884,10 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
+@@ -2792,6 +2945,10 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
      lock.renderer.update_drawable_size(drawable_size);
  
      if let Some(mut callback) = lock.resize_callback.take() {
@@ -2114,8 +2188,16 @@ index faf27e036b..b69e5671ba 100644
          let content_size = lock.content_size();
          let scale_factor = lock.scale_factor();
          drop(lock);
-@@ -2963,6 +3059,26 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
-         let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
+@@ -2939,6 +3096,7 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
+ }
+ 
+ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
++    let t0 = Instant::now();
+     fn convert(value: NSSize) -> Size<Pixels> {
+         Size {
+             width: px(value.width as f32),
+@@ -2959,6 +3117,35 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
+         return;
      }
  
 +    let in_live_resize: BOOL = unsafe { msg_send![lock.native_window, inLiveResize] };
@@ -2124,10 +2206,19 @@ index faf27e036b..b69e5671ba 100644
 +        // scene can render, and the resize callback draws synchronously —
 +        // handling each inline serializes the client and leaves the window
 +        // repainting stale sizes long after the writes stop. Flag the
-+        // resize and let the display-link pump deliver it once, at the
-+        // latest size. Restarting an already-running link would churn a
++        // resize before AppKit's layout pass can reach displayLayer — a
++        // synchronous display inside this call would draw with the flag
++        // still unset — and let the display-link pump deliver it once, at
++        // the latest size. Restarting an already-running link would churn a
 +        // CVDisplayLink stop/start per AX write, so only arm it once.
 +        lock.resize_pending = true;
++        lock.resize_last_write = Some(Instant::now());
++        unsafe {
++            let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
++        }
++        if resize_debug() {
++            eprintln!("[resize] write (handler {:.1}ms)", t0.elapsed().as_secs_f64() * 1000.0);
++        }
 +        if lock
 +            .frame_source
 +            .as_ref()
@@ -2138,10 +2229,10 @@ index faf27e036b..b69e5671ba 100644
 +        return;
 +    }
 +
-     let scale_factor = lock.scale_factor();
-     let drawable_size = new_size.to_device_pixels(scale_factor);
-     lock.renderer.update_drawable_size(drawable_size);
-@@ -2979,6 +3095,42 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
+     unsafe {
+         let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
+     }
+@@ -2979,11 +3166,63 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
  extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
      let window_state = unsafe { get_window_state(this) };
      let mut lock = window_state.lock();
@@ -2149,7 +2240,11 @@ index faf27e036b..b69e5671ba 100644
 +    if let Some((mut resize_callback, content_size, scale_factor)) = lock.take_pending_resize()
 +    {
 +        drop(lock);
++        let t0 = Instant::now();
 +        resize_callback(content_size, scale_factor);
++        if resize_debug() {
++            eprintln!("[resize] bounds_changed {:.1}ms", t0.elapsed().as_secs_f64() * 1000.0);
++        }
 +        lock = window_state.lock();
 +        lock.resize_callback = Some(resize_callback);
 +    }
@@ -2178,27 +2273,67 @@ index faf27e036b..b69e5671ba 100644
 +        }
 +        // The link cannot pace a step while the window is occluded or has no
 +        // screen, so fall through and render synchronously rather than
-+        // dropping the frame.
++        // dropping the frame — but not mid-storm: drawing per write would
++        // serialize the client behind nextDrawable. Re-dirty the view so the
++        // next updateWindows pass retries once the writes settle.
++        if lock.resize_pending {
++            unsafe {
++                let _: () = msg_send![lock.native_view.as_ptr(), setNeedsDisplay: YES];
++            }
++            return;
++        }
 +    }
 +
      if let Some(mut callback) = lock.request_frame_callback.take() {
          lock.renderer.set_presents_with_transaction(true);
          lock.stop_display_link();
-@@ -2997,6 +3149,14 @@ extern "C" fn step(view: *mut c_void) {
+         drop(lock);
++        let t0 = Instant::now();
+         callback(Default::default());
++        if resize_debug() {
++            eprintln!("[resize] display_layer draw {:.1}ms", t0.elapsed().as_secs_f64() * 1000.0);
++        }
+ 
+         let mut lock = window_state.lock();
+         lock.request_frame_callback = Some(callback);
+@@ -2997,9 +3236,37 @@ extern "C" fn step(view: *mut c_void) {
      let window_state = unsafe { get_window_state(&*view) };
      let mut lock = window_state.lock();
  
-+    if let Some((mut resize_callback, content_size, scale_factor)) = lock.take_pending_resize()
++    let applied = if let Some((mut resize_callback, content_size, scale_factor)) =
++        lock.take_pending_resize()
 +    {
 +        drop(lock);
 +        resize_callback(content_size, scale_factor);
 +        lock = window_state.lock();
 +        lock.resize_callback = Some(resize_callback);
-+    }
++        true
++    } else {
++        false
++    };
 +
++    // While an external write storm is hot, a dirty-window draw (~5-15ms on
++    // this runloop) queues every in-flight AX write behind it. Skip the frame
++    // unless this step just applied a resize — the apply draw repaints the
++    // latest size anyway, and ambient frames resume when the writes settle.
++    let storm_hot = !applied
++        && lock
++            .resize_last_write
++            .is_some_and(|at| at.elapsed() < RESIZE_SETTLE);
      if let Some(mut callback) = lock.request_frame_callback.take() {
++        if storm_hot {
++            lock.request_frame_callback = Some(callback);
++            return;
++        }
          drop(lock);
++        let t0 = Instant::now();
          callback(Default::default());
++        if resize_debug() {
++            eprintln!("[resize] step draw {:.1}ms", t0.elapsed().as_secs_f64() * 1000.0);
++        }
+         window_state.lock().request_frame_callback = Some(callback);
+     }
+ }
 diff --git a/crates/gpui_web/src/platform.rs b/crates/gpui_web/src/platform.rs
 index 2b14bd17bc..63c7d38b5e 100644
 --- a/crates/gpui_web/src/platform.rs

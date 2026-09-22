@@ -2587,3 +2587,116 @@ Result on the real window: 120fps, frame-gap p50 8.3ms, ~121 batches/s
 bun test 289/289, probes green.
 
 gpui-fork.patch re-exported (now 2344 lines); dylib deployed+signed.
+
+## Memoized subtrees activated + per-frame work trimmed (7d67d17)
+
+Native explorer found the memo machinery (memo_scan → MemoKey →
+GpuixSubtree → entity.cached → reuse_prepaint/reuse_paint) never fired
+in real apps: memo_scan flagged MEMO_HAS_EVENTS whenever the tree had a
+non-empty delegated_events set — Svelte 5 delegates globally, so every
+subtree disqualified and every frame was a full rebuild.
+
+Changes:
+- retained_tree.rs memo_scan: dropped the element.events +
+  delegated_events disqualifiers. Both paths bump subtree_revision
+  (set_event_listener → mark_render_changed; SetDelegatedEvents →
+  invalidate_render_caches) so stale keys can't replay. State-bucket,
+  capture, vlist, motion, custom gates kept.
+- retained_tree.rs: pub revision() accessor on RetainedTree.
+- renderer.rs: last_focus_sync_revision field; sync_focus_handles
+  early-outs when revision unchanged && no pending_focus_element.
+- renderer.rs apply_batch: retheme_roots sort/dedup + drop roots
+  covered by an ancestor root (sibling appends → N subtree walks).
+- renderer.rs BatchOp::SetStyle: byte-identical resend early-out
+  (animation frames resend often).
+
+A/B (MIN_MEMO_LEN=MAX vs 4) on /animations @120Hz frontmost:
+p99 7.96→3.23ms, max 8.07→3.27, p90 3.39→3.08. p90 modest because
+animated elements' ancestor chains legitimately rebuild each frame —
+static siblings memoize.
+
+Gates: cargo 324/324, bun 289/289, focus/xbutton-focus/hover/
+hover-ancestor/theme/rapid-toggle/anim-loop/frame-cadence/scroll-perf
+all green. probe-drift 130s: 120fps flat, gap p90 8.4ms, heap 14-15MB,
+nodes 386 constant, no anim/layer growth. probe-live.js gained an
+overlay-stats read (setDebugFrameOverlay('hidden') + reset + get).
+
+## Memo subtree layout oscillation — root-caused and fixed
+
+Symptom: after memoization activated, /animations page bounced ±50px on
+its own. Diagnosis via env-gated traces (SGFX_MEMO_DEBUG keyflap dump +
+SGFX_BOUNDS_DEBUG per-id bounds writers, both since removed):
+
+- #72's recorded height alternated 97.5↔47.5, bumping the parent
+  LAYOUT_EPOCH every cycle → epoch is in every sibling's memo key →
+  tree-wide cached↔live flap cascade.
+
+Two independent defects, both in the leaf/boundary split:
+
+1. **Pin wasn't a shrink floor.** `leaf.h(pin)` on a flex item with
+   `min-height:auto`: taffy can't measure a cached view's content, so
+   the floor resolves to 0 → a crowded flex column squeezed the leaf to
+   47.5 → inner `height:100%` recorded 47.5 → epoch churn → live frames
+   re-recorded 97.5 → repeat. Fix: `min_w/min_h(pin)` alongside
+   `w/h(pin)` — exactly emulates `min-*:auto` = measured content.
+
+2. **Double-decorated box.** Leaf applied E's full style (padding,
+   borders, bg) AND the inner boundary root kept them — double
+   decoration + divergent recorded-box conventions between paths. Fix:
+   `leaf_shell_style` strips every interior prop (padding, border, bg,
+   shadow, overflow, display/flex content props, transform, opacity)
+   from the leaf; the boundary root keeps them. The subtree is laid out
+   via `layout_as_root(bounds.size)` — leaf's painted border box — so
+   leaf padding could never inset the child anyway; inner owns it, and
+   the inner tracker records the same padding box as live frames.
+
+Also folded in from the same investigation: pin is now computed lazily
+at emit (`measure_pin`) and frozen in MemoEntry — pin axes are flags on
+MemoCandidate, not read-then-mutate values.
+
+Verified: probe-selfscroll bounds all flat (hs identical across 8
+samples; only the css-spin chip and fps counter move — both genuinely
+animate). cargo 324/324, bun 289/289, probes green.
+
+## AX/Swish resize lag regression — storm-aware debounce in gpui fork
+
+Regression: Swish resize storms blocked ~5-20ms per AX write again
+(285-680ms / 40 writes). The original resize_pending coalescing was still
+present — it only collapsed *multiple* writes per vsync, but every vsync
+still applied one resize: apply → bounds_changed → dirty → full draw +
+CAMetalLayer nextDrawable on the main runloop. Queued AX writes blocked
+behind each ~5-15ms draw. Worse: write latency paces write spacing —
+once a write stalls past RESIZE_SETTLE the gate reads "not hot" and
+applies again → bistable trap that never lets the storm cool.
+
+gpui_macos/window.rs:
+- resize_last_write / resize_last_apply timestamps; take_pending_resize
+  defers while writes arrive < RESIZE_SETTLE apart (48ms — must exceed
+  the degraded write period so hot engages), re-applying at most every
+  RESIZE_INTERVAL (64ms) so a visible window still tracks the gesture.
+  First write applies instantly via the overdue path — lone programmatic
+  resizes keep zero added latency.
+- Fully occluded windows never apply mid-storm (overdue gated on
+  NSWindowOcclusionStateVisible): nextDrawable stalls ~50ms on the
+  occluded presentation queue for pixels nobody sees.
+- step: skips the ambient request_frame draw while a storm is hot and no
+  apply landed this step — animation frames mid-gesture reflow anyway.
+- display_layer: when the link can't run (occluded/no screen) and a
+  resize is still pending, setNeedsDisplay + return instead of a
+  synchronous draw per write; the re-dirty pass is also the settle
+  retry that lands the final size.
+- set_frame_size flags pending BEFORE super.setFrameSize so a
+  synchronous displayLayer inside the AppKit call can't draw unflagged.
+- SGFX_RESIZE_DEBUG env-gated eprintln instrumentation (write handler,
+  drawable_size, bounds_changed, draw durations) — atomically cached.
+
+Measured (axresize.swift, 40 rapid AX writes, visible window):
+285ms/p50=6.3 → 85-91ms total, p50=0.5-0.7ms, max ~9ms. Isolated writes
+0.6-4ms. Occluded window storm sits at the OS floor (~52ms/write —
+WindowServer throttles commits for covered windows; Finder control
+reproduces the same). prof-resize.ts: tick p90 16.6→0.0ms, frames 41→3.
+
+emit.js experiment reverted — the committed FRAME_MS=4 pump pacing was
+already correct once draws stopped saturating the runloop.
+
+gpui-fork.patch re-exported; dylib deployed+signed. bun test 289/289.
