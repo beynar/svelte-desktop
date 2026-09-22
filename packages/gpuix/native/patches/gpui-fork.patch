@@ -811,7 +811,7 @@ index e7362f71e5..3a92935008 100644
  
  trait AsCacheKeyRef {
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index 3e550402b1..527d358d1d 100644
+index 3e550402b1..d05ccbc184 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
 @@ -45,7 +45,7 @@ use smallvec::SmallVec;
@@ -1169,7 +1169,20 @@ index 3e550402b1..527d358d1d 100644
      /// Returns whether or not the window is currently fullscreen
      pub fn is_fullscreen(&self) -> bool {
          self.platform_window.is_fullscreen()
-@@ -3081,8 +3170,33 @@ impl Window {
+@@ -2574,6 +2663,12 @@ impl Window {
+         self.active.get()
+     }
+ 
++    /// Returns whether the window is fully occluded (covered, minimized, or
++    /// on an inactive space) — i.e. not a single pixel is on screen.
++    pub fn is_occluded(&self) -> bool {
++        self.platform_window.is_occluded()
++    }
++
+     /// Returns whether this window is considered to be the window
+     /// that currently owns the mouse cursor.
+     /// On mac, this is equivalent to `is_window_active`.
+@@ -3081,8 +3176,33 @@ impl Window {
          self.invalidator.replace_views(views);
      }
  
@@ -1203,7 +1216,7 @@ index 3e550402b1..527d358d1d 100644
          #[cfg(feature = "profiler")]
          let _foreground_turn = profiler::journal::foreground_turn();
          #[cfg(feature = "profiler")]
-@@ -3380,7 +3494,15 @@ impl Window {
+@@ -3380,7 +3500,15 @@ impl Window {
              traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
  
              for deferred_draw_ix in traversal_order {
@@ -1220,7 +1233,7 @@ index 3e550402b1..527d358d1d 100644
                      let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                      self.element_id_stack
                          .clone_from(&deferred_draw.element_id_stack);
-@@ -3392,6 +3514,7 @@ impl Window {
+@@ -3392,6 +3520,7 @@ impl Window {
                          deferred_draw.current_view,
                          deferred_draw.rem_size,
                          deferred_draw.absolute_offset,
@@ -1228,7 +1241,7 @@ index 3e550402b1..527d358d1d 100644
                          deferred_draw.prepaint_range.clone(),
                      )
                  };
-@@ -3402,7 +3525,9 @@ impl Window {
+@@ -3402,7 +3531,9 @@ impl Window {
                      self.with_rendered_view(current_view, |window| {
                          window.with_rem_size(Some(rem_size), |window| {
                              window.with_absolute_element_offset(absolute_offset, |window| {
@@ -1239,7 +1252,7 @@ index 3e550402b1..527d358d1d 100644
                              });
                          });
                      });
-@@ -3442,11 +3567,14 @@ impl Window {
+@@ -3442,11 +3573,14 @@ impl Window {
  
              let paint_start = self.paint_index();
              let content_mask = deferred_draw.content_mask;
@@ -1255,7 +1268,7 @@ index 3e550402b1..527d358d1d 100644
                          });
                      })
                  })
-@@ -3523,6 +3651,7 @@ impl Window {
+@@ -3523,6 +3657,7 @@ impl Window {
                      priority: deferred_draw.priority,
                      element: None,
                      absolute_offset: deferred_draw.absolute_offset,
@@ -1263,7 +1276,7 @@ index 3e550402b1..527d358d1d 100644
                      prepaint_range: deferred_draw.prepaint_range.clone(),
                      paint_range: deferred_draw.paint_range.clone(),
                  }),
-@@ -3649,7 +3778,13 @@ impl Window {
+@@ -3649,7 +3784,13 @@ impl Window {
      ) -> R {
          self.invalidator.debug_assert_paint_or_prepaint();
          if let Some(mask) = mask {
@@ -1278,7 +1291,7 @@ index 3e550402b1..527d358d1d 100644
              self.content_mask_stack.push(mask);
              let result = f(self);
              self.content_mask_stack.pop();
-@@ -3691,6 +3826,43 @@ impl Window {
+@@ -3691,6 +3832,43 @@ impl Window {
          result
      }
  
@@ -1322,7 +1335,7 @@ index 3e550402b1..527d358d1d 100644
      pub(crate) fn with_element_opacity<R>(
          &mut self,
          opacity: Option<f32>,
-@@ -4029,6 +4201,7 @@ impl Window {
+@@ -4029,6 +4207,7 @@ impl Window {
              priority,
              element: Some(element),
              absolute_offset,
@@ -1330,7 +1343,7 @@ index 3e550402b1..527d358d1d 100644
              prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
              paint_range: PaintIndex::default()..PaintIndex::default(),
          });
-@@ -4077,6 +4250,7 @@ impl Window {
+@@ -4077,6 +4256,7 @@ impl Window {
          let opacity = self.element_opacity();
          let element_bounds = self.cover_bounds(bounds);
          let element_corner_radii = corner_radii.scale(scale_factor);
@@ -1338,7 +1351,7 @@ index 3e550402b1..527d358d1d 100644
          for shadow in shadows {
              if shadow.inset {
                  continue;
-@@ -4093,6 +4267,7 @@ impl Window {
+@@ -4093,6 +4273,7 @@ impl Window {
                  element_corner_radii,
                  inset: 0,
                  pad: 0,
@@ -1346,7 +1359,7 @@ index 3e550402b1..527d358d1d 100644
              });
          }
      }
-@@ -4113,6 +4288,7 @@ impl Window {
+@@ -4113,6 +4294,7 @@ impl Window {
          let opacity = self.element_opacity();
          let element_bounds = self.cover_bounds(bounds);
          let element_corner_radii = corner_radii.scale(scale_factor);
@@ -1354,7 +1367,7 @@ index 3e550402b1..527d358d1d 100644
          for shadow in shadows {
              if !shadow.inset {
                  continue;
-@@ -4138,6 +4314,7 @@ impl Window {
+@@ -4138,6 +4320,7 @@ impl Window {
                  element_corner_radii,
                  inset: 1,
                  pad: 0,
@@ -1362,7 +1375,7 @@ index 3e550402b1..527d358d1d 100644
              });
          }
      }
-@@ -4205,6 +4382,7 @@ impl Window {
+@@ -4205,6 +4388,7 @@ impl Window {
              corner_radii: quad.corner_radii.scale(self.scale_factor()),
              border_widths: snapped_border_widths,
              border_style: quad.border_style,
@@ -1370,7 +1383,7 @@ index 3e550402b1..527d358d1d 100644
          };
  
          if !quad.background.is_transparent() {
-@@ -4270,6 +4448,9 @@ impl Window {
+@@ -4270,6 +4454,9 @@ impl Window {
          path.content_mask = content_mask;
          let color: Background = color.into();
          path.color = color.opacity(opacity);
@@ -1380,7 +1393,7 @@ index 3e550402b1..527d358d1d 100644
          self.next_frame
              .scene
              .insert_primitive(path.scale(scale_factor));
-@@ -4307,6 +4488,7 @@ impl Window {
+@@ -4307,6 +4494,7 @@ impl Window {
              color: style.color.unwrap_or_default().opacity(element_opacity),
              thickness,
              wavy: style.wavy.into(),
@@ -1388,7 +1401,7 @@ index 3e550402b1..527d358d1d 100644
          });
      }
  
-@@ -4337,6 +4519,7 @@ impl Window {
+@@ -4337,6 +4525,7 @@ impl Window {
              thickness: self.snap_stroke(style.thickness),
              color: style.color.unwrap_or_default().opacity(opacity),
              wavy: false.into(),
@@ -1396,7 +1409,7 @@ index 3e550402b1..527d358d1d 100644
          });
      }
  
-@@ -4401,6 +4584,7 @@ impl Window {
+@@ -4401,6 +4590,7 @@ impl Window {
              };
              let content_mask = self.snapped_content_mask();
  
@@ -1404,7 +1417,7 @@ index 3e550402b1..527d358d1d 100644
              if subpixel_rendering {
                  self.next_frame.scene.insert_primitive(SubpixelSprite {
                      order: 0,
-@@ -4409,7 +4593,7 @@ impl Window {
+@@ -4409,7 +4599,7 @@ impl Window {
                      content_mask,
                      color: color.opacity(element_opacity),
                      tile,
@@ -1413,7 +1426,7 @@ index 3e550402b1..527d358d1d 100644
                  });
              } else {
                  self.next_frame.scene.insert_primitive(MonochromeSprite {
-@@ -4419,7 +4603,7 @@ impl Window {
+@@ -4419,7 +4609,7 @@ impl Window {
                      content_mask,
                      color: color.opacity(element_opacity),
                      tile,
@@ -1422,7 +1435,7 @@ index 3e550402b1..527d358d1d 100644
                  });
              }
          }
-@@ -4502,6 +4686,7 @@ impl Window {
+@@ -4502,6 +4692,7 @@ impl Window {
                  content_mask,
                  tile,
                  opacity,
@@ -1430,7 +1443,7 @@ index 3e550402b1..527d358d1d 100644
              });
          }
          Ok(())
-@@ -4566,7 +4751,10 @@ impl Window {
+@@ -4566,7 +4757,10 @@ impl Window {
              content_mask,
              color: color.opacity(element_opacity),
              tile,
@@ -1442,7 +1455,7 @@ index 3e550402b1..527d358d1d 100644
          });
  
          Ok(())
-@@ -4716,6 +4904,9 @@ impl Window {
+@@ -4716,6 +4910,9 @@ impl Window {
              corner_radii,
              tile: sub_tile,
              opacity,
@@ -1452,7 +1465,7 @@ index 3e550402b1..527d358d1d 100644
          });
          Ok(())
      }
-@@ -4922,6 +5113,10 @@ impl Window {
+@@ -4922,6 +5119,10 @@ impl Window {
          self.invalidator.debug_assert_prepaint();
  
          let content_mask = self.content_mask();

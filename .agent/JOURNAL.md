@@ -2700,3 +2700,32 @@ emit.js experiment reverted — the committed FRAME_MS=4 pump pacing was
 already correct once draws stopped saturating the runloop.
 
 gpui-fork.patch re-exported; dylib deployed+signed. bun test 289/289.
+
+## resize gate + is_occluded API (follow-up)
+
+The resize-storm probe is now a real gate: `bun packages/tests/probe-resize-storm.ts`.
+
+Gate design (after measuring every window state):
+- occluded → reports OCCLUDED, skips (OS floor ~52ms/write, Finder matches)
+- visible → the discriminator is **stormFrames** (frameStats delta over the
+  storm): healthy ≈ WRITES/10 (coalesced applies), regressed ≈ 1 frame/write.
+  Latency is only a loose backstop — a visible-but-backgrounded window floors
+  at ~9ms/write of pure IPC with zero extra frames, so p50 alone can't gate.
+- final-size assertion guards the storm actually landing.
+
+New API: `window.isOccluded` end-to-end —
+gpui PlatformWindow trait + Window forwarder + macOS impl
+(NSWindow.occlusionState) → platform.rs dispatch + allowlist →
+platform.isOccluded() → native-api.yaml. Used by the probe for the
+occluded classification instead of inferring from latency.
+
+axresize.swift: `raise` mode + AXRESIZE_RAISE env (front+raise before the
+write loop) + poll for AX window registration (bare bun processes surface
+their windows late).
+
+Gotcha found: `is_occluded` forwarder in gpui/src/window.rs was silently
+lost once — file-on-disk lacked it while a stale view showed it. Verify
+checkout edits with shell grep before trusting a rebuild.
+
+Measured: probe PASS (stormFrames=3/40, p50=7.1ms background-window floor,
+max 21ms). Fresh dev host frontmost: 130ms total, p50=1.1ms, p90=7.8ms.
