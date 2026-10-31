@@ -434,6 +434,11 @@ static std::string toast_xml(const notif::Show &s) {
   json launch{{"i", s.id}};
   if (!s.payload.empty() && s.payload.size() <= 2048) launch["p"] = s.payload; // history entries of a previous run
   std::string x = "<toast launch=\"" + xesc(launch.dump()) + "\" activationType=\"foreground\"";
+  for (auto &a : s.actions)
+    if (a.destructive) {
+      x += " useButtonStyle=\"true\""; // hint-buttonStyle is ignored without it
+      break;
+    }
   if (s.urgency == "critical") x += os_build() >= 22621 ? " scenario=\"urgent\"" : " scenario=\"reminder\"";
   else if (s.requireInteraction || s.ongoing) x += " scenario=\"reminder\"";
   if (s.hasTimestamp && s.timestamp > 0) {

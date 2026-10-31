@@ -449,8 +449,9 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		await shot('toast-urgent-request.png');
 		log('allow important:', await uia('act', { title: 'important notifications', button: '^Allow$' }));
 		await Bun.sleep(1000);
+		await app.eval(`host.notifications.dismiss('v1')`);
 		await show({ id: 'v1', title: 'Visual check (critical)', body: 'Urgent scenario, after Allow', urgency: 'critical', ...rich });
-		await Bun.sleep(2000);
+		await Bun.sleep(3500);
 		await shot('toast-urgent.png');
 		await app.eval(`host.notifications.dismiss('v1')`);
 		await app.eval(`host.notifications.setBadge(7)`);
