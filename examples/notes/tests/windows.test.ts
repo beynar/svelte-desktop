@@ -560,7 +560,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 	test('cold start: the activator launches the app (-ToastActivated), the click reaches it with its whole payload', async () => {
 		// > 2 KB of data: the toast arguments carry the id only, the payload comes from the persisted record.
 		const big = 'x'.repeat(3000);
-		await app.eval(`host.notifications.show({ id: 'cold', title: 'Cold', url: '/about', data: ${JSON.stringify(big)} })`);
+		await app.platform('notifications', 'show', { id: 'cold', title: 'Cold', payload: JSON.stringify({ url: '/about', data: big }) });
 		await app.close();
 		closed = true;
 		await Bun.sleep(2000);
