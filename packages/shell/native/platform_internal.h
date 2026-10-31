@@ -47,6 +47,8 @@ int platform_target_window(int preferred);
 /// The window's document is going away (navigation started, web process died): not a target until
 /// its next page reports ready.
 void platform_page_unloaded(int native_id);
+/// Scroll over a transparent title bar: swallow it (the gesture began there)? shell_macos.mm.
+bool platform_title_bar_scroll_filter(NSWindow *w, NSPoint locationInWindow, NSEventPhase phase, NSEventPhase momentum);
 
 // Windows ------------------------------------------------------------------
 // Public ids follow the GPUI contract: the primary window is 0, others keep

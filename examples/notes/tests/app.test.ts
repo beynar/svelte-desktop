@@ -325,3 +325,24 @@ test('notifications.show conformance fixtures (native/notifications.fixtures.jso
 	}
 	await app.platform('notifications', 'dismissAll');
 });
+
+test('scrolling: a transparent title bar does not scroll the page; no elastic overscroll by default', async () => {
+	// No rubber band: the bridge's zero-specificity default, which the app's CSS can override.
+	expect(await app.eval(`[getComputedStyle(document.documentElement).overscrollBehavior, getComputedStyle(document.body).overscrollBehavior]`)).toEqual(['none', 'none']);
+	if (process.env.DESKTOP_TEST_DEV) return; // the scroll gesture op belongs to the packaged app's test channel
+	await app.eval(`(document.body.style.minHeight = '4000px', scrollTo(0, 600), true)`);
+	await Bun.sleep(200);
+	const y = () => app.eval<number>('scrollY');
+	const bar = parseFloat(await app.eval<string>(`getComputedStyle(document.documentElement).getPropertyValue('--desktop-titlebar-height')`));
+	expect(bar).toBeGreaterThan(0); // hiddenInset: the page extends under the title bar
+	// A trackpad gesture in the page scrolls it (real WebKit scrolling)…
+	await app.platform('window', 'testScroll', { x: 300, y: bar + 200, dy: -20, steps: 10 });
+	await Bun.sleep(400);
+	const afterContent = await y();
+	expect(afterContent).toBeGreaterThan(600);
+	// …the same gesture over the title bar strip doesn't.
+	await app.platform('window', 'testScroll', { x: 300, y: bar / 2, dy: -20, steps: 10 });
+	await Bun.sleep(400);
+	expect(await y()).toBe(afterContent);
+	await app.eval(`(document.body.style.minHeight = '', scrollTo(0, 0), true)`);
+});

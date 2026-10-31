@@ -165,7 +165,9 @@ const char *const kBridgeScript =
     "post:(req)=>raw({t:'call',req:typeof req==='string'?JSON.parse(req):req}),"
     "setSink:(fn)=>{sink=fn;for(const [n,d] of q.splice(0))fn(n,d);},"
     "deliver:(n,d)=>{sink?sink(n,d):q.push([n,d]);}});"
-    "document.addEventListener('DOMContentLoaded',()=>raw({t:'ready'}));" SD_DRAG_LISTENER "})();";
+    "document.addEventListener('DOMContentLoaded',()=>raw({t:'ready'}));" SD_DRAG_LISTENER
+    // No elastic overscroll (rubber band): zero specificity, so the app's CSS can bring it back.
+    "const os=()=>{const s=document.createElement('style');s.textContent=':where(html,body){overscroll-behavior:none}';(document.head||document.documentElement).prepend(s);};document.documentElement?os():addEventListener('DOMContentLoaded',os,{once:true});" "})();";
 
 const char *const kDragListener = SD_DRAG_LISTENER;
 

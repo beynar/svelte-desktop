@@ -170,6 +170,8 @@ static NSString *const kBridgeScript =
      "setSink:(fn)=>{sink=fn;for(const [n,d] of q.splice(0))fn(n,d);},"
      "deliver:(n,d)=>{sink?sink(n,d):q.push([n,d]);}});"
      "document.addEventListener('DOMContentLoaded',()=>post({t:'ready'}));"
+     // No elastic overscroll (rubber band): zero specificity, so the app's CSS can bring it back.
+     "const os=()=>{const s=document.createElement('style');s.textContent=':where(html,body){overscroll-behavior:none}';(document.head||document.documentElement).prepend(s);};document.documentElement?os():addEventListener('DOMContentLoaded',os,{once:true});"
      // Drag regions: [data-desktop-drag] or `--app-region: drag` (inherited, so
      // `--app-region: no-drag` carves holes); controls stay clickable.
      "const nd='button,a,input,select,textarea,label,summary,option,[contenteditable],[role=button],[data-desktop-no-drag]';"

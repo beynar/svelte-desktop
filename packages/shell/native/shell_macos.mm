@@ -238,6 +238,35 @@ static void observe_window(Window *w) {
 
 static void install_default_menu(NSString *appName);
 
+// Scrolling over a transparent title bar (titleBarStyle transparent / hidden / hiddenInset: the page
+// extends under it) doesn't scroll the page: the strip behaves like a title bar, and title-bar
+// gesture tools (Swish…) aren't fighting a scrolling page. A gesture is routed as a whole, by where
+// it began: one that starts in the page keeps scrolling when it crosses the strip, and the reverse.
+bool platform_scroll_in_title_bar(NSWindow *w, NSPoint locationInWindow) {
+  if (!w || !(w.styleMask & NSWindowStyleMaskFullSizeContentView) || (w.styleMask & NSWindowStyleMaskFullScreen)) return false;
+  return locationInWindow.y > NSMaxY(w.contentLayoutRect);
+}
+
+/// The routing decision (shared by the monitor and the e2e test op): swallow this scroll event?
+bool platform_title_bar_scroll_filter(NSWindow *w, NSPoint locationInWindow, NSEventPhase phase, NSEventPhase momentum) {
+  static bool swallowing = false; // the current trackpad gesture began in the title bar
+  bool inBar = platform_scroll_in_title_bar(w, locationInWindow);
+  if (phase & (NSEventPhaseBegan | NSEventPhaseMayBegin)) swallowing = inBar;
+  else if (phase == NSEventPhaseNone && momentum == NSEventPhaseNone) swallowing = inBar; // mouse wheel: per event
+  return swallowing;
+}
+
+static void install_title_bar_scroll_monitor() {
+  static bool installed = false;
+  if (installed) return;
+  installed = true;
+  [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel
+                                        handler:^NSEvent *(NSEvent *e) {
+                                          if (!find_by_nswindow(e.window)) return e;
+                                          return platform_title_bar_scroll_filter(e.window, e.locationInWindow, e.phase, e.momentumPhase) ? nil : e;
+                                        }];
+}
+
 static int create_window(NSDictionary *o) {
   bool debug = [o[@"debug"] boolValue];
   webview_t wv = webview_create(debug ? 1 : 0, nullptr);
@@ -337,6 +366,7 @@ int shell_window_create(const char *opts_json) {
   if (!g_app_identifier) g_app_identifier = o[@"identifier"];
   int id = create_window(o);
   if (id > 0) {
+    install_title_bar_scroll_monitor();
     platform_init();
     if (!g_menu_installed) install_default_menu(platform_app_name());
   }

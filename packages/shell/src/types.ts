@@ -13,7 +13,8 @@ export interface WindowOptions {
   /** macOS title bar: 'default', 'transparent' (the page extends under it, title kept), 'hidden' (the page extends under the traffic lights) or
    *  'hiddenInset' (same, traffic lights inset). Drag the window by any element with
    *  `data-desktop-drag` or CSS `--app-region: drag`; the page gets `--desktop-titlebar-height`,
-   *  `--desktop-controls-width` and `html[data-desktop-titlebar]`. */
+   *  `--desktop-controls-width` and `html[data-desktop-titlebar]`. Scrolling over the title bar strip
+   *  doesn't scroll the page (title-bar gesture tools such as Swish keep working). */
   titleBarStyle?: "default" | "transparent" | "hidden" | "hiddenInset";
   /** Keep the window invisible until DOMContentLoaded to avoid a white flash. Default true. */
   hiddenUntilReady?: boolean;

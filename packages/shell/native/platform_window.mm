@@ -131,7 +131,49 @@ static NSRect controls_rect(NSWindow *w, NSWindowButton b) {
   return NSMakeRect(inWindow.origin.x, h - NSMaxY(inWindow), inWindow.size.width, inWindow.size.height);
 }
 
+// e2e tests (launch() sets SVELTE_DESKTOP_TEST): a trackpad gesture (began / changed… / ended) through
+// the title-bar routing decision the scroll monitor uses, then to the window like a real one — WebKit
+// scrolls (or rubber-bands) for real. {x, y}: point in the window (top-left, points); dx/dy per step
+// (positive dy = scrolling up); steps. Answers mid-gesture; the gesture ends ~200 ms later.
+static void send_scroll_step(NSWindow *w, NSPoint local, double dx, double dy, CGScrollPhase cgPhase, NSEventPhase phase) {
+  if (platform_title_bar_scroll_filter(w, local, phase, NSEventPhaseNone)) return; // what the monitor would swallow
+  CGEventRef e = CGEventCreateScrollWheelEvent2(NULL, kCGScrollEventUnitPixel, 2, (int32_t)dy, (int32_t)dx, 0);
+  // A synthesized event has no window: AppKit reads its location as window coordinates when the
+  // window dispatches it, so place it at the window-local point.
+  CGFloat primaryHeight = NSMaxY(NSScreen.screens.firstObject.frame);
+  CGEventSetLocation(e, CGPointMake(local.x, primaryHeight - local.y));
+  CGEventSetIntegerValueField(e, kCGScrollWheelEventIsContinuous, 1);
+  CGEventSetIntegerValueField(e, kCGScrollWheelEventScrollPhase, cgPhase);
+  NSEvent *ns = [NSEvent eventWithCGEvent:e];
+  CFRelease(e);
+  if (ns) [w sendEvent:ns];
+}
+
+static void register_test_scroll(void) {
+  const char *test = getenv("SVELTE_DESKTOP_TEST");
+  if (!test || strncmp(test, "ws://127.0.0.1:", 15)) return;
+  platform_register(@"window", @"testScroll", ^(PlatformCall *c) {
+    NSWindow *w = platform_window(platform_resolve_window(c));
+    if (!w) return [c fail:@"invalid_args" message:@"window.testScroll: no such window"];
+    NSPoint local = NSMakePoint([c number:@"x" or:100], NSHeight(w.frame) - [c number:@"y" or:100]);
+    double dx = [c number:@"dx" or:0], dy = [c number:@"dy" or:0];
+    int steps = (int)[c number:@"steps" or:10];
+    send_scroll_step(w, local, 0, 0, kCGScrollPhaseBegan, NSEventPhaseBegan);
+    for (int i = 1; i <= steps; i++)
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)i * 16 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        send_scroll_step(w, local, dx, dy, kCGScrollPhaseChanged, NSEventPhaseChanged);
+      });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(steps * 16 + 30) * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+      [c ok:nil];
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        send_scroll_step(w, local, 0, 0, kCGScrollPhaseEnded, NSEventPhaseEnded);
+      });
+    });
+  });
+}
+
 void platform_register_window(void) {
+  register_test_scroll();
   // ── multi-window ──────────────────────────────────────────────────────
   platform_register(@"window", @"create", ^(PlatformCall *c) {
     int id = platform_create_window(c.args);

@@ -93,7 +93,13 @@ The page extends under the title bar; the shell sets `--desktop-titlebar-height`
 `--desktop-controls-width` and `html[data-desktop-titlebar]` (`fullscreen` while in
 full screen, where both drop to 0). A double-click on a drag region follows the
 system setting (zoom / minimize). `window.setTitleBarStyle(style)` switches at
-runtime.
+runtime. Scrolling over the title bar strip doesn't scroll the page (macOS): it
+behaves like a title bar, and title-bar gesture tools (Swish…) work. A gesture is
+routed as a whole by where it began, so one started in the page keeps scrolling.
+
+No elastic overscroll (rubber band) on desktop: the bridge sets
+`:where(html, body) { overscroll-behavior: none }`, with zero specificity — bring it
+back with `html { overscroll-behavior: auto }`, or set it per scroll container.
 
 On Linux and Windows a hidden title bar is a frameless window: there are no native
 buttons to keep, so `html[data-desktop-controls="none"]` tells the page to draw its
