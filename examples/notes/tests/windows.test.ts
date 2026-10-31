@@ -186,6 +186,16 @@ switch ($Mode) {
     '== probed'; ProbeWindows | ForEach-Object { $f = $_.Split('|'); $p = (Get-Process -Id $f[3] -ErrorAction SilentlyContinue).ProcessName; "$_|$p" }
     foreach ($h in Hosts) { '== host'; Dump $h 0 14 }
   }
+  'dnd-off' { # the runner session starts with Do Not Disturb on (only priority banners pop up)
+    [SdInput]::Chord(0x5B, 0x4E); Start-Sleep -Milliseconds 1500
+    $btn = Find (Hosts) { param($e) $e.Current.AutomationId -eq 'DoNotDisturbButton' }
+    if (-not $btn) { 'no DND button'; exit 0 }
+    $tp = $null; [void]$btn.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$tp)
+    $before = "$($tp.Current.ToggleState)"
+    if ($before -eq 'On') { $tp.Toggle(); Start-Sleep -Milliseconds 500 }
+    "DND $before -> $($tp.Current.ToggleState)"
+    [SdInput]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [SdInput]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+  }
   'act' {
     $out = @{ where = 'popup' }
     $hasTitle = { param($e) $e.Current.Name -like ('*' + $s.title + '*') }
@@ -217,7 +227,7 @@ switch ($Mode) {
 }
 `;
 
-async function uia(mode: 'shot' | 'dump' | 'act', spec?: object) {
+async function uia(mode: 'shot' | 'dump' | 'act' | 'dnd-off', spec?: object) {
 	const file = join(tmp, `u${Math.random().toString(36).slice(2)}.json`);
 	writeFileSync(file, JSON.stringify(spec ?? {}));
 	const r = await ps(UIA_PS1, mode, file);
@@ -365,6 +375,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 
 	test('real click on the toast (UI Automation + mouse) → page navigates to its url', async () => {
 		await home();
+		log(await uia('dnd-off'));
 		await app.eval(`host.notifications.dismissAll()`); // one toast on screen at a time
 		await Bun.sleep(1000);
 		await show({ id: 'u1', title: 'Real click', body: 'Opens About', url: '/about', requireInteraction: true });
@@ -398,7 +409,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		await show({ id: 'u3', title: 'Real dismiss', body: 'Close me', requireInteraction: true, closeButtonText: 'Not now' });
 		await Bun.sleep(1500);
 		const next = app.nextEvent<{ id: string; kind: string }>('notificationResponse', (d) => d.id === 'u3', 20_000);
-		const r = await uia('act', { title: 'Real dismiss', button: '^(Not now|Dismiss|Close)$' });
+		const r = await uia('act', { title: 'Real dismiss', button: '^(Not now|Dismiss|Close|Clear this notification)$' });
 		log('act', r);
 		if (JSON.parse(r).error) log(await uia('dump'));
 		expect(JSON.parse(r).error).toBeUndefined();
