@@ -80,6 +80,109 @@ async function toasts(): Promise<{ setting: string; scheduled: string[]; history
 	return { setting: v.setting, scheduled: [v.scheduled ?? []].flat(), history: [v.history ?? []].flat() };
 }
 
+// Real input on the shell's toast UI: UI Automation finds the toast (popup, else the
+// notification center opened with Win+N) and the mouse clicks it; ValuePattern types the reply.
+const UIA_PS1 = String.raw`param([string]$Mode, [string]$Spec)
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms, System.Drawing
+Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public static class SdInput {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, UIntPtr e);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  public static void Click(int x, int y) { SetCursorPos(x, y); System.Threading.Thread.Sleep(150); mouse_event(2, 0, 0, 0, UIntPtr.Zero); mouse_event(4, 0, 0, 0, UIntPtr.Zero); }
+  public static void Chord(byte a, byte b) { keybd_event(a, 0, 0, UIntPtr.Zero); keybd_event(b, 0, 0, UIntPtr.Zero); keybd_event(b, 0, 2, UIntPtr.Zero); keybd_event(a, 0, 2, UIntPtr.Zero); }
+}
+"@
+[void][SdInput]::SetProcessDPIAware()
+$s = if ($Spec) { Get-Content -Raw $Spec | ConvertFrom-Json } else { $null }
+$A = [System.Windows.Automation.AutomationElement]
+$TS = [System.Windows.Automation.TreeScope]
+$True_ = [System.Windows.Automation.Condition]::TrueCondition
+function Shot($path) {
+  $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+  $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+  $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
+}
+function Desc($e) { $c = $e.Current; "[$($c.ControlType.ProgrammaticName)] '$($c.Name)' class=$($c.ClassName) aid=$($c.AutomationId) rect=$($c.BoundingRectangle)" }
+function Dump($el, $depth, $max) {
+  if ($depth -gt $max) { return }
+  ('  ' * $depth) + (Desc $el)
+  $w = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $ch = $w.GetFirstChild($el)
+  while ($ch) { Dump $ch ($depth + 1) $max; $ch = $w.GetNextSibling($ch) }
+}
+function Hosts { $A::RootElement.FindAll($TS::Children, $True_) | Where-Object { $_.Current.ClassName -like '*CoreWindow*' -or $_.Current.Name -match 'otification' } }
+function Find($hosts, [scriptblock]$pred) {
+  foreach ($h in $hosts) { foreach ($e in $h.FindAll($TS::Descendants, $True_)) { try { if (& $pred $e) { return $e } } catch {} } }
+  return $null
+}
+function ClickEl($e) {
+  $r = $e.Current.BoundingRectangle
+  if ($r.Width -gt 0 -and -not [double]::IsInfinity($r.Width)) { [SdInput]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)); return 'mouse' }
+  $p = $null
+  if ($e.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$p)) { $p.Invoke(); return 'invoke' }
+  throw "no way to click $(Desc $e)"
+}
+switch ($Mode) {
+  'shot' { Shot $s.path; 'ok' }
+  'dump' {
+    '== top-level'; $A::RootElement.FindAll($TS::Children, $True_) | ForEach-Object { Desc $_ }
+    foreach ($h in Hosts) { '== host'; Dump $h 0 14 }
+  }
+  'act' {
+    $out = @{ where = 'popup' }
+    $hasTitle = { param($e) $e.Current.Name -like ('*' + $s.title + '*') }
+    $toast = Find (Hosts) $hasTitle
+    if (-not $toast) {
+      [SdInput]::Chord(0x5B, 0x4E); Start-Sleep -Milliseconds 1500 # Win+N: notification center
+      $out.where = 'center'; $toast = Find (Hosts) $hasTitle
+    }
+    if (-not $toast) { $out.error = 'toast not found'; ($out | ConvertTo-Json -Compress); exit 0 }
+    $out.toast = Desc $toast
+    $hosts = Hosts
+    if ($s.text) {
+      $edit = Find $hosts { param($e) $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit }
+      if (-not $edit) { $out.error = 'no edit box'; ($out | ConvertTo-Json -Compress); exit 0 }
+      $vp = $null; [void]$edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)
+      $edit.SetFocus(); $vp.SetValue($s.text); $out.edit = Desc $edit
+    }
+    if ($s.button) {
+      $btn = Find $hosts { param($e) $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $e.Current.Name -match $s.button }
+      if (-not $btn) { $out.error = "no button $($s.button)"; ($out | ConvertTo-Json -Compress); exit 0 }
+      $out.button = Desc $btn; $out.how = ClickEl $btn
+    } else { $out.how = ClickEl $toast }
+    ($out | ConvertTo-Json -Compress)
+  }
+}
+`;
+
+async function uia(mode: 'shot' | 'dump' | 'act', spec?: object) {
+	const file = join(tmp, `u${Math.random().toString(36).slice(2)}.json`);
+	writeFileSync(file, JSON.stringify(spec ?? {}));
+	const r = await ps(UIA_PS1, mode, file);
+	if (r.code !== 0) throw new Error(`uia ${mode} failed: ${r.err || r.out}`);
+	return r.out;
+}
+const SHOTS = process.env.WINDOWS_SHOTS ?? tmp;
+const shot = async (name: string) => (await uia('shot', { path: join(SHOTS, name) }), log('screenshot', join(SHOTS, name)));
+
+/** A real PNG as a data: URL (RGB gradient / disc), for the hero image and the logo. */
+function pngDataUrl(w: number, h: number, px: (x: number, y: number) => [number, number, number, number]) {
+	const crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+	const crc = (b: Buffer) => { let c = 0xffffffff; for (const x of b) c = crcT[(c ^ x) & 0xff]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+	const chunk = (type: string, data: Buffer) => { const t = Buffer.from(type); const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const c = Buffer.alloc(4); c.writeUInt32BE(crc(Buffer.concat([t, data]))); return Buffer.concat([len, t, data, c]); };
+	const raw = Buffer.alloc((w * 4 + 1) * h);
+	for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) raw.set(px(x, y), y * (w * 4 + 1) + 1 + x * 4);
+	const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 6;
+	const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', require('node:zlib').deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+	return `data:image/png;base64,${png.toString('base64')}`;
+}
+
 const reg = (...a: string[]) => Bun.spawnSync(['reg', ...a], { stdout: 'pipe', stderr: 'pipe' });
 const log = (...a: unknown[]) => console.log('[windows-e2e]', ...a);
 
@@ -196,6 +299,65 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		await app.waitFor(() => /reply r1 reply: On my way/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
 		await activate({ i: 'r1', a: 'later' });
 		await app.waitFor(() => /action r1 later/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
+	});
+
+	test('visual: rich toast (hero image, logo, buttons, critical) + taskbar badge → screenshots', async () => {
+		const hero = pngDataUrl(364, 180, (x, y) => [255 - (x * 200) / 364, 62 + (y * 120) / 180, 0 + (x * 255) / 364, 255]);
+		const logo = pngDataUrl(64, 64, (x, y) => ((x - 32) ** 2 + (y - 32) ** 2 < 900 ? [255, 62, 0, 255] : [0, 0, 0, 0]));
+		await show({ id: 'v1', title: 'Visual check', subtitle: '#general', body: 'Hero image, logo override, buttons, critical', image: hero, icon: logo, urgency: 'critical',
+			actions: [{ id: 'reply', title: 'Reply', input: { placeholder: 'Type a reply', button: 'Send' } }, { id: 'delete', title: 'Delete', destructive: true }] });
+		await Bun.sleep(2000);
+		await shot('toast-rich.png');
+		log(await uia('dump'));
+		await app.eval(`host.notifications.dismiss('v1')`);
+		await app.eval(`host.notifications.setBadge(7)`);
+		await Bun.sleep(800);
+		await shot('taskbar-badge.png');
+		await app.eval(`host.notifications.setBadge(null)`);
+	});
+
+	const once = async (id: string, kind: string) => {
+		await Bun.sleep(1500); // let a second path (Activated event + COM activator) deliver a duplicate if it would
+		const rs = await app.platform<Array<{ id: string; kind: string }>>('notifications', 'responses');
+		expect(rs.filter((r) => r.id === id && r.kind === kind)).toHaveLength(1);
+	};
+
+	test('real click on the toast (UI Automation + mouse) → page navigates to its url', async () => {
+		await home();
+		await show({ id: 'u1', title: 'Real click', body: 'Opens About', url: '/about', requireInteraction: true });
+		await Bun.sleep(1500);
+		await shot('toast-click.png');
+		const r = await uia('act', { title: 'Real click' });
+		log('act', r);
+		expect(JSON.parse(r).error).toBeUndefined();
+		await app.waitFor(() => location.pathname === '/about', { timeout: 15_000 });
+		await app.waitFor(() => /click u1/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
+		await once('u1', 'click');
+	});
+
+	test('real reply: type in the toast input, press Send → kind reply with the text', async () => {
+		await home();
+		await show({ id: 'u2', title: 'Real reply', body: 'Type something', requireInteraction: true,
+			actions: [{ id: 'reply', title: 'Reply', input: { placeholder: 'Type a reply', button: 'Send' } }] });
+		await Bun.sleep(1500);
+		await shot('toast-reply.png');
+		const r = await uia('act', { title: 'Real reply', text: 'Typed for real', button: '^Send$' });
+		log('act', r);
+		expect(JSON.parse(r).error).toBeUndefined();
+		await app.waitFor(() => /reply u2 reply: Typed for real/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
+		await once('u2', 'reply');
+	});
+
+	test('real dismiss (the toast close button) → kind dismiss (Dismissed/UserCanceled)', async () => {
+		await home();
+		await show({ id: 'u3', title: 'Real dismiss', body: 'Close me', requireInteraction: true, closeButtonText: 'Not now' });
+		await Bun.sleep(1500);
+		const next = app.nextEvent<{ id: string; kind: string }>('notificationResponse', (d) => d.id === 'u3', 20_000);
+		const r = await uia('act', { title: 'Real dismiss', button: '^(Not now|Dismiss|Close)$' });
+		log('act', r);
+		expect(JSON.parse(r).error).toBeUndefined();
+		expect((await next).kind).toBe('dismiss');
+		await once('u3', 'dismiss');
 	});
 
 	test('cold start: the activator launches the app (-ToastActivated), the click reaches it', async () => {

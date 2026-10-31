@@ -69,7 +69,17 @@ jobs:
         env:
           WINDOWS_E2E: '1'
           WINDOWS_APP: ${{ github.workspace }}\notes-app
-        run: bun test --timeout 120000 tests/windows.test.ts
+          WINDOWS_SHOTS: ${{ runner.temp }}\shots
+        run: |
+          New-Item -ItemType Directory -Force $env:WINDOWS_SHOTS | Out-Null
+          bun test --timeout 120000 tests/windows.test.ts
+      - name: Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-screenshots
+          path: ${{ runner.temp }}\shots
+          if-no-files-found: warn
       - name: App logs on failure
         if: failure()
         shell: powershell
