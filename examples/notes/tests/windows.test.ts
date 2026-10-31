@@ -92,6 +92,26 @@ public static class SdInput {
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, UIntPtr e);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+  // Visible top-level windows (toast popups sit in a shell z-band UIA's root doesn't list): "hwnd|class|title|pid|l,t,r,b"
+  public static string[] Windows() {
+    var list = new System.Collections.Generic.List<string>();
+    EnumWindows((h, l) => {
+      if (!IsWindowVisible(h)) return true;
+      var c = new System.Text.StringBuilder(256); GetClassName(h, c, 256);
+      var t = new System.Text.StringBuilder(256); GetWindowText(h, t, 256);
+      uint pid; GetWindowThreadProcessId(h, out pid); RECT r; GetWindowRect(h, out r);
+      list.Add(h.ToInt64() + "|" + c + "|" + t + "|" + pid + "|" + r.L + "," + r.T + "," + r.R + "," + r.B);
+      return true; }, IntPtr.Zero);
+    return list.ToArray();
+  }
   public static void Click(int x, int y) { SetCursorPos(x, y); System.Threading.Thread.Sleep(150); mouse_event(2, 0, 0, 0, UIntPtr.Zero); mouse_event(4, 0, 0, 0, UIntPtr.Zero); }
   public static void Chord(byte a, byte b) { keybd_event(a, 0, 0, UIntPtr.Zero); keybd_event(b, 0, 0, UIntPtr.Zero); keybd_event(b, 0, 2, UIntPtr.Zero); keybd_event(a, 0, 2, UIntPtr.Zero); }
 }
@@ -116,7 +136,13 @@ function Dump($el, $depth, $max) {
   $ch = $w.GetFirstChild($el)
   while ($ch) { Dump $ch ($depth + 1) $max; $ch = $w.GetNextSibling($ch) }
 }
-function Hosts { $A::RootElement.FindAll($TS::Children, $True_) | Where-Object { $_.Current.ClassName -like '*CoreWindow*' -or $_.Current.Name -match 'otification' } }
+function ShellWindows { [SdInput]::Windows() | Where-Object { $f = $_.Split('|'); $f[1] -eq 'Windows.UI.Core.CoreWindow' -or $f[2] -match 'otification' } }
+function Hosts {
+  $out = @()
+  foreach ($w in ShellWindows) { try { $out += $A::FromHandle([IntPtr][long]$w.Split('|')[0]) } catch {} }
+  $out += @($A::RootElement.FindAll($TS::Children, $True_) | Where-Object { $_.Current.ClassName -like '*CoreWindow*' -or $_.Current.Name -match 'otification' })
+  return $out
+}
 function Find($hosts, [scriptblock]$pred) {
   foreach ($h in $hosts) { foreach ($e in $h.FindAll($TS::Descendants, $True_)) { try { if (& $pred $e) { return $e } } catch {} } }
   return $null
@@ -131,7 +157,7 @@ function ClickEl($e) {
 switch ($Mode) {
   'shot' { Shot $s.path; 'ok' }
   'dump' {
-    '== top-level'; $A::RootElement.FindAll($TS::Children, $True_) | ForEach-Object { Desc $_ }
+    '== windows'; [SdInput]::Windows() | ForEach-Object { $f = $_.Split('|'); $p = (Get-Process -Id $f[3] -ErrorAction SilentlyContinue).ProcessName; "$_|$p" }
     foreach ($h in Hosts) { '== host'; Dump $h 0 14 }
   }
   'act' {
@@ -304,11 +330,22 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 	test('visual: rich toast (hero image, logo, buttons, critical) + taskbar badge → screenshots', async () => {
 		const hero = pngDataUrl(364, 180, (x, y) => [255 - (x * 200) / 364, 62 + (y * 120) / 180, 0 + (x * 255) / 364, 255]);
 		const logo = pngDataUrl(64, 64, (x, y) => ((x - 32) ** 2 + (y - 32) ** 2 < 900 ? [255, 62, 0, 255] : [0, 0, 0, 0]));
-		await show({ id: 'v1', title: 'Visual check', subtitle: '#general', body: 'Hero image, logo override, buttons, critical', image: hero, icon: logo, urgency: 'critical',
-			actions: [{ id: 'reply', title: 'Reply', input: { placeholder: 'Type a reply', button: 'Send' } }, { id: 'delete', title: 'Delete', destructive: true }] });
+		const rich = { subtitle: '#general', image: hero, icon: logo,
+			actions: [{ id: 'reply', title: 'Reply', input: { placeholder: 'Type a reply', button: 'Send' } }, { id: 'delete', title: 'Delete', destructive: true }] };
+		await show({ id: 'v2', title: 'Visual check', body: 'Hero image, logo override, input + buttons', ...rich });
 		await Bun.sleep(2000);
 		await shot('toast-rich.png');
 		log(await uia('dump'));
+		await app.eval(`host.notifications.dismiss('v2')`);
+		// urgency critical = scenario "urgent": Windows 11 first asks the user ("Important Notification Request").
+		await show({ id: 'v1', title: 'Visual check (critical)', body: 'Urgent scenario', urgency: 'critical', ...rich });
+		await Bun.sleep(2000);
+		await shot('toast-urgent-request.png');
+		log('allow important:', await uia('act', { title: 'important notifications', button: '^Allow$' }));
+		await Bun.sleep(1000);
+		await show({ id: 'v1', title: 'Visual check (critical)', body: 'Urgent scenario, after Allow', urgency: 'critical', ...rich });
+		await Bun.sleep(2000);
+		await shot('toast-urgent.png');
 		await app.eval(`host.notifications.dismiss('v1')`);
 		await app.eval(`host.notifications.setBadge(7)`);
 		await Bun.sleep(800);
@@ -329,6 +366,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		await shot('toast-click.png');
 		const r = await uia('act', { title: 'Real click' });
 		log('act', r);
+		if (JSON.parse(r).error) log(await uia('dump'));
 		expect(JSON.parse(r).error).toBeUndefined();
 		await app.waitFor(() => location.pathname === '/about', { timeout: 15_000 });
 		await app.waitFor(() => /click u1/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
@@ -343,6 +381,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		await shot('toast-reply.png');
 		const r = await uia('act', { title: 'Real reply', text: 'Typed for real', button: '^Send$' });
 		log('act', r);
+		if (JSON.parse(r).error) log(await uia('dump'));
 		expect(JSON.parse(r).error).toBeUndefined();
 		await app.waitFor(() => /reply u2 reply: Typed for real/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
 		await once('u2', 'reply');
@@ -355,6 +394,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		const next = app.nextEvent<{ id: string; kind: string }>('notificationResponse', (d) => d.id === 'u3', 20_000);
 		const r = await uia('act', { title: 'Real dismiss', button: '^(Not now|Dismiss|Close)$' });
 		log('act', r);
+		if (JSON.parse(r).error) log(await uia('dump'));
 		expect(JSON.parse(r).error).toBeUndefined();
 		expect((await next).kind).toBe('dismiss');
 		await once('u3', 'dismiss');
