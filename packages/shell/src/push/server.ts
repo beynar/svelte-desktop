@@ -17,11 +17,9 @@
  * delete it.
  */
 import http2 from 'node:http2';
+import { b64url, fromB64url as decodeB64url, MAX_PLAINTEXT, type PushTarget } from './protocol.ts';
 
-export type PushTarget =
-	| { provider: 'apns'; token: string; topic?: string; environment?: 'development' | 'production' }
-	| { provider: 'fcm'; token: string }
-	| { provider: 'webpush'; endpoint: string; keys: { p256dh: string; auth: string }; expirationTime?: number | null };
+export type { PushTarget } from './protocol.ts';
 
 export interface PushNotification {
 	/** Dedupe/replace key, handed back as the notification id on the device. */
@@ -105,16 +103,11 @@ export class PushError extends Error {
 
 const enc = new TextEncoder();
 
-export function b64url(bytes: Uint8Array | ArrayBuffer): string {
-	const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-	let s = '';
-	for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
-	return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-export function fromB64url(s: string): Uint8Array {
-	const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));
-	return Uint8Array.from(b, (c) => c.charCodeAt(0));
+/** Keys and secrets from configs and targets: base64url, or a clear error. */
+function fromB64url(s: string): Uint8Array {
+	const bytes = decodeB64url(s);
+	if (!bytes) throw new Error(`push: not base64url: ${s.slice(0, 16)}…`);
+	return bytes;
 }
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -173,6 +166,7 @@ export async function encryptWebPush(
 	keys: { p256dh: string; auth: string },
 	seams: { salt?: Uint8Array; senderPrivate?: string; senderPublic?: string } = {},
 ): Promise<Uint8Array> {
+	if (plaintext.length > MAX_PLAINTEXT) throw new Error(`web push: message larger than ${MAX_PLAINTEXT} bytes (push services accept 4096-byte bodies)`);
 	const uaPublic = fromB64url(keys.p256dh);
 	const authSecret = fromB64url(keys.auth);
 	let asPrivate: CryptoKey, asPublic: Uint8Array;
@@ -193,6 +187,7 @@ export async function encryptWebPush(
 	const key = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['encrypt']);
 	// One record: plaintext ‖ 0x02 (last-record delimiter), no padding.
 	const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, key, concat(plaintext, new Uint8Array([2]))));
+	// One record ≤ 4096 bytes (MAX_PLAINTEXT caps it), so rs = 4096 always covers it.
 	const rs = 4096;
 	const header = new Uint8Array(21 + asPublic.length);
 	header.set(salt, 0);
@@ -209,7 +204,9 @@ export async function encryptWebPush(
 export async function decryptWebPush(body: Uint8Array, privateKey: CryptoKey, publicKey: Uint8Array, authSecret: Uint8Array): Promise<Uint8Array> {
 	if (body.length < 21) throw new Error('web push: body too short');
 	const salt = body.subarray(0, 16);
+	const rs = new DataView(body.buffer, body.byteOffset + 16, 4).getUint32(0);
 	const idlen = body[20];
+	if (rs < 18 || body.length - 21 - idlen > rs) throw new Error('web push: one record larger than its record size (rs)');
 	const asPublic = body.subarray(21, 21 + idlen);
 	const asKey = await crypto.subtle.importKey('raw', asPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
 	const secret = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: asKey }, privateKey, 256));
@@ -272,7 +269,7 @@ export function createPush(config: PushConfig): PushSender {
 		if (!c) throw new PushError('push: no `apns` config', 'apns', 0, 'NotConfigured', false);
 		const env = c.environment ?? t.environment ?? 'production';
 		const origin = c.origin ?? (env === 'development' ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com');
-		const topic = t.topic ?? c.topic;
+		const topic = t.topic || c.topic;
 		if (!topic) throw new PushError('push: APNs needs a topic (the bundle id)', 'apns', 0, 'MissingTopic', false);
 		const aps: Record<string, unknown> = {};
 		if (n.background) aps['content-available'] = 1;

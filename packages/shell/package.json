@@ -14,6 +14,7 @@
 		"./updater": "./src/updater/index.ts",
 		"./push": "./src/push/server.ts",
 		"./push-server": "./src/push/push-server.ts",
+		"./push-protocol": "./src/push/protocol.ts",
 		"./push/service-worker.js": "./src/push/service-worker.js",
 		"./platform": "./src/platform/index.ts",
 		"./stores": "./src/platform/stores.svelte.ts",

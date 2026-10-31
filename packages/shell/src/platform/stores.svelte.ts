@@ -916,9 +916,6 @@ class NotificationsNamespace extends PlatformNamespace {
 		this.permission = r.status;
 		return r;
 	}
-	show = notificationsSvc.show;
-	dismiss = notificationsSvc.dismiss;
-
 	/** click · action · reply · dismiss · response (all four) · shown. Responses wait for their first listener. */
 	on<E extends keyof NotificationsEvents & string>(
 		event: E,
@@ -967,7 +964,6 @@ class PushNamespace extends PlatformNamespace {
 		this.target = null;
 		return null;
 	}
-	token = pushSvc.token;
 	/** token: a new or rotated target · message: a push received while the app runs. */
 	on<E extends 'token' | 'message'>(event: E, fn: (e: E extends 'token' ? PushTarget : PushMessage) => void): () => void {
 		return pushSvc.on(event, fn);

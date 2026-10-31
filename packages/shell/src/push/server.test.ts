@@ -1,6 +1,9 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import http2 from "node:http2";
-import { b64url, createPush, encryptWebPush, fromB64url, generateVapidKeys, PushError } from "./server.ts";
+import { b64url, fromB64url as decode } from "./protocol.ts";
+import { createPush, encryptWebPush, generateVapidKeys, PushError } from "./server.ts";
+
+const fromB64url = (s: string) => decode(s)!;
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -219,4 +222,10 @@ describe("createPush", () => {
     expect(err.expired).toBe(true);
     expect(err.reason).toBe("UNREGISTERED");
   });
+});
+
+test("web push refuses messages push services would reject (> 4096-byte bodies)", async () => {
+  const ua = await userAgent();
+  expect(await encryptWebPush(new Uint8Array(3993), ua.keys).then((b) => b.length)).toBe(4096);
+  expect(await encryptWebPush(new Uint8Array(3994), ua.keys).catch((e) => e.message)).toContain("larger than 3993 bytes");
 });

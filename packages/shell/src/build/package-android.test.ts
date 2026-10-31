@@ -183,7 +183,8 @@ test("Web Push decryption in the Android host (WebPushCrypto.java on a JVM): RFC
   const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
   const { join, resolve } = await import("node:path");
   const { tmpdir } = await import("node:os");
-  const { encryptWebPush, b64url } = await import("../push/server.ts");
+  const { encryptWebPush } = await import("../push/server.ts");
+  const { b64url } = await import("../push/protocol.ts");
   const dir = mkdtempSync(join(tmpdir(), "sd-webpush-"));
   try {
     const main = join(dir, "Main.java");

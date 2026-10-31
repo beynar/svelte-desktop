@@ -4,7 +4,8 @@
 // pushes and notification events). Talks to pages with postMessage (`__sd` messages).
 /* eslint-env serviceworker */
 
-const unclaimed = []; // responses for a tab we opened, until it asks (`claim`)
+// Responses for a tab we opened, by that tab's client id, until it asks (`claim`).
+const unclaimed = new Map(); // clientId → { message, claimed: resolve }
 
 const parse = (text) => {
 	try {
@@ -21,7 +22,11 @@ self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 
 self.addEventListener('message', (e) => {
 	if (e.data?.__sd !== 'claim' || !e.source) return;
-	for (const m of unclaimed.splice(0)) e.source.postMessage(m);
+	const pending = unclaimed.get(e.source.id);
+	if (!pending) return;
+	unclaimed.delete(e.source.id);
+	e.source.postMessage(pending.message);
+	pending.claimed();
 });
 
 // Payload: { id, title, body, subtitle, icon, image, badge, silent, renotify, requireInteraction, payload }
@@ -61,13 +66,11 @@ async function respond(notification, response) {
 		return;
 	}
 	if (response.kind === 'dismiss') return;
-	// No tab: open one at the url (already navigated) and keep the event for it.
+	// No tab: open one at the url (already navigated) and keep the event for that tab only.
 	const opened = await self.clients.openWindow(url ? new URL(url, self.location.origin).href : '/');
-	unclaimed.push({ __sd: 'notificationResponse', response, navigated: !!url });
-	if (opened) {
-		// Give the tab a moment to start and claim it.
-		await new Promise((r) => setTimeout(r, 10000));
-	}
+	if (!opened) return;
+	// Stay alive until the tab claims it (the browser caps how long waitUntil may last).
+	await new Promise((claimed) => unclaimed.set(opened.id, { message: { __sd: 'notificationResponse', response, navigated: !!url }, claimed }));
 }
 
 self.addEventListener('notificationclick', (e) => {

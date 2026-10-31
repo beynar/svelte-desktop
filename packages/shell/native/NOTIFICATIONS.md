@@ -226,13 +226,19 @@ Windows compiles; it has not run on Windows.
 Web Push (RFC 8030 delivery, RFC 8291 encryption, RFC 8292 VAPID) is an open
 protocol, so the same target and the same sender work against your own server.
 
-- **Server** — two implementations of one contract: `@svelte-desktop/shell/push-server`
+- **Server** — the wire rules (request validation, VAPID, limits, frames) live in one
+  runtime-free module, `@svelte-desktop/shell/push-protocol` (src/push/protocol.ts), and one
+  contract test suite (src/push/contract.testkit.ts) runs against both implementations:
+  `@svelte-desktop/shell/push-server`
   (Bun, bun:sqlite, anywhere) and `packages/push-worker` (Cloudflare Workers: one Durable
   Object per device with SQLite storage, hibernatable WebSocket, TTL alarm — `wrangler deploy`).
   - `POST /v1/subscribe` (`Authorization: Bearer <device secret>`, body
     `{ applicationServerKey? }`) → `{ id, endpoint }`. `GET /v1/subscriptions/:id` checks it still exists (the
     client re-subscribes on 404 and reports the new target), `DELETE` unsubscribes.
-  - `POST /v1/push/:id` — the Web Push endpoint: `Content-Encoding: aes128gcm`, `TTL`,
+  - The device secret is ≥ 16 characters. Endpoints are opaque URLs (their shape differs
+    between the two servers).
+  - `POST /v1/push/…` — the Web Push endpoint: body ≤ 4096 bytes, `Content-Encoding: aes128gcm`,
+    `TTL` (exact; 0 = delivered to a connected device or dropped, never stored),
     `Topic` (replaces a queued message with the same topic = dedupe), `Urgency`; VAPID
     checked when the subscription has an applicationServerKey. 201 + Location; 404/410
     for unknown/removed subscriptions (senders see `expired`).

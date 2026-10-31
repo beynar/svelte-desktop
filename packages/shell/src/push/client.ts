@@ -1,31 +1,20 @@
 /**
  * The device side of the self-hosted push (desktop.config `push.server`): one WebSocket to
- * your push server (push-server.ts), held by the app's server process while the app runs,
- * window closed included. Messages arrive aes128gcm-encrypted (RFC 8291) for this device's
- * key; they're decrypted here, shown as notifications (`id` dedupes, payload deep-links) and
- * emitted as `pushMessage`. Keys and the device secret persist in `<data>/push.json`.
+ * your push server (push-server.ts or packages/push-worker), held by the app's server process
+ * while the app runs. Messages arrive aes128gcm-encrypted (RFC 8291) for this device's key.
+ *
+ * - One lifecycle, serialized: create keys → check the stored subscription → subscribe if the
+ *   server doesn't know it → connect. Runs on register(), at startup and on every reconnection,
+ *   so a server that lost the subscription gets a new one (reported through onTarget).
+ * - One delivery pipeline, in order: decrypt → parse → onMessage → ack. A message that can't be
+ *   decrypted or parsed is acked and dropped; one whose handler fails stays on the server and
+ *   comes back at the next connection.
+ * Keys and the device secret persist in `<data>/push.json`.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { b64url, decryptWebPush, fromB64url } from './server.ts';
-
-export interface WebPushTarget {
-	provider: 'webpush';
-	endpoint: string;
-	keys: { p256dh: string; auth: string };
-}
-
-/** What `createPush().send()` puts in a Web Push message. */
-export interface PushPayload {
-	id?: string;
-	title?: string;
-	body?: string;
-	subtitle?: string;
-	image?: string;
-	silent?: boolean;
-	payload?: string;
-	[key: string]: unknown;
-}
+import { b64url, fromB64url, parseMessageFrame, PING, type MessageFrame, type WebPushTarget, type WirePushMessage } from './protocol.ts';
+import { decryptWebPush } from './server.ts';
 
 interface Stored {
 	server: string;
@@ -41,14 +30,25 @@ export interface PushClientOptions {
 	server: string;
 	/** Where keys and the subscription persist. */
 	file: string;
-	/** A decrypted message. Resolve when it's handled (then it's acked and removed from the server). */
-	onMessage(message: PushPayload): void | Promise<void>;
-	/** The target changed (first registration, re-subscription). */
+	/** A decrypted message. Throw to have it redelivered at the next connection. */
+	onMessage(message: WirePushMessage): void | Promise<void>;
+	/** A new target (first registration, or re-subscription after the server lost it). */
 	onTarget?(target: WebPushTarget): void;
-	/** Connection state, for diagnostics. */
 	onState?(state: 'connecting' | 'open' | 'closed'): void;
-	/** Test seam: the VAPID public key subscriptions are locked to. */
+	/** Lock the subscription to your app server's VAPID key (base64url). */
 	applicationServerKey?: string;
+}
+
+function parseStored(text: string, server: string): Stored | null {
+	try {
+		const s = JSON.parse(text) as Partial<Stored>;
+		if (s.server !== server || typeof s.secret !== 'string' || typeof s.publicKey !== 'string' || typeof s.auth !== 'string' || !s.jwk) return null;
+		const sub = s.subscription;
+		if (sub && (typeof sub.id !== 'string' || typeof sub.endpoint !== 'string')) delete s.subscription;
+		return s as Stored;
+	} catch {
+		return null;
+	}
 }
 
 export function createPushClient(opts: PushClientOptions) {
@@ -56,165 +56,172 @@ export function createPushClient(opts: PushClientOptions) {
 	let state: Stored | null = null;
 	let key: CryptoKey | null = null;
 	let ws: WebSocket | null = null;
-	let stopped = true;
+	let running = false;
 	let retry = 0;
 	let timer: ReturnType<typeof setTimeout> | null = null;
+	let lifecycle: Promise<unknown> = Promise.resolve();
+	let delivery: Promise<unknown> = Promise.resolve();
+
+	/** Lifecycle steps run one at a time, in call order. */
+	function serial<T>(step: () => Promise<T>): Promise<T> {
+		const run = lifecycle.then(step);
+		lifecycle = run.catch(() => {});
+		return run;
+	}
 
 	function load(): Stored | null {
 		if (state) return state;
 		try {
-			const s = JSON.parse(readFileSync(opts.file, 'utf8')) as Stored;
-			if (s.server === base) state = s;
+			state = parseStored(readFileSync(opts.file, 'utf8'), base);
 		} catch {}
 		return state;
 	}
 
-	function save() {
+	function save(s: Stored) {
 		mkdirSync(dirname(opts.file), { recursive: true });
-		writeFileSync(opts.file, JSON.stringify(state, null, 2), { mode: 0o600 });
+		writeFileSync(opts.file, JSON.stringify(s, null, 2), { mode: 0o600 });
 	}
 
-	async function ensureKeys(): Promise<Stored> {
-		const s = load();
-		if (s) return s;
-		const pair = (await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])) as CryptoKeyPair;
-		state = {
-			server: base,
-			secret: b64url(crypto.getRandomValues(new Uint8Array(32))),
-			jwk: await crypto.subtle.exportKey('jwk', pair.privateKey),
-			publicKey: b64url(await crypto.subtle.exportKey('raw', pair.publicKey)),
-			auth: b64url(crypto.getRandomValues(new Uint8Array(16))),
-		};
-		save();
-		return state;
-	}
+	const target = (s: Stored & { subscription: { endpoint: string } }): WebPushTarget => ({
+		provider: 'webpush', endpoint: s.subscription.endpoint, keys: { p256dh: s.publicKey, auth: s.auth },
+	});
 
-	async function privateKey(): Promise<CryptoKey> {
-		return (key ??= await crypto.subtle.importKey('jwk', (await ensureKeys()).jwk, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']));
-	}
+	const authed = (s: Stored, init: RequestInit = {}) => ({ ...init, headers: { ...init.headers, authorization: `Bearer ${s.secret}` } });
 
-	/** Drop the stored subscription if the server no longer knows it (404). Network errors keep it. */
-	async function validate(s: Stored) {
-		if (!s.subscription) return;
-		const res = await fetch(`${base}/v1/subscriptions/${s.subscription.id}`, { headers: { authorization: `Bearer ${s.secret}` } }).catch(() => null);
-		if (res?.status === 404) {
-			delete s.subscription;
-			save();
+	/** Keys, a subscription the server knows, persisted. The one place a target is created. */
+	async function ensure(): Promise<WebPushTarget> {
+		let s = load();
+		if (!s) {
+			const pair = (await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])) as CryptoKeyPair;
+			s = state = {
+				server: base,
+				secret: b64url(crypto.getRandomValues(new Uint8Array(32))),
+				jwk: await crypto.subtle.exportKey('jwk', pair.privateKey),
+				publicKey: b64url(await crypto.subtle.exportKey('raw', pair.publicKey)),
+				auth: b64url(crypto.getRandomValues(new Uint8Array(16))),
+			};
+			save(s);
 		}
+		if (s.subscription) {
+			const res = await fetch(`${base}/v1/subscriptions/${s.subscription.id}`, authed(s));
+			if (res.status === 404) {
+				delete s.subscription;
+				save(s);
+			} else if (!res.ok) throw new Error(`push server ${base}: HTTP ${res.status}`);
+		}
+		if (!s.subscription) {
+			const res = await fetch(`${base}/v1/subscribe`, authed(s, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(opts.applicationServerKey ? { applicationServerKey: opts.applicationServerKey } : {}),
+			}));
+			if (!res.ok) throw new Error(`push server ${base}: subscribe failed (HTTP ${res.status} ${await res.text().catch(() => '')})`);
+			const sub = (await res.json()) as { id?: unknown; endpoint?: unknown };
+			if (typeof sub.id !== 'string' || typeof sub.endpoint !== 'string') throw new Error(`push server ${base}: bad subscribe answer`);
+			s.subscription = { id: sub.id, endpoint: sub.endpoint };
+			save(s);
+			opts.onTarget?.(target(s as Stored & { subscription: { endpoint: string } }));
+		}
+		return target(s as Stored & { subscription: { endpoint: string } });
 	}
 
-	const target = (s: Stored): WebPushTarget => ({ provider: 'webpush', endpoint: s.subscription!.endpoint, keys: { p256dh: s.publicKey, auth: s.auth } });
-
-	async function handle(frame: { id: string; body: string }) {
+	async function handle(frame: MessageFrame, socket: WebSocket) {
 		const s = state!;
+		let message: WirePushMessage;
 		try {
-			const plain = await decryptWebPush(Uint8Array.from(Buffer.from(frame.body, 'base64')), await privateKey(), fromB64url(s.publicKey), fromB64url(s.auth));
-			const text = new TextDecoder().decode(plain);
-			let message: PushPayload;
-			try {
-				message = JSON.parse(text);
-			} catch {
-				message = { body: text };
-			}
-			await opts.onMessage(message);
+			key ??= await crypto.subtle.importKey('jwk', s.jwk, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+			const plain = await decryptWebPush(Uint8Array.from(Buffer.from(frame.body, 'base64')), key, fromB64url(s.publicKey)!, fromB64url(s.auth)!);
+			const parsed = JSON.parse(new TextDecoder().decode(plain)) as unknown;
+			if (typeof parsed !== 'object' || parsed === null) throw new Error('not a JSON object');
+			message = parsed as WirePushMessage;
 		} catch (err) {
-			console.error(`[push] dropped a message: ${(err as Error).message}`);
+			console.error(`[push] dropped an unreadable message: ${(err as Error).message}`);
+			socket.send(JSON.stringify({ type: 'ack', id: frame.id }));
+			return;
 		}
-		ws?.send(JSON.stringify({ type: 'ack', id: frame.id }));
+		try {
+			await opts.onMessage(message);
+			socket.send(JSON.stringify({ type: 'ack', id: frame.id }));
+		} catch (err) {
+			console.error(`[push] will retry ${message.id ?? frame.id}: ${(err as Error).message}`);
+		}
 	}
 
 	function connect() {
-		if (stopped || !state) return;
+		if (!running || !state) return;
+		if (timer) clearTimeout(timer);
+		timer = null;
 		opts.onState?.('connecting');
-		const url = `${base.replace(/^http/, 'ws')}/v1/connect`;
-		const socket = new WebSocket(url, { headers: { authorization: `Bearer ${state.secret}` } } as unknown as string[]);
+		const socket = new WebSocket(`${base.replace(/^http/, 'ws')}/v1/connect`, { headers: { authorization: `Bearer ${state.secret}` } } as unknown as string[]);
 		ws = socket;
 		let ping: ReturnType<typeof setInterval> | null = null;
 		socket.onopen = () => {
 			retry = 0;
 			opts.onState?.('open');
 			// Keep-alive through proxies / idle timeouts (answered without waking a Durable Object).
-			ping = setInterval(() => socket.readyState === WebSocket.OPEN && socket.send('{"type":"ping"}'), 30_000);
+			ping = setInterval(() => socket.readyState === WebSocket.OPEN && socket.send(PING), 30_000);
+			// Every (re)connection: the subscription must still exist on the server.
+			void serial(ensure).catch((err) => console.error(`[push] ${(err as Error).message}`));
 		};
 		socket.onmessage = (e) => {
-			try {
-				const m = JSON.parse(String(e.data));
-				if (m.type === 'message') void handle(m);
-			} catch {}
+			const frame = parseMessageFrame(e.data);
+			if (frame) delivery = delivery.then(() => handle(frame, socket));
 		};
 		socket.onclose = () => {
 			if (ping) clearInterval(ping);
 			if (ws === socket) ws = null;
 			opts.onState?.('closed');
-			if (stopped) return;
+			if (!running) return;
 			// Backoff: 1 s, 2 s, 4 s … 60 s, with jitter.
 			const delay = Math.min(60_000, 1000 * 2 ** retry++) * (0.75 + Math.random() / 2);
 			timer = setTimeout(connect, delay);
 		};
-		socket.onerror = () => {};
+	}
+
+	function run() {
+		running = true;
+		if (!ws) connect(); // waiting in backoff (server was down) → now
+	}
+
+	function stop() {
+		running = false;
+		if (timer) clearTimeout(timer);
+		timer = null;
+		ws?.close();
+		ws = null;
 	}
 
 	return {
 		/** Subscribe (once; persisted) and connect. Returns the target your server sends to. */
 		async register(): Promise<WebPushTarget> {
-			const s = await ensureKeys();
-			await validate(s);
-			if (!s.subscription) {
-				const res = await fetch(`${base}/v1/subscribe`, {
-					method: 'POST',
-					headers: { authorization: `Bearer ${s.secret}`, 'content-type': 'application/json' },
-					body: JSON.stringify(opts.applicationServerKey ? { applicationServerKey: opts.applicationServerKey } : {}),
-				});
-				if (!res.ok) throw new Error(`push server ${base}: subscribe failed (HTTP ${res.status} ${await res.text().catch(() => '')})`);
-				s.subscription = (await res.json()) as { id: string; endpoint: string };
-				save();
-				opts.onTarget?.(target(s));
-			}
-			this.start();
-			// Waiting in backoff (the server was down)? Reconnect now.
-			if (!stopped && ws?.readyState !== WebSocket.OPEN && ws?.readyState !== WebSocket.CONNECTING) {
-				if (timer) clearTimeout(timer);
-				retry = 0;
-				connect();
-			}
-			return target(s);
+			const t = await serial(ensure);
+			run();
+			return t;
 		},
-		/** Reconnect with the stored subscription (at startup); no-op when never registered. */
+		/** At startup: reconnect if registered before (no-op otherwise). */
 		start() {
-			const s = load();
-			if (!s?.subscription || !stopped) return;
-			stopped = false;
-			connect();
-			// The server may have lost it (database reset, another server at this URL): re-subscribe
-			// and announce the new target (onTarget → push.on('token')).
-			void validate(s).then(() => { if (!s.subscription && !stopped) return this.register(); }).catch(() => {});
+			if (load()?.subscription) run();
 		},
 		/** The stored target, or null. */
 		target(): WebPushTarget | null {
 			const s = load();
-			return s?.subscription ? target(s) : null;
+			return s?.subscription ? target(s as Stored & { subscription: { endpoint: string } }) : null;
 		},
-		async unregister() {
-			const s = load();
-			this.stop();
-			if (s?.subscription) {
-				await fetch(`${base}/v1/subscriptions/${s.subscription.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${s.secret}` } }).catch(() => {});
+		/** Forgets the subscription only once the server confirmed (or never had it). */
+		unregister(): Promise<void> {
+			return serial(async () => {
+				const s = load();
+				stop();
+				if (!s?.subscription) return;
+				const res = await fetch(`${base}/v1/subscriptions/${s.subscription.id}`, authed(s, { method: 'DELETE' }));
+				if (!res.ok && res.status !== 404) throw new Error(`push server ${base}: unsubscribe failed (HTTP ${res.status})`);
 				delete s.subscription;
-				save();
-			}
+				save(s);
+			});
 		},
-		stop() {
-			stopped = true;
-			if (timer) clearTimeout(timer);
-			ws?.close();
-			ws = null;
-		},
+		stop,
 		get connected() {
 			return ws?.readyState === WebSocket.OPEN;
-		},
-		/** Exists for tests. */
-		get file() {
-			return existsSync(opts.file) ? opts.file : null;
 		},
 	};
 }

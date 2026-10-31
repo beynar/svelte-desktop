@@ -15,6 +15,10 @@
  *   still receive it (events wait for their first listener).
  */
 import { callPlatform, deliverPlatformEvent, NativeApiError, onPlatform, onPlatformReady, platformReady } from './bus';
+import type { PushTarget } from '../push/protocol.ts';
+import { CHANNEL, PUSH_CLIENT, type DesktopPushClient, type DesktopPushOp, type DesktopPushOps, type DesktopPushReply } from '../push/desktop-channel.ts';
+
+export type { PushTarget, WebPushTarget } from '../push/protocol.ts';
 
 export type NotificationUrgency = 'low' | 'normal' | 'critical';
 export type NotificationRepeat = 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year';
@@ -153,12 +157,6 @@ export interface NotificationChannel {
 	visibility?: 'public' | 'private' | 'secret';
 }
 
-/** What `host.push.register()` returns: send it to your server, give it to `createPush().send()`. */
-export type PushTarget =
-	| { provider: 'apns'; token: string; topic: string; environment: 'development' | 'production' }
-	| { provider: 'fcm'; token: string }
-	| { provider: 'webpush'; endpoint: string; keys: { p256dh: string; auth: string }; expirationTime?: number | null };
-
 export interface PushMessage<D = unknown> {
 	id?: string;
 	/** The push's custom keys (APNs) / data (FCM). */
@@ -206,30 +204,28 @@ const native = () => platformReady();
 // Self-hosted push (desktop.config `push.server`) on desktop: the client runs in the app's
 // server process (push/desktop.ts); pages ask it over the `push:*` broadcast channel.
 declare const __SVELTE_DESKTOP_PUSH__: { server?: string | null } | undefined;
-const PUSH_CLIENT = Symbol.for('svelte-desktop.push.client');
 function selfHostedPush(): boolean {
 	const c = typeof __SVELTE_DESKTOP_PUSH__ !== 'undefined' ? __SVELTE_DESKTOP_PUSH__ : undefined;
 	if (!c?.server || !native()) return false;
 	return isPage ? !/Android|iPhone|iPad/i.test(navigator.userAgent) : !process.env.SVELTE_DESKTOP_ANDROID_HOST;
 }
-type DesktopPush = { register(): Promise<PushTarget>; target(): PushTarget | null; unregister(): Promise<void> };
-async function desktopPush<T>(op: 'register' | 'token' | 'unregister'): Promise<T> {
+async function desktopPush<O extends DesktopPushOp>(op: O): Promise<DesktopPushOps[O]> {
 	if (!isPage) {
-		const client = (globalThis as Record<symbol, DesktopPush | undefined>)[PUSH_CLIENT];
+		const client = (globalThis as Record<symbol, DesktopPushClient | undefined>)[PUSH_CLIENT];
 		if (!client) throw new NativeApiError('unavailable', 'push: the self-hosted push client is not started yet (push.server)');
-		return (op === 'register' ? await client.register() : op === 'unregister' ? (await client.unregister(), null) : client.target()) as T;
+		return client.run(op);
 	}
 	const nonce = randomId();
-	return new Promise<T>((resolve, reject) => {
+	return new Promise((resolve, reject) => {
 		const timer = setTimeout(() => { off(); reject(new NativeApiError('unavailable', `push.${op}: no answer from the app server (push.server)`)); }, 30_000);
-		const off = onPlatform<{ channel: string; data: { nonce: string; ok: boolean; value?: T; error?: string } }>('message', (m) => {
-			if (m?.channel !== 'push:reply' || m.data?.nonce !== nonce) return;
+		const off = onPlatform<{ channel: string; data: DesktopPushReply }>('message', (m) => {
+			if (m?.channel !== CHANNEL.reply || m.data?.nonce !== nonce) return;
 			clearTimeout(timer);
 			off();
-			if (m.data.ok) resolve(m.data.value as T);
+			if (m.data.ok) resolve(m.data.value as DesktopPushOps[O]);
 			else reject(new NativeApiError('unavailable', `push.${op}: ${m.data.error}`));
 		});
-		void callPlatform('events', 'emit', { channel: 'push:request', data: { op, nonce } }).catch((e) => { clearTimeout(timer); off(); reject(e); });
+		void callPlatform('events', 'emit', { channel: CHANNEL.request, data: { op, nonce } }).catch((e) => { clearTimeout(timer); off(); reject(e); });
 	});
 }
 
@@ -282,14 +278,12 @@ interface State {
 	retained: { type: string; event: unknown }[];
 	seen: Set<number>;
 	bound: boolean;
-	pushToken: PushTarget | null;
 }
 const S: State = ((globalThis as Record<symbol, State | undefined>)[Symbol.for('svelte-desktop.notifications')] ??= {
 	listeners: new Map(),
 	retained: [],
 	seen: new Set(),
 	bound: false,
-	pushToken: null,
 });
 
 function emitLocal(types: string[], event: unknown): boolean {
@@ -306,12 +300,12 @@ function emitLocal(types: string[], event: unknown): boolean {
 	return delivered;
 }
 
-/** Deliver to listeners; keep it for the first listener when there is none yet. */
-function emit(types: string[], event: unknown) {
-	if (!emitLocal(types, event)) {
-		S.retained.push({ type: types[0], event });
-		if (S.retained.length > 50) S.retained.shift();
-	}
+/** Deliver to listeners; keep it for the first listener when there is none yet. true = heard now. */
+function emit(types: string[], event: unknown): boolean {
+	if (emitLocal(types, event)) return true;
+	S.retained.push({ type: types[0], event });
+	if (S.retained.length > 50) S.retained.shift();
+	return false;
 }
 
 export function onNotificationEvent(type: string, fn: (e: never) => void): () => void {
@@ -385,8 +379,13 @@ function handleResponse(r: WireResponse, opts: { target?: boolean; navigated?: b
 	if (r.input !== undefined) event.input = r.input;
 	if (url) event.url = url;
 	if (p.data !== undefined) event.data = p.data;
-	emit([kind, 'response'], event);
-	if (isPage && target && url && !prevented && !opts.navigated) void openNotificationUrl(url);
+	const heard = emit([kind, 'response'], event);
+	if (!isPage || !target || !url || opts.navigated) return;
+	// Nobody listening yet (a click that launched the app): give the page's listeners, which
+	// subscribe while it mounts, the chance to preventDefault before navigating.
+	if (heard) {
+		if (!prevented) void openNotificationUrl(url);
+	} else void hydrated().then(() => setTimeout(() => !prevented && openNotificationUrl(url), 0));
 }
 
 function handleShown(d: { id: string; payload?: string; push?: boolean }) {
@@ -418,8 +417,8 @@ function bind() {
 	// Self-hosted push: the server process relays messages and new targets to the pages.
 	if (isPage)
 		onPlatform<{ channel: string; data: unknown }>('message', (m) => {
-			if (m?.channel === 'push:message') emit(['message'], toPushMessage(m.data as Parameters<typeof toPushMessage>[0]));
-			if (m?.channel === 'push:token') emitLocal(['token'], m.data);
+			if (m?.channel === CHANNEL.message) emit(['message'], toPushMessage(m.data as Parameters<typeof toPushMessage>[0]));
+			if (m?.channel === CHANNEL.target) emitLocal(['token'], m.data);
 		});
 	onPlatformReady(() => {
 		// Responses that happened before this context was listening (a click that launched the app).
@@ -480,10 +479,11 @@ const web = {
 	async show(o: NotificationOptions, id: string, payload: string | undefined, at: number | null) {
 		if (!web.supported()) throw new NativeApiError('unavailable', 'notifications.show: this browser has no Notification API');
 		if (Notification.permission !== 'granted') throw new NativeApiError('denied', 'notifications.show: notifications are not allowed (requestPermission)');
+		if (o.repeat) throw new NativeApiError('unsupported', 'notifications.show: browsers have no scheduler — `repeat` needs the app');
 		web.cancel(id);
 		if (at !== null && at > Date.now()) {
 			// Only while the page stays open: browsers have no scheduler.
-			web.pending.set(id, { id, title: o.title, body: o.body ?? '', at: new Date(at), url: o.url, data: o.data, ...(o.repeat && { repeat: o.repeat }) });
+			web.pending.set(id, { id, title: o.title, body: o.body ?? '', at: new Date(at), url: o.url, data: o.data });
 			web.timers.set(id, setTimeout(() => { web.pending.delete(id); web.timers.delete(id); void web.show(o, id, payload, null); }, at - Date.now()));
 			return { id, scheduled: true };
 		}
@@ -557,6 +557,15 @@ bind();
 
 // ── services ────────────────────────────────────────────────────────
 
+const locks = new Map<string, Promise<unknown>>();
+function locked<T>(id: string, fn: () => Promise<T>): Promise<T> {
+	const run = (locks.get(id) ?? Promise.resolve()).then(fn, fn);
+	const tail = run.catch(() => {});
+	locks.set(id, tail);
+	void tail.then(() => locks.get(id) === tail && locks.delete(id));
+	return run;
+}
+
 export const notifications = {
 	/** Show (or schedule, with `at`/`delay`) a notification. Same `id` = replaced. */
 	async show<D = unknown>(o: NotificationOptions<D>): Promise<{ id: string; scheduled: boolean; skipped?: boolean }> {
@@ -564,8 +573,12 @@ export const notifications = {
 		const id = o.id ?? o.tag ?? randomId();
 		if (o.lines?.length && o.body === undefined) o = { ...o, body: o.lines.join('\n') };
 		if (o.replace === false) {
-			const [shown, waiting] = await Promise.all([notifications.delivered().catch(() => []), notifications.pending().catch(() => [])]);
-			if (shown.some((n) => n.id === id) || waiting.some((n) => n.id === id)) return { id, scheduled: false, skipped: true };
+			// One check-then-show at a time per id, so two callers can't both pass the check.
+			return locked(id, async () => {
+				const [shown, waiting] = await Promise.all([notifications.delivered(), notifications.pending()]);
+				if (shown.some((n) => n.id === id) || waiting.some((n) => n.id === id)) return { id, scheduled: false, skipped: true };
+				return notifications.show({ ...o, id, replace: true });
+			});
 		}
 		const actionUrls = Object.fromEntries((o.actions ?? []).filter((a) => a.url).map((a) => [a.id, a.url!]));
 		const p: Payload = {};
@@ -659,28 +672,26 @@ export const push = {
 	 * (`vapidPublicKey` required there).
 	 */
 	async register(opts: { vapidPublicKey?: string } = {}): Promise<PushTarget> {
-		const t = selfHostedPush() ? await desktopPush<PushTarget>('register') : native() ? await callPlatform<PushTarget>('push', 'register') : await web.pushRegister(opts);
-		S.pushToken = t;
-		return t;
+		if (selfHostedPush()) return desktopPush('register');
+		return native() ? callPlatform<PushTarget>('push', 'register') : web.pushRegister(opts);
 	},
 	unregister: async () => {
 		if (selfHostedPush()) await desktopPush('unregister');
 		else if (native()) await callPlatform<null>('push', 'unregister');
 		else await web.pushUnregister();
-		S.pushToken = null;
 		return null;
 	},
 	/** The current target, or null when not registered. */
 	async token(): Promise<PushTarget | null> {
-		if (selfHostedPush()) return (S.pushToken = await desktopPush<PushTarget | null>('token'));
+		if (selfHostedPush()) return desktopPush('token');
 		if (!native()) {
 			const reg = await web.sw();
 			const sub = await reg?.pushManager?.getSubscription();
 			if (!sub) return null;
 			const json = sub.toJSON() as { endpoint: string; keys: { p256dh: string; auth: string } };
-			return (S.pushToken = { provider: 'webpush', endpoint: json.endpoint, keys: json.keys });
+			return { provider: 'webpush', endpoint: json.endpoint, keys: json.keys };
 		}
-		return (S.pushToken = await callPlatform<PushTarget | null>('push', 'token'));
+		return callPlatform<PushTarget | null>('push', 'token');
 	},
 	/** token: a new or rotated target (send it to your server again) · message: a push received while running. */
 	on<E extends 'token' | 'message'>(event: E, fn: (e: E extends 'token' ? PushTarget : PushMessage) => void): () => void {
