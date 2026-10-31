@@ -356,6 +356,20 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		expect(t.history).toHaveLength(0);
 	});
 
+	test('repeating schedules hand the OS 30 days of occurrences (≤ 128), so they keep firing while the app is closed', async () => {
+		await show({ id: 'rep-h', title: 'Hourly', delay: 600_000, repeat: 'hour' });
+		await show({ id: 'rep-d', title: 'Daily', delay: 600_000, repeat: 'day' });
+		const t = await toasts();
+		expect(t.scheduled.filter((x) => x === 'rep-h')).toHaveLength(128);
+		const daily = t.scheduled.filter((x) => x === 'rep-d').length;
+		expect(daily).toBeGreaterThanOrEqual(30);
+		expect(daily).toBeLessThanOrEqual(31);
+		expect((await pending()).filter((p) => p.id.startsWith('rep-')).map((p) => p.repeat).sort()).toEqual(['day', 'hour']);
+		await app.eval(`host.notifications.dismissAll()`);
+		await Bun.sleep(300);
+		expect((await toasts()).scheduled).toHaveLength(0);
+	});
+
 	test('data: URL image → cache file', async () => {
 		const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 		expect(await show({ id: 'img', title: 'With image', image: png, icon: png })).toMatchObject({ id: 'img' });

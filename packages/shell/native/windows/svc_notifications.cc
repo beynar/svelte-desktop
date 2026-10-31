@@ -12,7 +12,7 @@
 // - Activated (launch/arguments carry {i: id, a: action, t: input id}) → click /
 //   action / reply; Dismissed with UserCanceled → dismiss. Marshalled to the UI thread.
 // - Scheduling: ScheduledToastNotification (survives the app quitting). The OS
-//   can't repeat: the next 8 occurrences of a series are scheduled, topped up at
+//   can't repeat: the next 30 days of a series (≤ 128 occurrences) are scheduled, topped up at
 //   startup and while running; <userData>/scheduled-notifications.json keeps
 //   the series and what `pending` reports.
 // - Clicks after the app quit (packaged apps): a COM toast activator. Per-app CLSID
@@ -235,7 +235,10 @@ static std::map<std::string, int> g_sched_window;
 static std::map<std::string, notif::Show> g_keep; // autoCancel:false / ongoing: back to the Action Center after a click
 static double g_started = 0;
 static const UINT_PTR kTimer = 0x5d70;
-static const int kAhead = 8; // occurrences of a series kept in the OS schedule
+// A series hands the OS what it needs to keep firing while the app is closed: the next 30 days of
+// occurrences, at most 128 (minute ≈ 2 h, hour ≈ 5 days, day/week/month: 30 days and more).
+static const int kAheadMax = 128;
+static const double kAheadMs = 30.0 * 24 * 3600 * 1000;
 
 static std::string tag_for(const std::string &id) {
   if (id.size() <= 64) return id;
@@ -922,7 +925,8 @@ static bool os_schedule(const json &e, std::string *error) {
   unschedule(tag);
   double at = e["at"].get<double>(), now = notif::now_ms();
   std::string repeat = e.value("repeat", "");
-  for (int i = 0; i < (repeat.empty() ? 1 : kAhead) && at > 0; i++) {
+  double horizon = std::max(at, now) + kAheadMs;
+  for (int i = 0; i < (repeat.empty() ? 1 : kAheadMax) && at > 0 && (i == 0 || at <= horizon); i++) {
     if (at > now + 1000) {
       Ptr<wun::IScheduledToastNotification> st;
       hr = toast::schedFactory->CreateScheduledToastNotification(doc.get(), to_datetime(at), st.put());
