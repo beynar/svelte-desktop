@@ -205,7 +205,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		// Elevated clients ignore per-user COM classes: mirror the registration machine-wide when we can.
 		const hklm = reg('copy', `HKCU\\Software\\Classes\\CLSID\\${CLSID}`, `HKLM\\Software\\Classes\\CLSID\\${CLSID}`, '/s', '/f').exitCode === 0;
 		log('HKLM mirror of the activator:', hklm);
-		const sysEnv = 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment';
+		const exe = join(APP, readdirSync(APP).find((f) => /\.exe$/i.test(f))!);
 		let activation: Promise<number> | null = null;
 		const t0 = Date.now();
 		try {
@@ -213,17 +213,13 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 				timeout: 45_000,
 				connect: (url) => {
 					// A COM-launched server doesn't get our environment (nor, on the runner, registry
-					// changes made after logon): when we own the machine-wide copy of the class, point
-					// its LocalServer32 at a wrapper that sets SVELTE_DESKTOP_TEST and runs the same
-					// command line ("<exe>" -ToastActivated -Embedding).
-					if (hklm) {
-						const exe = join(APP, readdirSync(APP).find((f) => /\.exe$/i.test(f))!);
-						const cmd = join(tmp, 'toast-launch.cmd');
-						writeFileSync(cmd, `@echo off\r\nset SVELTE_DESKTOP_TEST=${url}\r\n"${exe}" -ToastActivated %*\r\n`);
-						reg('add', `HKLM\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', `"${process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe'}" /d /c "${cmd}"`, '/f');
-					}
-					reg('add', 'HKCU\\Environment', '/v', 'SVELTE_DESKTOP_TEST', '/d', url, '/f');
-					reg('add', sysEnv, '/v', 'SVELTE_DESKTOP_TEST', '/d', url, '/f');
+					// changes made after logon): point the class's LocalServer32 at a wrapper that sets
+					// SVELTE_DESKTOP_TEST and runs the registered command ("<exe>" -ToastActivated
+					// -Embedding). The app writes the real value back when it starts.
+					const cmd = join(tmp, 'toast-launch.cmd');
+					writeFileSync(cmd, `@echo off\r\nset SVELTE_DESKTOP_TEST=${url}\r\n"${exe}" -ToastActivated %*\r\n`);
+					const wrapper = `"${process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe'}" /d /c "${cmd}"`;
+					for (const root of hklm ? ['HKCU', 'HKLM'] : ['HKCU']) reg('add', `${root}\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', wrapper, '/f');
 					activation = activate({ i: 'cold', p: payloadAbout }).then(() => Date.now() - t0);
 					activation.then((ms) => log(`cold activation returned after ${ms} ms`), (e) => log('cold activation failed:', String(e)));
 				},
@@ -234,34 +230,17 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 			expect(ms).toBeGreaterThan(0); // Activate() returned: COM started the exe and reached its activator
 			expect(procs.out).toContain('-ToastActivated');
 			log('test channel:', connected ? 'connected' : 'not connected');
-			if (connected) {
-				app = connected;
-				closed = false;
-				await app.waitFor(() => location.pathname === '/about', { timeout: 20_000 });
-				await app.waitFor(() => /click cold/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
-				expect(await app.platform<unknown[]>('notifications', 'claim')).toHaveLength(0); // the page took it
-			} else {
-				// No test channel (the COM-started process didn't get SVELTE_DESKTOP_TEST): ask the
-				// app's own server what its Worker saw (/api/notifications logs every response).
-				const pid = procs.out.split('\n').find((l) => l.includes('-ToastActivated'))!.split(' ')[0]!;
-				const ports = await ps(`Get-NetTCPConnection -State Listen -OwningProcess ${pid} | ForEach-Object { $_.LocalPort }`);
-				log('listening:', ports.out);
-				let seen: Array<{ kind: string; id: string }> = [];
-				for (let i = 0; i < 10 && !seen.length; i++) { // the route's listener starts with its first request
-					for (const port of ports.out.split(/\s+/).filter(Boolean)) {
-						const r = await fetch(`http://127.0.0.1:${port}/api/notifications`).catch(() => null);
-						if (r?.ok) seen = await r.json().catch(() => []);
-						if (seen.length) break;
-					}
-					if (!seen.length) await Bun.sleep(1000);
-				}
-				log('worker saw:', seen);
-				expect(seen.find((r) => r.id === 'cold')).toMatchObject({ kind: 'click' });
-				Bun.spawnSync(['taskkill', '/PID', pid, '/T', '/F']);
-			}
+			expect(connected).not.toBeNull();
+			app = connected!;
+			closed = false;
+			await app.waitFor(() => location.pathname === '/about', { timeout: 20_000 });
+			await app.waitFor(() => /click cold/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
+			const rs = await app.platform<Array<{ id: string; kind: string }>>('notifications', 'responses');
+			expect(rs.find((r) => r.id === 'cold')).toMatchObject({ kind: 'click' });
+			expect(await app.platform<unknown[]>('notifications', 'claim')).toHaveLength(0); // the page took it
+			expect(reg('query', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`).stdout.toString()).toContain(`"${exe}" -ToastActivated`); // restored by the app
 		} finally {
-			reg('delete', 'HKCU\\Environment', '/v', 'SVELTE_DESKTOP_TEST', '/f');
-			reg('delete', sysEnv, '/v', 'SVELTE_DESKTOP_TEST', '/f');
+			reg('add', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', `"${exe}" -ToastActivated`, '/f');
 			if (hklm) reg('delete', `HKLM\\Software\\Classes\\CLSID\\${CLSID}`, '/f');
 		}
 	});
