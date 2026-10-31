@@ -576,6 +576,15 @@ static void on_activated(const std::string &args, const json &inputs, const std:
   json a = json::parse(args, nullptr, false);
   std::string id, action, payload, kind;
   json input = nullptr;
+  if (!a.is_object() && (args == "dismiss" || args == "snooze")) {
+    // A system button (closeButtonText, the reminder's Dismiss): Windows reports it as an
+    // activation of the toast. Dismiss = the user closed it; Dismissed may come too: once.
+    if (args == "snooze" || hintId.empty() || !toast::live.count(hintId)) return;
+    auto rec = notif::records().find(hintId);
+    if (!(rec != notif::records().end() && rec->second.acted)) notif::respond(hintId, "dismiss", "", nullptr, "", 0);
+    forget(hintId);
+    return;
+  }
   if (a.is_object() && a.contains("i") && a["i"].is_string()) {
     id = a["i"], action = notif::jstr(a, "a"), payload = notif::jstr(a, "p");
     if (action.empty()) kind = "click";

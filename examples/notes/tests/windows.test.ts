@@ -217,7 +217,7 @@ switch ($Mode) {
       $edit.SetFocus(); $vp.SetValue($s.text); $out.edit = Desc $edit
     }
     if ($s.button) {
-      $btn = Find $hosts { param($e) $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $e.Current.Name -match $s.button }
+      $btn = Find $hosts { param($e) $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and ($e.Current.Name -match $s.button -or $e.Current.AutomationId -match $s.button) }
       if (-not $btn) { $out.error = "no button $($s.button)"; ($out | ConvertTo-Json -Compress); exit 0 }
       $out.button = Desc $btn; $out.how = ClickEl $btn
     } else { $out.how = ClickEl $toast }
@@ -415,6 +415,18 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		expect(JSON.parse(r).error).toBeUndefined();
 		expect((await next).kind).toBe('dismiss');
 		await once('u3', 'dismiss');
+	});
+
+	test('real close (the popup X) → kind dismiss through the Dismissed event (UserCanceled)', async () => {
+		await home();
+		await show({ id: 'u4', title: 'Real close', body: 'Use the X' });
+		const next = app.nextEvent<{ id: string; kind: string }>('notificationResponse', (d) => d.id === 'u4', 20_000);
+		const r = await uia('act', { title: 'Real close', button: '^(DismissButton|Close|Dismiss notification)$', noCenter: true });
+		log('act', r);
+		if (JSON.parse(r).error) log(await uia('dump'));
+		expect(JSON.parse(r).error).toBeUndefined();
+		expect((await next).kind).toBe('dismiss');
+		await once('u4', 'dismiss');
 	});
 
 	test('visual: rich toast (hero image, logo, buttons, critical) + taskbar badge → screenshots', async () => {
