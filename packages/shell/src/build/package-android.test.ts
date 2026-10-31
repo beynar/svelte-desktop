@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { resolveConfig } from "../config.ts";
+import { mergeLibraryManifests } from "../../scripts/fcm-pin.ts";
 import {
   androidManifest,
   androidPackageName,
@@ -7,7 +8,7 @@ import {
   defaultChannel,
   fcmArtifacts,
   googleServicesValues,
-  mergeLibraryManifests,
+  fcmManifestEntries,
   notificationsAsset,
 } from "./package-android.ts";
 
@@ -229,3 +230,11 @@ public class Main {
     rmSync(dir, { recursive: true, force: true });
   }
 }, 60_000);
+
+test("FCM manifest entries: merged once (scripts/fcm-pin.ts), the build only fills in the package", () => {
+  const e = fcmManifestEntries("dev.example.app");
+  expect(e.permissions).toContain("com.google.android.c2dm.permission.RECEIVE");
+  expect(e.application).toContain("com.google.firebase.components.ComponentDiscoveryService");
+  expect(e.application).not.toContain("${applicationId}");
+  expect(e.application).toContain("dev.example.app");
+});

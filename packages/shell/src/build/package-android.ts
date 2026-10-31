@@ -90,7 +90,7 @@ export function androidVersionCode(version: string): number {
 
 const xml = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/** Library manifest entries merged into the app's (FCM builds): see mergeLibraryManifests. */
+/** Library manifest entries merged into the app's (FCM builds): see fcmManifestEntries. */
 export type MergedEntries = { permissions: string[]; application: string };
 
 export function androidManifest(c: ResolvedConfig, opts: { icon: boolean; fcm?: MergedEntries }): string {
@@ -231,75 +231,14 @@ export function googleServicesValues(json: any, pkg: string): string {
   return `<?xml version="1.0" encoding="utf-8"?>\n<!-- generated from google-services.json by svelte-desktop -->\n<resources>\n${lines.join("\n")}\n</resources>\n`;
 }
 
-type XmlEl = { tag: string; attrs: [string, string][]; children: XmlEl[] };
-
-/** Enough XML for AAR manifests: elements and attributes; comments, text and PIs dropped. */
-function parseXml(src: string): XmlEl {
-  const root: XmlEl = { tag: "#root", attrs: [], children: [] };
-  const stack = [root];
-  const clean = src.replace(/<!--[\s\S]*?-->/g, "").replace(/<\?[\s\S]*?\?>/g, "");
-  for (const m of clean.matchAll(/<(\/?)([\w:.-]+)((?:\s+[\w:.-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g)) {
-    if (m[1]) {
-      if (stack.length > 1) stack.pop();
-      continue;
-    }
-    const attrs = [...m[3]!.matchAll(/([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map((a) => [a[1]!, a[2] ?? a[3] ?? ""] as [string, string]);
-    const el: XmlEl = { tag: m[2]!, attrs, children: [] };
-    stack.at(-1)!.children.push(el);
-    if (!m[4]) stack.push(el);
-  }
-  return root.children[0] ?? root;
-}
-
-const attr = (e: XmlEl, k: string) => e.attrs.find(([n]) => n === k)?.[1];
-const elKey = (e: XmlEl) => `${e.tag}|${attr(e, "android:name") ?? ""}`;
-
-function writeXml(e: XmlEl, indent: string): string {
-  const a = e.attrs.map(([k, v]) => ` ${k}="${v}"`).join("");
-  if (!e.children.length) return `${indent}<${e.tag}${a} />`;
-  return `${indent}<${e.tag}${a}>\n${e.children.map((x) => writeXml(x, `${indent}    `)).join("\n")}\n${indent}</${e.tag}>`;
-}
-
-/** What the Gradle manifest merger takes from library manifests, for the parts these libraries
- *  use: <uses-permission> and <application> children (components with the same name merge their
- *  attributes and meta-data, e.g. ComponentDiscoveryService registrars). tools:* attributes go,
- *  ${applicationId} becomes the package. Application attributes (appComponentFactory) are not
- *  carried over. */
-export function mergeLibraryManifests(manifests: string[], applicationId: string): MergedEntries {
-  const permissions = new Set<string>();
-  const merged: XmlEl[] = [];
-  const byKey = new Map<string, XmlEl>();
-  const tidy = (e: XmlEl): XmlEl => ({
-    tag: e.tag,
-    attrs: e.attrs.filter(([k]) => !k.startsWith("tools:") && !k.startsWith("xmlns:")).map(([k, v]) => [k, v.replaceAll("${applicationId}", applicationId)]),
-    children: e.children.filter((x) => attr(x, "tools:node") !== "remove").map(tidy),
-  });
-  for (const src of manifests) {
-    const root = parseXml(src);
-    for (const e of root.children) {
-      if (e.tag === "uses-permission" || e.tag === "uses-permission-sdk-23") {
-        const name = attr(e, "android:name");
-        if (name && attr(e, "tools:node") !== "remove") permissions.add(name);
-      }
-      if (e.tag !== "application") continue;
-      for (const raw of e.children) {
-        if (attr(raw, "tools:node") === "remove") continue;
-        const child = tidy(raw);
-        const prev = byKey.get(elKey(child));
-        if (!prev) {
-          byKey.set(elKey(child), child);
-          merged.push(child);
-          continue;
-        }
-        for (const [k, v] of child.attrs) if (attr(prev, k) === undefined) prev.attrs.push([k, v]);
-        for (const sub of child.children) {
-          const same = prev.children.some((x) => (sub.tag === "meta-data" ? elKey(x) === elKey(sub) : writeXml(x, "") === writeXml(sub, "")));
-          if (!same) prev.children.push(sub);
-        }
-      }
-    }
-  }
-  return { permissions: [...permissions].sort(), application: merged.map((e) => `\n${writeXml(e, "        ")}`).join("") };
+/** The library manifest entries FCM needs, merged once by scripts/fcm-pin.ts when the pins change
+ *  (native/android/fcm/manifest-entries.json, with `${applicationId}` left in): a build only fills
+ *  in the package. */
+export function fcmManifestEntries(applicationId: string): MergedEntries {
+  const file = join(hostDir, "fcm", "manifest-entries.json");
+  const e = JSON.parse(readFileSync(file, "utf8")) as Partial<MergedEntries>;
+  if (!Array.isArray(e.permissions) || typeof e.application !== "string") throw new Error(`${file}: run scripts/fcm-pin.ts`);
+  return { permissions: e.permissions, application: e.application.replaceAll("${applicationId}", applicationId) };
 }
 
 // Firebase Cloud Messaging and its runtime closure, resolved once from the POMs of
@@ -732,7 +671,7 @@ export async function packageAndroid(c: ResolvedConfig, stage: string): Promise<
     mkdirSync(join(res, "values"), { recursive: true });
     writeFileSync(join(res, "values", "google-services.xml"), googleServicesValues(JSON.parse(readFileSync(googleServices, "utf8")), pkg));
   }
-  const fcmEntries = googleServices ? mergeLibraryManifests(libraries.flatMap((l) => (l.manifest ? [l.manifest] : [])), pkg) : undefined;
+  const fcmEntries = googleServices ? fcmManifestEntries(pkg) : undefined;
   writeFileSync(join(work, "AndroidManifest.xml"), androidManifest(c, { icon: !!icon, fcm: fcmEntries }));
   const assets = join(work, "assets");
   mkdirSync(assets, { recursive: true });
