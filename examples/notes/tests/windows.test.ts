@@ -212,7 +212,16 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 			const connected = await launch({
 				timeout: 45_000,
 				connect: (url) => {
-					// A COM-launched server gets the user's registry environment, not ours.
+					// A COM-launched server doesn't get our environment (nor, on the runner, registry
+					// changes made after logon): when we own the machine-wide copy of the class, point
+					// its LocalServer32 at a wrapper that sets SVELTE_DESKTOP_TEST and runs the same
+					// command line ("<exe>" -ToastActivated -Embedding).
+					if (hklm) {
+						const exe = join(APP, readdirSync(APP).find((f) => /\.exe$/i.test(f))!);
+						const cmd = join(tmp, 'toast-launch.cmd');
+						writeFileSync(cmd, `@echo off\r\nset SVELTE_DESKTOP_TEST=${url}\r\n"${exe}" -ToastActivated %*\r\n`);
+						reg('add', `HKLM\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', `"${process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe'}" /d /c "${cmd}"`, '/f');
+					}
 					reg('add', 'HKCU\\Environment', '/v', 'SVELTE_DESKTOP_TEST', '/d', url, '/f');
 					reg('add', sysEnv, '/v', 'SVELTE_DESKTOP_TEST', '/d', url, '/f');
 					activation = activate({ i: 'cold', p: payloadAbout }).then(() => Date.now() - t0);
@@ -224,6 +233,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 			log('processes:', procs.out);
 			expect(ms).toBeGreaterThan(0); // Activate() returned: COM started the exe and reached its activator
 			expect(procs.out).toContain('-ToastActivated');
+			log('test channel:', connected ? 'connected' : 'not connected');
 			if (connected) {
 				app = connected;
 				closed = false;
@@ -237,10 +247,13 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 				const ports = await ps(`Get-NetTCPConnection -State Listen -OwningProcess ${pid} | ForEach-Object { $_.LocalPort }`);
 				log('listening:', ports.out);
 				let seen: Array<{ kind: string; id: string }> = [];
-				for (const port of ports.out.split(/\s+/).filter(Boolean)) {
-					const r = await fetch(`http://127.0.0.1:${port}/api/notifications`).catch(() => null);
-					if (r?.ok) seen = await r.json().catch(() => []);
-					if (seen.length) break;
+				for (let i = 0; i < 10 && !seen.length; i++) { // the route's listener starts with its first request
+					for (const port of ports.out.split(/\s+/).filter(Boolean)) {
+						const r = await fetch(`http://127.0.0.1:${port}/api/notifications`).catch(() => null);
+						if (r?.ok) seen = await r.json().catch(() => []);
+						if (seen.length) break;
+					}
+					if (!seen.length) await Bun.sleep(1000);
 				}
 				log('worker saw:', seen);
 				expect(seen.find((r) => r.id === 'cold')).toMatchObject({ kind: 'click' });
