@@ -703,8 +703,12 @@ export function nsisScript(c: ResolvedConfig, o: { exe: string; srcDir: string; 
     '  RMDir /r "$INSTDIR"',
     `  DeleteRegKey HKCU "${uninst}"`,
     `  DeleteRegKey HKCU "Software\\${id}"`,
-    `  DeleteRegKey HKCU "Software\\Classes\\AppUserModelId\\${id}"`, // toast identity (written by shell.dll at startup)
-    `  DeleteRegKey HKCU "Software\\Classes\\CLSID\\${toastActivatorClsid(c.identifier)}"`, // toast activator (idem)
+    // Written by the 64-bit shell.dll at startup; NSIS is 32-bit, and HKCU\Software\Classes\CLSID is
+    // redirected to WOW6432Node for 32-bit processes: delete through the 64-bit view.
+    "  SetRegView 64",
+    `  DeleteRegKey HKCU "Software\\Classes\\AppUserModelId\\${id}"`, // toast identity
+    `  DeleteRegKey HKCU "Software\\Classes\\CLSID\\${toastActivatorClsid(c.identifier)}"`, // toast activator
+    "  SetRegView lastused",
     `  DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "${name}"`,
     ...uninstall,
     "  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'",
