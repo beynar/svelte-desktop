@@ -162,6 +162,13 @@ function ProbeWindows {
   }
   $seen.Values | Where-Object { $f = $_.Split('|'); $f[1] -notin @('SvelteDesktopWindow', 'Progman', 'WorkerW', 'Shell_TrayWnd', 'CASCADIA_HOSTING_WINDOW_CLASS', 'ConsoleWindowClass') }
 }
+function CenterOpen { @(ProbeWindows | Where-Object { $_.Split('|')[2] -eq 'Notification Center' }).Count -gt 0 }
+function CloseCenter { # toast popups don't show while the notification center is open
+  for ($i = 0; $i -lt 4 -and (CenterOpen); $i++) {
+    if ($i % 2 -eq 0) { [SdInput]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [SdInput]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero) } else { [SdInput]::Chord(0x5B, 0x4E) }
+    Start-Sleep -Milliseconds 800
+  }
+}
 function Hosts {
   $out = @()
   foreach ($w in @(ShellWindows) + @(ProbeWindows)) { try { $out += $A::FromHandle([IntPtr][long]$w.Split('|')[0]) } catch {} }
@@ -194,14 +201,16 @@ switch ($Mode) {
     $before = "$($tp.Current.ToggleState)"
     if ($before -eq 'On') { $tp.Toggle(); Start-Sleep -Milliseconds 500 }
     "DND $before -> $($tp.Current.ToggleState)"
-    [SdInput]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [SdInput]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+    CloseCenter
+    "center open: $(CenterOpen)"
   }
   'act' {
     $out = @{ where = 'popup' }
     $hasTitle = { param($e) $e.Current.Name -like ('*' + $s.title + '*') }
+    $inPopup = { param($e) $e.Current.ClassName -eq 'FlexibleToastView' -and $e.Current.Name -like ('*' + $s.title + '*') }
+    CloseCenter
     $toast = $null
-    for ($i = 0; $i -lt 20 -and -not $toast; $i++) { $toast = Find (Hosts) $hasTitle; if (-not $toast) { Start-Sleep -Milliseconds 500 } } # the popup can take a while
-    if ($toast -and $toast.Current.ClassName -eq 'ListViewItem') { $toast = $null } # that's the center (left open): want the popup
+    for ($i = 0; $i -lt 20 -and -not $toast; $i++) { $toast = Find (Hosts) $inPopup; if (-not $toast) { Start-Sleep -Milliseconds 500 } } # the popup can take a while
     if (-not $toast) {
       if ($s.noCenter) { $out.error = 'no popup'; ($out | ConvertTo-Json -Compress); exit 0 }
       [SdInput]::Chord(0x5B, 0x4E); Start-Sleep -Milliseconds 1500 # Win+N: notification center
@@ -221,7 +230,7 @@ switch ($Mode) {
       if (-not $btn) { $out.error = "no button $($s.button)"; ($out | ConvertTo-Json -Compress); exit 0 }
       $out.button = Desc $btn; $out.how = ClickEl $btn
     } else { $out.how = ClickEl $toast }
-    if ($out.where -eq 'center') { Start-Sleep -Milliseconds 300; [SdInput]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [SdInput]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero) }
+    if ($out.where -eq 'center') { Start-Sleep -Milliseconds 300; CloseCenter }
     ($out | ConvertTo-Json -Compress)
   }
 }
