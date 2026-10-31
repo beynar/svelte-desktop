@@ -607,15 +607,6 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 			if (hklm) reg('delete', `HKLM\\Software\\Classes\\CLSID\\${CLSID}`, '/f');
 		}
 	});
-			app = connected;
-			closed = false;
-			await app.waitFor(() => location.pathname === '/about', { timeout: 20_000 });
-			const r = (await app.platform<Array<{ id: string; payload: string | null }>>('notifications', 'responses')).find((x) => x.id === 'big');
-			expect(JSON.parse(r!.payload!)).toEqual({ url: '/about', data });
-		} finally {
-			reg('add', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', `"${exe}" -ToastActivated`, '/f');
-		}
-	});
 
 	/** Start the app the way Windows does for a toast (the activator's LocalServer32), with the
 	 *  test channel: `trigger` is the real click; a .cmd wrapper only adds SVELTE_DESKTOP_TEST. */
