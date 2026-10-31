@@ -132,6 +132,19 @@ export default async (t: Harness) => {
   const rs = (await t.call("notifications", "responses")).value ?? [];
   t.check("responses ring holds every kind", ["click", "action", "dismiss"].every((k) => rs.some((x: any) => x.kind === k)), rs.map((x: any) => x.kind));
 
+  // The cross-backend conformance fixtures (native/notifications.fixtures.json).
+  const fx = JSON.parse(readFileSync(new URL("../../native/notifications.fixtures.json", import.meta.url), "utf8"));
+  const withTime = (a: Record<string, unknown>) => (typeof a.at === "number" ? { ...a, at: Date.now() + (a.at as number) } : a);
+  for (const c of fx.valid) {
+    const r = await t.call("notifications", "show", withTime(c.args));
+    t.check(`fixture ok: ${c.name}`, r.ok && r.value?.id === c.args.id && !!r.value?.scheduled === !!c.scheduled, r);
+  }
+  for (const c of fx.invalid) {
+    const r = await t.call("notifications", "show", withTime(c.args));
+    t.check(`fixture refused: ${c.name}`, !r.ok && r.error?.code === "invalid_args", r);
+  }
+  await t.call("notifications", "dismissAll");
+
   server.kill();
   await $`sh -c 'dunst >/tmp/dunst.log 2>&1 &'`.quiet().nothrow(); // back to the shared session's server
 };

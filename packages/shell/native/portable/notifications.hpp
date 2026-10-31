@@ -145,6 +145,29 @@ inline json record_json(const Record &r) {
   return o;
 }
 
+/// What a toast clicked after a restart needs (Windows keeps its notifications across runs).
+/// The window is process-local: not kept.
+inline json record_to_disk(const Record &r) {
+  json o = record_json(r);
+  o["foreground"] = r.foreground;
+  o["keep"] = r.keep;
+  return o;
+}
+
+inline bool record_from_disk(const json &o, Record &r) {
+  if (!o.is_object() || !o.contains("id") || !o["id"].is_string()) return false;
+  r = Record{};
+  r.id = o["id"];
+  r.title = jstr(o, "title"), r.body = jstr(o, "body"), r.subtitle = jstr(o, "subtitle");
+  r.group = jstr(o, "group"), r.payload = jstr(o, "payload");
+  if (o.contains("date") && o["date"].is_number()) r.date = o["date"];
+  if (o.contains("foreground") && o["foreground"].is_object())
+    for (auto &[k, v] : o["foreground"].items())
+      if (v.is_boolean()) r.foreground[k] = v;
+  r.keep = o.contains("keep") && o["keep"].is_boolean() && o["keep"].get<bool>();
+  return true;
+}
+
 // ---- responses ------------------------------------------------------------------
 inline json &ring() {
   static json r = json::array();

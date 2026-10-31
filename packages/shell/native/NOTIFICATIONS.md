@@ -9,6 +9,14 @@ Error codes are the usual ones: `invalid_args`, `unsupported` (the platform has 
 such thing), `unavailable` (missing at run time: no bundle id, no libnotify, no
 Play services…), `denied` (permission), `internal`.
 
+## Conformance
+
+`native/notifications.fixtures.json` lists valid and invalid `show` arguments with the expected
+outcome. Every backend's e2e suite replays it through the platform op (macOS `tests/app.test.ts`,
+iOS `tests/ios.test.ts`, Android `tests/android.test.ts`, Windows `tests/windows.test.ts`, Linux
+`test/platform/linux-notifications-fake.ts`): a backend that drifts from the contract fails there.
+Add a case there when the contract changes.
+
 ## The payload
 
 TypeScript passes `payload`, an opaque JSON **string** (`{url, data, actions}`), on

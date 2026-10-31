@@ -1,0 +1,19 @@
+{
+  "//": "notifications.show conformance: every backend's e2e suite replays these through the platform op (native/NOTIFICATIONS.md). `at` values are offsets in ms from now; the suite adds Date.now().",
+  "valid": [
+    { "name": "minimal", "args": { "id": "fx-min", "title": "Minimal" } },
+    { "name": "text fields + payload", "args": { "id": "fx-text", "title": "T", "body": "B", "subtitle": "S", "group": "g", "payload": "{\"url\":\"/about\",\"data\":{\"n\":1}}" } },
+    { "name": "actions with input", "args": { "id": "fx-act", "title": "Actions", "actions": [{ "id": "reply", "title": "Reply", "input": { "placeholder": "Message", "button": "Send" } }, { "id": "done", "title": "Done", "destructive": true, "foreground": false }] } },
+    { "name": "legacy action label", "args": { "id": "fx-label", "title": "Label", "actions": [{ "id": "ok", "label": "OK" }] } },
+    { "name": "urgent, silent, badge", "args": { "id": "fx-urgent", "title": "Urgent", "urgency": "critical", "silent": true, "badge": 2 } },
+    { "name": "scheduled one-shot", "args": { "id": "fx-later", "title": "Later", "at": 600000 }, "scheduled": true },
+    { "name": "scheduled daily repeat", "args": { "id": "fx-daily", "title": "Daily", "at": 600000, "repeat": "day" }, "scheduled": true }
+  ],
+  "invalid": [
+    { "name": "no title", "args": { "id": "fx-bad1" } },
+    { "name": "title not a string", "args": { "id": "fx-bad2", "title": 42 } },
+    { "name": "unknown repeat", "args": { "id": "fx-bad3", "title": "x", "at": 600000, "repeat": "fortnight" } },
+    { "name": "repeat without at", "args": { "id": "fx-bad4", "title": "x", "repeat": "day" } },
+    { "name": "action without id", "args": { "id": "fx-bad5", "title": "x", "actions": [{ "title": "No id" }] } }
+  ]
+}

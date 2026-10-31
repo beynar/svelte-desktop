@@ -222,7 +222,15 @@ final class Notifier {
 
     /** `notifications.show`: → {id, scheduled}. A pending notification with the same id is replaced. */
     static JSONObject show(Context c, JSONObject s) throws Exception {
-        if (str(s, "title") == null) throw new MainActivity.OpError("invalid_args", "notifications.show: `title` must be a string");
+        // The wire contract (native/notifications.fixtures.json), checked before any effect.
+        if (!(s.opt("title") instanceof String)) throw new MainActivity.OpError("invalid_args", "notifications.show: `title` must be a string");
+        if (s.has("repeat") && !s.has("at")) throw new MainActivity.OpError("invalid_args", "notifications.show: `repeat` needs `at`");
+        JSONArray acts = s.optJSONArray("actions");
+        for (int i = 0; acts != null && i < acts.length(); i++) {
+            JSONObject a = acts.optJSONObject(i);
+            if (a == null || !(a.opt("id") instanceof String) || a.optString("id").isEmpty() || !(a.opt("title") instanceof String || a.opt("label") instanceof String))
+                throw new MainActivity.OpError("invalid_args", "notifications.show: each action needs string `id` and `title`");
+        }
         String id = str(s, "id");
         if (id == null || id.isEmpty()) id = str(s, "tag");
         if (id == null || id.isEmpty()) id = "default";

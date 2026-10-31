@@ -310,3 +310,18 @@ test('quitOnLastWindowClosed: false — closing the last window hides it; the ap
 		server.stop(true);
 	}
 });
+
+test('notifications.show conformance fixtures (native/notifications.fixtures.json)', async () => {
+	if (process.env.DESKTOP_TEST_DEV) return; // unbundled: no notification center
+	const fx = await Bun.file(new URL('../../../packages/shell/native/notifications.fixtures.json', import.meta.url)).json();
+	const withTime = (a: Record<string, unknown>) => (typeof a.at === 'number' ? { ...a, at: Date.now() + a.at } : a);
+	for (const c of fx.valid) {
+		const r = await app.platform<{ id: string; scheduled?: boolean }>('notifications', 'show', withTime(c.args)).catch((e) => e);
+		expect({ name: c.name, r }).toMatchObject({ name: c.name, r: { id: c.args.id, scheduled: !!c.scheduled } });
+	}
+	for (const c of fx.invalid) {
+		const e = await app.platform('notifications', 'show', withTime(c.args)).then(() => null, (err) => err);
+		expect({ name: c.name, code: e?.code }).toEqual({ name: c.name, code: 'invalid_args' });
+	}
+	await app.platform('notifications', 'dismissAll');
+});

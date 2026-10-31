@@ -203,6 +203,20 @@ describe.skipIf(!process.env.ANDROID_E2E)('android', () => {
 			await n('dismissAll').catch(() => {});
 		});
 
+		test('notifications.show conformance fixtures (native/notifications.fixtures.json)', async () => {
+			const fx = await Bun.file(new URL('../../../packages/shell/native/notifications.fixtures.json', import.meta.url)).json();
+			const withTime = (a: Record<string, unknown>) => (typeof a.at === 'number' ? { ...a, at: Date.now() + a.at } : a);
+			for (const c of fx.valid) {
+				const r = await app.platform<{ id: string; scheduled?: boolean }>('notifications', 'show', withTime(c.args)).catch((e: unknown) => e);
+				expect({ name: c.name, r }).toMatchObject({ name: c.name, r: { id: c.args.id, scheduled: !!c.scheduled } });
+			}
+			for (const c of fx.invalid) {
+				const e = await app.platform('notifications', 'show', withTime(c.args)).then(() => null, (err: { code?: string }) => err);
+				expect({ name: c.name, code: (e as { code?: string } | null)?.code }).toEqual({ name: c.name, code: 'invalid_args' });
+			}
+			await app.platform('notifications', 'dismissAll');
+		});
+
 		test('show → delivered (payload, subtitle) → replace by id → dismiss', async () => {
 			expect(await n('show', { id: 'n1', title: 'Hello', body: 'World', subtitle: '#general', payload: '{"url":"/x"}' })).toMatchObject({ id: 'n1', scheduled: false });
 			let list = await until(delivered, (l) => l.some((d) => d.id === 'n1'));

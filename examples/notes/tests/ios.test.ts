@@ -163,6 +163,20 @@ describe.skipIf(!process.env.IOS_E2E)('ios', () => {
 		push.close();
 	});
 
+	test('notifications.show conformance fixtures (native/notifications.fixtures.json)', async () => {
+		const fx = await Bun.file(new URL('../../../packages/shell/native/notifications.fixtures.json', import.meta.url)).json();
+		const withTime = (a: Record<string, unknown>) => (typeof a.at === 'number' ? { ...a, at: Date.now() + a.at } : a);
+		for (const c of fx.valid) {
+			const r = await app.platform<{ id: string; scheduled?: boolean }>('notifications', 'show', withTime(c.args)).catch((e: unknown) => e);
+			expect({ name: c.name, r }).toMatchObject({ name: c.name, r: { id: c.args.id, scheduled: !!c.scheduled } });
+		}
+		for (const c of fx.invalid) {
+			const e = await app.platform('notifications', 'show', withTime(c.args)).then(() => null, (err: { code?: string }) => err);
+			expect({ name: c.name, code: (e as { code?: string } | null)?.code }).toEqual({ name: c.name, code: 'invalid_args' });
+		}
+		await app.platform('notifications', 'dismissAll');
+	});
+
 	test('Swift plugin (native/ios/Device.swift)', async () => {
 		expect(await app.platform('device', 'info')).toMatchObject({ idiom: 'phone' });
 		expect(await app.platform<number>('device', 'multiply', { a: 6, b: 7 })).toBe(42);

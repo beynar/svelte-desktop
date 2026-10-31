@@ -41,6 +41,7 @@ enum sd_winrt_boolean : unsigned char {};
 #include <windows.ui.notifications.h>
 #include <winstring.h>
 
+#include <algorithm>
 #include <cmath>
 
 #include "../portable/notifications.hpp"
@@ -431,8 +432,7 @@ static std::string toast_xml(const notif::Show &s) {
   std::string cache = local_dir() + "\\notification-images", err;
   std::string icon = s.icon.empty() ? "" : notif::image_file(s.icon, cache, &err);
   std::string image = s.image.empty() ? "" : notif::image_file(s.image, cache, &err);
-  json launch{{"i", s.id}};
-  if (!s.payload.empty() && s.payload.size() <= 2048) launch["p"] = s.payload; // history entries of a previous run
+  json launch{{"i", s.id}}; // the payload comes from the record (notification-records.json)
   std::string x = "<toast launch=\"" + xesc(launch.dump()) + "\" activationType=\"foreground\"";
   for (auto &a : s.actions)
     if (a.destructive) {
@@ -468,7 +468,6 @@ static std::string toast_xml(const notif::Show &s) {
       const notif::Action &a = s.actions[i];
       json args{{"i", s.id}, {"a", a.id}};
       if (a.input) args["t"] = "t" + std::to_string(i);
-      if (!s.payload.empty() && s.payload.size() <= 1024) args["p"] = s.payload; // cold start: no record to take it from
       x += "<action content=\"" + xesc(a.input && !a.button.empty() ? a.button : a.title) + "\" arguments=\"" + xesc(args.dump()) +
            "\" activationType=\"" + (a.foreground ? "foreground" : "background") + "\"";
       if (a.input) x += " hint-inputId=\"t" + std::to_string(i) + "\"";
@@ -561,10 +560,46 @@ static void drop_live(const std::string &id) {
   toast::live.erase(it);
 }
 
+// The records outlive the process like the toasts do: a click after a restart (Action Center,
+// cold start) still finds its payload, group and action flags; toast arguments carry only the id.
+static std::string records_path() { return local_dir() + "\\notification-records.json"; }
+
+static void save_records() {
+  std::vector<const notif::Record *> all;
+  for (auto &[id, r] : notif::records()) all.push_back(&r);
+  std::sort(all.begin(), all.end(), [](auto *a, auto *b) { return a->date > b->date; });
+  json out = json::array();
+  for (size_t i = 0; i < all.size() && i < 200; i++) out.push_back(notif::record_to_disk(*all[i])); // newest 200
+  std::error_code ec;
+  auto path = std::filesystem::u8path(records_path()), tmp = path;
+  tmp += ".tmp";
+  std::filesystem::create_directories(path.parent_path(), ec);
+  {
+    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+    if (!f) return;
+    f << out.dump();
+  }
+  std::filesystem::rename(tmp, path, ec);
+}
+
+static void load_records() {
+  std::ifstream f(std::filesystem::u8path(records_path()), std::ios::binary);
+  if (!f) return;
+  std::stringstream ss;
+  ss << f.rdbuf();
+  json v = json::parse(ss.str(), nullptr, false);
+  if (!v.is_array()) return;
+  for (auto &o : v) {
+    notif::Record r;
+    if (notif::record_from_disk(o, r) && !notif::records().count(r.id)) notif::records()[r.id] = r;
+  }
+}
+
 static void forget(const std::string &id) {
   drop_live(id);
   notif::records().erase(id);
   g_keep.erase(id);
+  save_records();
 }
 
 static bool deliver(const notif::Show &s, int window, std::string *error, bool quiet);
@@ -591,7 +626,7 @@ static void on_activated(const std::string &args, const json &inputs, const std:
     return;
   }
   if (a.is_object() && a.contains("i") && a["i"].is_string()) {
-    id = a["i"], action = notif::jstr(a, "a"), payload = notif::jstr(a, "p");
+    id = a["i"], action = notif::jstr(a, "a"), payload = notif::jstr(a, "p"); // "p": toasts shown by older builds
     if (action.empty()) kind = "click";
     else if (a.contains("t") && a["t"].is_string()) kind = "reply", input = inputs.value(a["t"].get<std::string>(), std::string());
     else kind = "action";
@@ -784,6 +819,7 @@ static bool show_balloon(const notif::Show &s, int window, std::string *error) {
   if (!tray_balloon_show(s.id, s.title, body, s.silent, err)) return *error = "notifications.show: " + err, false;
   toast::balloons = true;
   notif::records()[s.id] = notif::make_record(s, window);
+  save_records();
   return true;
 }
 
@@ -843,6 +879,7 @@ static bool deliver(const notif::Show &s, int window, std::string *error, bool q
   notif::records()[s.id] = r;
   if (r.keep) g_keep[s.id] = s;
   else g_keep.erase(s.id);
+  save_records();
   return true;
 }
 
@@ -1041,6 +1078,7 @@ void notification_balloon_clicked(const std::string &id) {
   if (rec != notif::records().end()) rec->second.acted = true;
   notif::respond(id, "click", "", nullptr, "", 0);
   notif::records().erase(id);
+  save_records();
 }
 
 // ---------------------------------------------------------------------------
@@ -1094,6 +1132,7 @@ static std::string permission() {
 }
 
 void register_notifications() {
+  load_records();
   g_started = notif::now_ms();
   register_identity();
   register_activator(); // early: a launch by COM (-ToastActivated) waits for it

@@ -604,6 +604,33 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		}
 	});
 
+	test('a click after a restart recovers the whole payload (> 2 KB) from the persisted record, not the toast arguments', async () => {
+		const data = 'x'.repeat(3000);
+		await app.eval(`host.notifications.show({ id: 'big', title: 'Big payload', url: '/about', data: ${JSON.stringify(data)} })`);
+		await app.close();
+		closed = true;
+		await Bun.sleep(2000);
+		const exe = join(APP, readdirSync(APP).find((f) => /\.exe$/i.test(f))!);
+		try {
+			const connected = await launch({
+				timeout: 45_000,
+				connect: (url) => {
+					const cmd = join(tmp, 'toast-launch-big.cmd');
+					writeFileSync(cmd, `@echo off\r\nset SVELTE_DESKTOP_TEST=${url}\r\n"${exe}" -ToastActivated %*\r\n`);
+					reg('add', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', `"${process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe'}" /d /c "${cmd}"`, '/f');
+					void activate({ i: 'big' }); // what the toast carries now: the id only
+				},
+			});
+			app = connected;
+			closed = false;
+			await app.waitFor(() => location.pathname === '/about', { timeout: 20_000 });
+			const r = (await app.platform<Array<{ id: string; payload: string | null }>>('notifications', 'responses')).find((x) => x.id === 'big');
+			expect(JSON.parse(r!.payload!)).toEqual({ url: '/about', data });
+		} finally {
+			reg('add', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', `"${exe}" -ToastActivated`, '/f');
+		}
+	});
+
 	/** Start the app the way Windows does for a toast (the activator's LocalServer32), with the
 	 *  test channel: `trigger` is the real click; a .cmd wrapper only adds SVELTE_DESKTOP_TEST. */
 	async function coldLaunch(trigger: () => Promise<unknown>) {
@@ -653,6 +680,20 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		await app.waitFor(() => location.pathname === '/about', { timeout: 30_000 });
 		await app.waitFor(() => /click sc1/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
 		expect(await pending()).toHaveLength(0);
+	});
+
+	test('notifications.show conformance fixtures (native/notifications.fixtures.json)', async () => {
+		const fx = await Bun.file(new URL('../../../packages/shell/native/notifications.fixtures.json', import.meta.url)).json();
+		const withTime = (a: Record<string, unknown>) => (typeof a.at === 'number' ? { ...a, at: Date.now() + a.at } : a);
+		for (const c of fx.valid) {
+			const r = await app.platform<{ id: string; scheduled?: boolean }>('notifications', 'show', withTime(c.args)).catch((e: unknown) => e);
+			expect({ name: c.name, r }).toMatchObject({ name: c.name, r: { id: c.args.id, scheduled: !!c.scheduled } });
+		}
+		for (const c of fx.invalid) {
+			const e = await app.platform('notifications', 'show', withTime(c.args)).then(() => null, (err: { code?: string }) => err);
+			expect({ name: c.name, code: (e as { code?: string } | null)?.code }).toEqual({ name: c.name, code: 'invalid_args' });
+		}
+		await app.platform('notifications', 'dismissAll');
 	});
 
 	test.skipIf(!process.env.WINDOWS_INSTALLER)('NSIS installer: silent install, Start Menu shortcut with AUMID + activator, toast, silent uninstall removes the identity', async () => {
