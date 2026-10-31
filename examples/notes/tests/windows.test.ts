@@ -205,8 +205,26 @@ switch ($Mode) {
     $hasTitle = { param($e) $e.Current.Name -like ('*' + $s.title + '*') }
     $inPopup = { param($e) $e.Current.ClassName -eq 'FlexibleToastView' -and $e.Current.Name -like ('*' + $s.title + '*') }
     $toast = $null
-    for ($i = 0; $i -lt 20 -and -not $toast; $i++) { $toast = Find (Hosts) $inPopup; if (-not $toast) { Start-Sleep -Milliseconds 500 } } # the popup can take a while
-    if (-not $toast) {
+    if (-not $s.center) { for ($i = 0; $i -lt 20 -and -not $toast; $i++) { $toast = Find (Hosts) $inPopup; if (-not $toast) { Start-Sleep -Milliseconds 500 } } } # the popup can take a while
+    if ($s.center) { # the entry in the notification center: open it, expand collapsed groups, click the entry
+      $out.where = 'center'
+      [SdInput]::Chord(0x5B, 0x4E); Start-Sleep -Milliseconds 1500
+      $inCenter = { param($e) $e.Current.ClassName -eq 'ListViewItem' -and $e.Current.Name -like ('*' + $s.title + '*') }
+      for ($i = 0; $i -lt 10 -and -not $toast; $i++) {
+        $toast = Find (Hosts) $inCenter
+        if (-not $toast) {
+          $more = Find (Hosts) { param($e) $e.Current.AutomationId -eq 'SeeMoreLessButton' -and $e.Current.Name -match '^\+' }
+          if ($more) { $out.expanded = Desc $more; [void](ClickEl $more) }
+          Start-Sleep -Milliseconds 700
+        }
+      }
+      if ($toast -and $s.shot) { Shot $s.shot }
+      if ($toast -and -not $s.button) {
+        $title = $null
+        foreach ($e in $toast.FindAll($TS::Descendants, $True_)) { if ($e.Current.AutomationId -eq 'Title' -and $e.Current.Name -like ('*' + $s.title + '*')) { $title = $e; break } }
+        if ($title) { $toast = $title }
+      }
+    } elseif (-not $toast) {
       if ($s.noCenter) { $out.error = 'no popup'; ($out | ConvertTo-Json -Compress); exit 0 }
       [SdInput]::Chord(0x5B, 0x4E); Start-Sleep -Milliseconds 1500 # Win+N: notification center
       $out.where = 'center'; $toast = Find (Hosts) $hasTitle
@@ -460,6 +478,85 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		await app.eval(`host.notifications.setBadge(null)`);
 	});
 
+	test('real click on the entry in the notification center (expanded if grouped) → navigates, once', async () => {
+		await home();
+		await app.eval(`host.notifications.dismissAll()`);
+		await show({ id: 'nc0', title: 'Older one', body: 'groups the app' });
+		await show({ id: 'nc1', title: 'In the center', body: 'Click me there', url: '/about' });
+		await Bun.sleep(9000); // the popups time out: the entries stay in the notification center
+		const r = await uia('act', { title: 'In the center', center: true, shot: join(SHOTS, 'notification-center.png') });
+		log('act', r);
+		if (JSON.parse(r).error) log(await uia('dump'));
+		expect(JSON.parse(r).error).toBeUndefined();
+		await app.waitFor(() => location.pathname === '/about', { timeout: 15_000 });
+		await app.waitFor(() => /click nc1/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
+		await once('nc1', 'click');
+		await app.eval(`host.notifications.dismissAll()`);
+	});
+
+	test('toastXml: the raw XML toast shows; a real click arrives as click, its button as action', async () => {
+		await home();
+		const xml = (n: string) => `<toast launch="custom-launch-${n}"><visual><binding template="ToastGeneric"><text>Custom XML ${n}</text><text>Raw toastXml</text></binding></visual><actions><action content="Custom button" arguments="custom-action"/></actions></toast>`;
+		await show({ id: 'x1', title: 'ignored', toastXml: xml('one') });
+		await Bun.sleep(1500);
+		await shot('toast-xml.png');
+		let next = app.nextEvent<{ id: string; kind: string; actionId: string | null }>('notificationResponse', (d) => d.id === 'x1', 20_000);
+		let r = await uia('act', { title: 'Custom XML one' });
+		log('act', r);
+		expect(JSON.parse(r).error).toBeUndefined();
+		expect(await next).toMatchObject({ kind: 'click', actionId: null });
+		await once('x1', 'click');
+		await show({ id: 'x2', title: 'ignored', toastXml: xml('two') });
+		next = app.nextEvent('notificationResponse', (d) => d.id === 'x2', 20_000);
+		r = await uia('act', { title: 'Custom XML two', button: '^Custom button$' });
+		log('act', r);
+		expect(JSON.parse(r).error).toBeUndefined();
+		expect(await next).toMatchObject({ kind: 'action', actionId: 'custom-action' });
+	});
+
+	test('autoCancel: false — after a real click the entry stays (history + delivered)', async () => {
+		await home();
+		await show({ id: 'k1', title: 'Keep me', body: 'Stays after the click', autoCancel: false });
+		const next = app.nextEvent<{ id: string; kind: string }>('notificationResponse', (d) => d.id === 'k1', 20_000);
+		const r = await uia('act', { title: 'Keep me' });
+		log('act', r);
+		expect(JSON.parse(r).error).toBeUndefined();
+		expect((await next).kind).toBe('click');
+		await Bun.sleep(2000);
+		expect((await toasts()).history).toContain('k1');
+		expect((await delivered()).map((n) => n.id)).toContain('k1');
+		await app.eval(`host.notifications.dismiss('k1')`);
+	});
+
+	const windows = () => app.platform<unknown[]>('window', 'list');
+	const until = async (what: string, fn: () => Promise<boolean>, ms = 20_000) => {
+		for (const end = Date.now() + ms; Date.now() < end; await Bun.sleep(250)) if (await fn().catch(() => false)) return;
+		throw new Error(`timed out: ${what}`);
+	};
+
+	test('quitOnLastWindowClosed: false — no window left: the app lives; a toast click reopens the main window, so does a second instance', async () => {
+		await home();
+		await show({ id: 'q1', title: 'Reopen me', body: 'No window open', url: '/about', requireInteraction: true });
+		await app.platform('window', 'close', { windowId: 0 });
+		await until('window closed', async () => (await windows()).length === 0, 10_000);
+		expect((await app.platform<{ identifier: string }>('app', 'getInfo')).identifier).toBe(ID); // still answering
+		const r = await uia('act', { title: 'Reopen me' });
+		log('act', r);
+		expect(JSON.parse(r).error).toBeUndefined();
+		await until('main window reopened', async () => (await windows()).length === 1);
+		await app.waitFor(() => location.pathname === '/about', { timeout: 30_000 });
+		await app.waitFor(() => /click q1/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
+		await shot('reopened-by-toast.png');
+		// A second launch with no window: the instance it hands over to reopens the main window.
+		await app.platform('window', 'close', { windowId: 0 });
+		await until('window closed again', async () => (await windows()).length === 0, 10_000);
+		const exe = join(APP, readdirSync(APP).find((f) => /\.exe$/i.test(f))!);
+		const second = Bun.spawn([exe], { stdout: 'ignore', stderr: 'ignore' });
+		expect(await Promise.race([second.exited, Bun.sleep(20_000).then(() => 'running')])).toBe(0); // handed over and left
+		await until('main window reopened by the second instance', async () => (await windows()).length === 1);
+		await app.waitFor('#counter', { timeout: 30_000 });
+	});
+
 	test('cold start: the activator launches the app (-ToastActivated), the click reaches it', async () => {
 		await app.close();
 		closed = true;
@@ -505,5 +602,101 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 			reg('add', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', `"${exe}" -ToastActivated`, '/f');
 			if (hklm) reg('delete', `HKLM\\Software\\Classes\\CLSID\\${CLSID}`, '/f');
 		}
+	});
+
+	/** Start the app the way Windows does for a toast (the activator's LocalServer32), with the
+	 *  test channel: `trigger` is the real click; a .cmd wrapper only adds SVELTE_DESKTOP_TEST. */
+	async function coldLaunch(trigger: () => Promise<unknown>) {
+		const exe = join(APP, readdirSync(APP).find((f) => /\.exe$/i.test(f))!);
+		try {
+			return await launch({
+				timeout: 60_000,
+				connect: (url) => {
+					const cmd = join(tmp, 'toast-launch.cmd');
+					writeFileSync(cmd, `@echo off\r\nset SVELTE_DESKTOP_TEST=${url}\r\n"${exe}" -ToastActivated %*\r\n`);
+					reg('add', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', `"${process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe'}" /d /c "${cmd}"`, '/f');
+					void trigger().then((r) => log('trigger', r), (e) => log('trigger failed', String(e)));
+				},
+			});
+		} finally {
+			reg('add', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', `"${exe}" -ToastActivated`, '/f');
+		}
+	}
+
+	test('real cold-start click: the app quits, the entry in the notification center is clicked → Windows starts it → the page navigates', async () => {
+		await home();
+		await show({ id: 'cc1', title: 'Cold click', body: 'Clicked after quitting', url: '/about' });
+		await Bun.sleep(1500);
+		await app.close();
+		closed = true;
+		await Bun.sleep(2000);
+		app = await coldLaunch(() => uia('act', { title: 'Cold click', center: true, shot: join(SHOTS, 'cold-click-center.png') }));
+		closed = false;
+		await app.waitFor(() => location.pathname === '/about', { timeout: 30_000 });
+		await app.waitFor(() => /click cc1/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
+		expect(await app.platform<unknown[]>('notifications', 'claim')).toHaveLength(0);
+		await once('cc1', 'click');
+	});
+
+	test('scheduled toast fires while the app is closed (ScheduledToastNotification); a real click cold-starts it', async () => {
+		await home();
+		expect(await show({ id: 'sc1', title: 'Scheduled cold', body: 'Fired while closed', url: '/about', delay: 20_000 })).toMatchObject({ scheduled: true });
+		await app.close();
+		closed = true;
+		await Bun.sleep(26_000);
+		const t = await toasts();
+		log('while closed', t);
+		expect(t.history).toContain('sc1');
+		await shot('scheduled-while-closed.png');
+		app = await coldLaunch(() => uia('act', { title: 'Scheduled cold', center: true }));
+		closed = false;
+		await app.waitFor(() => location.pathname === '/about', { timeout: 30_000 });
+		await app.waitFor(() => /click sc1/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
+		expect(await pending()).toHaveLength(0);
+	});
+
+	test.skipIf(!process.env.WINDOWS_INSTALLER)('NSIS installer: silent install, Start Menu shortcut with AUMID + activator, toast, silent uninstall removes the identity', async () => {
+		await app.close();
+		closed = true;
+		await Bun.sleep(1500);
+		const dir = resolve(process.env.WINDOWS_INSTALLER!);
+		const setup = join(dir, readdirSync(dir).find((f) => /-setup\.exe$/i.test(f))!);
+		const install = Bun.spawnSync([setup, '/S']);
+		log('installer exit', install.exitCode);
+		const instDir = join(process.env.LOCALAPPDATA!, 'Programs', 'Svelte Notes');
+		const lnk = join(process.env.APPDATA!, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Svelte Notes.lnk');
+		await until('installed', async () => existsSync(join(instDir, 'SvelteNotes.exe')) && existsSync(lnk), 30_000);
+		app = await launch({
+			timeout: 60_000,
+			connect: (url) => {
+				Bun.spawn(['powershell.exe', '-NoProfile', '-Command', `Start-Process -FilePath '${lnk}'`], { env: { ...process.env, SVELTE_DESKTOP_TEST: url }, stdout: 'ignore', stderr: 'ignore' });
+			},
+		});
+		closed = false;
+		const exePath = await app.platform<string>('app', 'getPath', { name: 'exe' });
+		log('running', exePath);
+		expect(exePath.toLowerCase()).toContain('programs\\svelte notes');
+		await Bun.sleep(1000);
+		const props = await ps(String.raw`param([string]$Lnk)
+$sh = New-Object -ComObject Shell.Application
+$item = $sh.Namespace((Split-Path $Lnk)).ParseName((Split-Path $Lnk -Leaf))
+@{ id = "$($item.ExtendedProperty('System.AppUserModel.ID'))"; clsid = "$($item.ExtendedProperty('System.AppUserModel.ToastActivatorCLSID'))" } | ConvertTo-Json -Compress`, lnk);
+		log('shortcut', props.out, props.err);
+		const sp = JSON.parse(props.out);
+		expect(sp.id).toBe(ID);
+		expect(sp.clsid.replace(/[{}]/g, '').toUpperCase()).toBe(CLSID.replace(/[{}]/g, ''));
+		expect(reg('query', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`).stdout.toString().toLowerCase()).toContain('programs\\svelte notes');
+		await show({ id: 'inst', title: 'From the installed app', body: 'NSIS install' });
+		await Bun.sleep(800);
+		expect((await toasts()).history).toContain('inst');
+		await shot('installed-app-toast.png');
+		await app.eval(`host.notifications.dismissAll()`);
+		await app.close();
+		closed = true;
+		await Bun.sleep(1500);
+		Bun.spawnSync([join(instDir, 'Uninstall.exe'), '/S']);
+		await until('uninstalled', async () => !existsSync(join(instDir, 'SvelteNotes.exe')) && !existsSync(lnk), 60_000);
+		await until('identity removed', async () =>
+			reg('query', `HKCU\\Software\\Classes\\AppUserModelId\\${ID}`).exitCode !== 0 && reg('query', `HKCU\\Software\\Classes\\CLSID\\${CLSID}`).exitCode !== 0, 30_000);
 	});
 });

@@ -179,6 +179,9 @@ int primary_window();
 int resolve_window(const Call &c);
 /// opts as shell_window_create (+ "path", "label" for multi-window). <0 on error (-4 duplicate label).
 int create_app_window(const json &opts);
+/// No window left (quitOnLastWindowClosed: false): reopen the first window's options. 0 when
+/// windows exist (or none was ever created), else the new native id.
+int recreate_main_window();
 void reveal_window(Window *w);
 /// Resize the client area to width x height DIPs (keeps the position).
 void set_content_size(Window *w, double width, double height);

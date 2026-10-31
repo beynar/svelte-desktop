@@ -194,6 +194,7 @@ void add_hidden_hook(MsgHook hook) { g_hidden_hooks.push_back(std::move(hook)); 
 void add_quit_hook(std::function<void()> hook) { g_quit_hooks.push_back(std::move(hook)); }
 
 static bool g_quit_on_last_window = true; // desktop.config quitOnLastWindowClosed
+static json g_main_opts;                    // the first window's options (recreate_main_window)
 void request_quit() { PostQuitMessage(0); }
 
 // ---------------------------------------------------------------------------
@@ -1184,6 +1185,16 @@ static int create_window(const json &o) {
   return w->id;
 }
 
+// quitOnLastWindowClosed: false and no window left: a toast click / second instance
+// reopens the main one (like a Dock click on macOS), at the app's origin.
+int recreate_main_window() {
+  if (!g_order.empty() || !g_main_opts.is_object()) return 0;
+  json o = g_main_opts;
+  for (const char *k : {"args", "cwd", "singleInstance", "url", "html"}) o.erase(k);
+  o["label"] = "main";
+  return create_app_window(o);
+}
+
 int create_app_window(const json &opts) {
   std::string label = jstr(opts, "label");
   if (!label.empty())
@@ -1364,6 +1375,7 @@ SHELL_API int shell_window_create(const char *opts_json) {
   if (!o.is_object()) o = json::object();
   if (g_main_tid.load() == 0) init_main_thread(o);
   else if (GetCurrentThreadId() != g_main_tid.load()) return -2;
+  if (g_main_opts.is_null()) g_main_opts = o;
   return create_window(o);
 }
 

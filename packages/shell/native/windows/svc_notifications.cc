@@ -614,6 +614,13 @@ static void on_activated(const std::string &args, const json &inputs, const std:
   auto rec = notif::records().find(id);
   int window = rec != notif::records().end() ? rec->second.window : 0;
   if (rec != notif::records().end()) rec->second.acted = rec->second.keep ? false : true;
+  bool foreground = kind == "click" || kind == "reply";
+  if (kind == "action" && rec != notif::records().end()) {
+    auto f = rec->second.foreground.find(action);
+    foreground = f == rec->second.foreground.end() || f->second;
+  } else if (kind == "action") foreground = true;
+  // No window (quitOnLastWindowClosed: false): reopen the main one; its page claims the response.
+  if (foreground && window_order().empty()) recreate_main_window();
   notif::respond(id, kind, action, input, payload, 0);
   auto keep = g_keep.find(id);
   std::string err;

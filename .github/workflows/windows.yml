@@ -54,6 +54,10 @@ jobs:
         with:
           name: notes-windows-x64
           path: notes-app
+      - uses: actions/download-artifact@v4
+        with:
+          name: notes-windows-x64-installer
+          path: notes-installer
       - name: Install (examples/notes, no scripts)
         working-directory: examples/notes
         run: bun install --ignore-scripts
@@ -70,9 +74,10 @@ jobs:
           WINDOWS_E2E: '1'
           WINDOWS_APP: ${{ github.workspace }}\notes-app
           WINDOWS_SHOTS: ${{ runner.temp }}\shots
+          WINDOWS_INSTALLER: ${{ github.workspace }}\notes-installer
         run: |
           New-Item -ItemType Directory -Force $env:WINDOWS_SHOTS | Out-Null
-          bun test --timeout 120000 tests/windows.test.ts
+          bun test --timeout 180000 tests/windows.test.ts
       - name: Screenshots
         if: always()
         uses: actions/upload-artifact@v4
