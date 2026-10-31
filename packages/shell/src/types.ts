@@ -10,6 +10,11 @@ export interface WindowOptions {
   debug?: boolean;
   /** Persist and restore the window frame under this name (NSUserDefaults on macOS). */
   autosaveName?: string;
+  /** macOS title bar: 'default', 'transparent' (the page extends under it, title kept), 'hidden' (the page extends under the traffic lights) or
+   *  'hiddenInset' (same, traffic lights inset). Drag the window by any element with
+   *  `data-desktop-drag` or CSS `--app-region: drag`; the page gets `--desktop-titlebar-height`,
+   *  `--desktop-controls-width` and `html[data-desktop-titlebar]`. */
+  titleBarStyle?: "default" | "transparent" | "hidden" | "hiddenInset";
   /** Keep the window invisible until DOMContentLoaded to avoid a white flash. Default true. */
   hiddenUntilReady?: boolean;
   readyTimeoutMs?: number;
@@ -25,6 +30,8 @@ export interface ShellOptions {
   lib: string;
   /** App native plugin (libapp-native.dylib), loaded on the UI thread before the loop starts. */
   plugin?: string | null;
+  /** desktop.config singleInstance (Linux/Windows). */
+  singleInstance?: boolean;
   /** permissions.pages from desktop.config; undefined = allow all. */
   pagePermissions?: string[];
   /** Main window URL override (dev mode points it at the Vite server). */

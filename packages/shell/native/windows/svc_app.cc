@@ -117,19 +117,31 @@ void on_first_page_ready() {
 static HANDLE g_instance_mutex = nullptr;
 static const ULONG_PTR kCopyDataTag = 0x53445349; // 'SDSI'
 
-static void request_single_instance(CallPtr c) {
-  if (g_instance_mutex) return c->ok(json{{"acquired", true}});
+/// Take the single-instance mutex, or hand this process's arguments to the holder.
+static bool acquire_single_instance() {
+  if (g_instance_mutex) return true;
   std::wstring name = L"Local\\" + wide(app_identifier()) + L".singleInstance";
   HANDLE m = CreateMutexW(nullptr, TRUE, name.c_str());
   DWORD err = GetLastError();
   if (m && err != ERROR_ALREADY_EXISTS) {
     g_instance_mutex = m;
-    return c->ok(json{{"acquired", true}});
+    return true;
   }
   if (m) CloseHandle(m);
   json argv = json::array();
-  for (auto &a : command_line_args()) argv.push_back(utf8(a));
-  std::string payload = json{{"argv", argv}, {"cwd", utf8(current_dir())}}.dump();
+  bool toastLaunch = false;
+  for (auto &a : command_line_args()) {
+    argv.push_back(utf8(a));
+    toastLaunch = toastLaunch || lstrcmpiW(a.c_str(), L"-ToastActivated") == 0;
+  }
+  json msg{{"argv", argv}, {"cwd", utf8(current_dir())}};
+  // Launched by the toast activator while another instance holds the lock (it hadn't
+  // registered the class object yet): take the activation and hand it over.
+  if (toastLaunch) {
+    json t = json::parse(toast_activation_wait(5000), nullptr, false);
+    if (t.is_object()) msg["toast"] = t;
+  }
+  std::string payload = msg.dump();
   // The holder's hidden window (this process has one with the same class + title: skip it).
   HWND holder = nullptr;
   DWORD pid = 0;
@@ -147,8 +159,12 @@ static void request_single_instance(CallPtr c) {
     DWORD_PTR result = 0;
     SendMessageTimeoutW(holder, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds), SMTO_ABORTIFHUNG, 3000, &result);
   }
-  c->ok(json{{"acquired", false}});
+  return false;
 }
+
+static void request_single_instance(CallPtr c) { c->ok(json{{"acquired", acquire_single_instance()}}); }
+
+bool claim_single_instance() { return acquire_single_instance(); }
 
 // ---------------------------------------------------------------------------
 // Taskbar (ITaskbarList3): progress (Dock progress) and overlay (Dock badge)
@@ -381,6 +397,7 @@ void register_app() {
       if (!cwd.empty()) SetCurrentDirectoryW(cwd.c_str()); // resolve relative paths against the sender's cwd
       handle_open_args(args);
       SetCurrentDirectoryW(prev.c_str());
+      if (d.contains("toast")) toast_activation_forwarded(d["toast"]);
     }
     *result = TRUE;
     return true;
@@ -413,7 +430,41 @@ void register_deep_link() {
 // ---------------------------------------------------------------------------
 // system.*
 
+// Windows privacy settings: desktop apps have no per-app prompt; camera,
+// microphone and location are allowed or denied for desktop apps as a whole
+// (CapabilityAccessManager consent store). The rest has no gate on Windows.
+static std::string consent(const wchar_t *capability) {
+  std::wstring base = std::wstring(L"Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\") + capability;
+  auto read = [](const std::wstring &key) -> std::wstring {
+    wchar_t buf[32];
+    DWORD size = sizeof buf;
+    if (RegGetValueW(HKEY_CURRENT_USER, key.c_str(), L"Value", RRF_RT_REG_SZ, nullptr, buf, &size) != ERROR_SUCCESS) return L"";
+    return buf;
+  };
+  if (read(base) == L"Deny" || read(base + L"\\NonPackaged") == L"Deny") return "denied";
+  return "granted";
+}
+
+static std::string permission_status(const std::string &name) {
+  if (name == "camera") return consent(L"webcam");
+  if (name == "microphone") return consent(L"microphone");
+  if (name == "location") return consent(L"location");
+  return "granted";
+}
+
 void register_system() {
+  reg("system", "checkPermission", [](CallPtr c) { c->ok(json{{"status", permission_status(c->str("name"))}}); });
+  reg("system", "requestPermission", [](CallPtr c) { c->ok(json{{"status", permission_status(c->str("name"))}}); });
+  reg("system", "openSettings", [](CallPtr c) {
+    static const std::map<std::string, const wchar_t *> kPages = {
+        {"privacy-camera", L"ms-settings:privacy-webcam"}, {"privacy-microphone", L"ms-settings:privacy-microphone"},
+        {"privacy-location", L"ms-settings:privacy-location"}, {"notifications", L"ms-settings:notifications"},
+        {"privacy-screenCapture", L"ms-settings:privacy-graphicsCaptureProgrammatic"}, {"privacy", L"ms-settings:privacy"}};
+    auto it = kPages.find(c->str("pane"));
+    const wchar_t *page = it == kPages.end() ? L"ms-settings:privacy" : it->second;
+    bool opened = (INT_PTR)ShellExecuteW(nullptr, L"open", page, nullptr, nullptr, SW_SHOWNORMAL) > 32;
+    c->ok(json{{"opened", opened}});
+  });
   reg("system", "info", [](CallPtr c) {
     c->ok(json{{"os", "windows"}, {"family", "windows"}, {"arch", diag_arch()}, {"keyboardLayout", keyboard_layout()}});
   });

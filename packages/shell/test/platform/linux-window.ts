@@ -80,7 +80,11 @@ export default async (t: Harness) => {
     const off = ["setDecorations", "setFocusable"].includes(op);
     t.check(`${op} on/off`, (await t.call("window", op, { enabled: off ? false : true })).ok && (await t.call("window", op, { enabled: off ? true : false })).ok);
   }
-  for (const op of ["setTitleBarStyle", "setTheme", "setContentProtected", "setDocumentEdited", "setSimpleFullscreen", "setRepresentedFilename", "setMinimizable", "setMaximizable", "setHasShadow", "invalidateShadow", "showCharacterPalette"])
+  // Hidden title bar: an undecorated window (the page draws its controls and drags it).
+  t.check("setTitleBarStyle hidden → frameless", (await t.call("window", "setTitleBarStyle", { style: "hidden" })).ok && (await t.call("window", "getTitleBarStyle")).value?.frameless === true);
+  t.check("setTitleBarStyle default → decorated", (await t.call("window", "setTitleBarStyle", { style: "default" })).ok && (await t.call("window", "getTitleBarStyle")).value?.frameless === false);
+  t.check("setTitleBarStyle bogus → invalid_args", (await t.call("window", "setTitleBarStyle", { style: "bogus" })).error?.code === "invalid_args");
+  for (const op of ["setTheme", "setContentProtected", "setDocumentEdited", "setSimpleFullscreen", "setRepresentedFilename", "setMinimizable", "setMaximizable", "setHasShadow", "invalidateShadow", "showCharacterPalette"])
     t.check(`${op} → unsupported`, (await t.call("window", op, { enabled: true })).error?.code === "unsupported");
   t.check("isOccluded is boolean", typeof (await t.call("window", "isOccluded")).value === "boolean");
   t.check("isHovered shape", typeof (await t.call("window", "isHovered")).value.hovered === "boolean");

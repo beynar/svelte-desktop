@@ -73,6 +73,33 @@ test("C Node-API addon (native/addons/fastmath.c, compiled with gcc) runs in ser
   expect(res.body).toContain("832040");
 });
 
+test("background job: own process (the executable acting as Bun), progress, result", async () => {
+  const api = <T>(path: string, init?: RequestInit) => app.eval<T>(`fetch(${JSON.stringify(path)}, ${JSON.stringify(init ?? {})}).then((r) => r.json())`);
+  const job = await api<{ id: string }>("/api/jobs", { method: "POST", body: JSON.stringify({ name: "count", args: { to: 4, delay: 20 } }) });
+  const done = await api<{ state: string; progress: number; result: { counted: number; pid: number } }>(`/api/jobs?id=${job.id}&wait=1`);
+  expect(done).toMatchObject({ state: "done", progress: 1, result: { counted: 4 } });
+  expect(done.result.pid).not.toBe((await app.platform<{ pid: number }>("diagnostics", "info")).pid);
+});
+
+test("hidden title bar (titleBarStyle: hiddenInset): frameless window, page metrics, drag region double-click maximizes", async () => {
+  expect(await app.platform<{ style: string; frameless: boolean }>("window", "getTitleBarStyle")).toEqual({ style: "hiddenInset", frameless: true });
+  expect(await app.eval<string[]>("[document.documentElement.dataset.desktopTitlebar, document.documentElement.dataset.desktopControls]")).toEqual(["hiddenInset", "none"]);
+  const maximized = () => app.platform<boolean | { maximized: boolean }>("window", "isMaximized").then((r) => (typeof r === "boolean" ? r : r.maximized));
+  expect(await maximized()).toBe(false);
+  // A double-click on the nav bar (a drag region in the notes CSS): the bridge's drag listener → native maximize.
+  await app.eval("document.querySelector('nav').dispatchEvent(new MouseEvent('mousedown', { button: 0, detail: 2, bubbles: true, cancelable: true }))");
+  for (let i = 0; i < 40 && !(await maximized()); i++) await Bun.sleep(50);
+  expect(await maximized()).toBe(true);
+  await app.eval("document.querySelector('nav').dispatchEvent(new MouseEvent('mousedown', { button: 0, detail: 2, bubbles: true, cancelable: true }))");
+  for (let i = 0; i < 40 && (await maximized()); i++) await Bun.sleep(50);
+  expect(await maximized()).toBe(false);
+  // Links inside the drag region stay links (not a drag).
+  await app.platform("window", "setTitleBarStyle", { style: "default" });
+  expect(await app.platform<{ frameless: boolean }>("window", "getTitleBarStyle")).toMatchObject({ style: "default", frameless: false });
+  expect(await app.eval<string>("document.documentElement.dataset.desktopControls")).toBe("native");
+  await app.platform("window", "setTitleBarStyle", { style: "hiddenInset" });
+});
+
 test("the Swift plugin is macOS-only: no greeter on Linux (typed `unknown`, the app keeps running)", async () => {
   const err: any = await app.platform("greeter", "hello", { name: "linux" }).catch((e) => e);
   expect(err.code).toBe("unknown");

@@ -1,6 +1,19 @@
-:root { font-family: system-ui, sans-serif; color: #1d1d1f; background: #fafafa; }
-body { margin: 0 auto; max-width: 42rem; padding: 2rem 1rem; }
-nav { display: flex; gap: 1rem; margin-bottom: 2rem; }
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; color: #1d1d1f; background: #fafafa; }
+body { margin: 0 auto; max-width: 42rem; padding: 0 1rem 2rem; }
+/* The window has no title bar (titleBarStyle: 'hiddenInset'): this bar takes its place.
+   It drags the window (--app-region: drag; links stay clickable) and clears the traffic
+   lights with the variables the shell provides (0 in a browser). */
+nav {
+	--app-region: drag;
+	position: sticky; top: 0; z-index: 1;
+	display: flex; align-items: center; gap: 1rem;
+	box-sizing: border-box; width: 100vw; margin: 0 0 2rem calc(50% - 50vw);
+	min-height: max(var(--desktop-titlebar-height, 0px), 2.5rem);
+	padding: 0 1rem 0 max(var(--desktop-controls-width, 0px), 1rem);
+	background: color-mix(in srgb, Canvas 85%, transparent); backdrop-filter: blur(12px);
+	border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+	user-select: none;
+}
 nav a { color: #ff3e00; }
 .card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; background: white; }
 @media (prefers-color-scheme: dark) {

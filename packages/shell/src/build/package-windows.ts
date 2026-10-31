@@ -19,7 +19,8 @@
 import { $ } from "bun";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import type { ResolvedConfig } from "../config.ts";
+import { sidecarEntries, type ResolvedConfig } from "../config.ts";
+import { pluginSources } from "./native.ts";
 import type { Arch, PackageResult } from "./package.ts";
 
 const shellRoot = resolve(import.meta.dir, "../..");
@@ -114,16 +115,7 @@ const isPE = (file: string) => {
   }
 };
 
-function listSources(dir: string, skipAddons = true): string[] {
-  const out: string[] = [];
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) {
-      if (!(skipAddons && e.name === "addons")) out.push(...listSources(p, skipAddons));
-    } else if (/\.(swift|m|mm|c|cc|cpp)$/.test(e.name)) out.push(p);
-  }
-  return out;
-}
+const listSources = (dir: string) => pluginSources(dir, "windows");
 
 /** The app's native plugin → app-native.dll (C/C++ only; Swift/Objective-C are macOS-only). */
 export async function buildWindowsPlugin(c: ResolvedConfig, arch: Arch, outDir: string): Promise<string | null> {
@@ -599,6 +591,29 @@ async function signFiles(files: string[], s: SignSetup, name: string): Promise<v
 
 const nsisStr = (s: string) => s.replace(/\$/g, "$$$$").replace(/"/g, '$\\"');
 
+/**
+ * CLSID of the app's toast activator (COM server that receives toast clicks after the
+ * app quit). Same derivation as notif::activator_clsid in native/portable/notifications.hpp:
+ * FNV-1a 64 of "svelte-desktop:toast-activator:<id>" and of that + "#", laid out as a GUID
+ * with version 5 / RFC 4122 variant bits. shell.dll registers it (HKCU CLSID LocalServer32,
+ * AppUserModelId CustomActivator) and stamps it on the Start Menu shortcut
+ * (System.AppUserModel.ToastActivatorCLSID) at startup: NSIS can't set shortcut properties.
+ */
+export function toastActivatorClsid(identifier: string): string {
+  const fnv = (s: string) => {
+    let h = 0xcbf29ce484222325n;
+    for (const b of new TextEncoder().encode(s)) h = ((h ^ BigInt(b)) * 0x100000001b3n) & 0xffffffffffffffffn;
+    return h;
+  };
+  const base = `svelte-desktop:toast-activator:${identifier}`;
+  const a = fnv(base), b = fnv(`${base}#`);
+  const hex = (v: bigint, n: number) => v.toString(16).toUpperCase().padStart(n, "0");
+  const d4 = Array.from({ length: 8 }, (_, i) => (b >> BigInt(56 - 8 * i)) & 0xffn);
+  d4[0] = (d4[0] & 0x3fn) | 0x80n;
+  const d = d4.map((x) => hex(x, 2)).join("");
+  return `{${hex(a >> 32n, 8)}-${hex((a >> 16n) & 0xffffn, 4)}-${hex((a & 0x0fffn) | 0x5000n, 4)}-${d.slice(0, 4)}-${d.slice(4)}}`;
+}
+
 export function nsisScript(c: ResolvedConfig, o: { exe: string; srcDir: string; outFile: string; icon: string | null; arch: Arch }): string {
   const name = nsisStr(c.appName), id = nsisStr(c.identifier), exe = nsisStr(o.exe);
   const v = fileVersion(c.version).join(".");
@@ -688,6 +703,8 @@ export function nsisScript(c: ResolvedConfig, o: { exe: string; srcDir: string; 
     '  RMDir /r "$INSTDIR"',
     `  DeleteRegKey HKCU "${uninst}"`,
     `  DeleteRegKey HKCU "Software\\${id}"`,
+    `  DeleteRegKey HKCU "Software\\Classes\\AppUserModelId\\${id}"`, // toast identity (written by shell.dll at startup)
+    `  DeleteRegKey HKCU "Software\\Classes\\CLSID\\${toastActivatorClsid(c.identifier)}"`, // toast activator (idem)
     `  DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "${name}"`,
     ...uninstall,
     "  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'",
@@ -820,6 +837,8 @@ export async function packageWindows(c: ResolvedConfig, stage: string): Promise<
   mkdirSync(appDir, { recursive: true });
   copyFileSync(exeOut, join(appDir, exe));
   copyFileSync(await ensureShellDll(arch), join(appDir, "shell.dll"));
+  // The notifications backend registers it as the toast icon (AppUserModelId IconUri).
+  if (c.icon && existsSync(c.icon) && c.icon.toLowerCase().endsWith(".png")) copyFileSync(c.icon, join(appDir, `${c.identifier}.png`));
   const plugin = await buildWindowsPlugin(c, arch, join(work, "native"));
   if (plugin) copyFileSync(plugin, join(appDir, "app-native.dll"));
   const addons = await buildWindowsAddons(c, arch, join(work, "addons"));
@@ -827,8 +846,7 @@ export async function packageWindows(c: ResolvedConfig, stage: string): Promise<
     mkdirSync(join(appDir, "addons"), { recursive: true });
     for (const [name, file] of Object.entries(addons)) copyFileSync(file, join(appDir, "addons", `${name}.node`));
   }
-  for (const [name, src] of Object.entries(c.sidecars ?? {})) {
-    const from = resolve(c.root, src);
+  for (const [name, from] of sidecarEntries(c, "windows")) {
     if (!existsSync(from)) throw new Error(`sidecar "${name}": ${from} not found`);
     if (!isPE(from)) warn(`sidecar "${name}": ${relative(c.root, from)} is not a Windows executable`);
     copyFileSync(from, join(appDir, name.toLowerCase().endsWith(".exe") ? name : `${name}.exe`));

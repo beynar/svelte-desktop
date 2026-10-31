@@ -2,7 +2,10 @@
 // bus. Used by the production Worker (bus → bun:ffi) and by `vite dev` (bus →
 // RPC to the dev shell), so server code behaves the same in both.
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { appDirs } from "./os.ts";
+import { endCrashTracking, startCrashTracking, type CrashInfo } from "./crash.ts";
+import { bindJobs, jobs, stopAllJobs } from "./jobs/host.ts";
 import type { DesktopApi } from "./api.ts";
 import { callPlatform, onPlatform } from "./platform/bus.ts";
 import type { MenuItemSpec, ShellEvent } from "./types.ts";
@@ -12,6 +15,8 @@ export interface DesktopApiDeps {
   identifier: string;
   origin: string;
   quit(): void;
+  /** Track unclean exits / OS crash reports (the packaged app; not `vite dev`). */
+  trackCrashes?: boolean;
 }
 
 type Listener = (e: any) => void;
@@ -49,6 +54,7 @@ export function createDesktopRuntime(deps: DesktopApiDeps): DesktopRuntime {
   const paths = appDirs(deps.identifier);
   mkdirSync(paths.data, { recursive: true });
   mkdirSync(paths.cache, { recursive: true });
+  const crash: CrashInfo = deps.trackCrashes ? startCrashTracking(paths.data) : { uncleanExit: false, previousLaunch: null, reports: [] };
 
   const fire = (type: string, event: unknown) => {
     for (const fn of listeners.get(type) ?? []) {
@@ -59,6 +65,16 @@ export function createDesktopRuntime(deps: DesktopApiDeps): DesktopRuntime {
       }
     }
   };
+  // Background jobs → pages: snapshots on the `jobs` broadcast channel (the `jobs` store);
+  // a page asks for the current list with `jobs:hello`.
+  const publishJobs = (list: unknown, extra?: Record<string, unknown>) =>
+    void callPlatform("events", "emit", { channel: "jobs", data: { jobs: list, ...extra } }).catch(() => {});
+  bindJobs(publishJobs, deps.trackCrashes ? join(paths.data, "jobs.json") : undefined);
+  onPlatform<{ channel?: string }>("message", (m) => {
+    if (m?.channel === "jobs:hello") publishJobs(jobs.list());
+    if (m?.channel === "jobs:cancel") jobs.cancel(String((m as { data?: { id?: string } }).data?.id ?? ""));
+  });
+
   // Platform menu clicks surface as the legacy `menu` event too.
   onPlatform<{ id: string }>("menuAction", (d) => fire("menu", { type: "menu", id: d.id }));
 
@@ -70,6 +86,7 @@ export function createDesktopRuntime(deps: DesktopApiDeps): DesktopRuntime {
     appName: deps.appName,
     origin: deps.origin,
     paths,
+    crashInfo: () => crash,
     window: {
       setTitle: (title) => win("setTitle", { title }),
       setSize: (width, height) => win("setSize", { width, height }),
@@ -140,6 +157,8 @@ export function createDesktopRuntime(deps: DesktopApiDeps): DesktopRuntime {
           console.error("[shell] beforeQuit hook threw", err);
         }
       }
+      stopAllJobs();
+      if (deps.trackCrashes) endCrashTracking(paths.data);
     },
   };
 }

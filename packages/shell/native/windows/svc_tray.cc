@@ -6,9 +6,8 @@
 // Windows convention: the menu opens on right click, left click is trayClick
 // (or toggles a bound popover).
 //
-// notifications.* — tray balloons (shown as toasts on Windows 10/11) through
-// the tray icon, or a temporary icon when no tray item exists.
-// Events: notificationResponse {tag, actionId: null} on click.
+// Balloons for notifications.* (svc_notifications.cc) when WinRT toasts are not
+// available: through the tray icon, or a temporary icon when no tray item exists.
 #include "win.hpp"
 
 #include <shellapi.h>
@@ -30,7 +29,6 @@ static std::wstring g_tip;
 static HMENU g_menu = nullptr;
 static bool g_temp_notify = false; // kNotifyId icon added for a notification
 static std::string g_last_tag;
-static int g_next_tag = 1;
 
 static NOTIFYICONDATAW base_nid(UINT id) {
   NOTIFYICONDATAW nid{};
@@ -109,7 +107,7 @@ static bool parse_color(const std::string &text, uint8_t out[4]) {
   return false;
 }
 
-static bool icon_pixels(HICON icon, std::vector<uint8_t> &px, int &w, int &h) {
+bool icon_pixels(HICON icon, std::vector<uint8_t> &px, int &w, int &h) {
   ICONINFO ii{};
   if (!GetIconInfo(icon, &ii)) return false;
   bool ok = false;
@@ -319,56 +317,42 @@ static void tray_remove(CallPtr c) {
 }
 
 // ---------------------------------------------------------------------------
-// notifications
+// notification balloons (fallback of svc_notifications.cc)
 
-static void show_notification(CallPtr c) {
-  if (!(c->args.contains("title") && c->args["title"].is_string()))
-    return c->fail("invalid_args", "notifications.show: `title` must be a string");
-  std::string tag = c->str("tag");
-  if (tag.empty()) tag = "notification-" + std::to_string(g_next_tag++);
-  UINT id = kTrayId;
+bool tray_balloon_show(const std::string &id, const std::string &title, const std::string &body, bool silent, std::string &error) {
+  UINT nid_id = kTrayId;
   if (!g_tray) {
-    id = kNotifyId;
+    nid_id = kNotifyId;
     if (!g_temp_notify) {
       NOTIFYICONDATAW nid = base_nid(kNotifyId);
       nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
       nid.uCallbackMessage = WM_SD_TRAY;
       nid.hIcon = app_icon(true);
       copy_tip(nid.szTip, ARRAYSIZE(nid.szTip), wide(app_name()));
-      if (!Shell_NotifyIconW(NIM_ADD, &nid)) return c->fail("unavailable", "notifications.show: Shell_NotifyIcon failed");
+      if (!Shell_NotifyIconW(NIM_ADD, &nid)) return error = "Shell_NotifyIcon failed", false;
       nid.uVersion = NOTIFYICON_VERSION_4;
       Shell_NotifyIconW(NIM_SETVERSION, &nid);
       g_temp_notify = true;
     }
   }
-  NOTIFYICONDATAW nid = base_nid(id);
+  NOTIFYICONDATAW nid = base_nid(nid_id);
   nid.uFlags = NIF_INFO;
-  copy_tip(nid.szInfoTitle, ARRAYSIZE(nid.szInfoTitle), wide(c->str("title")));
-  std::string body = c->str("body", c->str("message"));
+  copy_tip(nid.szInfoTitle, ARRAYSIZE(nid.szInfoTitle), wide(title));
   copy_tip(nid.szInfo, ARRAYSIZE(nid.szInfo), wide(body.empty() ? " " : body));
-  nid.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON | NIIF_RESPECT_QUIET_TIME | (c->flag("silent", false) ? NIIF_NOSOUND : 0);
+  nid.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON | NIIF_RESPECT_QUIET_TIME | (silent ? NIIF_NOSOUND : 0);
   nid.hBalloonIcon = app_icon(false);
-  if (!Shell_NotifyIconW(NIM_MODIFY, &nid)) return c->fail("unavailable", "notifications.show: the balloon could not be shown");
-  g_last_tag = tag;
-  c->ok(json{{"tag", tag}});
+  if (!Shell_NotifyIconW(NIM_MODIFY, &nid)) return error = "the balloon could not be shown", false;
+  g_last_tag = id;
+  return true;
 }
 
-void register_notifications() {
-  reg_many("notifications", {"show", "notify"}, [](CallPtr c) { show_notification(c); });
-  reg_many("notifications", {"dismiss", "close"}, [](CallPtr c) {
-    std::string tag = c->str("tag");
-    if (tag.empty()) return c->fail("invalid_args", "notifications.dismiss: `tag` must be a string");
-    if (tag == g_last_tag) {
-      NOTIFYICONDATAW nid = base_nid(g_tray ? kTrayId : kNotifyId);
-      nid.uFlags = NIF_INFO; // empty text hides the balloon
-      Shell_NotifyIconW(NIM_MODIFY, &nid);
-      remove_temp_notify();
-      g_last_tag.clear();
-    }
-    c->ok();
-  });
-  reg("notifications", "getPermissionStatus", [](CallPtr c) { c->ok(json{{"status", "granted"}}); });
-  reg("notifications", "requestPermission", [](CallPtr c) { c->ok(json{{"status", "granted"}}); });
+void tray_balloon_hide(const std::string &id) {
+  if (g_last_tag.empty() || (!id.empty() && id != g_last_tag)) return;
+  NOTIFYICONDATAW nid = base_nid(g_tray ? kTrayId : kNotifyId);
+  nid.uFlags = NIF_INFO; // empty text hides the balloon
+  Shell_NotifyIconW(NIM_MODIFY, &nid);
+  remove_temp_notify();
+  g_last_tag.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -403,11 +387,13 @@ void register_tray() {
         if (g_menu) show_tray_menu(pt);
         else tray_click();
         break;
-      case NIN_BALLOONUSERCLICK:
-        if (!g_last_tag.empty()) emit("notificationResponse", json{{"tag", g_last_tag}, {"actionId", nullptr}});
+      case NIN_BALLOONUSERCLICK: {
+        std::string tag = g_last_tag;
         g_last_tag.clear();
+        if (!tag.empty()) notification_balloon_clicked(tag);
         if (id == kNotifyId) remove_temp_notify();
         break;
+      }
       case NIN_BALLOONTIMEOUT:
       case NIN_BALLOONHIDE:
         if (id == kNotifyId) remove_temp_notify();

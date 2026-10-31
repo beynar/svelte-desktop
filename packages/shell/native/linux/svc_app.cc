@@ -83,18 +83,90 @@ static gboolean on_instance_connection(GSocketService *, GSocketConnection *conn
     body.append(buf, (size_t)n);
   }
   json msg = json::parse(body, nullptr, false);
-  if (msg.is_object())
+  if (msg.is_object()) {
     emit("secondInstance", json{{"argv", msg.value("argv", json::array())}, {"cwd", msg.value("cwd", std::string())}});
+    // argv[0] is the executable; the rest may be URLs (scheme handler) or documents.
+    json args = json::array();
+    json argv = msg.value("argv", json::array());
+    for (size_t i = 1; i < argv.size(); i++) args.push_back(argv[i]);
+    handle_open_args(args, msg.value("cwd", std::string()));
+  }
   return FALSE;
 }
 
-static void request_single_instance(CallPtr c) {
-  if (g_lock_fd >= 0) return c->ok(json{{"acquired", true}});
+// ---------------------------------------------------------------------------
+// Launch arguments: `Exec=app %U` passes URLs (x-scheme-handler) and documents
+// (MimeType) → openUrls {urls} / openFiles {paths}, as Apple events do on macOS.
+
+static json g_opened_files = json::array(), g_initial_urls = json::array();
+static json g_pending_files = json::array(), g_pending_urls = json::array();
+static bool g_page_ready = false;
+
+static void split_args(const json &args, const std::string &cwd, json &urls, json &files) {
+  for (const auto &a : args) {
+    if (!a.is_string()) continue;
+    std::string arg = a.get<std::string>();
+    if (arg.empty() || arg[0] == '-') continue;
+    gchar *scheme = g_uri_parse_scheme(arg.c_str());
+    if (scheme && std::string(scheme) != "file") {
+      urls.push_back(arg);
+      g_free(scheme);
+      continue;
+    }
+    g_free(scheme);
+    std::string path = arg;
+    if (arg.rfind("file://", 0) == 0) {
+      gchar *p = g_filename_from_uri(arg.c_str(), nullptr, nullptr);
+      if (!p) continue;
+      path = p;
+      g_free(p);
+    } else if (!g_path_is_absolute(arg.c_str())) {
+      gchar *abs = g_build_filename(cwd.empty() ? "." : cwd.c_str(), arg.c_str(), nullptr);
+      gchar *canon = g_canonicalize_filename(abs, nullptr);
+      path = canon;
+      g_free(abs);
+      g_free(canon);
+    }
+    if (g_file_test(path.c_str(), G_FILE_TEST_EXISTS)) files.push_back(path);
+  }
+}
+
+void set_launch_args(const json &args, const std::string &cwd) {
+  split_args(args, cwd, g_initial_urls, g_opened_files);
+  for (const auto &u : g_initial_urls) g_pending_urls.push_back(u);
+  for (const auto &f : g_opened_files) g_pending_files.push_back(f);
+}
+
+void handle_open_args(const json &args, const std::string &cwd) {
+  json urls = json::array(), files = json::array();
+  split_args(args, cwd, urls, files);
+  for (const auto &f : files) g_opened_files.push_back(f);
+  if (!g_page_ready) {
+    for (const auto &u : urls) g_pending_urls.push_back(u);
+    for (const auto &f : files) g_pending_files.push_back(f);
+    return;
+  }
+  if (!urls.empty()) emit("openUrls", json{{"urls", urls}});
+  if (!files.empty()) emit("openFiles", json{{"paths", files}});
+}
+
+void flush_open_requests() {
+  g_page_ready = true;
+  if (!g_pending_urls.empty()) emit("openUrls", json{{"urls", g_pending_urls}});
+  if (!g_pending_files.empty()) emit("openFiles", json{{"paths", g_pending_files}});
+  g_pending_urls = json::array();
+  g_pending_files = json::array();
+}
+
+/// Take the single-instance lock, or hand this process's arguments to the holder.
+/// Returns 1 acquired, 0 held by another instance (arguments sent), -1 error.
+static int acquire_single_instance() {
+  if (g_lock_fd >= 0) return 1;
   std::string dir = get_path("caches");
   g_mkdir_with_parents(dir.c_str(), 0700);
   std::string lock = dir + "/instance.lock", sock = dir + "/instance.sock";
   int fd = open(lock.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-  if (fd < 0) return c->fail("internal", "cannot open " + lock);
+  if (fd < 0) return -1;
   gchar *cwd = g_get_current_dir();
   std::string here = cwd;
   g_free(cwd);
@@ -112,7 +184,7 @@ static void request_single_instance(CallPtr c) {
     g_object_unref(addr);
     g_signal_connect(g_instance_service, "incoming", G_CALLBACK(on_instance_connection), nullptr);
     g_socket_service_start(g_instance_service);
-    return c->ok(json{{"acquired", true}});
+    return 1;
   }
   close(fd);
   // Tell the holder (best effort), then report that we didn't get the lock.
@@ -127,8 +199,16 @@ static void request_single_instance(CallPtr c) {
   }
   g_object_unref(addr);
   g_object_unref(client);
-  c->ok(json{{"acquired", false}});
+  return 0;
 }
+
+static void request_single_instance(CallPtr c) {
+  int r = acquire_single_instance();
+  if (r < 0) return c->fail("internal", "cannot open the single-instance lock");
+  c->ok(json{{"acquired", r == 1}});
+}
+
+bool claim_single_instance() { return acquire_single_instance() != 0; }
 
 // ---------------------------------------------------------------------------
 
@@ -162,6 +242,15 @@ static std::string icon_file() {
 
 void register_app() {
   reg("app", "whenReady", [](CallPtr c) { c->ok(true); });
+  // Documents the app was opened with (launch arguments, later instances), as on macOS.
+  auto opened = [](CallPtr c) { // read once, as on macOS
+    json out = g_opened_files;
+    g_opened_files = json::array();
+    c->ok(json{{"paths", out}});
+  };
+  reg("app", "getOpenedFiles", opened);
+  reg("webview", "getOpenedFiles", opened);
+  reg("deepLink", "getInitialUrls", [](CallPtr c) { c->ok(g_initial_urls); });
   reg("app", "getInfo", [](CallPtr c) {
     bool pkg = packaged();
     c->ok(json{{"name", app_name()},

@@ -5,6 +5,10 @@
 import type { DesktopApi } from "./api.ts";
 import { addonPath } from "./resolve-lib.ts";
 export type * from "./api.ts";
+export type { CrashInfo, CrashReport } from "./crash.ts";
+/** Background jobs: `src/jobs/<name>.ts` run in their own processes (see jobs/host.ts). */
+export { jobs } from "./jobs/host.ts";
+export type { JobContext, JobFunction, JobInfo, JobState, StartOptions } from "./jobs/host.ts";
 export type { MenuItemSpec, ShellEvent } from "./types.ts";
 
 const KEY = Symbol.for("svelte-desktop.api");

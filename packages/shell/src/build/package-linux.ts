@@ -20,7 +20,8 @@
 import { $ } from "bun";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import type { ResolvedConfig } from "../config.ts";
+import { sidecarEntries, type ResolvedConfig } from "../config.ts";
+import { pluginSources as sharedPluginSources } from "./native.ts";
 import { ensureLibshell, writeRelease, type Arch, type PackageResult } from "./package.ts";
 
 const log = (s: string) => console.log(`  \x1b[36m▸\x1b[0m ${s}`);
@@ -46,16 +47,7 @@ function newer(target: string, sources: string[]): boolean {
   return sources.every((s) => statSync(s).mtimeMs < t);
 }
 
-function pluginSources(dir: string): string[] {
-  const out: string[] = [];
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) {
-      if (e.name !== "addons") out.push(...pluginSources(p));
-    } else if (/\.(swift|m|mm|c|cc|cpp)$/.test(e.name)) out.push(p);
-  }
-  return out;
-}
+const pluginSources = (dir: string) => sharedPluginSources(dir, "linux");
 
 /** native/*.c|cc|cpp → libapp-native.so (Swift/ObjC skipped: macOS-only). */
 export async function buildLinuxPlugin(c: ResolvedConfig, arch: Arch, outDir: string): Promise<string | null> {
@@ -132,8 +124,46 @@ async function compile(c: ResolvedConfig, stage: string, out: string, arch: Arch
   if (r.exitCode !== 0) throw new Error(`bun build --compile failed:\n${r.stderr.toString()}${r.stdout.toString().slice(-4000)}`);
 }
 
-function desktopEntry(c: ResolvedConfig, exe: string, hasIcon: boolean): string {
-  const mime = (c.schemes ?? []).map((s) => `x-scheme-handler/${s};`).join("");
+const KNOWN_MIME: Record<string, string> = {
+  md: "text/markdown", markdown: "text/markdown", txt: "text/plain", json: "application/json", csv: "text/csv",
+  html: "text/html", htm: "text/html", xml: "application/xml", pdf: "application/pdf", png: "image/png",
+  jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", svg: "image/svg+xml", webp: "image/webp",
+  mp3: "audio/mpeg", mp4: "video/mp4", zip: "application/zip", yaml: "application/x-yaml", yml: "application/x-yaml",
+};
+
+/** fileTypes → MIME types for the .desktop entry, plus the types the app must declare itself. */
+export function linuxFileTypes(c: ResolvedConfig): { mimes: string[]; declared: Array<{ type: string; comment: string; glob: string }> } {
+  const mimes: string[] = [];
+  const declared: Array<{ type: string; comment: string; glob: string }> = [];
+  const slug = c.identifier.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  for (const t of c.fileTypes ?? []) {
+    if (t.mimeTypes?.length) {
+      mimes.push(...t.mimeTypes);
+      continue;
+    }
+    for (const raw of t.extensions) {
+      const ext = raw.replace(/^\./, "").toLowerCase();
+      if (ext === "*") continue;
+      const known = KNOWN_MIME[ext];
+      const type = known ?? `application/x-${slug}-${ext}`;
+      mimes.push(type);
+      if (!known) declared.push({ type, comment: t.name, glob: `*.${ext}` });
+    }
+  }
+  return { mimes: [...new Set(mimes)], declared };
+}
+
+export function sharedMimeInfo(declared: Array<{ type: string; comment: string; glob: string }>): string {
+  const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+${declared.map((d) => `  <mime-type type="${esc(d.type)}">\n    <comment>${esc(d.comment)}</comment>\n    <glob pattern="${esc(d.glob)}"/>\n  </mime-type>`).join("\n")}
+</mime-info>
+`;
+}
+
+export function desktopEntry(c: ResolvedConfig, exe: string, hasIcon: boolean): string {
+  const mime = [...(c.schemes ?? []).map((s) => `x-scheme-handler/${s}`), ...linuxFileTypes(c).mimes].map((m) => `${m};`).join("");
   const lines = [
     "[Desktop Entry]",
     "Type=Application",
@@ -144,6 +174,9 @@ function desktopEntry(c: ResolvedConfig, exe: string, hasIcon: boolean): string 
     "Terminal=false",
     "Categories=Utility;",
     `StartupWMClass=${c.identifier}`,
+    // The notifications backend names this entry (hint "desktop-entry", Unity badge URI);
+    // GNOME lists the app in its notification settings with this key.
+    "X-GNOME-UsesNotifications=true",
     `X-AppVersion=${c.version}`,
     ...(mime ? [`MimeType=${mime}`] : []),
     ...(c.copyright ? [`Comment=${c.copyright}`] : []),
@@ -178,8 +211,7 @@ export async function packageLinux(c: ResolvedConfig, stage: string): Promise<Pa
     mkdirSync(join(app, "lib", "addons"), { recursive: true });
     for (const [name, file] of Object.entries(addons)) copyFileSync(file, join(app, "lib", "addons", `${name}.node`));
   }
-  for (const [name, src] of Object.entries(c.sidecars ?? {})) {
-    const from = resolve(c.root, src);
+  for (const [name, from] of sidecarEntries(c, "linux")) {
     if (!existsSync(from)) throw new Error(`sidecar "${name}": ${from} not found`);
     copyFileSync(from, join(app, name));
     chmodSync(join(app, name), 0o755);
@@ -188,6 +220,15 @@ export async function packageLinux(c: ResolvedConfig, stage: string): Promise<Pa
   if (hasIcon) copyFileSync(c.icon!, join(app, `${c.identifier}.png`));
   else if (c.icon) warn(`icon: ${c.icon} is not a PNG (skipped)`);
   writeFileSync(join(app, `${c.identifier}.desktop`), desktopEntry(c, exe, hasIcon));
+  // Desktop integration (appimaged, AppImageLauncher, distro packages) reads share/: the entry and,
+  // for file types without a common MIME type, a shared-mime-info package.
+  mkdirSync(join(app, "share", "applications"), { recursive: true });
+  writeFileSync(join(app, "share", "applications", `${c.identifier}.desktop`), desktopEntry(c, exe, hasIcon));
+  const { declared } = linuxFileTypes(c);
+  if (declared.length) {
+    mkdirSync(join(app, "share", "mime", "packages"), { recursive: true });
+    writeFileSync(join(app, "share", "mime", "packages", `${c.identifier}.xml`), sharedMimeInfo(declared));
+  }
   log(`${c.appName}/  executable ${mb(join(app, exe))} (linux-${arch})${plugin ? " + plugin" : ""}${Object.keys(addons).length ? ` + ${Object.keys(addons).length} addon(s)` : ""}`);
 
   // 3. archives

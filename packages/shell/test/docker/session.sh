@@ -1,7 +1,8 @@
 # Sourced by the Linux test scripts inside the Docker image: a headless desktop
 # session — Xvfb, a D-Bus session bus, openbox (EWMH window manager), dunst
 # (notification server), gnome-keyring (Secret Service, unlocked), a stand-in
-# org.freedesktop.ScreenSaver, and an xdg-open that records instead of opening.
+# org.freedesktop.ScreenSaver, a scriptable fake notification server (built, not
+# started), and an xdg-open that records instead of opening.
 here=$(cd "$(dirname "${SESSION_SH:-$0}")" && pwd)
 export DISPLAY=${DISPLAY:-:99}
 export XDG_RUNTIME_DIR=/tmp/runtime-$(id -u); mkdir -p -m 700 "$XDG_RUNTIME_DIR"
@@ -18,6 +19,8 @@ dunst >/tmp/dunst.log 2>&1 &
 eval "$(printf 'test' | gnome-keyring-daemon --unlock --components=secrets 2>/dev/null)"
 [ -x /tmp/fake-screensaver ] || gcc "$here/fake-screensaver.c" $(pkg-config --cflags --libs gio-2.0) -o /tmp/fake-screensaver
 /tmp/fake-screensaver >/tmp/fake-screensaver.log 2>&1 &
+# Scriptable notification server for linux-notifications-fake (started by that suite, replacing dunst).
+[ -x /tmp/fake-notifications ] || gcc "$here/fake-notifications.c" $(pkg-config --cflags --libs gio-2.0) -o /tmp/fake-notifications
 mkdir -p /tmp/fakebin
 cat > /tmp/fakebin/xdg-open <<'X'
 #!/bin/sh

@@ -10,8 +10,10 @@
 //                       capabilities.describe, power.*
 //   svc_dialog.cc       dialog.* (GtkFileChooserNative, GtkMessageDialog)
 //   svc_webview.cc      webview.*, popover.*, events.emit
-//   svc_optional.cc     notifications.* (libnotify), tray.* (ayatana-appindicator),
-//                       secureStorage.* (libsecret) — all dlopen()ed at runtime
+//   svc_optional.cc     tray.* (ayatana-appindicator), secureStorage.* (libsecret)
+//                       — dlopen()ed at runtime
+//   svc_notifications.cc notifications.* (libnotify, dlopen()ed; Unity badge over
+//                       GDBus), push.* (unsupported)
 #pragma once
 #include <gtk/gtk.h>
 #include <webkit2/webkit2.h>
@@ -38,6 +40,13 @@ struct Window {
   bool focused = false;
   int minW = 0, minH = 0, maxW = 0, maxH = 0;
   bool ignoreMouse = false;
+  GtkWidget *box = nullptr;      // vertical: app menu bar + overlay
+  GtkWidget *overlay = nullptr;  // the page, plus view.* web views on top
+  GtkWidget *menubar = nullptr;
+  GtkAccelGroup *accel = nullptr;
+  std::string autosave;          // autosaveName → state file
+  int normX = 0, normY = 0, normW = 0, normH = 0; // last un-maximized geometry
+  guint saveTimer = 0;
 };
 
 // ---- windows (shell_linux.cc) ---------------------------------------------
@@ -51,6 +60,26 @@ int resolve_window(const Call &c);
 /// window.create: opts as shell_window_create plus `path` and `label`.
 /// Returns native id, -4 for a duplicate label, <0 on failure.
 int create_window_from_platform(const json &opts);
+
+// ---- launch arguments → openUrls / openFiles (svc_app.cc) --------------------
+/// The app's own arguments (URLs from scheme handlers, documents) at startup;
+/// delivered once the first page is ready.
+void set_launch_args(const json &args, const std::string &cwd);
+/// A later instance's arguments (single instance): delivered now.
+void handle_open_args(const json &args, const std::string &cwd);
+void flush_open_requests();
+
+// ---- menus (svc_optional.cc builder, svc_extra.cc services) ------------------
+/// MenuItemSpec[] → GtkMenu (nullptr + *error on invalid specs); accelerators into `accel`.
+GtkWidget *build_gtk_menu(const json &items, std::string *error, GtkAccelGroup *accel = nullptr);
+/// "CmdOrCtrl+Shift+K" → keyval + modifiers.
+bool parse_accelerator(const std::string &accel, guint *key, GdkModifierType *mods, std::string *error);
+/// The app menu bar on a (new) window.
+void attach_app_menu(Window *w);
+void register_extra(); // menu, shortcuts, capture, system
+/// singleInstance (desktop.config, default on): false when another instance holds
+/// the lock — this process's arguments were handed to it and it should exit.
+bool claim_single_instance();
 void reveal(Window *w);
 std::string app_name();
 std::string app_identifier();
@@ -78,6 +107,11 @@ bool popover_tray_click();               // true if a bound popover handled it
 // ---- JS helpers (svc_webview.cc) -----------------------------------------
 /// Evaluate `js` in the page (script semantics), reply with its JSON value.
 void eval_to_json(WebKitWebView *wv, const std::string &js, CallPtr c, const char *what);
+/// Awaited JS → JSON value (webview.executeJavaScript, view.executeJavaScript).
+void execute_js(WebKitWebView *wv, const std::string &code, CallPtr c);
+/// A web view committed a top-level load: track its origin (the bridge checks it).
+void page_committed(int native_id, const char *uri);
+void register_view();
 
 // ---- misc helpers ---------------------------------------------------------
 inline json rect_json(double x, double y, double w, double h) { return json{{"x", x}, {"y", y}, {"width", w}, {"height", h}}; }
@@ -102,6 +136,9 @@ void register_misc();   // screen, clipboard, shell, theme, diagnostics, capabil
 void register_dialog();
 void register_webview(); // webview, popover, events
 void register_optional(); // notifications, tray, secureStorage
+void register_notifications(); // svc_notifications.cc (called by register_optional)
+/// "" when notifications can be shown, else why not (no libnotify / no server).
+std::string notifications_unavailable();
 /// Ops that cannot work in this environment (library or daemon missing), for
 /// capabilities.describe: "service.op" → reason. Filled by register_optional().
 const std::vector<std::string> &unavailable_ops();

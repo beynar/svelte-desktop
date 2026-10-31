@@ -3,7 +3,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 export type OS = "darwin" | "linux" | "win32";
-export const currentOS = (): OS => (process.platform === "win32" ? "win32" : process.platform === "linux" ? "linux" : "darwin");
+// Android (Bun reports "android") uses the Linux layout; the host points XDG_* at the app sandbox.
+export const currentOS = (): OS => (process.platform === "win32" ? "win32" : process.platform === "linux" || (process.platform as string) === "android" ? "linux" : "darwin");
 
 /** Per-user directories for an app identifier (created by the runtime). */
 export function appDirs(identifier: string, os: OS = currentOS()) {

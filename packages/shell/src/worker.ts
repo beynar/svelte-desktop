@@ -5,7 +5,7 @@ import { JSCallback, FFIType, type Pointer } from "bun:ffi";
 import type { Server } from "bun";
 import { openNative, cstr, takeString, type Native } from "./ffi.ts";
 import { installDesktopApi } from "./server.ts";
-import { PROTOCOL_HEADER } from "./worker-env.ts";
+import { startGate } from "./gate.ts";
 import { createDesktopRuntime, type DesktopRuntime } from "./desktop-api.ts";
 import { connectTestChannel } from "./test-channel.ts";
 import { redirectConsole } from "./logging.ts";
@@ -22,8 +22,6 @@ export interface WorkerOptions {
   routes?: Record<string, any>;
 }
 
-const SESSION_COOKIE = "__svelte_desktop";
-const AUTH_PATH = "/__desktop/auth";
 const UPDATE_PATH = "/__desktop/update/";
 
 export function startWorker({ handler, routes = {} }: WorkerOptions) {
@@ -50,12 +48,6 @@ function dispatch(event: ShellEvent) {
   runtime?.feed(event);
 }
 
-const timingSafeEqual = (a: string, b: string) => {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-};
 
 async function init(msg: InitMessage, handler: KitHandler, routes: Record<string, any>) {
   if (msg.logFile) redirectConsole(msg.logFile, "worker");
@@ -79,61 +71,28 @@ async function init(msg: InitMessage, handler: KitHandler, routes: Record<string
   });
   const updates = msg.update ? setupUpdater(msg) : null;
 
-  let authSecret: string | null = msg.secret; // single use
-  const session = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
-  let host = "";
-
-  server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
+  const gate = startGate({
+    handler,
     routes,
-    async fetch(req, srv) {
-      // DNS-rebinding guard: only our exact loopback authority is served.
-      if (req.headers.get("host") !== host) return new Response("Misdirected Request", { status: 421 });
-      const url = new URL(req.url);
-
-      if (url.pathname === AUTH_PATH) {
-        const t = url.searchParams.get("t") ?? "";
-        if (!authSecret || !timingSafeEqual(t, authSecret)) return new Response("Forbidden", { status: 403 });
-        authSecret = null;
-        const next = url.searchParams.get("next");
-        return new Response(null, {
-          status: 302,
-          headers: {
-            location: next?.startsWith("/") && !next.startsWith("//") ? next : "/",
-            "set-cookie": `${SESSION_COOKIE}=${session}; Path=/; HttpOnly; SameSite=Strict`,
-          },
-        });
-      }
-
-      const cookie = req.headers.get("cookie") ?? "";
-      const got = /(?:^|;\s*)__svelte_desktop=([0-9a-f]+)/.exec(cookie)?.[1] ?? "";
-      if (!timingSafeEqual(got, session)) return new Response("Forbidden", { status: 403 });
-
-      if (url.pathname.startsWith(UPDATE_PATH) && req.method === "POST") {
-        // Same-origin only: the session cookie is SameSite=Strict, Origin pins it further.
-        if (req.headers.get("origin") !== `http://${host}`) return new Response("Forbidden", { status: 403 });
-        return updateRoute(updates, url.pathname.slice(UPDATE_PATH.length));
-      }
-
-      req.headers.set(PROTOCOL_HEADER, "http");
-      if (!debug) return handler(req, srv);
-      const res = await handler(req, srv);
-      console.log(`[shell] ${req.method} ${url.pathname}${url.search} → ${res.status}`);
-      return res;
+    secret: msg.secret,
+    debug,
+    extra: (req, url, origin) => {
+      if (!url.pathname.startsWith(UPDATE_PATH) || req.method !== "POST") return;
+      // Same-origin only: the session cookie is SameSite=Strict, Origin pins it further.
+      if (req.headers.get("origin") !== origin) return new Response("Forbidden", { status: 403 });
+      return updateRoute(updates, url.pathname.slice(UPDATE_PATH.length));
     },
   });
-
-  host = `127.0.0.1:${server.port}`;
-  const origin = `http://${host}`;
+  server = gate.server;
+  const origin = gate.origin;
   native.shell_set_app_origin(cstr(origin));
 
-  runtime = createDesktopRuntime({ appName: msg.appName, identifier: msg.identifier, origin, quit: () => void native.shell_quit() });
+  runtime = createDesktopRuntime({ appName: msg.appName, identifier: msg.identifier, origin, quit: () => void native.shell_quit(), trackCrashes: true });
   installDesktopApi(runtime.api);
   connectTestChannel({ origin, appName: msg.appName });
 
   if (debug) console.log(`[shell] serving ${origin}`);
-  native.shell_window_navigate(msg.windowId, cstr(`${origin}${AUTH_PATH}?t=${msg.secret}&next=/`));
+  native.shell_window_navigate(msg.windowId, cstr(gate.authUrl("/")));
 }
 
 // ---------------------------------------------------------------------------

@@ -131,6 +131,16 @@ void register_window() {
   });
 
   // ── geometry ──────────────────────────────────────────────────────────
+  wreg("setTitleBarStyle", [](CallPtr c, Window *w) {
+    std::string style = c->str("style", "default");
+    if (style != "default" && style != "transparent" && style != "hidden" && style != "hiddenInset")
+      return c->fail("invalid_args", "window.setTitleBarStyle: style is default | transparent | hidden | hiddenInset");
+    set_title_bar_style(w->id, style);
+    c->ok();
+  });
+  wreg("getTitleBarStyle", [](CallPtr c, Window *w) {
+    c->ok(json{{"style", title_bar_style(w->id)}, {"frameless", (GetWindowLongPtrW(w->hwnd, GWL_STYLE) & WS_CAPTION) != WS_CAPTION}});
+  });
   wreg("getBounds", [](CallPtr c, Window *w) { c->ok(json{{"bounds", window_bounds_json(w->hwnd)}, {"state", state_name(w)}}); });
   wreg("setBounds", [](CallPtr c, Window *w) {
     json b = window_bounds_json(w->hwnd);

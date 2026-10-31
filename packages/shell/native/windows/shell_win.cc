@@ -589,6 +589,13 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
         LPWSTR uri = nullptr;
         args->get_Uri(&uri);
         std::string url = take_string(uri);
+        if (View *bv = find_view(id); bv && !bv->browserView.empty()) {
+          // view.*: a browser view — web URLs load, anything else is refused.
+          std::string sc = url_scheme(url);
+          if (sc == "http" || sc == "https" || sc == "about" || sc == "data" || sc == "blob") emit("viewNavigated", json{{"id", bv->browserView}, {"url", url}});
+          else args->put_Cancel(TRUE);
+          return S_OK;
+        }
         if (is_internal_url(url)) return S_OK;
         args->put_Cancel(TRUE);
         open_external(id, url);
@@ -609,12 +616,21 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
   onNewWindow->Release();
 
   auto *onDone = new Cb<ICoreWebView2NavigationCompletedEventHandler, ICoreWebView2 *, ICoreWebView2NavigationCompletedEventArgs *>(
-      IID_ICoreWebView2NavigationCompletedEventHandler, [id](ICoreWebView2 *sender, ICoreWebView2NavigationCompletedEventArgs *) -> HRESULT {
+      IID_ICoreWebView2NavigationCompletedEventHandler, [id](ICoreWebView2 *sender, ICoreWebView2NavigationCompletedEventArgs *done) -> HRESULT {
         LPWSTR src = nullptr;
         sender->get_Source(&src);
         std::string url = take_string(src);
         View *v = find_view(id);
         if (v && url_scheme(url) != "about") v->lastUrl = url;
+        if (v && !v->browserView.empty()) {
+          BOOL success = TRUE;
+          done->get_IsSuccess(&success);
+          COREWEBVIEW2_WEB_ERROR_STATUS status = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
+          if (!success) done->get_WebErrorStatus(&status);
+          if (success) emit("viewLoaded", json{{"id", v->browserView}, {"url", url}});
+          else emit("viewFailed", json{{"id", v->browserView}, {"error", "navigation failed (WebView2 status " + std::to_string((int)status) + ")"}});
+          return S_OK;
+        }
         // Fallback for hidden-until-ready when the bridge's DOMContentLoaded didn't arrive.
         if (Window *w = find_window_unchecked(id))
           if (!w->shown && url_scheme(url) != "about" && !url.empty()) reveal_window(w);
@@ -938,9 +954,12 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(w));
   }
   if (!w) return DefWindowProcW(hwnd, msg, wp, lp);
+  static const UINT taskbarButtonCreated = RegisterWindowMessageW(L"TaskbarButtonCreated");
+  if (msg == taskbarButtonCreated) taskbar_button_created(hwnd); // badge overlay (svc_notifications.cc)
   switch (msg) {
     case WM_SIZE:
       view_resize(&w->view);
+      embedded_views_resized(w);
       if (wp != SIZE_MINIMIZED) emit_bounds(w);
       return 0;
     case WM_MOVE:
@@ -1087,6 +1106,9 @@ static void init_main_thread(const json &o) {
 }
 
 static int create_window(const json &o) {
+  // Opening a document or a link from Explorer starts a new process: hand it to the
+  // running instance (openUrls / openFiles there) and leave before any window.
+  if (g_order.empty() && jbool(o, "singleInstance", false) && !claim_single_instance()) ExitProcess(0);
   auto *w = new Window;
   w->id = g_next_id++;
   w->label = jstr(o, "label", g_order.empty() ? "main" : "window-" + std::to_string(w->id));
@@ -1147,6 +1169,7 @@ static int create_window(const json &o) {
   attach_app_menu(w);
   theme_apply_window(w);
   view_create(&w->view);
+  if (!jstr(o, "titleBarStyle", "").empty()) set_title_bar_style(w->id, jstr(o, "titleBarStyle", ""));
 
   bool hidden = jbool(o, "hiddenUntilReady", true);
   bool visible = jbool(o, "visible", jbool(o, "show", true));
@@ -1268,6 +1291,30 @@ void backend_page_ready(int nativeId) { page_ready(nativeId); }
 int backend_public_window_id(int nativeId) { return (!g_order.empty() && g_order.front() == nativeId) ? 0 : nativeId; }
 int backend_native_window_id(int publicId) { return publicId == 0 ? primary_window() : publicId; }
 
+// Hidden title bar: no caption (WS_POPUP + resizable frame); the page draws its own
+// controls and drags the window through its drag regions.
+void backend_set_frameless(int nativeId, bool frameless) {
+  Window *w = find_window(nativeId);
+  if (!w) return;
+  LONG_PTR style = GetWindowLongPtrW(w->hwnd, GWL_STYLE);
+  const LONG_PTR keep = WS_VISIBLE | WS_CLIPCHILDREN | (style & (WS_MINIMIZE | WS_MAXIMIZE));
+  style = frameless ? (keep | WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX) : (keep | WS_OVERLAPPEDWINDOW);
+  SetWindowLongPtrW(w->hwnd, GWL_STYLE, style);
+  SetWindowPos(w->hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+}
+
+void backend_window_drag(int nativeId, bool doubleClick) {
+  Window *w = find_window(nativeId);
+  if (!w) return;
+  if (doubleClick) {
+    ShowWindow(w->hwnd, IsZoomed(w->hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+    return;
+  }
+  // The classic move loop: as if the caption had been pressed.
+  ReleaseCapture();
+  SendMessageW(w->hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+}
+
 void *backend_native_window(int nativeId) {
   if (Window *w = find_window(nativeId)) return w->hwnd;
   View *v = find_view(nativeId);
@@ -1282,6 +1329,7 @@ void *backend_native_webview(int nativeId) {
 void backend_init_services() {
   register_app();
   register_window();
+  register_embed();
   register_screen();
   register_clipboard();
   register_shell();

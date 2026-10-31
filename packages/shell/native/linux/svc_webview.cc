@@ -55,7 +55,7 @@ void eval_to_json(WebKitWebView *wv, const std::string &js, CallPtr c, const cha
   }, new Ctx{c, what});
 }
 
-static void execute_js(WebKitWebView *wv, const std::string &code, CallPtr c) {
+void execute_js(WebKitWebView *wv, const std::string &code, CallPtr c) {
   // Awaits promises and returns a JSON value. Indirect eval keeps script
   // semantics (value of the last statement); a page CSP without 'unsafe-eval'
   // blocks it, then plain evaluation (no promise awaiting) is the fallback.
@@ -644,9 +644,7 @@ void register_webview() {
     webkit_web_view_terminate_web_process(t.wv);
     c->ok(true);
   });
-  auto opened = [](CallPtr c) { c->ok(json{{"paths", json::array()}}); }; // no document-open handoff on Linux yet
-  reg("webview", "getOpenedFiles", opened);
-  reg("app", "getOpenedFiles", opened);
+  // app/webview.getOpenedFiles: svc_app.cc (launch arguments, later instances).
 }
 
 } // namespace lx

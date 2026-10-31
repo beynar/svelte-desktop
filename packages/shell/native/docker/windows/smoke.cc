@@ -115,6 +115,10 @@ int main() {
       "{\"id\":23,\"service\":\"shortcuts\",\"op\":\"register\",\"args\":{\"accelerator\":\"Ctrl+Alt+F9\",\"id\":\"k\"}}",
       "{\"id\":24,\"service\":\"system\",\"op\":\"info\"}",
       "{\"id\":25,\"service\":\"capabilities\",\"op\":\"describe\"}",
+      "{\"id\":26,\"service\":\"window\",\"op\":\"setTitleBarStyle\",\"args\":{\"style\":\"hidden\"}}",
+      "{\"id\":27,\"service\":\"window\",\"op\":\"getTitleBarStyle\"}",
+      "{\"id\":28,\"service\":\"window\",\"op\":\"setTitleBarStyle\",\"args\":{\"style\":\"default\"}}",
+      "{\"id\":29,\"service\":\"window\",\"op\":\"getTitleBarStyle\"}",
   };
   const int total = (int)(sizeof requests / sizeof requests[0]);
   for (const char *r : requests) {
@@ -146,6 +150,9 @@ int main() {
   expect(21, "\"width\":640.0");
   expect(22, "\"armed\":true");
   expect(25, "\"platform\":\"windows\"");
+  expect(27, "\"frameless\":true");
+  expect(27, "\"style\":\"hidden\"");
+  expect(29, "\"frameless\":false");
 
   // Close veto: WM_CLOSE emits willClose and keeps the window; window.close bypasses it.
   auto close = sym<int (*)(int)>(m, "shell_window_close");

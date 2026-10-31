@@ -12,6 +12,8 @@
 		"./worker-env": "./src/worker-env.ts",
 		"./adapter": "./src/adapter.js",
 		"./updater": "./src/updater/index.ts",
+		"./push": "./src/push/server.ts",
+		"./push/service-worker.js": "./src/push/service-worker.js",
 		"./platform": "./src/platform/index.ts",
 		"./stores": "./src/platform/stores.svelte.ts",
 		"./platform/MenuBar.svelte": "./src/platform/components/MenuBar.svelte",
@@ -22,7 +24,8 @@
 		"./platform/PopoverContent.svelte": "./src/platform/components/PopoverContent.svelte",
 		"./vite": "./src/vite.ts",
 		"./config": "./src/config.ts",
-		"./test": "./src/test.ts"
+		"./test": "./src/test.ts",
+		"./globals": "./src/host/global.d.ts"
 	},
 	"peerDependencies": {
 		"@sveltejs/adapter-bun": "1.0.0-next.2",

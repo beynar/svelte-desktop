@@ -4,7 +4,7 @@
  * reject with `NativeApiError` carrying a typed `code` — `unsupported` means
  * the op is not implementable on this OS through the current backend.
  */
-import { callPlatform, onPlatform } from './bus';
+import { callPlatform, onPlatform, NativeApiError } from './bus';
 
 export {
 	NativeApiError, initPlatform, initPlatformForTests, onPlatform, oncePlatform,
@@ -613,12 +613,9 @@ export interface AccessibilityInfo {
 }
 
 export type PermissionName =
-	| 'accessibility'
-	| 'screenRecording'
-	| 'notifications'
-	| 'fullDiskAccess'
-	| 'camera'
-	| 'microphone';
+	| 'camera' | 'microphone' | 'location' | 'contacts' | 'calendars' | 'reminders' | 'photos' | 'bluetooth'
+	| 'speech' | 'appleEvents' | 'notifications' | 'screenRecording' | 'accessibility' | 'inputMonitoring'
+	| 'fullDiskAccess' | 'desktopFolder' | 'documentsFolder' | 'downloadsFolder';
 
 /** Resolved permission state. `unsupported` is an error code (the promise
  *  rejects with NativeApiError), never a resolved status. */
@@ -627,6 +624,7 @@ export type PermissionStatus = 'granted' | 'denied' | 'notDetermined' | 'unknown
 export type SettingsPane =
 	| 'privacy-accessibility'
 	| 'privacy-screenCapture'
+	| 'privacy-inputMonitoring'
 	| 'privacy-fullDiskAccess'
 	| 'privacy-camera'
 	| 'privacy-microphone'
@@ -730,32 +728,16 @@ export const secureStorage = {
 		),
 };
 
-// ── notifications ───────────────────────────────────────────────────
+// ── notifications · push ────────────────────────────────────────────
 
-export interface NotificationAction {
-	id: string;
-	label: string;
-}
-
-export const notifications = {
-	show: (options: {
-		title: string;
-		body?: string;
-		tag?: string;
-		actions?: NotificationAction[];
-	}) => callPlatform<{ tag: string }>('notifications', 'show', options),
-	dismiss: (tag: string) => callPlatform<null>('notifications', 'dismiss', { tag }),
-	/** Alias of `system.checkPermission('notifications')` — `unavailable`
-	 *  on unbundled binaries (UNUserNotificationCenter needs a bundle id). */
-	getPermissionStatus: () =>
-		callPlatform<{ status: PermissionStatus }>('notifications', 'getPermissionStatus'),
-	/** Alias of `system.requestPermission('notifications')`. */
-	requestPermission: () =>
-		callPlatform<{ status: PermissionStatus }>('notifications', 'requestPermission'),
-	/** actionId is null when the user clicked the notification body. */
-	onResponse: (cb: (data: { tag: string; actionId: string | null }) => void) =>
-		onPlatform('notificationResponse', cb),
-};
+export {
+	notifications, push, onNotification, openNotificationUrl,
+} from './notifications';
+export type {
+	NotificationAction, NotificationOptions, NotificationInfo, PendingNotification, NotificationEvent,
+	NotificationEventKind, NotificationShownEvent, NotificationChannel, NotificationEventMap,
+	NotificationUrgency, NotificationRepeat, NotificationPermission, PushTarget, PushMessage,
+} from './notifications';
 
 // ── deepLink ────────────────────────────────────────────────────────
 
@@ -1345,6 +1327,74 @@ export type DownloadProgressEvent = DownloadBase & {
 };
 export type DownloadFinishedEvent = DownloadBase & { path: string; bytes: number };
 export type DownloadFailedEvent = DownloadBase & { error: string; canceled: boolean };
+
+// ── permissions ─────────────────────────────────────────────────────
+// Declared in desktop.config.ts `permissions` (reason per permission), injected
+// at build time by the Vite plugin. Some must be declared (the OS kills an app
+// that asks without a usage string); the "Settings-only" ones (no grant prompt)
+// get a guided flow: the right System Settings pane plus a floating panel with
+// the app's icon to drag into the list.
+
+declare const __SVELTE_DESKTOP_PERMISSIONS__: Record<string, string> | undefined;
+const DECLARED: Record<string, string> = typeof __SVELTE_DESKTOP_PERMISSIONS__ === 'object' && __SVELTE_DESKTOP_PERMISSIONS__ ? __SVELTE_DESKTOP_PERMISSIONS__ : {};
+
+/** Must be in desktop.config `permissions` before asking (usage strings / manifest entries). */
+const MUST_DECLARE = new Set<string>(['camera', 'microphone', 'location', 'contacts', 'calendars', 'reminders', 'photos', 'bluetooth', 'speech', 'appleEvents', 'desktopFolder', 'documentsFolder', 'downloadsFolder']);
+/** No grant prompt: only System Settings can grant them (macOS). */
+const SETTINGS_ONLY = new Set<string>(['screenRecording', 'accessibility', 'inputMonitoring', 'fullDiskAccess']);
+const PANES: Record<string, string> = {
+	screenRecording: 'privacy-screenCapture', accessibility: 'privacy-accessibility', inputMonitoring: 'privacy-inputMonitoring',
+	fullDiskAccess: 'privacy-fullDiskAccess', camera: 'privacy-camera', microphone: 'privacy-microphone', notifications: 'notifications',
+};
+
+function requireDeclared(name: string, op: string) {
+	if (MUST_DECLARE.has(name) && !(name in DECLARED))
+		throw new NativeApiError('undeclared', `permissions.${op}('${name}'): declare it in desktop.config.ts → permissions: { ${name}: 'why the app needs it' } (the OS requires the reason)`);
+}
+
+export const permissions = {
+	/** desktop.config `permissions`: name → reason. */
+	declared: (): Record<string, string> => ({ ...DECLARED }),
+	/** Whether the permission can only be granted in System Settings (no prompt). */
+	settingsOnly: (name: PermissionName | string) => SETTINGS_ONLY.has(name),
+	async status(name: PermissionName | string): Promise<PermissionStatus> {
+		const r = await callPlatform<{ status: PermissionStatus }>('system', 'checkPermission', { name });
+		return r.status;
+	},
+	/**
+	 * Ask for a permission: the system prompt when there is one; the guided flow for the
+	 * Settings-only ones (unless `{ guide: false }`). Resolves with the resulting status.
+	 */
+	async request(name: PermissionName | string, opts: { guide?: boolean } = {}): Promise<PermissionStatus> {
+		requireDeclared(name, 'request');
+		if (SETTINGS_ONLY.has(name) && opts.guide !== false) return (await permissions.guide(name)).status;
+		const r = await callPlatform<{ status: PermissionStatus }>('system', 'requestPermission', { name });
+		return r.status;
+	},
+	/**
+	 * The guided flow: opens the permission's System Settings pane and floats a panel next to it
+	 * with the app's icon (drag it into the list) and the reason from desktop.config. Resolves when
+	 * granted, or when the user dismisses the panel. Where there is no guide (other platforms), the
+	 * settings page opens and the current status comes back.
+	 */
+	async guide(name: PermissionName | string, opts: { open?: boolean } = {}): Promise<{ status: PermissionStatus; canceled: boolean }> {
+		requireDeclared(name, 'guide');
+		try {
+			return await callPlatform<{ status: PermissionStatus; canceled: boolean }>('permissions', 'guide', { name, reason: DECLARED[name], open: opts.open ?? true });
+		} catch (e) {
+			if (!(e instanceof NativeApiError) || (e.code !== 'unknown' && e.code !== 'unsupported')) throw e;
+			if (PANES[name] && opts.open !== false) await callPlatform('system', 'openSettings', { pane: PANES[name] }).catch(() => {});
+			return { status: await permissions.status(name).catch(() => 'unknown' as const), canceled: false };
+		}
+	},
+	/** Close an open guide panel (its guide() resolves with canceled: true). */
+	cancelGuide: () => callPlatform<{ canceled: boolean }>('permissions', 'cancelGuide').catch(() => ({ canceled: false })),
+	guideState: () => callPlatform<{ open: boolean; name?: string; anchored?: boolean; draggable?: boolean }>('permissions', 'guideState'),
+	/** Open the permission's settings page. */
+	openSettings: (name: PermissionName | string) => callPlatform<{ opened: boolean }>('system', 'openSettings', { pane: PANES[name] ?? name }),
+	/** Grants seen by the guide (the store also re-checks when the app comes back to the front). */
+	onChange: (cb: (e: { name: string; status: PermissionStatus }) => void) => onPlatform('permissionChanged', cb),
+};
 
 export const webview = {
 	setZoom: (zoom: number, target: WebviewTarget = {}) =>

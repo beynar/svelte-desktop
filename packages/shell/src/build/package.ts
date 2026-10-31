@@ -3,9 +3,9 @@
 //   native plugin, sidecars) → codesign (hardened runtime) → notarize + staple →
 //   zip / DMG → release/ (tar.zst + signed update.json).
 import { $ } from "bun";
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { USAGE_KEYS, type ResolvedConfig } from "../config.ts";
+import { USAGE_KEYS, sidecarEntries, type ResolvedConfig } from "../config.ts";
 import { buildAddons, buildNativePlugin } from "./native.ts";
 
 const shellRoot = resolve(import.meta.dir, "../..");
@@ -66,7 +66,7 @@ export async function ensureLibshell(arch: Arch, os: LibOS = hostLibOS): Promise
 // ---------------------------------------------------------------------------
 // Info.plist
 
-function plistValue(v: unknown): string {
+export function plistValue(v: unknown): string {
   if (typeof v === "boolean") return v ? "<true/>" : "<false/>";
   if (typeof v === "number") return Number.isInteger(v) ? `<integer>${v}</integer>` : `<real>${v}</real>`;
   if (Array.isArray(v)) return `<array>${v.map(plistValue).join("")}</array>`;
@@ -103,7 +103,7 @@ export function infoPlist(c: ResolvedConfig, exe: string, hasIcon: boolean): str
       CFBundleTypeExtensions: t.extensions,
       ...(t.utis?.length ? { LSItemContentTypes: t.utis } : {}),
     }));
-  for (const [k, v] of Object.entries(c.usageDescriptions ?? {})) keys[USAGE_KEYS[k] ?? k] = v;
+  for (const [k, v] of Object.entries(c.osPermissions)) if (USAGE_KEYS[k] || /UsageDescription$/.test(k)) keys[USAGE_KEYS[k] ?? k] = v;
   Object.assign(keys, c.plist);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -126,7 +126,7 @@ const BUN_ENTITLEMENTS: Record<string, boolean> = {
 
 export function entitlements(c: ResolvedConfig): Record<string, unknown> {
   const e: Record<string, unknown> = { ...BUN_ENTITLEMENTS };
-  const usage = Object.keys(c.usageDescriptions ?? {});
+  const usage = Object.keys(c.osPermissions);
   const has = (short: string) => usage.includes(short) || usage.includes(USAGE_KEYS[short]!);
   if (has("camera")) e["com.apple.security.device.camera"] = true;
   if (has("microphone")) e["com.apple.security.device.audio-input"] = true;
@@ -136,6 +136,12 @@ export function entitlements(c: ResolvedConfig): Record<string, unknown> {
   if (has("photos")) e["com.apple.security.personal-information.photos-library"] = true;
   if (has("appleEvents")) e["com.apple.security.automation.apple-events"] = true;
   return { ...e, ...c.sign?.entitlements };
+}
+
+/** push.apns environment: explicit, else what the profile grants. */
+function apsEnvironment(c: ResolvedConfig, granted: string): string {
+  const apns = c.push?.apns;
+  return (typeof apns === "object" && apns.environment) || granted;
 }
 
 function signIdentity(c: ResolvedConfig): string {
@@ -154,9 +160,27 @@ async function signApp(app: string, exe: string, c: ResolvedConfig, work: string
   const identity = signIdentity(c);
   const runtime = c.sign?.hardenedRuntime ?? identity !== "-";
   const entFile = join(work, "entitlements.plist");
+  const ent = entitlements(c);
+  // Restricted entitlements (push) need a provisioning profile, or AMFI kills the app at launch.
+  if (c.sign?.provisioningProfile) {
+    const profile = resolve(c.root, c.sign.provisioningProfile);
+    copyFileSync(profile, join(app, "Contents/embedded.provisionprofile"));
+    const decoded = (await $`security cms -D -i ${profile}`.quiet()).stdout.toString();
+    const plist = join(work, "profile.plist");
+    await Bun.write(plist, decoded);
+    const granted = JSON.parse((await $`plutil -extract Entitlements json -o - ${plist}`.quiet()).stdout.toString()) as Record<string, unknown>;
+    for (const k of ["com.apple.application-identifier", "com.apple.developer.team-identifier"]) if (granted[k]) ent[k] = granted[k];
+    if (c.push?.apns) {
+      if (!granted["com.apple.developer.aps-environment"])
+        console.log(`  \x1b[33m!\x1b[0m push.apns: the provisioning profile has no aps-environment — enable Push Notifications for ${c.identifier}`);
+      else ent["com.apple.developer.aps-environment"] = apsEnvironment(c, String(granted["com.apple.developer.aps-environment"]));
+    }
+  } else if (c.push?.apns) {
+    console.log("  \x1b[33m!\x1b[0m push.apns: needs sign.provisioningProfile (a Developer ID or Mac App Store profile with Push Notifications) — host.push.register() will be unavailable");
+  }
   await Bun.write(
     entFile,
-    `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">${plistValue(entitlements(c))}</plist>\n`,
+    `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">${plistValue(ent)}</plist>\n`,
   );
   // Inside-out: nested code first, the bundle last.
   const fw = join(app, "Contents/Frameworks");
@@ -213,6 +237,8 @@ export async function packageApp(c: ResolvedConfig, stage: string): Promise<Pack
   const target = c.build?.target ?? (process.platform === "win32" ? "windows" : process.platform === "linux" ? "linux" : "macos");
   if (target === "linux") return (await import("./package-linux.ts")).packageLinux(c, stage);
   if (target === "windows") return (await import("./package-windows.ts")).packageWindows(c, stage);
+  if (target === "android") return (await import("./package-android.ts")).packageAndroid(c, stage);
+  if (target === "ios") return (await import("./package-ios.ts")).packageIos(c, stage);
   return packageMac(c, stage);
 }
 
@@ -253,8 +279,7 @@ async function packageMac(c: ResolvedConfig, stage: string): Promise<PackageResu
     mkdirSync(join(app, "Contents/Frameworks/addons"), { recursive: true });
     for (const [name, file] of Object.entries(addons)) await $`cp ${file} ${join(app, "Contents/Frameworks/addons", `${name}.node`)}`;
   }
-  for (const [name, src] of Object.entries(c.sidecars ?? {})) {
-    const from = resolve(c.root, src);
+  for (const [name, from] of sidecarEntries(c, "macos")) {
     if (!existsSync(from)) throw new Error(`sidecar "${name}": ${from} not found`);
     await $`cp ${from} ${join(app, "Contents/MacOS", name)}`;
     await $`chmod +x ${join(app, "Contents/MacOS", name)}`;

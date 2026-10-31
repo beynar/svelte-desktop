@@ -365,6 +365,17 @@ void register_window() {
     c->ok();
   });
   op("isClosable", [](CallPtr c, Window *w) { c->ok(json{{"closable", (bool)gtk_window_get_deletable(GTK_WINDOW(w->window))}}); });
+  op("setTitleBarStyle", [](CallPtr c, Window *w) {
+    std::string style = c->str("style", "default");
+    if (style != "default" && style != "transparent" && style != "hidden" && style != "hiddenInset")
+      return c->fail("invalid_args", "window.setTitleBarStyle: style is default | transparent | hidden | hiddenInset");
+    set_title_bar_style(w->id, style);
+    c->ok();
+  });
+  op("getTitleBarStyle", [](CallPtr c, Window *w) {
+    std::string style = title_bar_style(w->id);
+    c->ok(json{{"style", style}, {"frameless", !gtk_window_get_decorated(GTK_WINDOW(w->window))}});
+  });
   op("setDecorations", [](CallPtr c, Window *w) {
     gtk_window_set_decorated(GTK_WINDOW(w->window), c->flag("enabled", true));
     c->ok();

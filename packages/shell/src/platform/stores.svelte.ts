@@ -28,10 +28,12 @@ import {
 	app as appSvc, windows as windowSvc, screen as screenSvc,
 	clipboard as clipboardSvc, theme as themeSvc, system as systemSvc,
 	power as powerSvc, deepLink as deepLinkSvc, menu as menuSvc,
-	notifications as notificationsSvc, capture as captureSvc,
+	notifications as notificationsSvc, push as pushSvc, onNotification, capture as captureSvc,
 	diagnostics as diagnosticsSvc, capabilities as capabilitiesSvc,
 	updater as updaterSvc, tray as traySvc, shortcuts as shortcutsSvc,
 	emitTo as emitToWindow,
+	broadcast, onBroadcast,
+	permissions as permissionsSvc, type PermissionName, type PermissionStatus,
 	ShortcutRegistration, SleepBlocker, TrayHandle,
 } from './index';
 import { windowState as windowStateSvc } from './windowState';
@@ -45,6 +47,9 @@ import type {
 	WindowControlsArea, WindowStateName, WindowPositionPreset, TitleBarStyle, WindowTheme,
 } from './index';
 import type { PersistedWindowState, WindowStateFlag } from './windowState';
+import type {
+	NotificationEvent, NotificationEventMap, NotificationPermission, PushMessage, PushTarget,
+} from './notifications';
 
 // Bus + init helpers pass through — stores module is the whole surface.
 export {
@@ -60,7 +65,8 @@ export type {
 	DiagnosticsInfo, DialogFilter, DisplayInfo,
 	DockBounceType, MenuItemSpec, MenuItemState, MenuItemInfo, MenuItemUpdate,
 	MenuItemRole, MenuItemIcon,
-	MenuSpec, NotificationAction, OpenDialogOptions, SaveDialogOptions,
+	MenuSpec, NotificationAction, NotificationEvent, NotificationEventMap, NotificationPermission, PushTarget, PushMessage,
+	OpenDialogOptions, SaveDialogOptions,
 	MessageBoxOptions, PermissionName, PermissionStatus, SettingsPane,
 	SleepBlockType, SystemInfo, ThermalState, ThemeInfo, TitleBarStyle,
 	TrayOptions, TrayClickRect, UpdateEndpoints, ControlsRect, WindowControlsArea,
@@ -122,8 +128,9 @@ interface DeepLinkEvents {
 interface MenuEvents {
 	menuAction: { id: string };
 }
-interface NotificationsEvents {
-	notificationResponse: { tag: string; actionId: string | null };
+interface NotificationsEvents extends NotificationEventMap {
+	/** Raw native event (every context, no targeting). Prefer click/action/reply/dismiss. */
+	notificationResponse: { tag: string; id: string; actionId: string | null; kind: string };
 }
 interface TrayEvents {
 	trayClick: TrayClickRect;
@@ -578,7 +585,11 @@ class ClipboardNamespace extends PlatformNamespace {
 	get hasText() { return this.formats.includes('text/plain'); }
 
 	async init(): Promise<this> {
-		await this.refresh();
+		// iOS shows a paste prompt for every content read: start from the formats
+		// only there; `refresh()` reads the content when the app asks for it.
+		const info = await appSvc.getInfo().catch(() => null);
+		if (info?.platform === 'ios') this.formats = await clipboardSvc.availableFormats().catch(() => []);
+		else await this.refresh();
 		this.ready = true;
 		return this;
 	}
@@ -877,38 +888,94 @@ export const menu = new MenuNamespace();
 
 // ── notifications ───────────────────────────────────────────────────
 
-class NotificationsNamespace extends PlatformNamespace {
-	lastResponse = $state<{ tag: string; actionId: string | null } | null>(null);
+declare const __SVELTE_DESKTOP_NOTIFICATIONS__: { foreground?: boolean } | undefined;
 
-	init(): this {
-		this.#unsub ??= onPlatform<{ tag: string; actionId: string | null }>(
-			'notificationResponse',
-			(response) => { this.lastResponse = response; },
-		);
+class NotificationsNamespace extends PlatformNamespace {
+	/** 'unknown' until read; refreshed when the app comes back to front. */
+	permission = $state<NotificationPermission | 'unknown'>('unknown');
+	/** The last click/action/reply/dismiss handled in this context. */
+	lastResponse = $state<NotificationEvent | null>(null);
+
+	async init(): Promise<this> {
+		if (!this.#bound) {
+			this.#bound = true;
+			onPlatform('appActivated', () => void this.refresh());
+			const config = typeof __SVELTE_DESKTOP_NOTIFICATIONS__ !== 'undefined' ? __SVELTE_DESKTOP_NOTIFICATIONS__ : undefined;
+			if (config?.foreground === false) void notificationsSvc.setForeground(false).catch(() => {});
+		}
+		await this.refresh();
 		this.ready = true;
 		return this;
+	}
+	async refresh(): Promise<this> {
+		this.permission = (await notificationsSvc.getPermissionStatus().catch(() => ({ status: 'unavailable' as const }))).status;
+		return this;
+	}
+	async requestPermission() {
+		const r = await notificationsSvc.requestPermission();
+		this.permission = r.status;
+		return r;
 	}
 	show = notificationsSvc.show;
 	dismiss = notificationsSvc.dismiss;
 
+	/** click · action · reply · dismiss · response (all four) · shown. Responses wait for their first listener. */
 	on<E extends keyof NotificationsEvents & string>(
 		event: E,
 		cb: (data: NotificationsEvents[E]) => void,
 	): () => void {
-		return onPlatform(event, cb);
+		if (event === 'notificationResponse') return onPlatform(event, cb);
+		return onNotification(event as keyof NotificationEventMap, (e) => {
+			if (e && typeof e === 'object' && 'kind' in e) this.lastResponse = e as NotificationEvent;
+			cb(e as unknown as NotificationsEvents[E]);
+		});
 	}
 	/** Like on() but unsubscribes after the first delivery. */
 	once<E extends keyof NotificationsEvents & string>(
 		event: E,
 		cb: (data: NotificationsEvents[E]) => void,
 	): () => void {
-		return oncePlatform(event, cb);
+		const off = this.on(event, (d) => { off(); cb(d); });
+		return off;
 	}
 
-	#unsub: (() => void) | null = null;
-	dispose() { this.#unsub?.(); this.#unsub = null; }
+	#bound = false;
+	dispose() {}
 }
 export const notifications = new NotificationsNamespace();
+
+// ── push ────────────────────────────────────────────────────────────
+
+class PushNamespace extends PlatformNamespace {
+	/** The registered target (send it to your server), null when not registered. */
+	target = $state<PushTarget | null>(null);
+
+	async init(): Promise<this> {
+		if (!this.#bound) {
+			this.#bound = true;
+			pushSvc.on('token', (t) => { this.target = t; });
+		}
+		this.target = await pushSvc.token().catch(() => null);
+		this.ready = true;
+		return this;
+	}
+	async register(opts?: { vapidPublicKey?: string }): Promise<PushTarget> {
+		return (this.target = await pushSvc.register(opts));
+	}
+	async unregister() {
+		await pushSvc.unregister();
+		this.target = null;
+		return null;
+	}
+	token = pushSvc.token;
+	/** token: a new or rotated target · message: a push received while the app runs. */
+	on<E extends 'token' | 'message'>(event: E, fn: (e: E extends 'token' ? PushTarget : PushMessage) => void): () => void {
+		return pushSvc.on(event, fn);
+	}
+
+	#bound = false;
+}
+export const push = new PushNamespace();
 
 // ── capture ─────────────────────────────────────────────────────────
 
@@ -1222,12 +1289,140 @@ class EventsNamespace extends PlatformNamespace {
 }
 export const events = new EventsNamespace();
 
+// ── background jobs ─────────────────────────────────────────────────
+// Mirrors `jobs` from '@svelte-desktop/shell/server' (src/jobs/*.ts run in their own
+// processes): the server broadcasts snapshots on the `jobs` channel.
+
+export interface JobView {
+	id: string;
+	name: string;
+	state: 'queued' | 'running' | 'done' | 'failed' | 'canceled';
+	progress: number;
+	message: string | null;
+	args: unknown;
+	result?: unknown;
+	error?: string;
+	createdAt: number;
+	startedAt?: number;
+	endedAt?: number;
+	log: string[];
+}
+
+class JobsNamespace extends PlatformNamespace {
+	#all = $state<JobView[]>([]);
+	#events = new Set<(e: { id: string; data: unknown }) => void>();
+	#changes = new Set<(type: JobView['state'], job: JobView) => void>();
+	#bound = false;
+
+	async init(): Promise<this> {
+		if (!this.#bound) {
+			this.#bound = true;
+			onBroadcast<{ jobs: JobView[]; event?: { id: string; data: unknown }; change?: { type: JobView['state']; job: JobView } }>('jobs', (d) => {
+				if (Array.isArray(d?.jobs)) this.#all = d.jobs;
+				if (d?.event) for (const fn of this.#events) fn(d.event);
+				if (d?.change) for (const fn of this.#changes) fn(d.change.type, d.change.job);
+			});
+		}
+		await broadcast('jobs:hello'); // the server answers with a snapshot
+		this.ready = true;
+		return this;
+	}
+	/** Every job of this launch (and restored history), oldest first. Reactive. */
+	list(): JobView[] { return this.#all; }
+	/** Queued or running. Reactive. */
+	active(): JobView[] { return this.#all.filter((j) => j.state === 'running' || j.state === 'queued'); }
+	/** Running now. Reactive. */
+	running(): JobView[] { return this.#all.filter((j) => j.state === 'running'); }
+	get(id: string): JobView | undefined { return this.#all.find((j) => j.id === id); }
+	/** Ask the server to cancel a job (its ctx.signal fires). */
+	cancel(id: string): Promise<null> { return broadcast('jobs:cancel', { id }); }
+	/** State transitions: `on('done', (job) => …)`; '*' for every one. */
+	on(state: JobView['state'] | '*', fn: (job: JobView, state: JobView['state']) => void): () => void {
+		const cb = (type: JobView['state'], job: JobView) => (state === '*' || state === type) && fn(job, type);
+		this.#changes.add(cb);
+		return () => this.#changes.delete(cb);
+	}
+	/** Custom events from `ctx.emit(data)` in a job. */
+	onEvent(fn: (e: { id: string; data: unknown }) => void): () => void {
+		this.#events.add(fn);
+		return () => this.#events.delete(fn);
+	}
+}
+export const jobs = new JobsNamespace();
+
+// ── permissions ─────────────────────────────────────────────────────
+// Statuses of the permissions declared in desktop.config, kept current: on start,
+// when the app comes back to the front (the user may have toggled them in System
+// Settings) and after request/guide. `host.permissions.camera` reads them.
+
+class PermissionsNamespace extends PlatformNamespace {
+	#statuses = $state<Record<string, PermissionStatus>>({});
+	#listeners = new Set<(name: string, status: PermissionStatus) => void>();
+	#bound = false;
+
+	async init(): Promise<this> {
+		if (!this.#bound) {
+			this.#bound = true;
+			const again = () => void this.refresh();
+			onPlatform('appActivated', again);
+			onPlatform('focusChanged', (d: { focused?: boolean }) => d?.focused && again());
+			permissionsSvc.onChange(({ name, status }) => this.#set(name, status));
+		}
+		await this.refresh();
+		this.ready = true;
+		return this;
+	}
+	#set(name: string, status: PermissionStatus) {
+		const before = this.#statuses[name];
+		if (before === status) return;
+		this.#statuses = { ...this.#statuses, [name]: status };
+		if (before !== undefined) for (const fn of this.#listeners) fn(name, status);
+	}
+	/** Re-read the declared (and already seen) permissions. */
+	async refresh(): Promise<this> {
+		const names = new Set([...Object.keys(permissionsSvc.declared()), ...Object.keys(this.#statuses)]);
+		await Promise.all([...names].map(async (n) => this.#set(n, await permissionsSvc.status(n).catch(() => 'unknown' as const))));
+		return this;
+	}
+	/** Reactive status ('unknown' until read). */
+	get(name: PermissionName | string): PermissionStatus { return this.#statuses[name] ?? 'unknown'; }
+	/** Read the status now (and keep it current). */
+	async status(name: PermissionName | string): Promise<PermissionStatus> {
+		const status = await permissionsSvc.status(name);
+		this.#set(name, status);
+		return status;
+	}
+	guideState() { return permissionsSvc.guideState(); }
+	/** Every known status. Reactive. */
+	all(): Record<string, PermissionStatus> { return this.#statuses; }
+	declared(): Record<string, string> { return permissionsSvc.declared(); }
+	settingsOnly(name: PermissionName | string): boolean { return permissionsSvc.settingsOnly(name); }
+	async request(name: PermissionName | string, opts?: { guide?: boolean }): Promise<PermissionStatus> {
+		const status = await permissionsSvc.request(name, opts);
+		this.#set(name, status);
+		return status;
+	}
+	async guide(name: PermissionName | string, opts?: { open?: boolean }) {
+		const r = await permissionsSvc.guide(name, opts);
+		this.#set(name, r.status);
+		return r;
+	}
+	cancelGuide() { return permissionsSvc.cancelGuide(); }
+	openSettings(name: PermissionName | string) { return permissionsSvc.openSettings(name); }
+	/** Status changes: `on('change', (name, status) => …)`. */
+	on(_event: 'change', fn: (name: string, status: PermissionStatus) => void): () => void {
+		this.#listeners.add(fn);
+		return () => this.#listeners.delete(fn);
+	}
+}
+export const permissions = new PermissionsNamespace();
+
 // ── aggregate init ──────────────────────────────────────────────────
 
 const ALL: PlatformNamespace[] = [
 	app, window, windowState, screen, clipboard, theme, system, power,
-	deepLink, menu, notifications, capture, diagnostics, capabilities, update,
-	tray, shortcuts, store, events,
+	deepLink, menu, notifications, push, capture, diagnostics, capabilities, update,
+	tray, shortcuts, store, events, jobs, permissions,
 ];
 
 let running: Promise<PlatformNamespace[]> | null = null;

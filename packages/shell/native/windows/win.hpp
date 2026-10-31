@@ -126,7 +126,8 @@ struct View {
   std::string lastUrl;                 // for recovery after a browser crash
   bool failed = false;                 // controller creation failed for good
   bool ready = false;                  // controller set up and bridge script registered
-  EventRegistrationToken tokens[8]{};
+  EventRegistrationToken tokens[8]{};  // [7]: DocumentTitleChanged (view.* only)
+  std::string browserView;             // view.* id: any origin may load ("" = app page)
 };
 
 /// Every live web view by native id (windows + popovers).
@@ -255,6 +256,20 @@ HICON app_icon(bool small);
 // ---------------------------------------------------------------------------
 // Cross-module glue
 
+/// HICON → top-down BGRA pixels (svc_tray.cc).
+bool icon_pixels(HICON icon, std::vector<uint8_t> &px, int &w, int &h);
+/// Tray balloon fallback for notifications (svc_tray.cc): the tray icon, or a temporary
+/// one. A click calls notification_balloon_clicked(id) (svc_notifications.cc).
+bool tray_balloon_show(const std::string &id, const std::string &title, const std::string &body, bool silent, std::string &error);
+void tray_balloon_hide(const std::string &id); // "" = whatever is shown
+void notification_balloon_clicked(const std::string &id);
+/// Toast COM activator (svc_notifications.cc): a second instance launched with
+/// -ToastActivated pumps messages until Windows delivers the activation ({args, inputs}
+/// JSON, "" on timeout); the holder replays what it forwards.
+std::string toast_activation_wait(int ms);
+void toast_activation_forwarded(const json &activation);
+/// A window's taskbar button exists (re-apply the badge overlay).
+void taskbar_button_created(HWND hwnd);
 /// Tray icon rect (physical px), false when no tray icon is placed (svc_tray.cc).
 bool tray_rect(RECT &out);
 /// Popovers (svc_popover.cc)
@@ -300,4 +315,10 @@ void run_file_dialog(const json &opts, bool save, HWND parent, std::function<voi
 /// WebView2 runtime version string ("" when missing).
 std::string webview2_version();
 
+/// singleInstance (desktop.config, default on): false when another instance holds the
+/// mutex — this process's arguments were handed to it and it should exit.
+bool claim_single_instance();
+/// view.* (svc_embed.cc): keep autoresizing views in step with their window.
+void embedded_views_resized(Window *w);
+void register_embed(); // view.*, capture.*
 } // namespace sd::win

@@ -39,6 +39,11 @@ void platform_register_many(NSString *service, NSArray<NSString *> *ops, Platfor
 
 /// Broadcast a platform event to the Worker sink and every page.
 void platform_emit(NSString *name, NSDictionary *_Nullable data);
+/// Same, with `target: true` only in the page of window `target` (native id), false in the others.
+void platform_emit_targeted(NSString *name, NSDictionary *_Nullable data, int target);
+/// The window whose page should handle a user response: `preferred` if open and loaded, else the
+/// key/main window, else the first loaded one. 0 when no page is loaded (cold start).
+int platform_target_window(int preferred);
 
 // Windows ------------------------------------------------------------------
 // Public ids follow the GPUI contract: the primary window is 0, others keep
@@ -75,6 +80,9 @@ void platform_register_dialog(void);
 void platform_register_theme(void);
 void platform_register_menu(void);
 void platform_register_system(void);
+void platform_register_permissions(void);
+/// Synchronous TCC status (granted | denied | notDetermined | unknown), nil if unknown here.
+NSString *_Nullable platform_permission_status(NSString *name);
 void platform_register_power(void);
 void platform_register_secure_storage(void);
 void platform_register_notifications(void);
@@ -104,6 +112,10 @@ void shell_emit(NSDictionary *event);
 void shell_on_page_ready(int native_id);
 /// Install the page bridge (WKUserScript + origin-checked message handler).
 void platform_attach_webview(int native_id, WKWebView *webview);
+/// Title bar style (default | hidden | hiddenInset) + the page's chrome CSS variables.
+void platform_apply_title_bar_style(NSWindow *w, WKWebView *_Nullable webview, NSString *style);
+/// Start a window drag from the current mouse-down (or the double-click action).
+void platform_window_drag(NSWindow *_Nullable w, BOOL doubleClick);
 void platform_detach_webview(int native_id);
 /// Register all modules + app-delegate hooks. Idempotent; main thread.
 void platform_init(void);

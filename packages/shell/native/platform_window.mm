@@ -6,6 +6,77 @@
 #include <map>
 
 #include "platform_internal.h"
+#include <objc/runtime.h>
+
+// ── title bar styles ────────────────────────────────────────────────────
+// default: the system title bar. transparent: the page extends under a title bar
+// that keeps its title. hidden: no title bar, the page extends under the traffic lights. hiddenInset: same, with the traffic lights inset (a unified
+// compact toolbar, like Safari / Electron's hiddenInset). The page gets
+// --desktop-titlebar-height / --desktop-controls-width and
+// html[data-desktop-titlebar] to lay itself out, kept current across fullscreen.
+
+static char kStyleKey, kObserversKey;
+
+static void publish_chrome(NSWindow *w, WKWebView *wv) {
+  if (!wv) return;
+  NSString *style = objc_getAssociatedObject(w, &kStyleKey) ?: @"default";
+  BOOL hidden = ![style isEqual:@"default"];
+  BOOL full = (w.styleMask & NSWindowStyleMaskFullScreen) != 0;
+  CGFloat bar = hidden && !full ? MAX(0, NSHeight(w.frame) - NSHeight(w.contentLayoutRect)) : 0;
+  NSButton *zoom = [w standardWindowButton:NSWindowZoomButton];
+  CGFloat controls = hidden && !full && zoom ? NSMaxX([zoom convertRect:zoom.bounds toView:nil]) + 12 : 0;
+  NSString *js = [NSString stringWithFormat:
+      @"(()=>{const a=()=>{const r=document.documentElement;r.style.setProperty('--desktop-titlebar-height','%.0fpx');"
+       "r.style.setProperty('--desktop-controls-width','%.0fpx');r.dataset.desktopTitlebar='%@';r.dataset.desktopControls='native';};"
+       "document.documentElement?a():document.addEventListener('readystatechange',a,{once:true});})()",
+      bar, controls, full ? @"fullscreen" : style];
+  // Now, and for every later document in this web view.
+  [wv evaluateJavaScript:js completionHandler:nil];
+  [wv.configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:js
+                                                                              injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+                                                                           forMainFrameOnly:YES]];
+}
+
+void platform_apply_title_bar_style(NSWindow *w, WKWebView *_Nullable wv, NSString *style) {
+  BOOL transparent = ![style isEqual:@"default"];
+  w.titlebarAppearsTransparent = transparent;
+  if (transparent) w.styleMask |= NSWindowStyleMaskFullSizeContentView;
+  else w.styleMask &= ~NSWindowStyleMaskFullSizeContentView;
+  w.titleVisibility = [style hasPrefix:@"hidden"] ? NSWindowTitleHidden : NSWindowTitleVisible; // transparent keeps the title
+  if ([style isEqual:@"hiddenInset"]) {
+    if (!w.toolbar) w.toolbar = [[NSToolbar alloc] initWithIdentifier:@"sd-inset"];
+    w.toolbarStyle = NSWindowToolbarStyleUnifiedCompact;
+  } else if ([w.toolbar.identifier isEqual:@"sd-inset"]) {
+    w.toolbar = nil;
+  }
+  objc_setAssociatedObject(w, &kStyleKey, style, OBJC_ASSOCIATION_COPY_NONATOMIC);
+  if (!objc_getAssociatedObject(w, &kObserversKey)) {
+    NSMutableArray *tokens = [NSMutableArray array];
+    WKWebView *__weak weakView = wv;
+    NSWindow *__weak weakWindow = w;
+    for (NSNotificationName n in @[ NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification ])
+      [tokens addObject:[NSNotificationCenter.defaultCenter addObserverForName:n object:w queue:NSOperationQueue.mainQueue
+                                                                    usingBlock:^(NSNotification *) {
+                                                                      if (weakWindow) publish_chrome(weakWindow, weakView);
+                                                                    }]];
+    objc_setAssociatedObject(w, &kObserversKey, tokens, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  publish_chrome(w, wv);
+}
+
+/// Page drag regions (bridge messages `drag` / `dragDouble`, main frame of the app origin).
+void platform_window_drag(NSWindow *w, BOOL doubleClick) {
+  if (!w) return;
+  if (doubleClick) {
+    // The user's "double-click a window's title bar to" setting.
+    NSString *action = [NSUserDefaults.standardUserDefaults stringForKey:@"AppleActionOnDoubleClick"];
+    if ([action isEqual:@"Minimize"]) [w miniaturize:nil];
+    else if (![action isEqual:@"None"]) [w zoom:nil];
+    return;
+  }
+  NSEvent *e = NSApp.currentEvent;
+  if (e && (e.type == NSEventTypeLeftMouseDown || e.type == NSEventTypeLeftMouseDragged)) [w performWindowDragWithEvent:e];
+}
 
 typedef void (^WindowOp)(PlatformCall *c, NSWindow *w, int nativeId);
 
@@ -336,20 +407,15 @@ void platform_register_window(void) {
   reg_flag(@"setMaximizable", @"isMaximizable", @"maximizable",
            ^(NSWindow *w, BOOL on) { [w standardWindowButton:NSWindowZoomButton].enabled = on; },
            ^BOOL(NSWindow *w) { return [w standardWindowButton:NSWindowZoomButton].isEnabled; });
-  reg(@"setTitleBarStyle", ^(PlatformCall *c, NSWindow *w, int) {
+  reg(@"setTitleBarStyle", ^(PlatformCall *c, NSWindow *w, int native) {
     NSString *style = [c string:@"style"] ?: @"default";
-    BOOL transparent = ![style isEqual:@"default"];
-    w.titlebarAppearsTransparent = transparent;
-    set_mask(w, NSWindowStyleMaskFullSizeContentView, transparent);
-    w.titleVisibility = [style hasPrefix:@"hidden"] ? NSWindowTitleHidden : NSWindowTitleVisible;
-    if ([style isEqual:@"hiddenInset"]) {
-      // An empty unified toolbar pushes the traffic lights inward (Electron's hiddenInset).
-      if (!w.toolbar) w.toolbar = [[NSToolbar alloc] initWithIdentifier:@"sd-inset"];
-      w.toolbarStyle = NSWindowToolbarStyleUnifiedCompact;
-    } else if ([w.toolbar.identifier isEqual:@"sd-inset"]) {
-      w.toolbar = nil;
-    }
+    if (![@[ @"default", @"transparent", @"hidden", @"hiddenInset" ] containsObject:style])
+      return [c fail:@"invalid_args" message:@"window.setTitleBarStyle: style is default | transparent | hidden | hiddenInset"];
+    platform_apply_title_bar_style(w, platform_webview(native), style);
     [c ok:nil];
+  });
+  reg(@"getTitleBarStyle", ^(PlatformCall *c, NSWindow *w, int) {
+    [c ok:@{@"style" : objc_getAssociatedObject(w, &kStyleKey) ?: @"default", @"frameless" : @NO}]; // the traffic lights stay
   });
   reg_flag(@"setDecorations", nil, nil, ^(NSWindow *w, BOOL on) {
     if (on) w.styleMask |= NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable;

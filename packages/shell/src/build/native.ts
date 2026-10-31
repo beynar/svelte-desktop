@@ -9,17 +9,25 @@ import type { Arch } from "./package.ts";
 
 const include = resolve(import.meta.dir, "../../native/include");
 
-function sources(dir: string): string[] {
+const PLATFORM_DIRS = ["macos", "linux", "windows", "android", "ios"] as const;
+export type PluginPlatform = (typeof PLATFORM_DIRS)[number];
+
+/** Plugin sources under native/ for one platform: everything except addons/ (Node-API
+ *  addons) and sidecars/ (executables), built separately, and the other platforms'
+ *  folders (native/<platform>/). */
+export function pluginSources(dir: string, platform: PluginPlatform): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name !== "addons") out.push(...sources(p)); // native/addons/ = Node-API addons, built separately
-    }
-    else if (/\.(swift|m|mm|c|cc|cpp)$/.test(entry.name)) out.push(p);
+      if (entry.name === "addons" || entry.name === "sidecars") continue; // built separately
+      if ((PLATFORM_DIRS as readonly string[]).includes(entry.name) && entry.name !== platform) continue;
+      out.push(...pluginSources(p, platform));
+    } else if (/\.(swift|m|mm|c|cc|cpp)$/.test(entry.name)) out.push(p);
   }
   return out;
 }
+const sources = (dir: string) => pluginSources(dir, "macos");
 
 export async function buildNativePlugin(
   c: ResolvedConfig,

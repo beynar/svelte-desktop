@@ -20,6 +20,8 @@ find ".desktop/dist/Svelte Notes" -maxdepth 2 | sort
 cat ".desktop/dist/Svelte Notes/"*.desktop
 echo "── e2e (launch() → the built app in its WebKitGTK window)"
 RESULTS=/results bun test --timeout 60000 /work/packages/shell/test/docker/notes-linux.test.ts
+echo "── desktop integration (opened URLs/documents, second instance, .desktop/MIME, autosaveName)"
+bun test --timeout 120000 /work/packages/shell/test/docker/notes-linux-open.test.ts
 echo "── vite dev (launch({ dev: true }) → the WebKitGTK window on the Vite server)"
 bun test --timeout 180000 /work/packages/shell/test/docker/notes-linux-dev.test.ts 2>&1 | grep -E "pass|fail|error" | tail -5
 echo "── updater release artifacts (0.1.0 → 0.2.0, signed manifest, delta patch)"

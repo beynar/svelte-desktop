@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 native/build-linux.sh >/dev/null || exit 1
 SESSION_SH=test/docker/session.sh . test/docker/session.sh
 # Portable suites run unchanged; linux-* are the variants of the Apple-specific ones.
-SUITES=${*:-"core screen clipboard shell theme popover secure_storage linux-app linux-window linux-navigation linux-webview linux-dialog linux-diagnostics linux-notifications linux-tray linux-power"}
+SUITES=${*:-"core screen clipboard shell theme popover secure_storage linux-app linux-window linux-navigation linux-webview linux-dialog linux-diagnostics linux-notifications linux-notifications-fake linux-tray linux-power linux-extra view"}
 P=0; F=0; S=0
 for name in $SUITES; do
   suite=test/platform/$name.ts

@@ -5,6 +5,8 @@
 #include <string>
 
 #include "platform_internal.h"
+
+#include <set>
 #include "shell.h"
 
 // ---------------------------------------------------------------------------
@@ -100,6 +102,7 @@ static void dispatch_call(NSDictionary *request, int callerWindow, ReplyBlock re
 // Events
 
 static std::map<int, WKWebView *__weak> g_webviews;
+static std::set<int> g_ready_pages; // native ids whose main frame reported DOMContentLoaded
 
 static NSString *json_string(id obj) {
   NSData *d = [NSJSONSerialization dataWithJSONObject:obj options:NSJSONWritingFragmentsAllowed error:nil];
@@ -122,6 +125,34 @@ void platform_emit(NSString *name, NSDictionary *data) {
   else dispatch_async(dispatch_get_main_queue(), send);
 }
 
+void platform_emit_targeted(NSString *name, NSDictionary *data, int target) {
+  void (^send)(void) = ^{
+    shell_emit(@{@"type" : @"platform", @"name" : name, @"data" : data ?: @{}});
+    for (auto &[id, wv] : g_webviews) {
+      WKWebView *strong = wv;
+      if (!strong) continue;
+      NSMutableDictionary *d = [data ?: @{} mutableCopy];
+      d[@"target"] = @(id == target);
+      deliver_to_page(strong, name, d);
+    }
+  };
+  if (NSThread.isMainThread) send();
+  else dispatch_async(dispatch_get_main_queue(), send);
+}
+
+int platform_target_window(int preferred) {
+  auto ready = [](int id) { return g_ready_pages.count(id) && g_webviews.count(id) && g_webviews[id] && platform_window(id); };
+  if (preferred > 0 && ready(preferred)) return preferred;
+  for (NSWindow *w in @[ NSApp.keyWindow ?: NSNull.null, NSApp.mainWindow ?: NSNull.null ]) {
+    if (![w isKindOfClass:NSWindow.class]) continue;
+    for (auto &[id, wv] : g_webviews)
+      if (ready(id) && platform_window(id) == w) return id;
+  }
+  for (NSNumber *n in platform_window_ids())
+    if (ready(n.intValue)) return n.intValue;
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Page bridge: our own message handler (not webview_bind) so every message is
 // checked for main frame + app origin. Subframes can reach message handlers,
@@ -134,7 +165,13 @@ static NSString *const kBridgeScript =
      "post:(req)=>post({t:'call',req:typeof req==='string'?JSON.parse(req):req}),"
      "setSink:(fn)=>{sink=fn;for(const [n,d] of q.splice(0))fn(n,d);},"
      "deliver:(n,d)=>{sink?sink(n,d):q.push([n,d]);}});"
-     "document.addEventListener('DOMContentLoaded',()=>post({t:'ready'}));})();";
+     "document.addEventListener('DOMContentLoaded',()=>post({t:'ready'}));"
+     // Drag regions: [data-desktop-drag] or `--app-region: drag` (inherited, so
+     // `--app-region: no-drag` carves holes); controls stay clickable.
+     "const nd='button,a,input,select,textarea,label,summary,option,[contenteditable],[role=button],[data-desktop-no-drag]';"
+     "const dr=(t)=>t instanceof Element&&!t.closest(nd)&&(!!t.closest('[data-desktop-drag]')||getComputedStyle(t).getPropertyValue('--app-region').trim()==='drag');"
+     "addEventListener('mousedown',(e)=>{if(e.button!==0||!dr(e.target))return;"
+     "if(e.detail===2){e.preventDefault();post({t:'dragDouble'});}else if(e.detail===1)post({t:'drag'});},true);})();";
 
 // Page permissions (desktop.config `permissions.pages`): nil = everything.
 static NSArray<NSString *> *g_page_permissions = nil;
@@ -181,7 +218,14 @@ static BOOL origin_allowed(WKFrameInfo *frame) {
   if (![msg isKindOfClass:NSDictionary.class]) return;
   NSString *t = msg[@"t"];
   if ([t isEqual:@"ready"]) {
-    if (message.frameInfo.isMainFrame) shell_on_page_ready(self.windowId);
+    if (message.frameInfo.isMainFrame) {
+      g_ready_pages.insert(self.windowId);
+      shell_on_page_ready(self.windowId);
+    }
+    return;
+  }
+  if ([t isEqual:@"drag"] || [t isEqual:@"dragDouble"]) {
+    if (message.frameInfo.isMainFrame && origin_allowed(message.frameInfo)) platform_window_drag(message.webView.window, [t isEqual:@"dragDouble"]);
     return;
   }
   if (![t isEqual:@"call"]) return;
@@ -223,6 +267,7 @@ void platform_detach_webview(int native_id) {
   if (it == g_webviews.end()) return;
   if (WKWebView *wv = it->second) [wv.configuration.userContentController removeScriptMessageHandlerForName:@"__shell__"];
   g_webviews.erase(it);
+  g_ready_pages.erase(native_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +345,7 @@ void platform_init(void) {
   platform_register_theme();
   platform_register_menu();
   platform_register_system();
+  platform_register_permissions();
   platform_register_power();
   platform_register_secure_storage();
   platform_register_notifications();

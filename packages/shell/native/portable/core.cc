@@ -149,6 +149,13 @@ bool page_may_call(const std::string &service, const std::string &op) {
 // ---------------------------------------------------------------------------
 // Bridge
 
+// Drag regions, inside each bridge script (uses its `raw` sender): same rules as the
+// macOS bridge (platform_core.mm) — controls stay clickable.
+#define SD_DRAG_LISTENER \
+  "const nd='button,a,input,select,textarea,label,summary,option,[contenteditable],[role=button],[data-desktop-no-drag]';" \
+  "const dr=(t)=>t instanceof Element&&!t.closest(nd)&&(!!t.closest('[data-desktop-drag]')||getComputedStyle(t).getPropertyValue('--app-region').trim()==='drag');" \
+  "addEventListener('mousedown',(e)=>{if(e.button!==0||!dr(e.target))return;" \
+  "if(e.detail===2){e.preventDefault();raw({t:'dragDouble'});}else if(e.detail===1)raw({t:'drag'});},true);"
 const char *const kBridgeScript =
     "(()=>{if(window.__shell)return;const q=[];let sink=null;"
     "const raw=(m)=>{const s=JSON.stringify(m);"
@@ -158,14 +165,70 @@ const char *const kBridgeScript =
     "post:(req)=>raw({t:'call',req:typeof req==='string'?JSON.parse(req):req}),"
     "setSink:(fn)=>{sink=fn;for(const [n,d] of q.splice(0))fn(n,d);},"
     "deliver:(n,d)=>{sink?sink(n,d):q.push([n,d]);}});"
-    "document.addEventListener('DOMContentLoaded',()=>raw({t:'ready'}));})();";
+    "document.addEventListener('DOMContentLoaded',()=>raw({t:'ready'}));" SD_DRAG_LISTENER "})();";
+
+const char *const kDragListener = SD_DRAG_LISTENER;
+
+static std::mutex g_style_mu;
+static std::map<int, std::string> g_styles;
+
+static void publish_chrome(int native_id) {
+  std::string style = title_bar_style(native_id);
+  bool frameless = style != "default";
+  std::string js = "(()=>{const a=()=>{const r=document.documentElement;r.style.setProperty('--desktop-titlebar-height','0px');"
+                   "r.style.setProperty('--desktop-controls-width','0px');r.dataset.desktopTitlebar=" + json(style).dump() +
+                   ";r.dataset.desktopControls='" + std::string(frameless ? "none" : "native") + "';};"
+                   "document.documentElement?a():document.addEventListener('readystatechange',a,{once:true});})()";
+  if (backend_is_main_thread()) backend_eval_in_page(native_id, js);
+  else backend_run_on_main([native_id, js] { backend_eval_in_page(native_id, js); });
+}
+
+void set_title_bar_style(int native_id, const std::string &style) {
+  {
+    std::lock_guard<std::mutex> lock(g_style_mu);
+    g_styles[native_id] = style;
+  }
+  backend_set_frameless(native_id, style != "default");
+  publish_chrome(native_id);
+}
+
+std::string title_bar_style(int native_id) {
+  std::lock_guard<std::mutex> lock(g_style_mu);
+  auto it = g_styles.find(native_id);
+  return it == g_styles.end() ? "default" : it->second;
+}
+
+static std::set<int> g_loaded; // main thread
+
+bool page_loaded(int native_id) {
+  if (!g_loaded.count(native_id)) return false;
+  for (int id : backend_page_ids())
+    if (id == native_id) return true;
+  g_loaded.erase(native_id); // destroyed
+  return false;
+}
+void page_unloaded(int native_id) { g_loaded.erase(native_id); }
 
 void on_bridge_message(int native_id, const std::string &body, const std::string &origin, bool main_frame) {
   json msg = json::parse(body, nullptr, false);
   if (!msg.is_object()) return;
   std::string t = msg.value("t", "");
   if (t == "ready") {
-    if (main_frame) backend_page_ready(native_id);
+    if (main_frame) {
+      g_loaded.insert(native_id);
+      backend_page_ready(native_id);
+      bool styled;
+      {
+        std::lock_guard<std::mutex> lock(g_style_mu);
+        styled = g_styles.count(native_id) > 0;
+      }
+      if (styled) publish_chrome(native_id); // every new document
+    }
+    return;
+  }
+  if (t == "drag" || t == "dragDouble") {
+    std::string appOrigin = app_origin();
+    if (main_frame && !appOrigin.empty() && origin == appOrigin) backend_window_drag(native_id, t == "dragDouble");
     return;
   }
   if (t != "call" || !msg.contains("req") || !msg["req"].is_object()) return;

@@ -260,14 +260,20 @@ static gboolean on_focus(GtkWidget *, GdkEventFocus *ev, gpointer data) {
   return FALSE;
 }
 
+static void schedule_save(Window *w); // autosaveName (below)
+
 static gboolean on_configure(GtkWidget *, GdkEventConfigure *, gpointer data) {
   Window *w = find_window(GPOINTER_TO_INT(data));
   if (w && w->shown) emit("boundsChanged", bounds_event(w));
+  if (w) schedule_save(w);
   return FALSE;
 }
 
 static gboolean on_window_state(GtkWidget *, GdkEventWindowState *ev, gpointer data) {
-  if (Window *w = find_window(GPOINTER_TO_INT(data))) w->state = ev->new_window_state;
+  if (Window *w = find_window(GPOINTER_TO_INT(data))) {
+    w->state = ev->new_window_state;
+    schedule_save(w);
+  }
   return FALSE;
 }
 
@@ -297,11 +303,53 @@ static void apply_geometry(Window *w) {
   gtk_window_set_geometry_hints(GTK_WINDOW(w->window), nullptr, mask ? &g : nullptr, (GdkWindowHints)mask);
 }
 
+// ---- autosaveName: position, size and maximized state across launches ------
+
+static std::string g_identifier;
+
+static std::string autosave_file(const std::string &name) {
+  const char *state = getenv("XDG_STATE_HOME");
+  std::string base = state && *state ? state : std::string(g_get_home_dir()) + "/.local/state";
+  std::string safe;
+  for (char ch : name) safe += (isalnum((unsigned char)ch) || ch == '-' || ch == '_') ? ch : '_';
+  return base + "/" + (g_identifier.empty() ? app_name() : g_identifier) + "/windows/" + safe + ".json";
+}
+
+static gboolean save_frame(gpointer data) {
+  Window *w = find_window(GPOINTER_TO_INT(data));
+  if (!w) return G_SOURCE_REMOVE;
+  w->saveTimer = 0;
+  json frame{{"x", w->normX}, {"y", w->normY}, {"width", w->normW}, {"height", w->normH},
+             {"maximized", (w->state & GDK_WINDOW_STATE_MAXIMIZED) != 0}};
+  std::string file = w->autosave;
+  gchar *dir = g_path_get_dirname(file.c_str());
+  g_mkdir_with_parents(dir, 0700);
+  g_free(dir);
+  g_file_set_contents(file.c_str(), frame.dump().c_str(), -1, nullptr);
+  return G_SOURCE_REMOVE;
+}
+
+static void schedule_save(Window *w) {
+  if (w->autosave.empty() || !w->shown) return;
+  if (!(w->state & (GDK_WINDOW_STATE_MAXIMIZED | GDK_WINDOW_STATE_FULLSCREEN))) {
+    gtk_window_get_position(GTK_WINDOW(w->window), &w->normX, &w->normY);
+    gtk_window_get_size(GTK_WINDOW(w->window), &w->normW, &w->normH);
+  }
+  if (w->saveTimer) g_source_remove(w->saveTimer);
+  w->saveTimer = g_timeout_add(300, save_frame, GINT_TO_POINTER(w->id));
+}
+
 static int create_window(const json &o) {
   auto num = [&](const char *k, double f) { return o.contains(k) && o[k].is_number() ? o[k].get<double>() : f; };
   auto flag = [&](const char *k, bool f) { return o.contains(k) && o[k].is_boolean() ? o[k].get<bool>() : f; };
   auto str = [&](const char *k) { return o.contains(k) && o[k].is_string() ? o[k].get<std::string>() : std::string(); };
 
+  if (g_identifier.empty() && o.contains("identifier") && o["identifier"].is_string()) g_identifier = o["identifier"].get<std::string>();
+  // The app's own arguments (first window): URLs / documents it was opened with.
+  if (o.contains("args") && o["args"].is_array()) set_launch_args(o["args"], o.value("cwd", std::string()));
+  // Opening a document or a link from the desktop starts a new process: hand it to
+  // the running instance (openUrls / openFiles there) and leave before any window.
+  if (g_order.empty() && o.value("singleInstance", false) && !claim_single_instance()) _exit(0);
   Window *w = new Window;
   w->id = g_next_id++;
   w->label = str("label");
@@ -319,10 +367,22 @@ static int create_window(const json &o) {
   if (!flag("resizable", true)) gtk_window_set_resizable(win, FALSE);
   if (!flag("decorations", true)) gtk_window_set_decorated(win, FALSE);
   if (flag("alwaysOnTop", false)) gtk_window_set_keep_above(win, TRUE);
-  if (o.contains("x") && o.contains("y")) gtk_window_move(win, (int)num("x", 0), (int)num("y", 0));
+  json saved;
+  if (!str("autosaveName").empty()) {
+    w->autosave = autosave_file(str("autosaveName"));
+    gchar *text = nullptr;
+    if (g_file_get_contents(w->autosave.c_str(), &text, nullptr, nullptr)) saved = json::parse(text, nullptr, false);
+    g_free(text);
+  }
+  if (saved.is_object() && saved.value("width", 0) > 0 && saved.value("height", 0) > 0) {
+    gtk_window_set_default_size(win, saved.value("width", 1024), saved.value("height", 720));
+    gtk_window_move(win, saved.value("x", 0), saved.value("y", 0));
+    if (saved.value("maximized", false)) gtk_window_maximize(win);
+  } else if (o.contains("x") && o.contains("y")) gtk_window_move(win, (int)num("x", 0), (int)num("y", 0));
   else gtk_window_set_position(win, GTK_WIN_POS_CENTER);
 
   w->webview = make_webview(w->id, flag("debug", false), "");
+  if (!str("titleBarStyle").empty()) set_title_bar_style(w->id, str("titleBarStyle"));
   if (flag("transparent", false)) {
     GdkScreen *screen = gtk_widget_get_screen(w->window);
     if (GdkVisual *v = gdk_screen_get_rgba_visual(screen)) {
@@ -332,8 +392,16 @@ static int create_window(const json &o) {
       webkit_web_view_set_background_color(w->webview, &clear);
     }
   }
-  gtk_container_add(GTK_CONTAINER(w->window), GTK_WIDGET(w->webview));
-  gtk_widget_show(GTK_WIDGET(w->webview));
+  // window → box (app menu bar, then the overlay) → overlay (the page; view.* on top)
+  w->accel = gtk_accel_group_new();
+  gtk_window_add_accel_group(win, w->accel);
+  w->box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  w->overlay = gtk_overlay_new();
+  gtk_container_add(GTK_CONTAINER(w->overlay), GTK_WIDGET(w->webview));
+  gtk_box_pack_end(GTK_BOX(w->box), w->overlay, TRUE, TRUE, 0);
+  gtk_container_add(GTK_CONTAINER(w->window), w->box);
+  gtk_widget_show_all(w->box);
+  attach_app_menu(w);
 
   gpointer id = GINT_TO_POINTER(w->id);
   g_signal_connect(w->window, "delete-event", G_CALLBACK(on_delete), id);
@@ -387,7 +455,8 @@ static std::string bridge_script(const std::string &nonce) {
          "post:(req)=>raw({t:'call',req:typeof req==='string'?P(req):req}),"
          "setSink:(fn)=>{sink=fn;for(const [n,d] of q.splice(0))fn(n,d);},"
          "deliver:(n,d)=>{sink?sink(n,d):q.push([n,d]);}});"
-         "document.addEventListener('DOMContentLoaded',()=>raw({t:'ready'}));})();";
+         "document.addEventListener('DOMContentLoaded',()=>raw({t:'ready'}));" +
+         std::string(kDragListener) + "})();";
 }
 
 static void on_script_message(WebKitUserContentManager *, WebKitJavascriptResult *r, gpointer data) {
@@ -463,11 +532,15 @@ static GtkWidget *on_create(WebKitWebView *, WebKitNavigationAction *a, gpointer
   return nullptr;
 }
 
+void page_committed(int native_id, const char *uri) {
+  page_unloaded(native_id); // until the new document's bridge reports ready
+  auto it = g_pages.find(native_id);
+  if (it != g_pages.end()) it->second.origin = origin_of(uri ? uri : "");
+}
+
 static void on_load_changed(WebKitWebView *wv, WebKitLoadEvent ev, gpointer data) {
   if (ev != WEBKIT_LOAD_COMMITTED) return;
-  auto it = g_pages.find(GPOINTER_TO_INT(data));
-  const char *uri = webkit_web_view_get_uri(wv);
-  if (it != g_pages.end()) it->second.origin = origin_of(uri ? uri : "");
+  page_committed(GPOINTER_TO_INT(data), webkit_web_view_get_uri(wv));
 }
 
 static gboolean on_load_failed(WebKitWebView *, WebKitLoadEvent, gchar *uri, GError *err, gpointer data) {
@@ -599,6 +672,7 @@ void backend_page_ready(int native_id) {
   if (lx::Window *w = lx::find_window(native_id)) {
     lx::reveal(w);
     emit_raw(json{{"type", "ready"}, {"window", native_id}});
+    lx::flush_open_requests();
     return;
   }
   lx::popover_page_ready(native_id);
@@ -615,9 +689,33 @@ void *backend_native_window(int native_id) {
 }
 void *backend_native_webview(int native_id) { return lx::webview_for(native_id); }
 
+// Hidden title bar: an undecorated window (the page draws its own controls and drags
+// it through its drag regions).
+void backend_set_frameless(int native_id, bool frameless) {
+  if (lx::Window *w = lx::find_window(native_id)) gtk_window_set_decorated(GTK_WINDOW(w->window), !frameless);
+}
+
+void backend_window_drag(int native_id, bool double_click) {
+  lx::Window *w = lx::find_window(native_id);
+  if (!w) return;
+  GtkWindow *win = GTK_WINDOW(w->window);
+  if (double_click) {
+    if (gtk_window_is_maximized(win)) gtk_window_unmaximize(win);
+    else gtk_window_maximize(win);
+    return;
+  }
+  GdkDisplay *display = gtk_widget_get_display(w->window);
+  GdkDevice *pointer = gdk_seat_get_pointer(gdk_display_get_default_seat(display));
+  int x = 0, y = 0;
+  gdk_device_get_position(pointer, nullptr, &x, &y);
+  gtk_window_begin_move_drag(win, 1, x, y, GDK_CURRENT_TIME);
+}
+
 void backend_init_services() {
   lx::register_app();
   lx::register_window();
+  lx::register_extra();
+  lx::register_view();
   lx::register_misc();
   lx::register_dialog();
   lx::register_webview();
@@ -674,6 +772,9 @@ SHELL_API int shell_run(void) {
   if (!sd::backend_is_main_thread()) return -2;
   if (lx::g_order.empty()) return -1;
   lx::install_signal_sources();
+  // Register the services now: their startup work (scheduled notifications) runs
+  // before the first platform call.
+  sd::dispatch(json{{"service", ""}, {"op", ""}}, 0, [](const json &) {});
   if (lx::g_quit_requested) return 0;
   lx::g_in_main = true;
   gtk_main();

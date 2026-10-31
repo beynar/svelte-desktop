@@ -18,6 +18,7 @@ export type PlatformErrorCode =
 	| 'unsupported'
 	| 'unavailable'
 	| 'denied'
+	| 'undeclared' // a permission used without its desktop.config `permissions` entry
 	| 'internal';
 
 export class NativeApiError extends Error {

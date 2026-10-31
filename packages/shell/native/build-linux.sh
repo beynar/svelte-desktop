@@ -12,7 +12,7 @@ case "$(uname -m)" in aarch64|arm64) ARCH=arm64 ;; x86_64|amd64) ARCH=x86_64 ;; 
 OUT=${OUT:-build/linux-$ARCH}
 mkdir -p "$OUT/obj"
 CXX=${CXX:-g++}
-PKGS="gtk+-3.0 webkit2gtk-4.1"
+PKGS="gtk+-3.0 webkit2gtk-4.1 x11"
 CFLAGS="-std=c++17 -fPIC -O2 -fvisibility=hidden -Wall -Wno-deprecated-declarations -Wno-unused-function $(pkg-config --cflags $PKGS libsecret-1)"
 OBJS=""
 pids=""

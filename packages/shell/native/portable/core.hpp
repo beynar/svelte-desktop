@@ -56,6 +56,19 @@ extern const char *const kBridgeScript;
 /// ("http://127.0.0.1:1234"), `main_frame` whether it's the top document.
 void on_bridge_message(int native_id, const std::string &body, const std::string &origin, bool main_frame);
 
+/// Page drag regions ([data-desktop-drag] / `--app-region: drag`): JS for inside a bridge
+/// script, calling its `raw(message)` sender (kBridgeScript already includes it).
+extern const char *const kDragListener;
+/// Title bar style per window: default | transparent | hidden | hiddenInset. Anything but
+/// `default` is a frameless window here (no native buttons: html[data-desktop-controls=none]).
+void set_title_bar_style(int native_id, const std::string &style);
+std::string title_bar_style(int native_id);
+
+/// A page whose current document reported DOMContentLoaded (bridge `ready`) and that
+/// still exists. Main thread. page_unloaded: a new document is loading.
+bool page_loaded(int native_id);
+void page_unloaded(int native_id);
+
 /// JSON for `deliver(name, data)` into a page (used by emit and replies).
 std::string deliver_js(const std::string &name, const json &data);
 
@@ -70,4 +83,6 @@ int backend_native_window_id(int public_id);
 void *backend_native_window(int native_id);  // GtkWindow* / HWND
 void *backend_native_webview(int native_id); // WebKitWebView* / ICoreWebView2*
 void backend_init_services();                // reg() every service module (called once)
+void backend_set_frameless(int native_id, bool frameless); // title bar off / on
+void backend_window_drag(int native_id, bool double_click); // move from the current pointer / maximize toggle
 } // namespace sd

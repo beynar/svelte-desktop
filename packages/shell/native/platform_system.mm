@@ -2,6 +2,7 @@
 // TCC permissions (check / request / open the Settings pane).
 // Events: keyboardLayoutChanged {} (kTISNotifySelectedKeyboardInputSourceChanged).
 #include "platform_internal.h"
+#import <IOKit/hidsystem/IOHIDLib.h>
 
 #import <AVFoundation/AVFoundation.h>
 #import <ApplicationServices/ApplicationServices.h>
@@ -60,21 +61,31 @@ static NSString *full_disk_access_status(void) {
 }
 
 static NSString *const kPermissionNames =
-    @"accessibility|screenRecording|notifications|fullDiskAccess|camera|microphone";
+    @"accessibility|screenRecording|inputMonitoring|notifications|fullDiskAccess|camera|microphone";
+
+static NSString *hid_status(IOHIDAccessType t) {
+  switch (t) {
+    case kIOHIDAccessTypeGranted: return @"granted";
+    case kIOHIDAccessTypeDenied: return @"denied";
+    default: return @"notDetermined";
+  }
+}
+
+NSString *platform_permission_status(NSString *name) {
+  if ([name isEqual:@"accessibility"]) return AXIsProcessTrusted() ? @"granted" : @"denied"; // no notDetermined for AX
+  if ([name isEqual:@"screenRecording"]) return CGPreflightScreenCaptureAccess() ? @"granted" : @"denied";
+  if ([name isEqual:@"inputMonitoring"]) return hid_status(IOHIDCheckAccess(kIOHIDRequestTypeListenEvent));
+  if ([name isEqual:@"fullDiskAccess"]) return full_disk_access_status();
+  if ([name isEqual:@"camera"]) return av_status([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo]);
+  if ([name isEqual:@"microphone"]) return av_status([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]);
+  return nil; // unknown here, or asynchronous (notifications)
+}
 
 static void check_permission(PlatformCall *call) {
   NSString *name = [call string:@"name"];
   if (!name) return [call fail:@"invalid_args" message:@"system.checkPermission: missing `name`"];
-  if ([name isEqual:@"accessibility"]) // no notDetermined state for AX
-    return [call ok:@{@"status" : AXIsProcessTrusted() ? @"granted" : @"denied"}];
-  if ([name isEqual:@"screenRecording"])
-    return [call ok:@{@"status" : CGPreflightScreenCaptureAccess() ? @"granted" : @"denied"}];
   if ([name isEqual:@"notifications"]) return platform_notifications_permission(call, NO);
-  if ([name isEqual:@"fullDiskAccess"]) return [call ok:@{@"status" : full_disk_access_status()}];
-  if ([name isEqual:@"camera"])
-    return [call ok:@{@"status" : av_status([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo])}];
-  if ([name isEqual:@"microphone"])
-    return [call ok:@{@"status" : av_status([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio])}];
+  if (NSString *status = platform_permission_status(name)) return [call ok:@{@"status" : status}];
   [call fail:@"invalid_args"
        message:[NSString stringWithFormat:@"system.checkPermission: unknown name `%@`, expected %@", name, kPermissionNames]];
 }
@@ -115,6 +126,11 @@ static void request_permission(PlatformCall *call) {
       @"note" : @"grant the app in System Settings > Privacy & Security > Screen Recording, then relaunch"
     }];
   }
+  if ([name isEqual:@"inputMonitoring"]) {
+    // Adds the app to the Input Monitoring list and shows the system prompt (first call).
+    BOOL granted = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent);
+    return [call ok:@{@"status" : granted ? @"granted" : hid_status(IOHIDCheckAccess(kIOHIDRequestTypeListenEvent))}];
+  }
   if ([name isEqual:@"notifications"]) return platform_notifications_permission(call, YES);
   if ([name isEqual:@"camera"]) return request_av(call, name, AVMediaTypeVideo, @"NSCameraUsageDescription");
   if ([name isEqual:@"microphone"]) return request_av(call, name, AVMediaTypeAudio, @"NSMicrophoneUsageDescription");
@@ -133,6 +149,7 @@ static void open_settings(PlatformCall *call) {
   NSDictionary *urls = @{
     @"privacy-accessibility" : [privacy stringByAppendingString:@"?Privacy_Accessibility"],
     @"privacy-screenCapture" : [privacy stringByAppendingString:@"?Privacy_ScreenCapture"],
+    @"privacy-inputMonitoring" : [privacy stringByAppendingString:@"?Privacy_ListenEvent"],
     @"privacy-fullDiskAccess" : [privacy stringByAppendingString:@"?Privacy_AllFiles"],
     @"privacy-camera" : [privacy stringByAppendingString:@"?Privacy_Camera"],
     @"privacy-microphone" : [privacy stringByAppendingString:@"?Privacy_Microphone"],

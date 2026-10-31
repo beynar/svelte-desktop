@@ -9,7 +9,12 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"postinstall": "ln -sfn ../../../../packages/shell node_modules/@svelte-desktop/shell-link && rm -rf node_modules/@svelte-desktop/shell && mv node_modules/@svelte-desktop/shell-link node_modules/@svelte-desktop/shell",
 		"test": "bun test --timeout 30000 tests/",
-		"test:dev": "DESKTOP_TEST_DEV=1 bun test --timeout 90000 tests/"
+		"test:dev": "DESKTOP_TEST_DEV=1 bun test --timeout 90000 tests/",
+		"test:android": "ANDROID_E2E=1 bun test --timeout 180000 tests/android.test.ts",
+		"build:android": "SVELTE_DESKTOP_TARGET=android bunx --bun vite build",
+		"test:ios": "IOS_E2E=1 bun test --timeout 180000 tests/ios.test.ts",
+		"build:ios": "SVELTE_DESKTOP_TARGET=ios bunx --bun vite build",
+		"test:ios-offline": "IOS_OFFLINE_E2E=1 bun test --timeout 180000 tests/ios-offline.test.ts"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-bun": "1.0.0-next.2",

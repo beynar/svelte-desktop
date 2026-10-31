@@ -19,6 +19,9 @@ export interface FileTypeConfig {
   rank?: "Owner" | "Default" | "Alternate";
   /** Uniform type identifiers, if known (e.g. net.daringfireball.markdown). */
   utis?: string[];
+  /** Linux MIME types (e.g. text/markdown). Default: the common type of each extension, else a type the
+   *  build declares (application/x-<identifier>-<ext>, shipped as a shared-mime-info package). */
+  mimeTypes?: string[];
 }
 
 export interface SignConfig {
@@ -31,6 +34,9 @@ export interface SignConfig {
   hardenedRuntime?: boolean;
   /** notarytool keychain profile. Default: $NOTARY_PROFILE. Notarizes + staples when set. */
   notaryProfile?: string;
+  /** macOS provisioning profile (.provisionprofile) embedded in the bundle — needed by restricted
+   *  entitlements such as Push Notifications (`push.apns`). */
+  provisioningProfile?: string;
   /** Windows Authenticode signing (osslsigncode). Also enabled by $WINDOWS_CERT_PFX (+ $WINDOWS_CERT_PASSWORD). */
   windows?: {
     /** PKCS#12 (.pfx/.p12) code-signing certificate, relative to the project. Default: $WINDOWS_CERT_PFX. */
@@ -40,13 +46,30 @@ export interface SignConfig {
     /** RFC 3161 timestamp server. Default: http://timestamp.digicert.com */
     timestampUrl?: string;
   };
+  /** iOS device builds: a provisioning profile (+ identity, default $IOS_SIGN_IDENTITY or "Apple Development").
+   *  Without a profile, `target: 'ios'` builds for the simulator. */
+  ios?: {
+    identity?: string;
+    provisioningProfile?: string;
+  };
+  /** Android APK signing. Default: $ANDROID_KEYSTORE (+ _ALIAS, _PASSWORD), else ~/.android/debug.keystore. */
+  android?: {
+    keystore?: string;
+    alias?: string;
+    password?: string;
+  };
 }
 
 export interface BuildConfig {
-  /** Target OS. Default: the host. Linux/Windows can be built from macOS (cross-compiled; --aot is host-only). */
-  target?: "macos" | "linux" | "windows";
-  /** Linux/Windows target architecture. Default: x64. */
+  /** Target OS. Default: the host. Linux/Windows/Android can be built from macOS (cross-compiled; --aot is host-only).
+   *  Android builds a signed APK with the SDK build-tools; iOS builds a WKWebView app on `ios.serverUrl` (see MOBILE.md). */
+  target?: "macos" | "linux" | "windows" | "android" | "ios";
+  /** Linux/Windows/Android target architecture. Default: x64 (Linux/Windows), arm64 (Android). */
   targetArch?: "x64" | "arm64";
+  /** Android ABIs: one or several (`['arm64', 'x64']`). Default: targetArch, else arm64. */
+  androidArch?: "arm64" | "x64" | Array<"arm64" | "x64">;
+  /** Android: also build an Android App Bundle (.aab) for Play. Default $SVELTE_DESKTOP_AAB. */
+  aab?: boolean;
   /** Bun `--aot` (canary today). */
   aot?: boolean;
   /** Bun `--trim` (canary today). */
@@ -85,8 +108,12 @@ export interface DesktopConfig {
   schemes?: string[];
   /** Document types the app opens (CFBundleDocumentTypes) → `openFiles` events. */
   fileTypes?: FileTypeConfig[];
-  /** Info.plist usage strings, e.g. { camera: 'Scan documents' } or raw NS…UsageDescription keys. */
+  /** @deprecated use `permissions` (same shape). */
   usageDescriptions?: Record<string, string>;
+  /** One running instance (default true): launching the app again — opening a document or a link
+   *  from the desktop — hands its arguments to the running one (`openUrls` / `openFiles`, `secondInstance`).
+   *  Linux and Windows (macOS does this natively). */
+  singleInstance?: boolean;
   /** LSUIElement: no Dock icon, no app menu. */
   trayOnly?: boolean;
   /** Native plugin sources (Swift/ObjC/C). Default 'native' if the folder exists. */
@@ -94,16 +121,108 @@ export interface DesktopConfig {
   /** Prebuilt Node-API addons (`.node`) to ship, reachable with `loadAddon(name)` from server code.
    *  Sources in native/addons/*.c are compiled automatically. */
   addons?: Record<string, string>;
-  /** Executables shipped in Contents/MacOS and reachable with `sidecar(name)`. */
-  sidecars?: Record<string, string>;
-  /** Native ops pages may call (`service.op` or `service.*`). Server code is never restricted.
-   *  Default: everything. */
-  permissions?: { pages?: string[] };
+  /** Executables shipped with the app and reachable with `sidecar(name)` from server code.
+   *  A path for every platform, or one per platform: `{ ffmpeg: { macos: 'bin/ffmpeg', android: 'bin/ffmpeg-android' } }`.
+   *  On Android, C sources in native/sidecars/ and native/android/sidecars/ are also compiled into sidecars. */
+  sidecars?: Record<string, SidecarSource>;
+  /** OS permissions the app uses, each with the reason shown to the user:
+   *  `{ camera: 'Scan documents', screenRecording: 'Share your screen' }`. Generates the Info.plist
+   *  usage strings and hardened-runtime entitlements (macOS), the Android manifest and the iOS keys;
+   *  `host.permissions` checks, requests and guides them at run time. Some (camera, microphone,
+   *  location, contacts…) must be declared here: the OS kills an app that asks without a reason. */
+  permissions?: PermissionsConfig;
+  /** Local notifications (`host.notifications`). */
+  notifications?: NotificationsConfig;
+  /** Remote push (`host.push`): APNs on macOS/iOS, Firebase Cloud Messaging on Android, Web Push in browsers. */
+  push?: PushConfig;
+  /** The page → native bridge. */
+  bridge?: {
+    /** Native ops pages may call (`service.op` or `service.*`). Server code is never restricted.
+     *  Default: everything. */
+    allow?: string[];
+  };
   /** Extra Info.plist keys. */
   plist?: Record<string, unknown>;
   build?: BuildConfig;
   sign?: SignConfig;
+  /** iOS ("thin client": iOS can't run Bun). */
+  ios?: {
+    /** Where the SvelteKit server is deployed (https; http only for a localhost dev server). Default $SVELTE_DESKTOP_IOS_SERVER_URL. */
+    serverUrl?: string;
+    /** Offline mode: bundle the client build, prerendered pages and an SPA fallback into the app and
+     *  serve them from app://localhost — for apps that work without a server (prerendered / `ssr = false`
+     *  pages, no server load or remote functions). Ignores serverUrl. */
+    offline?: boolean;
+    /** Default 17.0 */
+    deploymentTarget?: string;
+    /** Build for devices (iphoneos) even without sign.ios: an unsigned .app to sign later. Default $SVELTE_DESKTOP_IOS_DEVICE. */
+    device?: boolean;
+    /** Web Inspector + e2e test channel in device builds (always on for simulator builds). */
+    debug?: boolean;
+    /** Extra Info.plist keys. */
+    plist?: Record<string, unknown>;
+  };
 }
+
+export interface NotificationChannelConfig {
+  id: string;
+  name: string;
+  description?: string;
+  /** Default 'default'. 'high' and 'max' peek on screen (heads-up). */
+  importance?: "min" | "low" | "default" | "high" | "max";
+  /** false: silent channel. A string names a sound shipped with the app. Default true. */
+  sound?: boolean | string;
+  vibrate?: boolean;
+  lights?: boolean;
+  /** Launcher badge dot. Default true. */
+  badge?: boolean;
+  /** Lock-screen visibility. Default 'private'. */
+  visibility?: "public" | "private" | "secret";
+}
+
+export interface NotificationsConfig {
+  /** Android notification channels, created at startup (the first one is the default; a 'default'
+   *  channel is created when there are none). Users tune sound/importance per channel in Settings. */
+  channels?: NotificationChannelConfig[];
+  /** Show notifications (local and push) as banners while the app is frontmost. Default true. */
+  foreground?: boolean;
+}
+
+export interface PushConfig {
+  /** APNs (macOS, iOS): adds the `aps-environment` entitlement. Needs a provisioning profile that
+   *  enables Push Notifications (`sign.ios.provisioningProfile`, `sign.provisioningProfile` on macOS).
+   *  `true` = 'production' for signed release builds, 'development' otherwise. */
+  apns?: boolean | { environment?: "development" | "production" };
+  /** Firebase Cloud Messaging (Android): the google-services.json of your Firebase project.
+   *  The build adds Firebase Messaging to the APK. */
+  fcm?: { googleServices: string };
+}
+
+export type SidecarPlatform = "macos" | "linux" | "windows" | "android";
+export type SidecarSource = string | Partial<Record<SidecarPlatform, string>>;
+
+/** Sidecars declared for one platform: [name, absolute path]. */
+export function sidecarEntries(c: { root: string; sidecars?: Record<string, SidecarSource> }, platform: SidecarPlatform): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (const [name, src] of Object.entries(c.sidecars ?? {})) {
+    const path = typeof src === "string" ? src : src[platform];
+    if (path) out.push([name, resolve(c.root, path)]);
+  }
+  return out;
+}
+
+/** OS permissions `host.permissions` knows. */
+export type PermissionName =
+  | "camera" | "microphone" | "location" | "contacts" | "calendars" | "reminders" | "photos" | "bluetooth"
+  | "speech" | "appleEvents" | "notifications" | "screenRecording" | "accessibility" | "inputMonitoring"
+  | "fullDiskAccess" | "desktopFolder" | "documentsFolder" | "downloadsFolder";
+
+export type PermissionsConfig = Partial<Record<PermissionName, string>> & {
+  /** @deprecated moved to `bridge.allow`. */
+  pages?: string[];
+  /** Raw NS…UsageDescription keys pass through to Info.plist. */
+  [usageKey: string]: string | string[] | undefined;
+};
 
 export function defineConfig(config: DesktopConfig): DesktopConfig {
   return config;
@@ -136,6 +255,10 @@ export interface ResolvedConfig extends Omit<DesktopConfig, "window" | "native">
   native: string | null;
   icon?: string;
   configFile: string | null;
+  /** `permissions` (+ legacy `usageDescriptions`): OS permission → reason. */
+  osPermissions: Record<string, string>;
+  /** `bridge.allow` (or legacy `permissions.pages`); undefined = every op. */
+  bridgeAllow?: string[];
 }
 
 export async function loadConfig(root = process.cwd(), inline?: Partial<DesktopConfig>): Promise<ResolvedConfig> {
@@ -164,8 +287,24 @@ export function resolveConfig(root: string, config: Partial<DesktopConfig>, conf
     throw new Error(`svelte-desktop: identifier "${identifier}" must be reverse-DNS (e.g. com.example.app)`);
   const nativeDir = config.native === false ? null : resolve(root, config.native ?? "native");
   const iconGuess = config.icon ?? (existsSync(join(root, "static/icon.png")) ? "static/icon.png" : undefined);
+  // `SVELTE_DESKTOP_TARGET=android vite build` builds another target without editing the config.
+  const envTarget = process.env.SVELTE_DESKTOP_TARGET as BuildConfig["target"] | undefined;
+  const envArch = process.env.SVELTE_DESKTOP_TARGET_ARCH as BuildConfig["targetArch"] | undefined;
+  const envAndroid = process.env.SVELTE_DESKTOP_ANDROID_ARCH?.split(",").map((a) => a.trim()) as Array<"arm64" | "x64"> | undefined;
+  const build =
+    envTarget || envArch || envAndroid
+      ? { ...config.build, ...(envTarget && { target: envTarget }), ...(envArch && { targetArch: envArch }), ...(envAndroid && { androidArch: envAndroid }) }
+      : config.build;
+  const ios = process.env.SVELTE_DESKTOP_IOS_OFFLINE ? { ...config.ios, offline: true } : config.ios;
+  const osPermissions: Record<string, string> = { ...config.usageDescriptions };
+  for (const [k, v] of Object.entries(config.permissions ?? {})) if (k !== "pages" && typeof v === "string") osPermissions[k] = v;
+  const bridgeAllow = config.bridge?.allow ?? config.permissions?.pages;
   return {
     ...config,
+    osPermissions,
+    bridgeAllow,
+    ios,
+    build,
     root,
     appName,
     identifier,

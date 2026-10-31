@@ -281,6 +281,7 @@ static int create_window(NSDictionary *o) {
   w->webview.navigationDelegate = w->nav;
   platform_attach_webview(w->id, w->webview);
   platform_webview_configure(w->id, w->webview);
+  if (NSString *style = o[@"titleBarStyle"]) platform_apply_title_bar_style(win, w->webview, style);
   install_close_veto_hook(win);
   observe_window(w);
 

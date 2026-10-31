@@ -1,8 +1,8 @@
-// notifications.* (libnotify), tray.* (libayatana-appindicator3, falling back to
-// libappindicator3) and secureStorage.* (libsecret → the Secret Service:
-// GNOME Keyring, KWallet, KeePassXC…).
+// tray.* (libayatana-appindicator3, falling back to libappindicator3) and
+// secureStorage.* (libsecret → the Secret Service: GNOME Keyring, KWallet,
+// KeePassXC…). notifications.* (libnotify) lives in svc_notifications.cc.
 //
-// The three libraries are dlopen()ed on first use, so libshell.so only hard-
+// The libraries are dlopen()ed on first use, so libshell.so only hard-
 // depends on GTK and WebKitGTK: on a system without one of them (or without the
 // daemon behind it) the service answers `unavailable` with the reason, and
 // capabilities.describe reports it.
@@ -25,95 +25,6 @@ static void *open_lib(std::initializer_list<const char *> names) {
 template <typename T> static bool sym(void *h, const char *name, T &out) {
   out = h ? reinterpret_cast<T>(dlsym(h, name)) : nullptr;
   return out != nullptr;
-}
-
-// ===========================================================================
-// notifications.* — libnotify (org.freedesktop.Notifications)
-
-namespace notify {
-typedef void (*ActionCb)(GObject *, char *, gpointer);
-static bool tried = false, loaded = false;
-static gboolean (*init)(const char *);
-static GObject *(*create)(const char *, const char *, const char *);
-static gboolean (*show)(GObject *, GError **);
-static gboolean (*close)(GObject *, GError **);
-static void (*add_action)(GObject *, const char *, const char *, ActionCb, gpointer, GFreeFunc);
-static gboolean (*server_info)(char **, char **, char **, char **);
-static std::map<std::string, GObject *> live; // tag → notification
-
-static bool load() {
-  if (tried) return loaded;
-  tried = true;
-  void *h = open_lib({"libnotify.so.4", "libnotify.so"});
-  loaded = sym(h, "notify_init", init) && sym(h, "notify_notification_new", create) && sym(h, "notify_notification_show", show) &&
-           sym(h, "notify_notification_close", close) && sym(h, "notify_notification_add_action", add_action) &&
-           sym(h, "notify_get_server_info", server_info) && init(app_name().c_str());
-  return loaded;
-}
-/// "" when notifications can be shown, else why not.
-static std::string unavailable() {
-  if (!load()) return "libnotify (libnotify.so.4) is not installed";
-  char *name = nullptr, *vendor = nullptr, *version = nullptr, *spec = nullptr;
-  bool ok = server_info(&name, &vendor, &version, &spec);
-  g_free(name), g_free(vendor), g_free(version), g_free(spec);
-  return ok ? "" : "no notification server on the session bus (org.freedesktop.Notifications)";
-}
-} // namespace notify
-
-static void register_notifications() {
-  auto status = [](CallPtr c) {
-    std::string why = notify::unavailable();
-    if (!why.empty()) return c->fail("unavailable", "notifications: " + why);
-    c->ok(json{{"status", "granted"}}); // freedesktop notifications have no permission model
-  };
-  reg("notifications", "getPermissionStatus", status);
-  reg("notifications", "requestPermission", status);
-  reg_many("notifications", {"show", "notify"}, [](CallPtr c) {
-    if (!c->args.contains("title") || !c->args["title"].is_string()) return c->fail("invalid_args", "notifications.show: `title` must be a string");
-    std::string why = notify::unavailable();
-    if (!why.empty()) return c->fail("unavailable", "notifications: " + why);
-    static int seq = 1;
-    std::string tag = c->has("tag") ? c->str("tag") : "n" + std::to_string(seq++);
-    auto old = notify::live.find(tag);
-    if (old != notify::live.end()) { // same tag replaces
-      notify::close(old->second, nullptr);
-      g_object_unref(old->second);
-      notify::live.erase(old);
-    }
-    std::string icon = exe_dir() + "/" + app_identifier() + ".png";
-    GObject *n = notify::create(c->str("title").c_str(), c->has("body") ? c->str("body").c_str() : nullptr,
-                                g_file_test(icon.c_str(), G_FILE_TEST_EXISTS) ? icon.c_str() : nullptr);
-    auto respond = +[](GObject *, char *action, gpointer data) {
-      std::string tag = (const char *)data, a = action ? action : "default";
-      emit("notificationResponse", json{{"tag", tag}, {"actionId", a == "default" ? json(nullptr) : json(a)}});
-    };
-    notify::add_action(n, "default", "Open", respond, g_strdup(tag.c_str()), g_free);
-    if (c->args.contains("actions") && c->args["actions"].is_array())
-      for (auto &a : c->args["actions"])
-        if (a.is_object() && a.contains("id") && a["id"].is_string())
-          notify::add_action(n, a["id"].get<std::string>().c_str(), a.value("label", a["id"].get<std::string>()).c_str(), respond, g_strdup(tag.c_str()), g_free);
-    GError *err = nullptr;
-    if (!notify::show(n, &err)) {
-      std::string m = err ? err->message : "failed";
-      g_clear_error(&err);
-      g_object_unref(n);
-      return c->fail("internal", "notifications.show: " + m);
-    }
-    notify::live[tag] = n;
-    c->ok(json{{"tag", tag}});
-  });
-  reg_many("notifications", {"dismiss", "close"}, [](CallPtr c) {
-    if (!c->args.contains("tag") || !c->args["tag"].is_string()) return c->fail("invalid_args", "notifications.dismiss: `tag` must be a string");
-    std::string why = notify::unavailable();
-    if (!why.empty()) return c->fail("unavailable", "notifications: " + why);
-    auto it = notify::live.find(c->str("tag"));
-    if (it != notify::live.end()) {
-      notify::close(it->second, nullptr);
-      g_object_unref(it->second);
-      notify::live.erase(it);
-    }
-    c->ok();
-  });
 }
 
 // ===========================================================================
@@ -221,21 +132,87 @@ static std::string role_label(const std::string &r) {
   return out;
 }
 
-static void on_item_activate(GtkMenuItem *item, gpointer) {
-  const char *id = (const char *)g_object_get_data(G_OBJECT(item), "sd-id");
-  const char *role = (const char *)g_object_get_data(G_OBJECT(item), "sd-role");
-  if (role && std::string(role) == "quit") {
-    emit("willQuit");
-    request_quit();
-  } else if (role && std::string(role) == "about") {
-    dispatch(json{{"service", "app"}, {"op", "aboutPanel"}}, 0, [](const json &) {});
-  } else if (id) {
-    emit("menuAction", json{{"id", id}});
-  }
+/// The focused app window (for edit/window roles), else the primary one.
+static Window *role_target() {
+  for (int id : window_ids())
+    if (Window *w = find_window(id); w && gtk_window_is_active(GTK_WINDOW(w->window))) return w;
+  return find_window(primary_window());
 }
 
-/// MenuItemSpec[] → GtkMenu (nullptr + *error on invalid specs). validateOnly builds nothing.
-static GtkWidget *build_menu(const json &items, std::string *error) {
+static void on_item_activate(GtkMenuItem *item, gpointer) {
+  const char *id = (const char *)g_object_get_data(G_OBJECT(item), "sd-id");
+  const char *rolep = (const char *)g_object_get_data(G_OBJECT(item), "sd-role");
+  std::string role = rolep ? rolep : "";
+  if (role == "quit") {
+    emit("willQuit");
+    request_quit();
+    return;
+  }
+  if (role == "about") return dispatch(json{{"service", "app"}, {"op", "aboutPanel"}}, 0, [](const json &) {});
+  if (!role.empty()) {
+    Window *w = role_target();
+    if (!w) return;
+    static const std::map<std::string, const char *> kEdit = {{"undo", WEBKIT_EDITING_COMMAND_UNDO}, {"redo", WEBKIT_EDITING_COMMAND_REDO},
+                                                              {"cut", WEBKIT_EDITING_COMMAND_CUT}, {"copy", WEBKIT_EDITING_COMMAND_COPY},
+                                                              {"paste", WEBKIT_EDITING_COMMAND_PASTE}, {"selectAll", WEBKIT_EDITING_COMMAND_SELECT_ALL},
+                                                              {"pasteAndMatchStyle", WEBKIT_EDITING_COMMAND_PASTE_AS_PLAIN_TEXT}};
+    if (auto e = kEdit.find(role); e != kEdit.end()) return webkit_web_view_execute_editing_command(w->webview, e->second);
+    GtkWindow *gw = GTK_WINDOW(w->window);
+    if (role == "reload") webkit_web_view_reload(w->webview);
+    else if (role == "minimize") gtk_window_iconify(gw);
+    else if (role == "close") gtk_window_close(gw);
+    else if (role == "zoom") gtk_window_is_maximized(gw) ? gtk_window_unmaximize(gw) : gtk_window_maximize(gw);
+    else if (role == "toggleFullscreen") (w->state & GDK_WINDOW_STATE_FULLSCREEN) ? gtk_window_unfullscreen(gw) : gtk_window_fullscreen(gw);
+    else if (role == "toggleDevTools") webkit_web_inspector_show(webkit_web_view_get_inspector(w->webview));
+    else if (role == "resetZoom") webkit_web_view_set_zoom_level(w->webview, 1.0);
+    else if (role == "zoomIn") webkit_web_view_set_zoom_level(w->webview, webkit_web_view_get_zoom_level(w->webview) * 1.1);
+    else if (role == "zoomOut") webkit_web_view_set_zoom_level(w->webview, webkit_web_view_get_zoom_level(w->webview) / 1.1);
+    return;
+  }
+  if (id) emit("menuAction", json{{"id", id}});
+}
+
+/// "CmdOrCtrl+Shift+K" → a GTK keyval + modifiers (Cmd/Super → Super, Option → Alt).
+bool parse_accelerator(const std::string &accel, guint *key, GdkModifierType *mods, std::string *error) {
+  *key = 0;
+  *mods = (GdkModifierType)0;
+  std::vector<std::string> parts;
+  std::string cur;
+  for (size_t i = 0; i < accel.size(); i++) {
+    if (accel[i] == '+' && !cur.empty()) {
+      parts.push_back(cur);
+      cur.clear();
+    } else cur += accel[i];
+  }
+  if (!cur.empty()) parts.push_back(cur);
+  if (parts.empty()) return *error = "empty accelerator", false;
+  auto lower = [](std::string v) {
+    for (auto &ch : v) ch = (char)g_ascii_tolower(ch);
+    return v;
+  };
+  for (size_t i = 0; i + 1 < parts.size(); i++) {
+    std::string m = lower(parts[i]);
+    if (m == "cmdorctrl" || m == "commandorcontrol" || m == "ctrl" || m == "control") *mods = (GdkModifierType)(*mods | GDK_CONTROL_MASK);
+    else if (m == "cmd" || m == "command" || m == "super" || m == "meta" || m == "win") *mods = (GdkModifierType)(*mods | GDK_SUPER_MASK);
+    else if (m == "shift") *mods = (GdkModifierType)(*mods | GDK_SHIFT_MASK);
+    else if (m == "alt" || m == "option" || m == "altgr") *mods = (GdkModifierType)(*mods | GDK_MOD1_MASK);
+    else return *error = "unknown modifier `" + parts[i] + "` in `" + accel + "`", false;
+  }
+  std::string k = parts.back(), lk = lower(k);
+  static const std::map<std::string, const char *> kNames = {
+      {"space", "space"}, {"enter", "Return"}, {"return", "Return"}, {"tab", "Tab"}, {"escape", "Escape"}, {"esc", "Escape"},
+      {"backspace", "BackSpace"}, {"delete", "Delete"}, {"insert", "Insert"}, {"up", "Up"}, {"down", "Down"}, {"left", "Left"},
+      {"right", "Right"}, {"home", "Home"}, {"end", "End"}, {"pageup", "Page_Up"}, {"pagedown", "Page_Down"}, {"plus", "plus"},
+      {"minus", "minus"}, {"=", "equal"}, {",", "comma"}, {".", "period"}, {"/", "slash"}, {";", "semicolon"}, {"`", "grave"}};
+  if (auto n = kNames.find(lk); n != kNames.end()) *key = gdk_keyval_from_name(n->second);
+  else if (k.size() == 1) *key = gdk_unicode_to_keyval((guint32)g_ascii_tolower(k[0]));
+  else *key = gdk_keyval_from_name(k.c_str());
+  if (!*key || *key == GDK_KEY_VoidSymbol) return *error = "unknown key `" + k + "` in `" + accel + "`", false;
+  return true;
+}
+
+/// MenuItemSpec[] → GtkMenu (nullptr + *error on invalid specs); accelerators go to `accel` when given.
+GtkWidget *build_gtk_menu(const json &items, std::string *error, GtkAccelGroup *accel) {
   GtkWidget *menu = gtk_menu_new();
   for (auto &it : items) {
     if (!it.is_object()) {
@@ -264,7 +241,7 @@ static GtkWidget *build_menu(const json &items, std::string *error) {
         *error = "submenu `" + label + "` has no items";
         break;
       }
-      GtkWidget *sub = build_menu(it["submenu"], error);
+      GtkWidget *sub = build_gtk_menu(it["submenu"], error, accel);
       if (!sub) break;
       item = gtk_menu_item_new_with_label(label.c_str());
       gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), sub);
@@ -278,6 +255,17 @@ static GtkWidget *build_menu(const json &items, std::string *error) {
     if (!role.empty()) g_object_set_data_full(G_OBJECT(item), "sd-role", g_strdup(role.c_str()), g_free);
     if (it.value("disabled", false) || (it.contains("enabled") && it["enabled"].is_boolean() && !it["enabled"].get<bool>())) gtk_widget_set_sensitive(item, FALSE);
     g_signal_connect(item, "activate", G_CALLBACK(on_item_activate), nullptr);
+    if (it.contains("accelerator") && it["accelerator"].is_string()) {
+      guint key;
+      GdkModifierType mods;
+      std::string err;
+      if (!parse_accelerator(it["accelerator"].get<std::string>(), &key, &mods, &err)) {
+        *error = err;
+        gtk_widget_destroy(item);
+        break;
+      }
+      if (accel) gtk_widget_add_accelerator(item, "activate", accel, key, mods, GTK_ACCEL_VISIBLE);
+    }
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
   }
   if (!error->empty()) {
@@ -342,7 +330,7 @@ static void tray_set(CallPtr c) {
   if (menuGiven && !menuNull) {
     json items = c->args["menu"].is_array() ? c->args["menu"] : c->args["menu"].is_object() ? c->args["menu"].value("items", json()) : json();
     if (!items.is_array()) return c->fail("invalid_args", "tray.set: `menu` must be {items:[…]} or an array of items");
-    menu = build_menu(items, &error);
+    menu = build_gtk_menu(items, &error);
     if (!menu) return c->fail("invalid_args", "tray.set: " + error);
   }
   if (!ind::load()) {
@@ -494,7 +482,7 @@ static void register_secure_storage() {
 const std::vector<std::string> &unavailable_ops() {
   static std::vector<std::string> out;
   out.clear();
-  if (!notify::unavailable().empty()) out.push_back("notifications.*");
+  if (!notifications_unavailable().empty()) out.push_back("notifications.*");
   if (!ind::load()) out.push_back("tray.*");
   if (!secret::load()) out.push_back("secureStorage.*");
   return out;

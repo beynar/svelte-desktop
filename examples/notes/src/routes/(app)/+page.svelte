@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { onDesktopEvent } from '@svelte-desktop/shell/client';
-	import { onBroadcast } from '@svelte-desktop/shell/platform';
 	import Popover from '@svelte-desktop/shell/platform/Popover.svelte';
 	import { addNote, getState, increment } from '#lib/data.remote';
 	import {
@@ -22,14 +21,14 @@
 	// Messages from popover routes (separate web views, same app).
 	onMount(() => {
 		const offs = [
-			onBroadcast('notes-changed', () => getState().refresh()),
-			onBroadcast<string>('emoji', (e) => {
+			host.onBroadcast('notes-changed', () => getState().refresh()),
+			host.onBroadcast<string>('emoji', (e) => {
 				if (!input) return;
 				input.value += e;
 				input.dispatchEvent(new Event('input', { bubbles: true }));
 				input.focus();
 			}),
-			onBroadcast('focus-input', () => input?.focus()),
+			host.onBroadcast('focus-input', () => input?.focus()),
 		];
 		return () => offs.forEach((off) => off());
 	});
@@ -81,6 +80,38 @@
 				<button onclick={() => openDocs()}>Open docs (browser)</button>
 				<a href="https://svelte.dev" target="_blank">external link</a>
 				<button onclick={() => quitApp()}>Quit</button>
+			</div>
+			<h3>Permissions</h3>
+			<div class="row" id="permissions">
+				{#each Object.keys(host.permissions.declared()) as name (name)}
+					<span>{name}: <b data-permission={name}>{host.permissions.get(name)}</b></span>
+					{#if host.permissions.get(name) !== 'granted'}
+						<button onclick={() => host.permissions.request(name)}>{host.permissions.settingsOnly(name) ? 'Guide me…' : 'Allow…'}</button>
+					{/if}
+				{/each}
+			</div>
+			<h3>Notifications</h3>
+			<div class="row" id="notifications">
+				<span>permission: <b id="notification-permission">{host.notifications.permission}</b></span>
+				{#if host.notifications.permission === 'notDetermined'}
+					<button onclick={() => host.notifications.requestPermission()}>Allow…</button>
+				{/if}
+				<button onclick={() => host.notifications.show({ id: 'hello', title: 'Svelte Notes', body: 'Click me: opens About', url: '/about' })}>Notify</button>
+				<button onclick={() => host.notifications.show({ id: 'later', title: 'Reminder', body: 'Scheduled 5 s ago', delay: 5000 })}>In 5 s</button>
+				<button onclick={() => host.notifications.show({
+					id: 'chat', title: 'Alice', subtitle: '#general', body: 'Lunch?', group: 'chat',
+					actions: [{ id: 'reply', title: 'Reply', input: { placeholder: 'Message' } }, { id: 'about', title: 'Open About', url: '/about' }]
+				})}>With actions</button>
+				<span id="notification-response">{host.notifications.lastResponse ? `${host.notifications.lastResponse.kind} ${host.notifications.lastResponse.id}${host.notifications.lastResponse.input ? `: ${host.notifications.lastResponse.input}` : ''}` : ''}</span>
+			</div>
+			<h3>Background jobs</h3>
+			<div class="row">
+				<button id="start-job" onclick={() => fetch('/api/jobs', { method: 'POST', body: JSON.stringify({ name: 'count', args: { to: 40, delay: 50 } }) })}>Run a job</button>
+				{#each host.jobs.active() as j (j.id)}
+					<span class="job"><progress value={j.progress}></progress> {j.message ?? j.state}
+						<button onclick={() => host.jobs.cancel(j.id)}>✕</button></span>
+				{/each}
+				<span id="jobs-done">{host.jobs.list().filter((j) => j.state === 'done').length} done</span>
 			</div>
 			<h3>Events</h3>
 			<ul class="log">

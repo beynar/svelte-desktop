@@ -27,6 +27,9 @@ export interface DesktopApi {
   readonly origin: string;
   /** Per-user writable directories, created on startup. */
   readonly paths: { data: string; cache: string; home: string; logs: string };
+  /** How the previous run ended: an unclean exit (crash, kill, power loss) and the OS crash
+   *  reports written since (macOS .ips, Windows minidumps) — e.g. to offer sending them. */
+  crashInfo(): import("./crash.ts").CrashInfo;
   readonly window: {
     setTitle(title: string): void;
     setSize(width: number, height: number): void;
