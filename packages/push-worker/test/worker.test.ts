@@ -10,10 +10,13 @@ import { createPush, generateVapidKeys, PushError } from "../../shell/src/push/s
 
 const dir = mkdtempSync(join(tmpdir(), "sd-push-worker-"));
 const port = 18000 + Math.floor(Math.random() * 2000);
-const base = `http://127.0.0.1:${port}`;
-let dev: ReturnType<typeof Bun.spawn>;
+// PUSH_WORKER_URL=https://svelte-desktop-push.<you>.workers.dev: the same tests against a deployed Worker.
+const deployed = process.env.PUSH_WORKER_URL?.replace(/\/+$/, "");
+const base = deployed ?? `http://127.0.0.1:${port}`;
+let dev: ReturnType<typeof Bun.spawn> | undefined;
 
 beforeAll(async () => {
+  if (deployed) return;
   dev = Bun.spawn(["bunx", "wrangler", "dev", "--port", String(port), "--ip", "127.0.0.1", "--persist-to", join(dir, "state"), "--show-interactive-dev-session=false"], {
     cwd: join(import.meta.dir, ".."),
     stdout: "pipe",
