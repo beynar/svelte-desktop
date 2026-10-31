@@ -441,10 +441,16 @@ describe.skipIf(!process.env.ANDROID_E2E)('android', () => {
 			await app.waitFor('#counter', { timeout: 20_000 });
 		});
 
-		test('push without FCM in the build: register → unavailable, token null, unregister ok', async () => {
-			const e = (await app.platform('push', 'register').catch((x: unknown) => x)) as { code: string; message: string };
-			expect(e).toMatchObject({ code: 'unavailable' });
-			expect(e.message).toContain('push.fcm.googleServices');
+		test('push without FCM in the build and no UnifiedPush distributor: register → unavailable, token null, unregister ok', async () => {
+			// With a distributor installed (ntfy, the UnifiedPush tests) register would use it instead.
+			const distributor = !(await sh('cmd', 'package', 'query-receivers', '--brief', '-a', 'org.unifiedpush.android.distributor.REGISTER')).includes('No receivers');
+			await app.platform('push', 'unregister');
+			if (!distributor) {
+				const e = (await app.platform('push', 'register').catch((x: unknown) => x)) as { code: string; message: string };
+				expect(e).toMatchObject({ code: 'unavailable' });
+				expect(e.message).toContain('push.fcm.googleServices');
+				expect(e.message).toContain('UnifiedPush');
+			}
 			expect(await app.platform('push', 'token')).toBeNull();
 			expect(await app.platform('push', 'unregister')).toBeNull();
 		});
@@ -588,4 +594,146 @@ describe.skipIf(!process.env.ANDROID_E2E || !process.env.ANDROID_REBOOT_E2E)('an
 		await n('dismissAll');
 		await app.close();
 	}, 900_000);
+});
+
+// Self-hosted push through UnifiedPush, for real: the ntfy app (F-Droid build, pinned sha256) as the
+// distributor on the public ntfy.sh server; the test sends with createPush({ webpush }) like a server
+// would (VAPID + RFC 8291). Needs network. ANDROID_E2E=1 ANDROID_UP_E2E=1 bun run test:android
+describe.skipIf(!process.env.ANDROID_E2E || !process.env.ANDROID_UP_E2E)('android + UnifiedPush (ntfy)', () => {
+	const adb = `${process.env.ANDROID_HOME ?? `${process.env.HOME}/Library/Android/sdk`}/platform-tools/adb`;
+	const serial = process.env.ANDROID_SERIAL ? ['-s', process.env.ANDROID_SERIAL] : [];
+	const pkg = 'dev.svelte_desktop.notes';
+	const NTFY = { version: 63, sha256: 'b4baa6f668bd57ad5df3b4e0e769165dcf25c5ee19fdb04f78077ee819616f2a' }; // io.heckel.ntfy 1.25.2
+	const sh = (...args: string[]) => Bun.$`${adb} ${serial} shell ${args.map((a) => `'${a.replace(/'/g, `'\\''`)}'`).join(' ')}`.quiet().nothrow().text();
+	type Target = { provider: 'webpush'; endpoint: string; keys: { p256dh: string; auth: string } };
+	let app: AppHandle;
+	let target: Target;
+	let push: import('@svelte-desktop/shell/push').PushSender;
+	const until = async <T>(get: () => Promise<T>, ok: (v: T) => boolean, ms = 15_000): Promise<T> => {
+		const end = Date.now() + ms;
+		let v = await get();
+		while (!ok(v) && Date.now() < end) {
+			await Bun.sleep(250);
+			v = await get();
+		}
+		return v;
+	};
+	const delivered = () => app.platform<{ id: string; title: string; body: string; payload?: string }[]>('notifications', 'delivered');
+	// ntfy keeps its connection in a foreground service, which Android 14+ won't start from the background:
+	// opening ntfy once starts it (a real user has it running).
+	const wakeNtfy = async () => {
+		await sh('monkey', '-p', 'io.heckel.ntfy', '-c', 'android.intent.category.LAUNCHER', '1');
+		await Bun.sleep(5000);
+		await sh('am', 'start', '-n', `${pkg}/dev.sveltedesktop.MainActivity`);
+		await Bun.sleep(1500);
+	};
+
+	beforeAll(async () => {
+		if ((await sh('cmd', 'package', 'query-receivers', '--brief', '-a', 'org.unifiedpush.android.distributor.REGISTER')).includes('No receivers')) {
+			const apk = `${process.env.HOME}/.cache/svelte-desktop/ntfy-${NTFY.version}.apk`;
+			const ok = async () => (await Bun.file(apk).exists()) && new Bun.CryptoHasher('sha256').update(await Bun.file(apk).arrayBuffer()).digest('hex') === NTFY.sha256;
+			if (!(await ok())) await Bun.write(apk, await fetch(`https://f-droid.org/repo/io.heckel.ntfy_${NTFY.version}.apk`));
+			if (!(await ok())) throw new Error('ntfy APK: sha256 mismatch');
+			await Bun.$`${adb} ${serial} install -r ${apk}`.quiet();
+		}
+		await sh('pm', 'grant', 'io.heckel.ntfy', 'android.permission.POST_NOTIFICATIONS');
+		app = await launch({ android: { serial: process.env.ANDROID_SERIAL }, timeout: 60_000 });
+		await app.waitFor('#counter', { timeout: 20_000 });
+		await sh('pm', 'grant', pkg, 'android.permission.POST_NOTIFICATIONS');
+		await app.platform('notifications', 'dismissAll');
+		const { createPush, generateVapidKeys } = await import('@svelte-desktop/shell/push');
+		const vapid = await generateVapidKeys();
+		push = createPush({ webpush: { ...vapid, subject: 'mailto:e2e@svelte-desktop.dev' } });
+		await wakeNtfy(); // opened once, as a user would after installing it
+		await app.platform('push', 'unregister'); // a fresh registration → a new endpoint → pushToken
+		const token = app.nextEvent<Target>('pushToken', (t) => t.provider === 'webpush', 40_000);
+		target = await app.platform<Target>('push', 'register', { vapidPublicKey: vapid.publicKey });
+		expect(await token).toEqual(target);
+		await wakeNtfy();
+		await app.eval(`(() => { window.__push = []; host.on('pushMessage', (m) => window.__push.push(m)); return true; })()`);
+	}, 180_000);
+	afterAll(async () => {
+		await app?.platform('push', 'unregister').catch(() => {});
+		await app?.platform('notifications', 'dismissAll').catch(() => {});
+		await app?.close();
+	});
+
+	test('register → a Web Push target from the distributor (P-256 key + auth secret), push.token', async () => {
+		expect(target.provider).toBe('webpush');
+		expect(target.endpoint).toMatch(/^https:\/\/ntfy\.sh\/up[A-Za-z0-9]+\?up=1$/);
+		expect(Buffer.from(target.keys.p256dh, 'base64url')).toHaveLength(65);
+		expect(Buffer.from(target.keys.p256dh, 'base64url')[0]).toBe(4); // uncompressed point
+		expect(Buffer.from(target.keys.auth, 'base64url')).toHaveLength(16);
+		expect(await app.platform('push', 'token')).toEqual(target);
+		expect(await sh('dumpsys', 'package', pkg)).toContain('dev.sveltedesktop.UnifiedPushReceiver');
+	});
+
+	test('createPush → ntfy.sh → ntfy → decrypted, shown with its id, pushMessage in the page; same id replaces', async () => {
+		const first = app.nextEvent<{ id: string; payload: string; notification?: { title: string } }>('pushMessage', (m) => m.id === 'up-1', 30_000);
+		await push.send(target, { id: 'up-1', title: 'From ntfy E2E', body: 'via UnifiedPush', url: '/about', data: { n: 1 } });
+		const m = await first;
+		expect(m).toMatchObject({ id: 'up-1', foreground: true, notification: { title: 'From ntfy E2E', body: 'via UnifiedPush' } });
+		expect(JSON.parse(m.payload)).toMatchObject({ url: '/about', data: { n: 1 } });
+		let list = await until(delivered, (l) => l.some((d) => d.id === 'up-1'));
+		expect(list.find((d) => d.id === 'up-1')).toMatchObject({ title: 'From ntfy E2E', body: 'via UnifiedPush' });
+		await app.waitFor(() => (window as any).__push?.some((x: { id: string }) => x.id === 'up-1'));
+		const second = app.nextEvent('pushMessage', (x: { notification?: { title: string } }) => x.notification?.title === 'Replaced E2E', 30_000);
+		await push.send(target, { id: 'up-1', title: 'Replaced E2E', body: 'second', url: '/about' });
+		await second;
+		list = await until(delivered, (l) => l.some((d) => d.title === 'Replaced E2E'));
+		expect(list.filter((d) => d.id === 'up-1')).toHaveLength(1);
+	}, 90_000);
+
+	test('a tap on the pushed notification is a notificationResponse with its payload and navigates', async () => {
+		await app.goto('/');
+		const resp = app.nextEvent<{ id: string; kind: string; payload: string }>('notificationResponse', (r) => r.id === 'up-1', 30_000);
+		await sh('cmd', 'statusbar', 'expand-notifications');
+		await Bun.sleep(1200);
+		await sh('uiautomator', 'dump', '/sdcard/sd-ui.xml');
+		const xml = await sh('cat', '/sdcard/sd-ui.xml');
+		const node = [...xml.matchAll(/<node [^>]*>/g)].map((m) => m[0]).find((n) => /text="Replaced E2E"/.test(n));
+		const b = node && /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(node);
+		if (!b) throw new Error('the pushed notification is not in the shade (uiautomator busy?)');
+		await sh('input', 'tap', String((Number(b[1]) + Number(b[3])) >> 1), String((Number(b[2]) + Number(b[4])) >> 1));
+		const r = await resp;
+		expect(r).toMatchObject({ id: 'up-1', kind: 'click' });
+		expect(JSON.parse(r.payload).url).toBe('/about');
+		expect(await until(() => app.eval<string>('location.pathname'), (p) => p === '/about')).toBe('/about');
+		await app.goto('/');
+	}, 90_000);
+
+	test('a background push (no title): pushMessage only, no notification', async () => {
+		const msg = app.nextEvent<{ id: string; payload: string; notification?: unknown }>('pushMessage', (m) => m.id === 'up-bg', 30_000);
+		await push.send(target, { id: 'up-bg', background: true, data: { sync: true } });
+		const m = await msg;
+		expect(m.notification).toBeUndefined();
+		expect(JSON.parse(m.payload)).toMatchObject({ data: { sync: true } });
+		await Bun.sleep(1000);
+		expect((await delivered()).some((d) => d.id === 'up-bg')).toBe(false);
+	}, 60_000);
+
+	test('the app not running: ntfy wakes the receiver, which decrypts and shows it', async () => {
+		await sh('input', 'keyevent', 'KEYCODE_HOME');
+		await Bun.sleep(1000);
+		// Kill the process without force-stop (that would mark the app stopped: no broadcasts at all).
+		// The debug build allows run-as; `am kill` alone leaves a recently used process alive.
+		const pid = (await sh('pidof', pkg)).trim();
+		if (pid) await sh('run-as', pkg, 'kill', '-9', pid);
+		await sh('am', 'kill', pkg);
+		await Bun.sleep(1500);
+		expect((await sh('pidof', pkg)).trim()).toBe('');
+		await push.send(target, { id: 'up-cold', title: 'While closed E2E', body: 'cold', url: '/about' });
+		const posted = async () => (await sh('dumpsys', 'notification')).includes('tag=up-cold ');
+		const end = Date.now() + 30_000;
+		while (!(await posted()) && Date.now() < end) await Bun.sleep(500);
+		expect(await posted()).toBe(true);
+		const woken = (await sh('pidof', pkg)).trim();
+		expect(woken).not.toBe('');
+		expect(woken).not.toBe(pid); // a new process, started for the broadcast
+		// back to a running app for afterAll
+		app = await launch({ android: { serial: process.env.ANDROID_SERIAL, install: false }, timeout: 60_000 });
+		await app.waitFor('#counter', { timeout: 20_000 });
+		await app.platform('push', 'unregister');
+		expect(await app.platform('push', 'token')).toBeNull();
+	}, 120_000);
 });

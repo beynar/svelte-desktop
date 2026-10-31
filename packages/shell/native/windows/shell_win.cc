@@ -193,6 +193,7 @@ HWND hidden_window() { return g_hidden; }
 void add_hidden_hook(MsgHook hook) { g_hidden_hooks.push_back(std::move(hook)); }
 void add_quit_hook(std::function<void()> hook) { g_quit_hooks.push_back(std::move(hook)); }
 
+static bool g_quit_on_last_window = true; // desktop.config quitOnLastWindowClosed
 void request_quit() { PostQuitMessage(0); }
 
 // ---------------------------------------------------------------------------
@@ -942,7 +943,7 @@ static void destroy_window_state(Window *w) {
   emit_raw(json{{"type", "closed"}, {"window", id}});
   emit("closed", json{{"windowId", publicId}});
   // Same as macOS: closing the last window ends the run loop (graceful quit).
-  if (g_order.empty()) request_quit();
+  if (g_order.empty() && g_quit_on_last_window) request_quit();
 }
 
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -1109,6 +1110,7 @@ static int create_window(const json &o) {
   // Opening a document or a link from Explorer starts a new process: hand it to the
   // running instance (openUrls / openFiles there) and leave before any window.
   if (g_order.empty() && jbool(o, "singleInstance", false) && !claim_single_instance()) ExitProcess(0);
+  if (g_order.empty() && o.contains("quitOnLastWindowClosed")) g_quit_on_last_window = jbool(o, "quitOnLastWindowClosed", true);
   auto *w = new Window;
   w->id = g_next_id++;
   w->label = jstr(o, "label", g_order.empty() ? "main" : "window-" + std::to_string(w->id));

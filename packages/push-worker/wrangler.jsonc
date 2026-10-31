@@ -1,0 +1,13 @@
+// Self-hosted push for svelte-desktop apps: `bunx wrangler deploy`, then set
+// desktop.config `push.server` to the Worker's URL (https://svelte-desktop-push.<you>.workers.dev).
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "svelte-desktop-push",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-01",
+	"observability": { "enabled": true },
+	"durable_objects": {
+		"bindings": [{ "name": "DEVICE", "class_name": "Device" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Device"] }]
+}

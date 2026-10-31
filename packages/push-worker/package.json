@@ -1,0 +1,16 @@
+{
+	"name": "@svelte-desktop/push-worker",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "Self-hosted push service (Web Push compatible) on Cloudflare Workers + Durable Objects",
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"test": "bun test --timeout 60000 test/",
+		"types": "wrangler types"
+	},
+	"devDependencies": {
+		"wrangler": "^4.156.0"
+	}
+}

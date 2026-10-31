@@ -118,7 +118,8 @@ function write_entries(dir, c) {
 		window: c.window,
 		update: c.update ? { manifestUrl: c.update.manifestUrl, publicKey: c.update.publicKey, channel: c.update.channel } : undefined,
 		pagePermissions: c.bridgeAllow,
-		singleInstance: c.singleInstance ?? true
+		singleInstance: c.singleInstance ?? true,
+		quitOnLastWindowClosed: c.quitOnLastWindowClosed ?? true
 	};
 
 	fs.writeFileSync(

@@ -32,6 +32,8 @@ export interface ShellOptions {
   plugin?: string | null;
   /** desktop.config singleInstance (Linux/Windows). */
   singleInstance?: boolean;
+  /** desktop.config quitOnLastWindowClosed (default true). */
+  quitOnLastWindowClosed?: boolean;
   /** permissions.pages from desktop.config; undefined = allow all. */
   pagePermissions?: string[];
   /** Main window URL override (dev mode points it at the Vite server). */

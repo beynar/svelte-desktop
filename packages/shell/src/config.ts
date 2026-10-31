@@ -116,6 +116,10 @@ export interface DesktopConfig {
   singleInstance?: boolean;
   /** LSUIElement: no Dock icon, no app menu. */
   trayOnly?: boolean;
+  /** Default true. false: the app keeps running when its last window closes — like most macOS apps
+   *  (a Dock click reopens the main window), or a tray app on Windows/Linux — so background work,
+   *  jobs and the self-hosted push connection (`push.server`) go on. Quit with Cmd+Q / `host.app.quit()`. */
+  quitOnLastWindowClosed?: boolean;
   /** Native plugin sources (Swift/ObjC/C). Default 'native' if the folder exists. */
   native?: string | false;
   /** Prebuilt Node-API addons (`.node`) to ship, reachable with `loadAddon(name)` from server code.
@@ -196,6 +200,14 @@ export interface PushConfig {
   /** Firebase Cloud Messaging (Android): the google-services.json of your Firebase project.
    *  The build adds Firebase Messaging to the APK. */
   fcm?: { googleServices: string };
+  /** Your own push server (`@svelte-desktop/shell/push-server`, Web Push compatible) for macOS, Windows
+   *  and Linux: the app holds one connection to it while it runs (window closed included) — no Apple or
+   *  Google account. `host.push.register()` returns a Web Push target your server sends to with
+   *  `createPush({ webpush })`. Takes precedence over APNs on macOS. */
+  server?: string;
+  /** Android: UnifiedPush (a distributor app such as ntfy, self-hostable) before FCM. Default true when a
+   *  distributor is installed. */
+  unifiedPush?: boolean;
 }
 
 export type SidecarPlatform = "macos" | "linux" | "windows" | "android";

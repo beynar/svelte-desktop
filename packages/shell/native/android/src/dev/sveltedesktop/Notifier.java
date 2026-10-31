@@ -818,6 +818,34 @@ final class Notifier {
         }
     }
 
+    /** A UnifiedPush / Web Push message, decrypted: what sendWebPush sends — `{id, title, body, subtitle,
+     *  image, silent, payload}`, or `{id, payload}` for a background push (no title: no notification). */
+    static void webPushMessage(Context c, JSONObject m, String messageId) {
+        String id = str(m, "id");
+        if (id == null) id = messageId;
+        String title = str(m, "title"), body = str(m, "body"), payload = str(m, "payload");
+        boolean fg = resumed;
+        try {
+            JSONObject msg = new JSONObject().put("data", m).put("foreground", fg).put("payload", orNull(payload));
+            if (id != null) msg.put("id", id);
+            if (title != null) {
+                msg.put("notification", new JSONObject().put("title", title).put("body", orNull(body)));
+                if (!fg || showInForeground(c, null)) {
+                    JSONObject s = new JSONObject().put("id", id != null ? id : "push").put("title", title);
+                    for (String k : new String[] { "body", "subtitle", "payload", "group", "channel" }) if (str(m, k) != null) s.put(k, str(m, k));
+                    if (m.optBoolean("silent", false)) s.put("silent", true);
+                    if (s.has("channel") && nm(c).getNotificationChannel(s.getString("channel")) == null) s.remove("channel");
+                    String image = str(m, "image");
+                    if (image != null) s.put("image", image.startsWith("https://") ? download(c, image) : image.startsWith("data:") ? image : null);
+                    post(c, s, true);
+                }
+            }
+            emit("pushMessage", msg);
+        } catch (Exception e) {
+            Log.w(TAG, "web push message", e);
+        }
+    }
+
     /** FCM's notification.image: fetched on the messaging thread into the cache. */
     private static String download(Context c, String url) {
         if (!url.startsWith("https://")) return null;

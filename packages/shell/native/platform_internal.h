@@ -59,6 +59,8 @@ NSString *_Nullable platform_window_label(int native_id);
 /// Create a window on the app origin (multi-window). opts as shell_window_create
 /// plus "path" (appended to the app origin) and "label". Returns native id or <0.
 int platform_create_window(NSDictionary *opts);
+/// quitOnLastWindowClosed: false — recreate the main window when none is left (Dock click). 0 if windows exist.
+int platform_recreate_main_window(void);
 NSString *_Nullable platform_app_origin(void);
 /// App identity from Info.plist, falling back to the shell options.
 NSString *platform_app_name(void);

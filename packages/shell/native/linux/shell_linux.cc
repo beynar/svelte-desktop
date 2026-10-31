@@ -175,6 +175,8 @@ std::string app_version() { return g_app_version.empty() ? "0.0.0" : g_app_versi
 void set_app_name_override(const std::string &n) { g_name_override = n; }
 void set_app_identifier_override(const std::string &i) { g_identifier_override = i; }
 
+static bool g_quit_on_last_window = true; // desktop.config quitOnLastWindowClosed
+
 void request_quit() {
   g_quit_requested = true;
   if (g_in_main) gtk_main_quit();
@@ -246,7 +248,7 @@ static void on_destroy(GtkWidget *, gpointer data) {
   delete w;
   emit_raw(json{{"type", "closed"}, {"window", id}});
   emit("closed", json{{"windowId", pub}});
-  if (g_order.empty()) request_quit(); // like webview/webview on macOS: last window ends the loop
+  if (g_order.empty() && g_quit_on_last_window) request_quit(); // like webview/webview on macOS: last window ends the loop
 }
 
 static gboolean on_focus(GtkWidget *, GdkEventFocus *ev, gpointer data) {
@@ -350,6 +352,7 @@ static int create_window(const json &o) {
   // Opening a document or a link from the desktop starts a new process: hand it to
   // the running instance (openUrls / openFiles there) and leave before any window.
   if (g_order.empty() && o.value("singleInstance", false) && !claim_single_instance()) _exit(0);
+  if (g_order.empty() && o.contains("quitOnLastWindowClosed")) g_quit_on_last_window = o.value("quitOnLastWindowClosed", true);
   Window *w = new Window;
   w->id = g_next_id++;
   w->label = str("label");

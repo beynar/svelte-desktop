@@ -68,13 +68,21 @@ test("manifest: notification receiver, boot re-arm, no Firebase without push.fcm
   expect(m).toContain('<action android:name="android.intent.action.BOOT_COMPLETED" />');
   expect(m).toContain('<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />');
   expect(m).not.toContain("SCHEDULE_EXACT_ALARM");
-  expect(m).not.toMatch(/com\.google\.firebase|firebase_|PushService/);
+  // UnifiedPush connector (default on): exported receiver, raise-to-foreground service, distributor visibility
+  expect(m).toContain('<receiver android:name="dev.sveltedesktop.UnifiedPushReceiver" android:exported="true">');
+  expect(m).toContain('<action android:name="org.unifiedpush.android.connector.MESSAGE" />');
+  expect(m).toContain('<action android:name="org.unifiedpush.android.connector.RAISE_TO_FOREGROUND" />');
+  expect(m).toMatch(/<queries>[\s\S]*org\.unifiedpush\.android\.distributor\.REGISTER[\s\S]*android:scheme="unifiedpush"[\s\S]*<\/queries>/);
+  const off = androidManifest(resolveConfig("/tmp", { appName: "A", identifier: "a.b", push: { unifiedPush: false } }), { icon: false });
+  expect(off).not.toMatch(/unifiedpush|UnifiedPush/i);
+  expect(JSON.parse(notificationsAsset(resolveConfig("/tmp", { appName: "A", identifier: "a.b", push: { unifiedPush: false } }))).unifiedPush).toBe(false);
+  expect(m).not.toMatch(/com\.google\.firebase|firebase_|sveltedesktop\.PushService/);
   expect(m).not.toMatch(/__[A-Z]+__/);
 });
 
 test("notifications asset: config channels, foreground default, fcm flag", () => {
   const plain = resolveConfig("/tmp", { appName: "A", identifier: "a.b" });
-  expect(JSON.parse(notificationsAsset(plain))).toEqual({ channels: [], foreground: true, fcm: false });
+  expect(JSON.parse(notificationsAsset(plain))).toEqual({ channels: [], foreground: true, fcm: false, unifiedPush: true });
   expect(defaultChannel(plain)).toBe("default");
   const c = resolveConfig("/tmp", {
     appName: "A",
@@ -86,6 +94,7 @@ test("notifications asset: config channels, foreground default, fcm flag", () =>
     channels: [{ id: "messages", name: "Messages", importance: "high" }, { id: "news", name: "News", sound: false }],
     foreground: false,
     fcm: true,
+    unifiedPush: true,
   });
   expect(defaultChannel(c)).toBe("messages");
   const dup = resolveConfig("/tmp", { appName: "A", identifier: "a.b", notifications: { channels: [{ id: "x", name: "X" }, { id: "x", name: "Y" }] } });
@@ -162,3 +171,55 @@ test("FCM artifacts are pinned (exact versions + sha256)", () => {
   }
   expect(new Set(all.map((a) => `${a.group}:${a.artifact}`)).size).toBe(all.length);
 });
+
+test("Web Push decryption in the Android host (WebPushCrypto.java on a JVM): RFC 8291 appendix A + encryptWebPush interop", async () => {
+  const { androidToolchain } = await import("./package-android.ts");
+  let javac: string;
+  try {
+    javac = androidToolchain().javac;
+  } catch {
+    return; // no JDK / SDK on this machine
+  }
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { join, resolve } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const { encryptWebPush, b64url } = await import("../push/server.ts");
+  const dir = mkdtempSync(join(tmpdir(), "sd-webpush-"));
+  try {
+    const main = join(dir, "Main.java");
+    writeFileSync(
+      main,
+      `package dev.sveltedesktop;
+public class Main {
+  public static void main(String[] a) throws Exception {
+    java.util.Base64.Decoder d = java.util.Base64.getUrlDecoder();
+    byte[] out = WebPushCrypto.decrypt(d.decode(a[3]), WebPushCrypto.privateFromScalar(d.decode(a[0])), d.decode(a[1]), d.decode(a[2]));
+    System.out.print(new String(out, java.nio.charset.StandardCharsets.UTF_8));
+  }
+}`,
+    );
+    const src = resolve(import.meta.dir, "../../native/android/src/dev/sveltedesktop/WebPushCrypto.java");
+    const c = await Bun.$`${javac} --release 11 -d ${dir} ${src} ${main}`.quiet().nothrow();
+    expect(c.exitCode).toBe(0);
+    const java = javac.replace(/javac$/, "java");
+    const decrypt = async (d: string, pub: string, auth: string, body: string) => (await Bun.$`${java} -cp ${dir} dev.sveltedesktop.Main ${d} ${pub} ${auth} ${body}`.quiet()).text();
+    // RFC 8291 appendix A
+    expect(
+      await decrypt(
+        "q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94",
+        "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4",
+        "BTBZMqHH6r4Tts7J_aSIgg",
+        "DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN",
+      ),
+    ).toBe("When I grow up, I want to be a watermelon");
+    // what @svelte-desktop/shell/push sends, to a fresh device key
+    const pair = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"])) as CryptoKeyPair;
+    const d = (await crypto.subtle.exportKey("jwk", pair.privateKey)).d!;
+    const p256dh = b64url(await crypto.subtle.exportKey("raw", pair.publicKey));
+    const auth = b64url(crypto.getRandomValues(new Uint8Array(16)));
+    const message = JSON.stringify({ id: "m1", title: "Héllo ✓", body: "x".repeat(3000), payload: '{"url":"/a"}' });
+    expect(await decrypt(d, p256dh, auth, b64url(await encryptWebPush(new TextEncoder().encode(message), { p256dh, auth })))).toBe(message);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 60_000);

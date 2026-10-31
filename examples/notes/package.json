@@ -13,6 +13,7 @@
 		"test:android": "ANDROID_E2E=1 bun test --timeout 180000 tests/android.test.ts",
 		"build:android": "SVELTE_DESKTOP_TARGET=android bunx --bun vite build",
 		"test:ios": "IOS_E2E=1 bun test --timeout 180000 tests/ios.test.ts",
+		"push-server": "bun -e \"(await import('@svelte-desktop/shell/push-server')).servePush({ port: 47123, db: '.desktop/push.sqlite' }); console.log('push server on :47123')\"",
 		"build:ios": "SVELTE_DESKTOP_TARGET=ios bunx --bun vite build",
 		"test:ios-offline": "IOS_OFFLINE_E2E=1 bun test --timeout 180000 tests/ios-offline.test.ts"
 	},

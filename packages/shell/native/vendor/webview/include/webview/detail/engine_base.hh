@@ -43,6 +43,12 @@
 namespace webview {
 namespace detail {
 
+// svelte-desktop patch: when true, closing the last window doesn't stop the run loop.
+inline bool &keep_running_without_windows() {
+  static bool keep = false;
+  return keep;
+}
+
 class engine_base {
 public:
   engine_base(bool owns_window) : m_owns_window{owns_window} {}
@@ -317,7 +323,8 @@ protected:
 
   virtual void on_window_destroyed(bool skip_termination = false) {
     if (dec_window_count() <= 0) {
-      if (!skip_termination) {
+      // svelte-desktop patch: desktop.config quitOnLastWindowClosed: false keeps the loop.
+      if (!skip_termination && !keep_running_without_windows()) {
         terminate();
       }
     }

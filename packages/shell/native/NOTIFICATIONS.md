@@ -220,3 +220,33 @@ token and a delivered push via simctl), Android emulator (incl. shade taps), Lin
 (Xvfb), Chrome (a real Web Push through Google's push service). Need your
 credentials to run: a real APNs send (`APNS_KEY` e2e), FCM with a Firebase project.
 Windows compiles; it has not run on Windows.
+
+## Self-hosted push (no Apple / Google account)
+
+Web Push (RFC 8030 delivery, RFC 8291 encryption, RFC 8292 VAPID) is an open
+protocol, so the same target and the same sender work against your own server.
+
+- **Server** — two implementations of one contract: `@svelte-desktop/shell/push-server`
+  (Bun, bun:sqlite, anywhere) and `packages/push-worker` (Cloudflare Workers: one Durable
+  Object per device with SQLite storage, hibernatable WebSocket, TTL alarm — `wrangler deploy`).
+  - `POST /v1/subscribe` (`Authorization: Bearer <device secret>`, body
+    `{ applicationServerKey? }`) → `{ id, endpoint }`. `GET /v1/subscriptions/:id` checks it still exists (the
+    client re-subscribes on 404 and reports the new target), `DELETE` unsubscribes.
+  - `POST /v1/push/:id` — the Web Push endpoint: `Content-Encoding: aes128gcm`, `TTL`,
+    `Topic` (replaces a queued message with the same topic = dedupe), `Urgency`; VAPID
+    checked when the subscription has an applicationServerKey. 201 + Location; 404/410
+    for unknown/removed subscriptions (senders see `expired`).
+  - `GET /v1/connect` (WebSocket, `?secret=` or bearer) — the device's one connection:
+    queued messages first, then live ones `{ type: 'message', id, subscription, topic, body }`
+    (body base64), acked with `{ type: 'ack', id }`; TTL-expired ones are dropped. The client
+    pings (`{ type: 'ping' }` → `pong`) every 30 s.
+- **Desktop client** (macOS, Windows, Linux, when `push.server` is set): runs in the
+  app's server process, keeps the connection (backoff reconnect) while the app runs,
+  window closed included. Keys (P-256 + auth secret) and the device secret live in
+  `<data>/push.json`. A message is decrypted, shown with `notifications.show` (its `id`
+  dedupes, its payload deep-links) and emitted as `pushMessage`.
+- **Android** — UnifiedPush (the app registers with a distributor app, e.g. ntfy, by
+  intents; the endpoint it gets is a Web Push endpoint): `push.register` returns the same
+  `{ provider: 'webpush', endpoint, keys }` target; the app decrypts (RFC 8291) and shows /
+  emits like the desktop client. Falls back to FCM when no distributor is installed.
+- **iOS** — no alternative: APNs only (Apple allows no other background channel).

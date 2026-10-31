@@ -25,3 +25,12 @@ const serverOnly = {
 };
 
 (globalThis as any).host ??= buildHost(serverOnly);
+
+// Self-hosted push (desktop.config `push.server`) on macOS / Windows / Linux: the connection
+// lives in this process, so it holds while the app runs, window closed included.
+declare const __SVELTE_DESKTOP_PUSH__: { server?: string | null } | undefined;
+const pushServer = typeof __SVELTE_DESKTOP_PUSH__ !== "undefined" ? __SVELTE_DESKTOP_PUSH__?.server : null;
+if (pushServer && !process.env.SVELTE_DESKTOP_ANDROID_HOST)
+  onDesktopReady(() => {
+    void import("../push/desktop.ts").then(({ startDesktopPush }) => startDesktopPush(pushServer, desktop.paths.data));
+  });

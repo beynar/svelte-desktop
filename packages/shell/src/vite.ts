@@ -70,13 +70,13 @@ export async function desktop(kitOptions: Record<string, unknown> = {}, options:
   const kitPath = Bun.resolveSync("@sveltejs/kit/vite", config.root);
   const { sveltekit } = await import(kitPath);
   const kit = (await sveltekit({ ...kitOptions, adapter: desktopAdapter(config) })) as Plugin[];
-  return [...kit, hydrationMarker(config.osPermissions, { foreground: config.notifications?.foreground ?? true }), pushServiceWorker(), devPlugin(config, options)];
+  return [...kit, hydrationMarker(config.osPermissions, { foreground: config.notifications?.foreground ?? true }, { server: config.push?.server ?? null }), pushServiceWorker(), devPlugin(config, options)];
 }
 
 // SvelteKit has no public "hydrated" signal; tests (and apps) need one. Wrap the
 // client runtime's start(): once it resolves, <html data-desktop-hydrated> is set
 // and a `desktop:hydrated` event fires. No-op if Kit's code changes shape.
-function hydrationMarker(permissionsConfig: Record<string, string>, notificationsConfig: { foreground: boolean }): Plugin {
+function hydrationMarker(permissionsConfig: Record<string, string>, notificationsConfig: { foreground: boolean }, pushConfig: { server: string | null }): Plugin {
   const hostClient = JSON.stringify(join(shellRoot, "src", "host", "client.ts"));
   const hostServer = JSON.stringify(join(shellRoot, "src", "host", "server.ts"));
   return {
@@ -86,6 +86,7 @@ function hydrationMarker(permissionsConfig: Record<string, string>, notification
       define: {
         __SVELTE_DESKTOP_PERMISSIONS__: JSON.stringify(permissionsConfig),
         __SVELTE_DESKTOP_NOTIFICATIONS__: JSON.stringify(notificationsConfig),
+        __SVELTE_DESKTOP_PUSH__: JSON.stringify(pushConfig),
       },
     }),
     transform(code, id) {

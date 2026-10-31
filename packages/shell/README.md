@@ -231,6 +231,13 @@ const results = await push.sendMany(targets, { id: 'msg-42', title: 'Alice', bod
 // results[i].expired → the target is gone (uninstalled, unsubscribed): delete it
 ```
 
+No Apple or Google account on desktop: set `push.server` to your own push service — deploy
+`packages/push-worker` on Cloudflare (`bunx wrangler deploy`: Workers + one Durable Object per
+device, hibernatable WebSockets) or run `servePush()` from `@svelte-desktop/shell/push-server`
+anywhere. The app holds one connection while it runs; `register()` then returns a Web Push
+target and the same `push.send()` delivers to it, end-to-end encrypted. Android can use
+UnifiedPush (a distributor app such as ntfy); iOS has no alternative to APNs.
+
 In a plain browser tab, `host.notifications` uses the Notification API and a small
 service worker (`/__desktop/push-sw.js`, its own scope: it never competes with the
 app's). Per-platform details: [native/NOTIFICATIONS.md](native/NOTIFICATIONS.md).

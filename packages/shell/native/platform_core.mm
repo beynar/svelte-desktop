@@ -305,8 +305,10 @@ static void install_app_delegate_hooks(void) {
                   imp_implementationWithBlock(^BOOL(id, NSApplication *, BOOL visible) {
                     if (platform_on_reopen) platform_on_reopen(visible);
                     platform_emit(@"reopened", @{@"hasVisibleWindows" : @(visible)});
-                    if (!visible)
+                    if (!visible) {
+                      if (!platform_window_ids().count) platform_recreate_main_window();
                       for (NSNumber *n in platform_window_ids()) [platform_window(n.intValue) makeKeyAndOrderFront:nil];
+                    }
                     return YES;
                   }),
                   "c@:@c");

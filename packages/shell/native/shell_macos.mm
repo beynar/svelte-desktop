@@ -298,9 +298,18 @@ static int create_window(NSDictionary *o) {
   return w->id;
 }
 
+// The first window's options: a Dock click with no window left recreates it
+// (desktop.config quitOnLastWindowClosed: false).
+static NSDictionary *g_main_opts;
+extern "C" void webview_sd_keep_running_without_windows(int keep); // vendor/webview/webview.cc (patch)
+
 int shell_window_create(const char *opts_json) {
   if (![NSThread isMainThread]) return -2;
   NSDictionary *o = parse_json(opts_json) ?: @{};
+  if (!g_main_opts) {
+    g_main_opts = o;
+    if (o[@"quitOnLastWindowClosed"] && ![o[@"quitOnLastWindowClosed"] boolValue]) webview_sd_keep_running_without_windows(1);
+  }
   if (!g_app_name) g_app_name = o[@"appName"];
   if (!g_app_identifier) g_app_identifier = o[@"identifier"];
   int id = create_window(o);
@@ -344,6 +353,14 @@ NSString *platform_window_label(int id) {
   Window *w = find(id);
   return w ? w->label : nil;
 }
+int platform_recreate_main_window(void) {
+  if (!g_windows.empty() || !g_main_opts) return 0;
+  NSMutableDictionary *o = [g_main_opts mutableCopy];
+  for (NSString *k in @[ @"args", @"cwd", @"singleInstance", @"url" ]) [o removeObjectForKey:k];
+  o[@"label"] = @"main";
+  return platform_create_window(o);
+}
+
 int platform_create_window(NSDictionary *opts) {
   NSString *label = opts[@"label"];
   if (label)

@@ -120,7 +120,40 @@ export function androidManifest(c: ResolvedConfig, opts: { icon: boolean; fcm?: 
     .join("");
   // FCM: our PushService takes MESSAGING_EVENT (the SDK's own service sits at priority -500), no token
   // before push.register (auto-init off), FCM-displayed notifications use the default channel.
-  const application = opts.fcm
+  // UnifiedPush (push.unifiedPush, default on): the connector's receiver (exported: distributors
+  // are other apps; intents are checked against our token), the service a distributor binds to
+  // raise us while it delivers, and package visibility of distributors (REGISTER receivers, link activity).
+  const unifiedPush = c.push?.unifiedPush !== false;
+  const upEntries = unifiedPush
+    ? `
+        <receiver android:name="dev.sveltedesktop.UnifiedPushReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
+                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+                <action android:name="org.unifiedpush.android.connector.TEMP_UNAVAILABLE" />
+            </intent-filter>
+        </receiver>
+        <service android:name="dev.sveltedesktop.UnifiedPushService" android:exported="true">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.RAISE_TO_FOREGROUND" />
+            </intent-filter>
+        </service>`
+    : "";
+  const queries = unifiedPush
+    ? `
+    <queries>
+        <intent>
+            <action android:name="org.unifiedpush.android.distributor.REGISTER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="unifiedpush" android:host="link" />
+        </intent>
+    </queries>`
+    : "";
+  const application = upEntries + (opts.fcm
     ? `${opts.fcm.application}
         <service android:name="dev.sveltedesktop.PushService" android:exported="false">
             <intent-filter>
@@ -129,9 +162,10 @@ export function androidManifest(c: ResolvedConfig, opts: { icon: boolean; fcm?: 
         </service>
         <meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" />
         <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="${xml(defaultChannel(c))}" />`
-    : "";
+    : "");
   return readFileSync(join(hostDir, "AndroidManifest.xml"), "utf8")
     .replace("__PERMISSIONS__", permissions)
+    .replace("__QUERIES__", queries)
     .replaceAll("__PACKAGE__", androidPackageName(c.identifier))
     .replaceAll("__LABEL__", xml(c.appName))
     .replaceAll("__IDENTIFIER__", xml(c.identifier))
@@ -161,7 +195,7 @@ export function notificationsAsset(c: ResolvedConfig): string {
     if (ids.has(ch.id)) throw new Error(`notifications.channels: duplicate id "${ch.id}"`);
     ids.add(ch.id);
   }
-  return JSON.stringify({ channels, foreground: c.notifications?.foreground ?? true, fcm: !!c.push?.fcm });
+  return JSON.stringify({ channels, foreground: c.notifications?.foreground ?? true, fcm: !!c.push?.fcm, unifiedPush: c.push?.unifiedPush !== false });
 }
 
 const resString = (s: string) =>

@@ -100,6 +100,11 @@ static void deliver_response(NSDictionary *base, int origin, BOOL activates, BOO
   if (g_ring.count > 64) [g_ring removeObjectAtIndex:0];
   int target = cold ? 0 : platform_target_window(origin);
   if (!target) [g_unclaimed addObject:r];
+  // No window left (quitOnLastWindowClosed: false): open the main one; its page claims the click.
+  if (!target && activates && !platform_window_ids().count) {
+    platform_recreate_main_window();
+    [NSApp activateIgnoringOtherApps:YES];
+  }
   else if (activates) bring_to_front(target);
   platform_emit_targeted(@"notificationResponse", r, target);
 }
@@ -560,7 +565,8 @@ void platform_register_notifications(void) {
           if (input) r[@"input"] = input;
           if (NSString *p = payload_of(info)) r[@"payload"] = p;
           NSNumber *origin = info[@"sdw"];
-          deliver_response(r, [origin isKindOfClass:NSNumber.class] ? origin.intValue : 0, NO, [call boolean:@"cold" or:NO]);
+          // Like a real click: anything but a dismissal brings the app forward.
+          deliver_response(r, [origin isKindOfClass:NSNumber.class] ? origin.intValue : 0, ![r[@"kind"] isEqual:@"dismiss"], [call boolean:@"cold" or:NO]);
           [call ok:r];
         });
       }];

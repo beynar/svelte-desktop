@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Scheduled notifications are re-armed after a reboot (NotificationReceiver). -->
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />__PERMISSIONS__
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />__PERMISSIONS____QUERIES__
     <application
         android:label="__LABEL__"
         android:extractNativeLibs="true"

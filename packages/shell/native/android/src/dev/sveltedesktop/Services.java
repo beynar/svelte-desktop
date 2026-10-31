@@ -453,13 +453,22 @@ final class Services {
         });
 
         // Push: Firebase Cloud Messaging when the build has it (push.fcm in desktop.config.ts).
+        // UnifiedPush (a distributor app is installed, push.unifiedPush not false) → a Web Push target;
+        // else Firebase Cloud Messaging when the build has it (push.fcm); else unavailable.
         a.async("push.register", (args, r) -> {
-            Notifier.Push p = Notifier.push();
-            if (p == null) throw new MainActivity.OpError("unavailable", "push.register: this build has no Firebase Cloud Messaging (set push.fcm.googleServices in desktop.config.ts to your google-services.json)");
+            boolean up = UnifiedPush.available(a);
+            Notifier.Push p = up ? null : Notifier.push();
+            if (!up && p == null)
+                throw new MainActivity.OpError("unavailable", "push.register: no UnifiedPush distributor installed (e.g. ntfy) and this build has no Firebase Cloud Messaging (set push.fcm.googleServices in desktop.config.ts to your google-services.json)");
             Runnable go = () -> {
-                try { p.register(a.getApplicationContext(), r); } catch (Throwable t) { r.fail("unavailable", "push.register: " + t); }
+                try {
+                    if (up) UnifiedPush.register(a, args, r);
+                    else p.register(a.getApplicationContext(), r);
+                } catch (Throwable t) {
+                    r.fail("unavailable", "push.register: " + t);
+                }
             };
-            // Ask for the notification permission first; a refusal still gets a token (data messages).
+            // Ask for the notification permission first; a refusal still registers (data messages).
             if (Build.VERSION.SDK_INT >= 33 && !nm().areNotificationsEnabled()) {
                 markAsked(Manifest.permission.POST_NOTIFICATIONS);
                 a.requestPermission(Manifest.permission.POST_NOTIFICATIONS, granted -> go.run());
@@ -468,12 +477,14 @@ final class Services {
             }
         });
         a.async("push.unregister", (args, r) -> {
+            if (UnifiedPush.registered(a)) UnifiedPush.unregister(a);
             Notifier.Push p = Notifier.push();
-            if (p == null) { r.ok(null); return; }
+            if (p == null || Notifier.storedToken(a) == null) { r.ok(null); return; }
             try { p.unregister(a.getApplicationContext(), r); } catch (Throwable t) { r.fail("unavailable", "push.unregister: " + t); }
         });
         a.sync("push.token", args -> {
-            JSONObject t = Notifier.push() == null ? null : Notifier.storedToken(a);
+            JSONObject t = UnifiedPush.target(a);
+            if (t == null && Notifier.push() != null) t = Notifier.storedToken(a);
             return t == null ? JSONObject.NULL : t;
         });
     }

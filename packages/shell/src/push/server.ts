@@ -202,6 +202,29 @@ export async function encryptWebPush(
 	return concat(header, ciphertext);
 }
 
+/**
+ * The receiving side of RFC 8291: decrypt an aes128gcm body with the subscription's private
+ * key (ECDH P-256) and auth secret. Used by the desktop client of the self-hosted push.
+ */
+export async function decryptWebPush(body: Uint8Array, privateKey: CryptoKey, publicKey: Uint8Array, authSecret: Uint8Array): Promise<Uint8Array> {
+	if (body.length < 21) throw new Error('web push: body too short');
+	const salt = body.subarray(0, 16);
+	const idlen = body[20];
+	const asPublic = body.subarray(21, 21 + idlen);
+	const asKey = await crypto.subtle.importKey('raw', asPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+	const secret = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: asKey }, privateKey, 256));
+	const ikm = await hkdf(authSecret, secret, concat(enc.encode('WebPush: info\0'), publicKey, asPublic), 32);
+	const cek = await hkdf(salt, ikm, enc.encode('Content-Encoding: aes128gcm\0'), 16);
+	const nonce = await hkdf(salt, ikm, enc.encode('Content-Encoding: nonce\0'), 12);
+	const key = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['decrypt']);
+	const plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, key, body.subarray(21 + idlen)));
+	// Strip the padding: the last non-zero byte is the delimiter (2 = last record).
+	let end = plain.length - 1;
+	while (end >= 0 && plain[end] === 0) end--;
+	if (end < 0 || plain[end] !== 2) throw new Error('web push: bad record delimiter');
+	return plain.subarray(0, end);
+}
+
 /** Web Push Topic header: ≤32 URL-safe chars. */
 async function topicFor(id: string): Promise<string> {
 	if (/^[A-Za-z0-9_-]{1,32}$/.test(id)) return id;

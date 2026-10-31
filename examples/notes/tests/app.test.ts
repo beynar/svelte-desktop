@@ -246,3 +246,71 @@ test('notifications: dedupe by id, schedule, lists, deep link on click, actions/
 	expect(await app.eval('host.notifications.delivered()')).toEqual([]);
 	expect(await app.eval('host.notifications.pending()')).toEqual([]);
 });
+
+test('self-hosted push (push.server): register, end-to-end encrypted delivery, dedupe by id, tap deep-links', async () => {
+	const { servePush } = await import('@svelte-desktop/shell/push-server');
+	const { createPush, generateVapidKeys } = await import('@svelte-desktop/shell/push');
+	const server = servePush({ port: 47123, hostname: '127.0.0.1' });
+	try {
+		await app.eval(`(window.__pm = [], host.push.on('message', (m) => window.__pm.push(m)), true)`);
+		const target = await app.eval<{ provider: string; endpoint: string; keys: { p256dh: string; auth: string } }>('host.push.register()');
+		expect(target.provider).toBe('webpush');
+		expect(target.endpoint).toStartWith('http://127.0.0.1:47123/v1/push/');
+		for (let i = 0; i < 100 && server.push.connected() === 0; i++) await Bun.sleep(50);
+		expect(server.push.connected()).toBe(1); // the app's server process holds the connection
+		const push = createPush({ webpush: { ...(await generateVapidKeys()), subject: 'mailto:ops@example.com' } });
+		await push.send(target as never, { id: 'sh-1', title: 'Self-hosted', body: 'one', url: '/about', data: { n: 1 } });
+		await app.waitFor(() => (window as any).__pm.some((m: { id: string }) => m.id === 'sh-1'), { timeout: 10_000 });
+		const message = (await app.eval<{ id: string; url?: string; data?: unknown; notification?: { title: string } }[]>('window.__pm'))[0];
+		expect(message).toMatchObject({ id: 'sh-1', url: '/about', data: { n: 1 }, notification: { title: 'Self-hosted' } });
+		if (process.env.DESKTOP_TEST_DEV) return; // unbundled: no native notification center
+		await push.send(target as never, { id: 'sh-1', title: 'Self-hosted', body: 'two', url: '/about' });
+		await app.waitFor(() => (window as any).__pm.length >= 2, { timeout: 10_000 });
+		const shown = (await app.eval<{ id: string; body: string }[]>('host.notifications.delivered()')).filter((n) => n.id === 'sh-1');
+		expect(shown).toEqual([expect.objectContaining({ body: 'two', url: '/about' })]);
+		await app.platform('notifications', 'simulateResponse', { id: 'sh-1' });
+		await app.waitFor(() => location.pathname === '/about', { timeout: 5000 });
+		await app.eval('host.notifications.dismissAll()');
+		await app.eval('host.push.unregister()');
+		expect(await app.eval('host.push.token()')).toBeNull();
+	} finally {
+		server.stop(true);
+	}
+});
+
+test('quitOnLastWindowClosed: false — window closed, the app and its push connection live on; a click reopens the window and deep-links', async () => {
+	if (process.env.DESKTOP_TEST_DEV) return; // vite dev owns the window lifecycle
+	const { servePush } = await import('@svelte-desktop/shell/push-server');
+	const { createPush, generateVapidKeys } = await import('@svelte-desktop/shell/push');
+	const server = servePush({ port: 47123, hostname: '127.0.0.1' });
+	try {
+		const target = await app.eval<never>('host.push.register()');
+		for (let i = 0; i < 100 && server.push.connected() === 0; i++) await Bun.sleep(50);
+		await app.platform('window', 'close', { windowId: 0 });
+		await Bun.sleep(1000);
+		// Still running, no window, still connected.
+		expect(await app.platform<unknown[]>('window', 'list')).toEqual([]);
+		expect(server.push.connected()).toBe(1);
+		const push = createPush({ webpush: { ...(await generateVapidKeys()), subject: 'mailto:ops@example.com' } });
+		await push.send(target, { id: 'closed-1', title: 'While closed', body: 'still delivered', url: '/about' });
+		let delivered: { id: string }[] = [];
+		for (let i = 0; i < 100 && !delivered.some((n) => n.id === 'closed-1'); i++) {
+			delivered = await app.platform<{ id: string }[]>('notifications', 'delivered');
+			await Bun.sleep(100);
+		}
+		expect(delivered.map((n) => n.id)).toContain('closed-1');
+		// The click reopens the main window; its page claims the click and navigates.
+		await app.platform('notifications', 'simulateResponse', { id: 'closed-1' });
+		let windows: unknown[] = [];
+		for (let i = 0; i < 100 && !windows.length; i++) {
+			windows = await app.platform<unknown[]>('window', 'list');
+			await Bun.sleep(100);
+		}
+		expect(windows).toHaveLength(1);
+		await app.waitFor(() => location.pathname === '/about', { timeout: 15_000 });
+		await app.eval('host.notifications.dismissAll()');
+		await app.eval('host.push.unregister()');
+	} finally {
+		server.stop(true);
+	}
+});

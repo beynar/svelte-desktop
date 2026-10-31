@@ -203,6 +203,36 @@ function parsePayload(text: unknown): Payload {
 const isPage = typeof window !== 'undefined' && typeof document !== 'undefined';
 const native = () => platformReady();
 
+// Self-hosted push (desktop.config `push.server`) on desktop: the client runs in the app's
+// server process (push/desktop.ts); pages ask it over the `push:*` broadcast channel.
+declare const __SVELTE_DESKTOP_PUSH__: { server?: string | null } | undefined;
+const PUSH_CLIENT = Symbol.for('svelte-desktop.push.client');
+function selfHostedPush(): boolean {
+	const c = typeof __SVELTE_DESKTOP_PUSH__ !== 'undefined' ? __SVELTE_DESKTOP_PUSH__ : undefined;
+	if (!c?.server || !native()) return false;
+	return isPage ? !/Android|iPhone|iPad/i.test(navigator.userAgent) : !process.env.SVELTE_DESKTOP_ANDROID_HOST;
+}
+type DesktopPush = { register(): Promise<PushTarget>; target(): PushTarget | null; unregister(): Promise<void> };
+async function desktopPush<T>(op: 'register' | 'token' | 'unregister'): Promise<T> {
+	if (!isPage) {
+		const client = (globalThis as Record<symbol, DesktopPush | undefined>)[PUSH_CLIENT];
+		if (!client) throw new NativeApiError('unavailable', 'push: the self-hosted push client is not started yet (push.server)');
+		return (op === 'register' ? await client.register() : op === 'unregister' ? (await client.unregister(), null) : client.target()) as T;
+	}
+	const nonce = randomId();
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => { off(); reject(new NativeApiError('unavailable', `push.${op}: no answer from the app server (push.server)`)); }, 30_000);
+		const off = onPlatform<{ channel: string; data: { nonce: string; ok: boolean; value?: T; error?: string } }>('message', (m) => {
+			if (m?.channel !== 'push:reply' || m.data?.nonce !== nonce) return;
+			clearTimeout(timer);
+			off();
+			if (m.data.ok) resolve(m.data.value as T);
+			else reject(new NativeApiError('unavailable', `push.${op}: ${m.data.error}`));
+		});
+		void callPlatform('events', 'emit', { channel: 'push:request', data: { op, nonce } }).catch((e) => { clearTimeout(timer); off(); reject(e); });
+	});
+}
+
 function toMillis(v: Date | number | string): number {
 	const ms = v instanceof Date ? v.getTime() : typeof v === 'number' ? v : Date.parse(v);
 	if (!Number.isFinite(ms)) throw new NativeApiError('invalid_args', `notifications.show: invalid date ${String(v)}`);
@@ -385,6 +415,12 @@ function bind() {
 	onPlatform<{ id: string; payload?: string; push?: boolean }>('notificationShown', handleShown);
 	onPlatform<{ provider: string; token: string }>('pushToken', () => void push.token().then((t) => t && emitLocal(['token'], t)));
 	onPlatform<Parameters<typeof toPushMessage>[0]>('pushMessage', (m) => emit(['message'], toPushMessage(m)));
+	// Self-hosted push: the server process relays messages and new targets to the pages.
+	if (isPage)
+		onPlatform<{ channel: string; data: unknown }>('message', (m) => {
+			if (m?.channel === 'push:message') emit(['message'], toPushMessage(m.data as Parameters<typeof toPushMessage>[0]));
+			if (m?.channel === 'push:token') emitLocal(['token'], m.data);
+		});
 	onPlatformReady(() => {
 		// Responses that happened before this context was listening (a click that launched the app).
 		if (isPage) callPlatform<WireResponse[]>('notifications', 'claim').then((list) => list.forEach((r) => handleResponse(r, { target: true })), () => {});
@@ -623,18 +659,20 @@ export const push = {
 	 * (`vapidPublicKey` required there).
 	 */
 	async register(opts: { vapidPublicKey?: string } = {}): Promise<PushTarget> {
-		const t = native() ? await callPlatform<PushTarget>('push', 'register') : await web.pushRegister(opts);
+		const t = selfHostedPush() ? await desktopPush<PushTarget>('register') : native() ? await callPlatform<PushTarget>('push', 'register') : await web.pushRegister(opts);
 		S.pushToken = t;
 		return t;
 	},
 	unregister: async () => {
-		if (native()) await callPlatform<null>('push', 'unregister');
+		if (selfHostedPush()) await desktopPush('unregister');
+		else if (native()) await callPlatform<null>('push', 'unregister');
 		else await web.pushUnregister();
 		S.pushToken = null;
 		return null;
 	},
 	/** The current target, or null when not registered. */
 	async token(): Promise<PushTarget | null> {
+		if (selfHostedPush()) return (S.pushToken = await desktopPush<PushTarget | null>('token'));
 		if (!native()) {
 			const reg = await web.sw();
 			const sub = await reg?.pushManager?.getSubscription();
