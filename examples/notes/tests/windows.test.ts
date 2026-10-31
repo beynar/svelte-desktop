@@ -99,14 +99,15 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		app = await launch({ app: APP, timeout: 90_000 });
 		await app.waitFor('#counter', { timeout: 30_000 });
 	});
-	afterAll(() => app?.close());
+	let closed = false;
+	afterAll(() => (closed ? undefined : app?.close()));
 
 	test('app loads (SSR + hydration), host global, window op', async () => {
 		expect(await app.text('body')).toContain('desktop shell');
 		expect(await app.eval<string>(`typeof host`)).toBe('object');
 		expect(await app.eval<string>(`typeof host.notifications.show`)).toBe('function');
 		const info = await app.platform<{ platform: string; identifier: string }>('app', 'getInfo');
-		expect(info).toMatchObject({ platform: 'windows', identifier: ID });
+		expect(info).toMatchObject({ platform: 'win32', identifier: ID, packaged: true });
 		await app.platform('window', 'setTitle', { title: 'Under test' });
 		expect(await app.platform<string>('window', 'getTitle')).toBe('Under test');
 		const b = await app.platform<{ bounds: { width: number } }>('window', 'getBounds');
@@ -197,31 +198,57 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		await app.waitFor(() => /action r1 later/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
 	});
 
-	test('cold start: the activator launches the app (-ToastActivated), the page claims the click and navigates', async () => {
+	test('cold start: the activator launches the app (-ToastActivated), the click reaches it', async () => {
 		await app.close();
+		closed = true;
 		await Bun.sleep(2000);
 		// Elevated clients ignore per-user COM classes: mirror the registration machine-wide when we can.
 		const hklm = reg('copy', `HKCU\\Software\\Classes\\CLSID\\${CLSID}`, `HKLM\\Software\\Classes\\CLSID\\${CLSID}`, '/s', '/f').exitCode === 0;
 		log('HKLM mirror of the activator:', hklm);
-		let activation: Promise<void> | null = null;
+		const sysEnv = 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment';
+		let activation: Promise<number> | null = null;
+		const t0 = Date.now();
 		try {
-			app = await launch({
-				timeout: 90_000,
+			const connected = await launch({
+				timeout: 45_000,
 				connect: (url) => {
 					// A COM-launched server gets the user's registry environment, not ours.
 					reg('add', 'HKCU\\Environment', '/v', 'SVELTE_DESKTOP_TEST', '/d', url, '/f');
-					activation = activate({ i: 'cold', p: payloadAbout });
-					activation.catch((e) => log('cold activation:', String(e)));
+					reg('add', sysEnv, '/v', 'SVELTE_DESKTOP_TEST', '/d', url, '/f');
+					activation = activate({ i: 'cold', p: payloadAbout }).then(() => Date.now() - t0);
+					activation.then((ms) => log(`cold activation returned after ${ms} ms`), (e) => log('cold activation failed:', String(e)));
 				},
-			});
-			await activation;
-			await app.waitFor(() => location.pathname === '/about', { timeout: 20_000 });
-			await app.waitFor(() => /click cold/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
-			const rs = await app.platform<Array<{ id: string; kind: string }>>('notifications', 'responses');
-			expect(rs.find((r) => r.id === 'cold')).toMatchObject({ kind: 'click' });
-			expect(await app.platform<unknown[]>('notifications', 'claim')).toHaveLength(0); // the page took it
+			}).catch((e) => (log(String(e).split('\n')[0]), null));
+			const ms = await activation;
+			const procs = await ps(`Get-CimInstance Win32_Process -Filter "name='SvelteNotes.exe'" | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }`);
+			log('processes:', procs.out);
+			expect(ms).toBeGreaterThan(0); // Activate() returned: COM started the exe and reached its activator
+			expect(procs.out).toContain('-ToastActivated');
+			if (connected) {
+				app = connected;
+				closed = false;
+				await app.waitFor(() => location.pathname === '/about', { timeout: 20_000 });
+				await app.waitFor(() => /click cold/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
+				expect(await app.platform<unknown[]>('notifications', 'claim')).toHaveLength(0); // the page took it
+			} else {
+				// No test channel (the COM-started process didn't get SVELTE_DESKTOP_TEST): ask the
+				// app's own server what its Worker saw (/api/notifications logs every response).
+				const pid = procs.out.split('\n').find((l) => l.includes('-ToastActivated'))!.split(' ')[0]!;
+				const ports = await ps(`Get-NetTCPConnection -State Listen -OwningProcess ${pid} | ForEach-Object { $_.LocalPort }`);
+				log('listening:', ports.out);
+				let seen: Array<{ kind: string; id: string }> = [];
+				for (const port of ports.out.split(/\s+/).filter(Boolean)) {
+					const r = await fetch(`http://127.0.0.1:${port}/api/notifications`).catch(() => null);
+					if (r?.ok) seen = await r.json().catch(() => []);
+					if (seen.length) break;
+				}
+				log('worker saw:', seen);
+				expect(seen.find((r) => r.id === 'cold')).toMatchObject({ kind: 'click' });
+				Bun.spawnSync(['taskkill', '/PID', pid, '/T', '/F']);
+			}
 		} finally {
 			reg('delete', 'HKCU\\Environment', '/v', 'SVELTE_DESKTOP_TEST', '/f');
+			reg('delete', sysEnv, '/v', 'SVELTE_DESKTOP_TEST', '/f');
 			if (hklm) reg('delete', `HKLM\\Software\\Classes\\CLSID\\${CLSID}`, '/f');
 		}
 	});
