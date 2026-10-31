@@ -36,6 +36,9 @@ export interface LaunchOptions {
   env?: Record<string, string>;
   /** Command-line arguments for a built app (URLs, documents to open). */
   args?: string[];
+  /** Start the app yourself (e.g. Windows' toast activator launching it): called with the
+   *  test channel URL to put in the app's SVELTE_DESKTOP_TEST; launch() then waits for it to connect. */
+  connect?: (testUrl: string) => void | Promise<void>;
   /** ms to wait for the app to connect and its page to load. Default 30000. */
   timeout?: number;
 }
@@ -125,6 +128,24 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
   if (options.android) {
     server.stop(true); // the runner connects to the app instead
     return launchAndroid(options, route, hello, resolveHello, () => socket, pending, waiters, () => nextId++, timeout);
+  }
+  if (options.connect) {
+    const timer = setTimeout(() => resolveHello({ origin: "" }), timeout);
+    await options.connect(env.SVELTE_DESKTOP_TEST);
+    const h = await hello;
+    clearTimeout(timer);
+    if (!socket) {
+      server.stop(true);
+      throw new Error(`launch: the app did not connect within ${timeout} ms`);
+    }
+    return makeHandle({
+      origin: h.origin, socket: socket!, pending, waiters, nextId: () => nextId++, timeout, stdout: () => "",
+      async stop(platform) {
+        await platform("app", "quit").catch(() => {});
+        await Bun.sleep(1000);
+        server.stop(true);
+      },
+    });
   }
   let cmd: string[];
   let cwd = process.cwd();

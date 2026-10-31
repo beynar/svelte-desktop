@@ -1,0 +1,78 @@
+# Windows build of examples/notes (cross-compiled on Linux: Bun --compile + shell.dll with
+# llvm-mingw in Docker + NSIS), then its e2e on a real Windows runner (WebView2, WinRT
+# toasts, the COM toast activator): examples/notes/tests/windows.test.ts.
+name: windows
+
+on:
+  push:
+    branches: [bun-webview-shell]
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Install (examples/notes)
+        working-directory: examples/notes
+        run: bun install
+      - name: Build the Windows app (shell.dll, addon and installer through the Docker toolchain)
+        working-directory: examples/notes
+        run: SVELTE_DESKTOP_TARGET=windows bunx --bun vite build
+      - name: Unit tests (packagers)
+        working-directory: packages/shell
+        run: bun test src/build/package-windows.test.ts src/build/package-linux.test.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notes-windows-x64
+          path: examples/notes/.desktop/dist/Svelte Notes-windows-x64
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notes-windows-x64-installer
+          path: examples/notes/.desktop/dist/*-setup.exe
+          if-no-files-found: error
+
+  test:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/download-artifact@v4
+        with:
+          name: notes-windows-x64
+          path: notes-app
+      - name: Install (examples/notes, no scripts)
+        working-directory: examples/notes
+        run: bun install --ignore-scripts
+      - name: Session info
+        shell: powershell
+        run: |
+          $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+          "user: $($id.Name)  admin: $(([Security.Principal.WindowsPrincipal]$id).IsInRole('Administrators'))  session: $((Get-Process -Id $PID).SessionId)"
+          [System.Environment]::OSVersion.VersionString
+          Get-ChildItem notes-app | Format-Table Name, Length
+      - name: e2e (tests/windows.test.ts)
+        working-directory: examples/notes
+        env:
+          WINDOWS_E2E: '1'
+          WINDOWS_APP: ${{ github.workspace }}\notes-app
+        run: bun test --timeout 120000 tests/windows.test.ts
+      - name: App logs on failure
+        if: failure()
+        shell: powershell
+        run: |
+          Get-ChildItem -Recurse "$env:LOCALAPPDATA\dev.svelte-desktop.notes" -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize
+          Get-ChildItem -Recurse "$env:LOCALAPPDATA\dev.svelte-desktop.notes" -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Tail 80 }
