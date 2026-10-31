@@ -100,6 +100,18 @@ public static class SdInput {
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint f);
+  // The root window under a screen point: "hwnd|class|title|pid|rect" (band windows included).
+  public static string At(int x, int y) {
+    POINT p; p.X = x; p.Y = y; IntPtr h = GetAncestor(WindowFromPoint(p), 2);
+    if (h == IntPtr.Zero) return "";
+    var c = new System.Text.StringBuilder(256); GetClassName(h, c, 256);
+    var t = new System.Text.StringBuilder(256); GetWindowText(h, t, 256);
+    uint pid; GetWindowThreadProcessId(h, out pid); RECT r; GetWindowRect(h, out r);
+    return h.ToInt64() + "|" + c + "|" + t + "|" + pid + "|" + r.L + "," + r.T + "," + r.R + "," + r.B;
+  }
   // Visible top-level windows (toast popups sit in a shell z-band UIA's root doesn't list): "hwnd|class|title|pid|l,t,r,b"
   public static string[] Windows() {
     var list = new System.Collections.Generic.List<string>();
@@ -137,9 +149,22 @@ function Dump($el, $depth, $max) {
   while ($ch) { Dump $ch ($depth + 1) $max; $ch = $w.GetNextSibling($ch) }
 }
 function ShellWindows { [SdInput]::Windows() | Where-Object { $f = $_.Split('|'); $f[1] -eq 'Windows.UI.Core.CoreWindow' -or $f[2] -match 'otification' } }
+# Toast popups don't show up in EnumWindows / UIA's root on this shell: probe the bottom-right
+# corner (where they stack) with WindowFromPoint and take the windows that aren't ours.
+function ProbeWindows {
+  $b = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  $seen = @{}
+  for ($y = $b.Bottom - 20; $y -gt $b.Bottom - 700 -and $y -gt $b.Top; $y -= 40) {
+    foreach ($x in @(($b.Right - 60), ($b.Right - 200), ($b.Right - 330))) {
+      $w = [SdInput]::At($x, $y)
+      if ($w -and -not $seen.ContainsKey($w.Split('|')[0])) { $seen[$w.Split('|')[0]] = $w }
+    }
+  }
+  $seen.Values | Where-Object { $f = $_.Split('|'); $f[1] -notin @('SvelteDesktopWindow', 'Progman', 'WorkerW', 'Shell_TrayWnd', 'CASCADIA_HOSTING_WINDOW_CLASS', 'ConsoleWindowClass') }
+}
 function Hosts {
   $out = @()
-  foreach ($w in ShellWindows) { try { $out += $A::FromHandle([IntPtr][long]$w.Split('|')[0]) } catch {} }
+  foreach ($w in @(ShellWindows) + @(ProbeWindows)) { try { $out += $A::FromHandle([IntPtr][long]$w.Split('|')[0]) } catch {} }
   $out += @($A::RootElement.FindAll($TS::Children, $True_) | Where-Object { $_.Current.ClassName -like '*CoreWindow*' -or $_.Current.Name -match 'otification' })
   return $out
 }
@@ -158,6 +183,7 @@ switch ($Mode) {
   'shot' { Shot $s.path; 'ok' }
   'dump' {
     '== windows'; [SdInput]::Windows() | ForEach-Object { $f = $_.Split('|'); $p = (Get-Process -Id $f[3] -ErrorAction SilentlyContinue).ProcessName; "$_|$p" }
+    '== probed'; ProbeWindows | ForEach-Object { $f = $_.Split('|'); $p = (Get-Process -Id $f[3] -ErrorAction SilentlyContinue).ProcessName; "$_|$p" }
     foreach ($h in Hosts) { '== host'; Dump $h 0 14 }
   }
   'act' {
@@ -327,32 +353,6 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		await app.waitFor(() => /action r1 later/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
 	});
 
-	test('visual: rich toast (hero image, logo, buttons, critical) + taskbar badge → screenshots', async () => {
-		const hero = pngDataUrl(364, 180, (x, y) => [255 - (x * 200) / 364, 62 + (y * 120) / 180, 0 + (x * 255) / 364, 255]);
-		const logo = pngDataUrl(64, 64, (x, y) => ((x - 32) ** 2 + (y - 32) ** 2 < 900 ? [255, 62, 0, 255] : [0, 0, 0, 0]));
-		const rich = { subtitle: '#general', image: hero, icon: logo,
-			actions: [{ id: 'reply', title: 'Reply', input: { placeholder: 'Type a reply', button: 'Send' } }, { id: 'delete', title: 'Delete', destructive: true }] };
-		await show({ id: 'v2', title: 'Visual check', body: 'Hero image, logo override, input + buttons', ...rich });
-		await Bun.sleep(2000);
-		await shot('toast-rich.png');
-		log(await uia('dump'));
-		await app.eval(`host.notifications.dismiss('v2')`);
-		// urgency critical = scenario "urgent": Windows 11 first asks the user ("Important Notification Request").
-		await show({ id: 'v1', title: 'Visual check (critical)', body: 'Urgent scenario', urgency: 'critical', ...rich });
-		await Bun.sleep(2000);
-		await shot('toast-urgent-request.png');
-		log('allow important:', await uia('act', { title: 'important notifications', button: '^Allow$' }));
-		await Bun.sleep(1000);
-		await show({ id: 'v1', title: 'Visual check (critical)', body: 'Urgent scenario, after Allow', urgency: 'critical', ...rich });
-		await Bun.sleep(2000);
-		await shot('toast-urgent.png');
-		await app.eval(`host.notifications.dismiss('v1')`);
-		await app.eval(`host.notifications.setBadge(7)`);
-		await Bun.sleep(800);
-		await shot('taskbar-badge.png');
-		await app.eval(`host.notifications.setBadge(null)`);
-	});
-
 	const once = async (id: string, kind: string) => {
 		await Bun.sleep(1500); // let a second path (Activated event + COM activator) deliver a duplicate if it would
 		const rs = await app.platform<Array<{ id: string; kind: string }>>('notifications', 'responses');
@@ -361,6 +361,8 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 
 	test('real click on the toast (UI Automation + mouse) → page navigates to its url', async () => {
 		await home();
+		await app.eval(`host.notifications.dismissAll()`); // one toast on screen at a time
+		await Bun.sleep(1000);
 		await show({ id: 'u1', title: 'Real click', body: 'Opens About', url: '/about', requireInteraction: true });
 		await Bun.sleep(1500);
 		await shot('toast-click.png');
@@ -398,6 +400,32 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		expect(JSON.parse(r).error).toBeUndefined();
 		expect((await next).kind).toBe('dismiss');
 		await once('u3', 'dismiss');
+	});
+
+	test('visual: rich toast (hero image, logo, buttons, critical) + taskbar badge → screenshots', async () => {
+		const hero = pngDataUrl(364, 180, (x, y) => [255 - (x * 200) / 364, 62 + (y * 120) / 180, 0 + (x * 255) / 364, 255]);
+		const logo = pngDataUrl(64, 64, (x, y) => ((x - 32) ** 2 + (y - 32) ** 2 < 900 ? [255, 62, 0, 255] : [0, 0, 0, 0]));
+		const rich = { subtitle: '#general', image: hero, icon: logo,
+			actions: [{ id: 'reply', title: 'Reply', input: { placeholder: 'Type a reply', button: 'Send' } }, { id: 'delete', title: 'Delete', destructive: true }] };
+		await show({ id: 'v2', title: 'Visual check', body: 'Hero image, logo override, input + buttons', ...rich });
+		await Bun.sleep(2000);
+		await shot('toast-rich.png');
+		log(await uia('dump'));
+		await app.eval(`host.notifications.dismiss('v2')`);
+		// urgency critical = scenario "urgent": Windows 11 first asks the user ("Important Notification Request").
+		await show({ id: 'v1', title: 'Visual check (critical)', body: 'Urgent scenario', urgency: 'critical', ...rich });
+		await Bun.sleep(2000);
+		await shot('toast-urgent-request.png');
+		log('allow important:', await uia('act', { title: 'important notifications', button: '^Allow$' }));
+		await Bun.sleep(1000);
+		await show({ id: 'v1', title: 'Visual check (critical)', body: 'Urgent scenario, after Allow', urgency: 'critical', ...rich });
+		await Bun.sleep(2000);
+		await shot('toast-urgent.png');
+		await app.eval(`host.notifications.dismiss('v1')`);
+		await app.eval(`host.notifications.setBadge(7)`);
+		await Bun.sleep(800);
+		await shot('taskbar-badge.png');
+		await app.eval(`host.notifications.setBadge(null)`);
 	});
 
 	test('cold start: the activator launches the app (-ToastActivated), the click reaches it', async () => {
