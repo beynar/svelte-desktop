@@ -1190,6 +1190,10 @@ void register_notifications() {
       return c->fail("internal", saved.empty() ? err : "notifications.show: the schedule could not be saved: " + saved);
     }
     if (future) remove_delivered(s.id); // one id = one notification: the scheduled one replaces the shown one
+    // The OS shows it later, maybe after this process is gone: its record (payload, group, action
+    // flags) must already be on disk for the click that cold-starts the app.
+    notif::records()[s.id] = notif::make_record(s, window);
+    save_records();
     g_sched_window[s.id] = window;
     rearm_timer();
     c->ok(json{{"id", s.id}, {"scheduled", true}});
