@@ -557,7 +557,10 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		await app.waitFor('#counter', { timeout: 30_000 });
 	});
 
-	test('cold start: the activator launches the app (-ToastActivated), the click reaches it', async () => {
+	test('cold start: the activator launches the app (-ToastActivated), the click reaches it with its whole payload', async () => {
+		// > 2 KB of data: the toast arguments carry the id only, the payload comes from the persisted record.
+		const big = 'x'.repeat(3000);
+		await app.eval(`host.notifications.show({ id: 'cold', title: 'Cold', url: '/about', data: ${JSON.stringify(big)} })`);
 		await app.close();
 		closed = true;
 		await Bun.sleep(2000);
@@ -579,7 +582,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 					writeFileSync(cmd, `@echo off\r\nset SVELTE_DESKTOP_TEST=${url}\r\n"${exe}" -ToastActivated %*\r\n`);
 					const wrapper = `"${process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe'}" /d /c "${cmd}"`;
 					for (const root of hklm ? ['HKCU', 'HKLM'] : ['HKCU']) reg('add', `${root}\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', wrapper, '/f');
-					activation = activate({ i: 'cold', p: payloadAbout }).then(() => Date.now() - t0);
+					activation = activate({ i: 'cold' }).then(() => Date.now() - t0);
 					activation.then((ms) => log(`cold activation returned after ${ms} ms`), (e) => log('cold activation failed:', String(e)));
 				},
 			}).catch((e) => (log(String(e).split('\n')[0]), null));
@@ -594,8 +597,9 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 			closed = false;
 			await app.waitFor(() => location.pathname === '/about', { timeout: 20_000 });
 			await app.waitFor(() => /click cold/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
-			const rs = await app.platform<Array<{ id: string; kind: string }>>('notifications', 'responses');
+			const rs = await app.platform<Array<{ id: string; kind: string; payload: string | null }>>('notifications', 'responses');
 			expect(rs.find((r) => r.id === 'cold')).toMatchObject({ kind: 'click' });
+			expect(JSON.parse(rs.find((r) => r.id === 'cold')!.payload!)).toEqual({ url: '/about', data: big });
 			expect(await app.platform<unknown[]>('notifications', 'claim')).toHaveLength(0); // the page took it
 			expect(reg('query', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`).stdout.toString()).toContain(`"${exe}" -ToastActivated`); // restored by the app
 		} finally {
@@ -603,24 +607,6 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 			if (hklm) reg('delete', `HKLM\\Software\\Classes\\CLSID\\${CLSID}`, '/f');
 		}
 	});
-
-	test('a click after a restart recovers the whole payload (> 2 KB) from the persisted record, not the toast arguments', async () => {
-		const data = 'x'.repeat(3000);
-		await app.eval(`host.notifications.show({ id: 'big', title: 'Big payload', url: '/about', data: ${JSON.stringify(data)} })`);
-		await app.close();
-		closed = true;
-		await Bun.sleep(2000);
-		const exe = join(APP, readdirSync(APP).find((f) => /\.exe$/i.test(f))!);
-		try {
-			const connected = await launch({
-				timeout: 45_000,
-				connect: (url) => {
-					const cmd = join(tmp, 'toast-launch-big.cmd');
-					writeFileSync(cmd, `@echo off\r\nset SVELTE_DESKTOP_TEST=${url}\r\n"${exe}" -ToastActivated %*\r\n`);
-					reg('add', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', `"${process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe'}" /d /c "${cmd}"`, '/f');
-					void activate({ i: 'big' }); // what the toast carries now: the id only
-				},
-			});
 			app = connected;
 			closed = false;
 			await app.waitFor(() => location.pathname === '/about', { timeout: 20_000 });
