@@ -1,0 +1,254 @@
+[
+  {
+    "name": "kit-0-adapter-own-compile",
+    "ready_ms_runs": [
+      886.9,
+      23.2,
+      21.9,
+      20.8,
+      21.7
+    ],
+    "ready_ms_median": 21.9,
+    "rss_idle_mb": 24,
+    "rss_after_200_mb": 62.6,
+    "ssr_rps_sequential": 6300,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "hello-a-stable",
+    "ready_ms_runs": [
+      841.5,
+      8.3,
+      8.2,
+      8.2,
+      8.2
+    ],
+    "ready_ms_median": 8.2,
+    "rss_idle_mb": 11.8,
+    "rss_after_200_mb": 14,
+    "ssr_rps_sequential": 28461,
+    "checks_passed": "1/1",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "hello-b-canary",
+    "ready_ms_runs": [
+      3927.8,
+      11.2,
+      11,
+      10.9,
+      11.4
+    ],
+    "ready_ms_median": 11.2,
+    "rss_idle_mb": 11.5,
+    "rss_after_200_mb": 13.9,
+    "ssr_rps_sequential": 17656,
+    "checks_passed": "1/1",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "hello-e-trim-en",
+    "ready_ms_runs": [
+      706.9,
+      11,
+      10.9,
+      11,
+      10.9
+    ],
+    "ready_ms_median": 11,
+    "rss_idle_mb": 11.7,
+    "rss_after_200_mb": 14,
+    "ssr_rps_sequential": 32411,
+    "checks_passed": "1/1",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "hello-f-aot",
+    "ready_ms_runs": [
+      599.4,
+      10.4,
+      10.4,
+      10.5,
+      10.2
+    ],
+    "ready_ms_median": 10.4,
+    "rss_idle_mb": 13.4,
+    "rss_after_200_mb": 13.6,
+    "ssr_rps_sequential": 36194,
+    "checks_passed": "1/1",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "hello-g-aot-trim-en",
+    "ready_ms_runs": [
+      444.1,
+      10.7,
+      10.8,
+      10.7,
+      10.6
+    ],
+    "ready_ms_median": 10.7,
+    "rss_idle_mb": 13.3,
+    "rss_after_200_mb": 13.5,
+    "ssr_rps_sequential": 16547,
+    "checks_passed": "1/1",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-a-stable",
+    "ready_ms_runs": [
+      875.5,
+      21.5,
+      21.1,
+      20.6,
+      20.7
+    ],
+    "ready_ms_median": 21.1,
+    "rss_idle_mb": 24.3,
+    "rss_after_200_mb": 61.5,
+    "ssr_rps_sequential": 5770,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-b-canary",
+    "ready_ms_runs": [
+      3161.2,
+      23.9,
+      25.4,
+      23.9,
+      24.3
+    ],
+    "ready_ms_median": 24.3,
+    "rss_idle_mb": 23.8,
+    "rss_after_200_mb": 62.5,
+    "ssr_rps_sequential": 6046,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-c2-bytecode-esm",
+    "ready_ms_runs": [
+      1092.9,
+      15.4,
+      14.2,
+      14.3,
+      14.2
+    ],
+    "ready_ms_median": 14.3,
+    "rss_idle_mb": 22.2,
+    "rss_after_200_mb": 63.3,
+    "ssr_rps_sequential": 6080,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-d-trim",
+    "ready_ms_runs": [
+      775.5,
+      24.2,
+      23.7,
+      24.1,
+      25.8
+    ],
+    "ready_ms_median": 24.2,
+    "rss_idle_mb": 24.5,
+    "rss_after_200_mb": 62,
+    "ssr_rps_sequential": 5848,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-e-trim-en",
+    "ready_ms_runs": [
+      725.6,
+      23.3,
+      23.5,
+      26.5,
+      24
+    ],
+    "ready_ms_median": 24,
+    "rss_idle_mb": 24.2,
+    "rss_after_200_mb": 62.1,
+    "ssr_rps_sequential": 5519,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-f-aot",
+    "ready_ms_runs": [
+      658.8,
+      12.9,
+      12.7,
+      14.9,
+      12.6
+    ],
+    "ready_ms_median": 12.9,
+    "rss_idle_mb": 22.4,
+    "rss_after_200_mb": 32.1,
+    "ssr_rps_sequential": 6673,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-g-aot-trim-en",
+    "ready_ms_runs": [
+      573.8,
+      15.2,
+      15.7,
+      13.7,
+      12.6
+    ],
+    "ready_ms_median": 15.2,
+    "rss_idle_mb": 22.4,
+    "rss_after_200_mb": 32,
+    "ssr_rps_sequential": 5999,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-h-aot-trim-en-nosrc",
+    "ready_ms_runs": [
+      570.4,
+      16.3,
+      15.9,
+      15.5,
+      15.3
+    ],
+    "ready_ms_median": 15.9,
+    "rss_idle_mb": 22.2,
+    "rss_after_200_mb": 32,
+    "ssr_rps_sequential": 6427,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  }
+]

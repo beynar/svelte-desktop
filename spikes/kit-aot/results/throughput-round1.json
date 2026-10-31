@@ -1,0 +1,128 @@
+[
+  {
+    "name": "kit-a-stable",
+    "ssr": {
+      "rps": 22924.79,
+      "p50": 1,
+      "p99": 3,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "api": {
+      "rps": 36068.27,
+      "p50": 1,
+      "p99": 1,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "rss_after_mb": 105.3
+  },
+  {
+    "name": "kit-b-canary",
+    "ssr": {
+      "rps": 22409.77,
+      "p50": 1,
+      "p99": 3,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "api": {
+      "rps": 41434.72,
+      "p50": 1,
+      "p99": 1,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "rss_after_mb": 105.8
+  },
+  {
+    "name": "kit-c2-bytecode-esm",
+    "ssr": {
+      "rps": 20244.66,
+      "p50": 1,
+      "p99": 6,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "api": {
+      "rps": 38044.8,
+      "p50": 1,
+      "p99": 1,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "rss_after_mb": 93.5
+  },
+  {
+    "name": "kit-e-trim-en",
+    "ssr": {
+      "rps": 22248.55,
+      "p50": 1,
+      "p99": 2,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "api": {
+      "rps": 40543.61,
+      "p50": 1,
+      "p99": 1,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "rss_after_mb": 104.4
+  },
+  {
+    "name": "kit-f-aot",
+    "ssr": {
+      "rps": 20374.32,
+      "p50": 1,
+      "p99": 4,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "api": {
+      "rps": 29141.99,
+      "p50": 1,
+      "p99": 2,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "rss_after_mb": 38.5
+  },
+  {
+    "name": "kit-g-aot-trim-en",
+    "ssr": {
+      "rps": 21128.11,
+      "p50": 1,
+      "p99": 2,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "api": {
+      "rps": 34733.2,
+      "p50": 1,
+      "p99": 1,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "rss_after_mb": 38.3
+  },
+  {
+    "name": "kit-h-aot-trim-en-nosrc",
+    "ssr": {
+      "rps": 24416.06,
+      "p50": 1,
+      "p99": 2,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "api": {
+      "rps": 39297.98,
+      "p50": 1,
+      "p99": 1,
+      "errors": 0,
+      "non2xx": 0
+    },
+    "rss_after_mb": 37.3
+  }
+]

@@ -1,0 +1,7 @@
+node_modules/
+.svelte-kit/
+build-adapter/
+stage/
+out/
+out-*/
+results/run-*.log*

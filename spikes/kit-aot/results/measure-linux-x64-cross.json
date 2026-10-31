@@ -1,0 +1,66 @@
+[
+  {
+    "name": "kit-bun-linux-x64",
+    "ready_ms_runs": [
+      548.1,
+      379.9,
+      406.7
+    ],
+    "ready_ms_median": 406.7,
+    "rss_idle_mb": 54.6,
+    "rss_after_200_mb": 108.1,
+    "ssr_rps_sequential": 475,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-bun-linux-x64-canaryexe",
+    "ready_ms_runs": [
+      486.8,
+      401.8,
+      392.9
+    ],
+    "ready_ms_median": 401.8,
+    "rss_idle_mb": 54.3,
+    "rss_after_200_mb": 104.8,
+    "ssr_rps_sequential": 440,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-bun-linux-x64-canaryexe-trim",
+    "ready_ms_runs": [
+      551,
+      406.3,
+      403.5
+    ],
+    "ready_ms_median": 406.3,
+    "rss_idle_mb": 55.9,
+    "rss_after_200_mb": 105.8,
+    "ssr_rps_sequential": 438,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-bun-linux-x64-canaryexe-trimtrimlocalesen",
+    "ready_ms_runs": [
+      563.6,
+      406,
+      399.7
+    ],
+    "ready_ms_median": 406,
+    "rss_idle_mb": 55.6,
+    "rss_after_200_mb": 108.6,
+    "ssr_rps_sequential": 429,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  }
+]

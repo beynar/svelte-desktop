@@ -1,0 +1,32 @@
+{
+  "name": "hello-electron",
+  "productName": "HelloElectron",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "dist": "electron-builder --mac dmg zip --arm64"
+  },
+  "build": {
+    "appId": "dev.bench.hello.electron",
+    "productName": "HelloElectron",
+    "files": [
+      "main.js",
+      "index.html"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": null
+    },
+    "directories": {
+      "output": "dist"
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.2.0",
+    "electron-builder": "^26.18.0"
+  }
+}

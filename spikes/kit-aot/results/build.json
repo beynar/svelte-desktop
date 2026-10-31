@@ -1,0 +1,231 @@
+[
+  {
+    "name": "kit-a-stable",
+    "bun": "stable",
+    "entry": "kit",
+    "flags": [],
+    "cmd": "/Users/arnaud/.bun/bin/bun build --compile stage/entry.js --outfile out/kit-a-stable",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 271,
+    "bytes": 89605730,
+    "mb": 89.61,
+    "warnings": 0,
+    "errors": []
+  },
+  {
+    "name": "kit-b-canary",
+    "bun": "canary",
+    "entry": "kit",
+    "flags": [],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile stage/entry.js --outfile out/kit-b-canary",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 117,
+    "bytes": 121554530,
+    "mb": 121.55,
+    "warnings": 0,
+    "errors": []
+  },
+  {
+    "name": "kit-c-bytecode",
+    "bun": "canary",
+    "entry": "kit",
+    "flags": [
+      "--bytecode"
+    ],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile --bytecode stage/entry.js --outfile out/kit-c-bytecode",
+    "ok": false,
+    "exitCode": 1,
+    "ms": 11,
+    "bytes": null,
+    "mb": null,
+    "warnings": 0,
+    "errors": [
+      "error: \"await\" can only be used inside an \"async\" function",
+      "error: Unexpected ."
+    ]
+  },
+  {
+    "name": "kit-c2-bytecode-esm",
+    "bun": "canary",
+    "entry": "kit",
+    "flags": [
+      "--bytecode",
+      "--format=esm"
+    ],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile --bytecode --format=esm stage/entry.js --outfile out/kit-c2-bytecode-esm",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 138,
+    "bytes": 123684578,
+    "mb": 123.68,
+    "warnings": 0,
+    "errors": []
+  },
+  {
+    "name": "kit-d-trim",
+    "bun": "canary",
+    "entry": "kit",
+    "flags": [
+      "--trim"
+    ],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile --trim stage/entry.js --outfile out/kit-d-trim",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 207,
+    "bytes": 68864738,
+    "mb": 68.86,
+    "warnings": 0,
+    "errors": []
+  },
+  {
+    "name": "kit-e-trim-en",
+    "bun": "canary",
+    "entry": "kit",
+    "flags": [
+      "--trim",
+      "--trim-locales=en"
+    ],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile --trim --trim-locales=en stage/entry.js --outfile out/kit-e-trim-en",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 193,
+    "bytes": 68864738,
+    "mb": 68.86,
+    "warnings": 0,
+    "errors": []
+  },
+  {
+    "name": "kit-f-aot",
+    "bun": "canary",
+    "entry": "kit",
+    "flags": [
+      "--aot"
+    ],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile --aot stage/entry.js --outfile out/kit-f-aot",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 1441,
+    "bytes": 61137122,
+    "mb": 61.14,
+    "warnings": 4,
+    "errors": []
+  },
+  {
+    "name": "kit-g-aot-trim-en",
+    "bun": "canary",
+    "entry": "kit",
+    "flags": [
+      "--aot",
+      "--trim",
+      "--trim-locales=en"
+    ],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile --aot --trim --trim-locales=en stage/entry.js --outfile out/kit-g-aot-trim-en",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 1446,
+    "bytes": 44905826,
+    "mb": 44.91,
+    "warnings": 4,
+    "errors": []
+  },
+  {
+    "name": "kit-h-aot-trim-en-nosrc",
+    "bun": "canary",
+    "entry": "kit",
+    "flags": [
+      "--aot",
+      "--trim",
+      "--trim-locales=en",
+      "--no-compile-function-source"
+    ],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile --aot --trim --trim-locales=en --no-compile-function-source stage/entry.js --outfile out/kit-h-aot-trim-en-nosrc",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 1510,
+    "bytes": 44740706,
+    "mb": 44.74,
+    "warnings": 4,
+    "errors": []
+  },
+  {
+    "name": "hello-a-stable",
+    "bun": "stable",
+    "entry": "hello",
+    "flags": [],
+    "cmd": "/Users/arnaud/.bun/bin/bun build --compile scripts/hello.ts --outfile out/hello-a-stable",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 272,
+    "bytes": 89159906,
+    "mb": 89.16,
+    "warnings": 0,
+    "errors": []
+  },
+  {
+    "name": "hello-b-canary",
+    "bun": "canary",
+    "entry": "hello",
+    "flags": [],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile scripts/hello.ts --outfile out/hello-b-canary",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 67,
+    "bytes": 121108706,
+    "mb": 121.11,
+    "warnings": 0,
+    "errors": []
+  },
+  {
+    "name": "hello-f-aot",
+    "bun": "canary",
+    "entry": "hello",
+    "flags": [
+      "--aot"
+    ],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile --aot scripts/hello.ts --outfile out/hello-f-aot",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 236,
+    "bytes": 51906914,
+    "mb": 51.91,
+    "warnings": 0,
+    "errors": []
+  },
+  {
+    "name": "hello-e-trim-en",
+    "bun": "canary",
+    "entry": "hello",
+    "flags": [
+      "--trim",
+      "--trim-locales=en"
+    ],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile --trim --trim-locales=en scripts/hello.ts --outfile out/hello-e-trim-en",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 181,
+    "bytes": 68418914,
+    "mb": 68.42,
+    "warnings": 0,
+    "errors": []
+  },
+  {
+    "name": "hello-g-aot-trim-en",
+    "bun": "canary",
+    "entry": "hello",
+    "flags": [
+      "--aot",
+      "--trim",
+      "--trim-locales=en"
+    ],
+    "cmd": "/tmp/bun-canary/bun-darwin-aarch64/bun build --compile --aot --trim --trim-locales=en scripts/hello.ts --outfile out/hello-g-aot-trim-en",
+    "ok": true,
+    "exitCode": 0,
+    "ms": 209,
+    "bytes": 30325746,
+    "mb": 30.33,
+    "warnings": 0,
+    "errors": []
+  }
+]

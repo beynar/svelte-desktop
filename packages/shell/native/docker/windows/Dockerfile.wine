@@ -1,0 +1,6 @@
+# Test-only image: Wine (x86_64 + i386) under linux/amd64 emulation, Xvfb for a
+# display. Runs smoke.exe against shell.dll and the NSIS installer.
+#   docker build --platform linux/amd64 -f Dockerfile.wine -t svelte-desktop-wine .
+FROM debian:bookworm-slim
+RUN dpkg --add-architecture i386 && apt-get update && apt-get install -y --no-install-recommends wine64 wine wine32:i386 xvfb xauth ca-certificates && rm -rf /var/lib/apt/lists/*
+ENV WINEDEBUG=-all WINEPREFIX=/tmp/wineprefix

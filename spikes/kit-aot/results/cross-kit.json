@@ -1,0 +1,302 @@
+[
+  {
+    "target": "bun-linux-x64",
+    "canary_runtime": false,
+    "flags": "",
+    "ok": true,
+    "exit": 0,
+    "ms": 48,
+    "mb": 109.57,
+    "out": "  [32ms] compile  /Users/arnaud/code/svelte-desktop/spikes/kit-aot/out-cross/kit-bun-linux-x64 bun-linux-x64-v1.4.4"
+  },
+  {
+    "target": "bun-linux-x64",
+    "canary_runtime": false,
+    "flags": "--trim",
+    "ok": false,
+    "exit": 1,
+    "ms": 15,
+    "mb": null,
+    "out": "error: this build of Bun doesn't support --trim (NoTrimTable)"
+  },
+  {
+    "target": "bun-linux-x64",
+    "canary_runtime": false,
+    "flags": "--trim --trim-locales=en",
+    "ok": false,
+    "exit": 1,
+    "ms": 14,
+    "mb": null,
+    "out": "error: this build of Bun doesn't support --trim (NoTrimTable)"
+  },
+  {
+    "target": "bun-linux-x64",
+    "canary_runtime": false,
+    "flags": "--aot",
+    "ok": false,
+    "exit": 1,
+    "ms": 7,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  },
+  {
+    "target": "bun-linux-x64",
+    "canary_runtime": false,
+    "flags": "--aot --trim --trim-locales=en",
+    "ok": false,
+    "exit": 1,
+    "ms": 7,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  },
+  {
+    "target": "bun-linux-arm64",
+    "canary_runtime": false,
+    "flags": "",
+    "ok": true,
+    "exit": 0,
+    "ms": 109,
+    "mb": 109.63,
+    "out": "  [93ms] compile  /Users/arnaud/code/svelte-desktop/spikes/kit-aot/out-cross/kit-bun-linux-arm64 bun-linux-aarch64-v1.4.4"
+  },
+  {
+    "target": "bun-linux-arm64",
+    "canary_runtime": false,
+    "flags": "--trim",
+    "ok": false,
+    "exit": 1,
+    "ms": 15,
+    "mb": null,
+    "out": "error: this build of Bun doesn't support --trim (NoTrimTable)"
+  },
+  {
+    "target": "bun-linux-arm64",
+    "canary_runtime": false,
+    "flags": "--trim --trim-locales=en",
+    "ok": false,
+    "exit": 1,
+    "ms": 15,
+    "mb": null,
+    "out": "error: this build of Bun doesn't support --trim (NoTrimTable)"
+  },
+  {
+    "target": "bun-linux-arm64",
+    "canary_runtime": false,
+    "flags": "--aot",
+    "ok": false,
+    "exit": 1,
+    "ms": 7,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  },
+  {
+    "target": "bun-linux-arm64",
+    "canary_runtime": false,
+    "flags": "--aot --trim --trim-locales=en",
+    "ok": false,
+    "exit": 1,
+    "ms": 7,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  },
+  {
+    "target": "bun-windows-x64",
+    "canary_runtime": false,
+    "flags": "",
+    "ok": true,
+    "exit": 0,
+    "ms": 460,
+    "mb": 115.72,
+    "out": " [440ms] compile  /Users/arnaud/code/svelte-desktop/spikes/kit-aot/out-cross/kit-bun-windows-x64.exe bun-windows-x64-v1.4.4"
+  },
+  {
+    "target": "bun-windows-x64",
+    "canary_runtime": false,
+    "flags": "--trim",
+    "ok": false,
+    "exit": 1,
+    "ms": 14,
+    "mb": null,
+    "out": "error: this build of Bun doesn't support --trim (NoTrimTable)"
+  },
+  {
+    "target": "bun-windows-x64",
+    "canary_runtime": false,
+    "flags": "--trim --trim-locales=en",
+    "ok": false,
+    "exit": 1,
+    "ms": 14,
+    "mb": null,
+    "out": "error: this build of Bun doesn't support --trim (NoTrimTable)"
+  },
+  {
+    "target": "bun-windows-x64",
+    "canary_runtime": false,
+    "flags": "--aot",
+    "ok": false,
+    "exit": 1,
+    "ms": 7,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  },
+  {
+    "target": "bun-windows-x64",
+    "canary_runtime": false,
+    "flags": "--aot --trim --trim-locales=en",
+    "ok": false,
+    "exit": 1,
+    "ms": 7,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  },
+  {
+    "target": "bun-darwin-x64",
+    "canary_runtime": false,
+    "flags": "",
+    "ok": true,
+    "exit": 0,
+    "ms": 95,
+    "mb": 98.61,
+    "out": "  [81ms] compile  /Users/arnaud/code/svelte-desktop/spikes/kit-aot/out-cross/kit-bun-darwin-x64 bun-darwin-x64-v1.4.4"
+  },
+  {
+    "target": "bun-darwin-x64",
+    "canary_runtime": false,
+    "flags": "--trim",
+    "ok": false,
+    "exit": 1,
+    "ms": 14,
+    "mb": null,
+    "out": "error: this build of Bun doesn't support --trim (NoTrimTable)"
+  },
+  {
+    "target": "bun-darwin-x64",
+    "canary_runtime": false,
+    "flags": "--trim --trim-locales=en",
+    "ok": false,
+    "exit": 1,
+    "ms": 14,
+    "mb": null,
+    "out": "error: this build of Bun doesn't support --trim (NoTrimTable)"
+  },
+  {
+    "target": "bun-darwin-x64",
+    "canary_runtime": false,
+    "flags": "--aot",
+    "ok": false,
+    "exit": 1,
+    "ms": 7,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  },
+  {
+    "target": "bun-darwin-x64",
+    "canary_runtime": false,
+    "flags": "--aot --trim --trim-locales=en",
+    "ok": false,
+    "exit": 1,
+    "ms": 7,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  },
+  {
+    "target": "bun-linux-x64",
+    "canary_runtime": true,
+    "flags": "",
+    "ok": true,
+    "exit": 0,
+    "ms": 130,
+    "mb": 140.8,
+    "out": " [114ms] compile  /Users/arnaud/code/svelte-desktop/spikes/kit-aot/out-cross/kit-bun-linux-x64-canaryexe bun-linux-x64-v1.4.4"
+  },
+  {
+    "target": "bun-linux-x64",
+    "canary_runtime": true,
+    "flags": "--trim",
+    "ok": true,
+    "exit": 0,
+    "ms": 376,
+    "mb": 84.91,
+    "out": " [359ms] compile  /Users/arnaud/code/svelte-desktop/spikes/kit-aot/out-cross/kit-bun-linux-x64-canaryexe-trim  84.9 MB (54.0 MB of unused Bun APIs removed) bun-linux-x64-v1.4.4"
+  },
+  {
+    "target": "bun-linux-x64",
+    "canary_runtime": true,
+    "flags": "--trim --trim-locales=en",
+    "ok": true,
+    "exit": 0,
+    "ms": 1338,
+    "mb": 79.36,
+    "out": "[1322ms] compile  /Users/arnaud/code/svelte-desktop/spikes/kit-aot/out-cross/kit-bun-linux-x64-canaryexe-trimtrimlocalesen  79.4 MB (59.8 MB of unused Bun APIs removed) bun-linux-x64-v1.4.4"
+  },
+  {
+    "target": "bun-linux-x64",
+    "canary_runtime": true,
+    "flags": "--aot",
+    "ok": false,
+    "exit": 1,
+    "ms": 7,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  },
+  {
+    "target": "bun-linux-x64",
+    "canary_runtime": true,
+    "flags": "--aot --trim --trim-locales=en",
+    "ok": false,
+    "exit": 1,
+    "ms": 6,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  },
+  {
+    "target": "bun-windows-x64",
+    "canary_runtime": true,
+    "flags": "",
+    "ok": true,
+    "exit": 0,
+    "ms": 1004,
+    "mb": 150.31,
+    "out": " [983ms] compile  /Users/arnaud/code/svelte-desktop/spikes/kit-aot/out-cross/kit-bun-windows-x64-canaryexe.exe bun-windows-x64-v1.4.4"
+  },
+  {
+    "target": "bun-windows-x64",
+    "canary_runtime": true,
+    "flags": "--trim",
+    "ok": true,
+    "exit": 0,
+    "ms": 652,
+    "mb": 96.28,
+    "out": " [632ms] compile  /Users/arnaud/code/svelte-desktop/spikes/kit-aot/out-cross/kit-bun-windows-x64-canaryexe-trim.exe  96.3 MB (56.3 MB of unused Bun APIs removed) bun-windows-x64-v1.4.4"
+  },
+  {
+    "target": "bun-windows-x64",
+    "canary_runtime": true,
+    "flags": "--trim --trim-locales=en",
+    "ok": true,
+    "exit": 0,
+    "ms": 526,
+    "mb": 93.66,
+    "out": " [505ms] compile  /Users/arnaud/code/svelte-desktop/spikes/kit-aot/out-cross/kit-bun-windows-x64-canaryexe-trimtrimlocalesen.exe  93.7 MB (60.5 MB of unused Bun APIs removed) bun-windows-x64-v1.4.4"
+  },
+  {
+    "target": "bun-windows-x64",
+    "canary_runtime": true,
+    "flags": "--aot",
+    "ok": false,
+    "exit": 1,
+    "ms": 8,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  },
+  {
+    "target": "bun-windows-x64",
+    "canary_runtime": true,
+    "flags": "--aot --trim --trim-locales=en",
+    "ok": false,
+    "exit": 1,
+    "ms": 8,
+    "mb": null,
+    "out": "error: --aot can't cross-compile. It only builds for the platform it runs on"
+  }
+]

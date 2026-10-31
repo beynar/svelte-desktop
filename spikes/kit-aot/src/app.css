@@ -1,0 +1,5 @@
+:root { font-family: system-ui, sans-serif; color: #1d1d1f; background: #fafafa; }
+body { margin: 0 auto; max-width: 42rem; padding: 2rem 1rem; }
+nav { display: flex; gap: 1rem; margin-bottom: 2rem; }
+nav a { color: #ff3e00; }
+.card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; background: white; }

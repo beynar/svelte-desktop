@@ -1,0 +1,347 @@
+735 | var escape_regex = (dict) => new RegExp(`[${Object.keys(dict).join("")}]|\\p{Surrogate}`, "gu");
+                                       ^
+warn: TS100058: this regular expression runs in the interpreter (reason 6)
+   at /Users/arnaud/code/svelte-desktop/spikes/kit-aot/.svelte-kit/output/server/chunks/instance.js:735:34
+
+775 | var pattern = new RegExp(`[${Object.keys(replacements).join("")}]`, "g");
+                        ^
+warn: TS100058: this regular expression runs in the interpreter (reason 6)
+   at /Users/arnaud/code/svelte-desktop/spikes/kit-aot/.svelte-kit/output/server/chunks/instance.js:775:19
+
+454 | var obfuscated_import = (module_name) => import(
+                                               ^
+warn: TS100064: this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time (data files still load). Add the file as an entry point, or build with --aot-allow-code-from-disk
+   at /Users/arnaud/code/svelte-desktop/spikes/kit-aot/.svelte-kit/output/server/chunks/server2.js:454:42
+
+158 | 	fromRegExpInfo: (source, flags) => new RegExp(source, flags),
+                                              ^
+warn: TS100058: this regular expression runs in the interpreter (reason 6)
+   at /Users/arnaud/code/svelte-desktop/spikes/kit-aot/node_modules/devalue/src/operations.js:158:41
+ [137ms]  bundle  77 modules
+[1.859s] compile  out/explain-tmp  44.9 MB (83.5 MB of unused Bun APIs removed)
+        build id  fa688b3449e84fedecf50c32a0bcdcd4
+note: Untyped code works, but runs slower. 1,148 causes:
+
+434 | 		for (const [field_name, entries] of group_formdata(form_data)) {
+                                ^
+note: 1. builtin-result: The value is the result of a built-in function whose result type the compiler doesn't know.
+   at .svelte-kit/output/server/chunks/remote.js:434:27
+
+note: 892 of 2,305 untyped accesses, and 10 of 371 in dependencies
+note: 148 indirect calls, 124 untyped operators
+note: about 25.3% of the time in untyped operations, by how often the compiler expects each to run
+note: 1,173 of these stay untyped until other entries are fixed too
+note: in function 'handle_issues'
+note: types: 'LazyFile', 'RequestEvent<Record<string, never>, "/" | "/about" | "/api/stats" | null>', 'ProxyHandler<object>', 'ValidationCaughtError<Issue>', 'RequestInit', 'Cookies', 'SerializeOptions'
+note: why (declaration-only): The type comes from a 'declare' or a .d.ts file, which the compiler can't check against the code.
+note: fix: narrow the result.
+note: https://bun.com/docs/compiler/explain#builtin-result
+
+2144 | 				return create_live_query_response(event, state, internals, parse_remote_arg(new URL(event.request.url).searchParams.get("payload")));
+                                                                                           ^
+note: 2. caught-value: The value was caught, and anything can be thrown.
+   at .svelte-kit/output/server/chunks/internal.js:2144:85
+
+note: 47 of 2,305 untyped accesses, and 43 of 371 in dependencies
+note: 3 indirect calls, 4 untyped operators
+note: about 5.5% of the time in untyped operations, by how often the compiler expects each to run
+note: 97 of these stay untyped until other entries are fixed too
+note: in function 'handle_remote_call_internal'
+note: types: 'HttpError', 'Redirect', 'HandledHttpError', 'SvelteKitError', 'ValidationCaughtError<Issue>'
+note: why (external-data): The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).
+note: fix: narrow it first, for example with instanceof Error.
+note: https://bun.com/docs/compiler/explain#caught-value
+
+51 | 	fn.__.id = "19aeq9f/" + name;
+      ^
+note: 3. unknown-callee-result: The value is returned by a call whose callee isn't known at build time.
+   at .svelte-kit/output/server/chunks/data.remote.js:51:2
+
+note: 1 of 2,305 untyped accesses
+note: about 2.8% of the time in untyped operations, by how often the compiler expects each to run
+note: why (unknown-callee): The callee isn't known at build time.
+note: fix: give the callee a function type.
+note: https://bun.com/docs/compiler/explain#unknown-callee-result
+
+52 | 	fn.__.name = name;
+      ^
+note: 4. unknown-callee-result: The value is returned by a call whose callee isn't known at build time.
+   at .svelte-kit/output/server/chunks/data.remote.js:52:2
+
+note: 1 of 2,305 untyped accesses
+note: about 2.8% of the time in untyped operations, by how often the compiler expects each to run
+note: why (unknown-callee): The callee isn't known at build time.
+note: fix: give the callee a function type.
+note: https://bun.com/docs/compiler/explain#unknown-callee-result
+
+824 | 		return new Proxy(new LazyFile(name, type, size, last_modified, get_chunk, offset), { getPrototypeOf() {
+                   ^
+note: 5. builtin-result: The value is the result of a built-in function whose result type the compiler doesn't know.
+   at .svelte-kit/output/server/chunks/internal.js:824:14
+
+note: 180 of 2,305 untyped accesses, and 20 of 371 in dependencies
+note: 25 indirect calls, 15 untyped operators
+note: about 4.1% of the time in untyped operations, by how often the compiler expects each to run
+note: 240 of these stay untyped until other entries are fixed too
+note: in function 'File'
+note: types: 'HttpError', 'Renderer'
+note: why (declaration-only): The type comes from a 'declare' or a .d.ts file, which the compiler can't check against the code.
+note: fix: narrow the result.
+note: https://bun.com/docs/compiler/explain#builtin-result
+
+1643 | 	if (result instanceof Promise) return result.then(merge, (hook_error) => {
+                                                     ^
+note: 6. passed-to-builtin: An object of this type is passed to a built-in function here that may add, delete or redefine its properties.
+   at .svelte-kit/output/server/chunks/internal.js:1643:47
+
+note: 2 untyped operators
+note: about 2.5% of the time in untyped operations, by how often the compiler expects each to run
+note: in function 'handle_error_and_jsonify'
+note: why (passed-to-builtin): The object is passed to a built-in function that may write to it.
+note: fix: pass only the fields the function needs, or a copy.
+note: https://bun.com/docs/compiler/explain#passed-to-builtin
+
+1435 | 		remote_fns_reducers[remote_object] = (value) => {
+         ^
+note: 7. called-by-unknown-code: A function is handed to code the compiler can't see here, which can call it with any arguments.
+   at .svelte-kit/output/server/chunks/internal.js:1435:3
+
+note: 121 of 2,305 untyped accesses, and 45 of 371 in dependencies
+note: 11 indirect calls, 21 untyped operators
+note: about 2.4% of the time in untyped operations, by how often the compiler expects each to run
+note: 198 of these stay untyped until other entries are fixed too
+note: in function 'create_remote_arg_reducers'
+note: types: 'SystemErrorContext'
+note: why (called-by-runtime-code): Code that isn't in the executable can call this function with any arguments.
+note: fix: call the function from your own code, or hand over a small wrapper that checks its arguments.
+note: https://bun.com/docs/compiler/explain#called-by-unknown-code
+
+796 | 		if (filter(key, value)) headers[key] = value;
+                                ^
+note: 8. not-a-plain-object: An array, a function or a built-in object is used as this type here.
+   at .svelte-kit/output/server/chunks/instance.js:796:27
+
+note: 1 of 2,305 untyped accesses
+note: about 1.9% of the time in untyped operations, by how often the compiler expects each to run
+note: in function 'serialize_data'
+note: why (not-a-plain-object): A primitive, function, array, built-in object or proxy is used as this object type.
+note: fix: pass an object literal or a class instance, or declare the parameter with the type that is actually passed.
+note: https://bun.com/docs/compiler/explain#not-a-plain-object
+
+2261 | 					(data[type] ??= {})[remote_key] = { v };
+                  ^
+note: 9. passed-to-untyped-code: An object of this type is passed to untyped code here, which may add, delete or redefine its properties.
+   at .svelte-kit/output/server/chunks/internal.js:2261:12
+
+note: 2 of 2,305 untyped accesses
+note: about 1.3% of the time in untyped operations, by how often the compiler expects each to run
+note: why (written-by-runtime-code): Code that isn't in the executable can write to this object.
+note: fix: pass only the fields the other code needs. Instead of Object.defineProperty, declare the property in the class. Instead of Object.create, use a class and extends.
+note: https://bun.com/docs/compiler/explain#passed-to-untyped-code
+
+28 | 		fn();
+       ^
+note: 10. read-from-shared-object: An object is handed to code the compiler can't see here, which can write anything into it.
+   at .svelte-kit/output/server/chunks/server-errors.js:28:3
+
+note: 3 of 2,305 untyped accesses
+note: about 1.2% of the time in untyped operations, by how often the compiler expects each to run
+note: 3 of these stay untyped until other entries are fixed too
+note: in function 'capture_error'
+note: why (written-by-runtime-code): Code that isn't in the executable can write to this object.
+note: fix: hand over a copy, or only the fields that code needs.
+note: https://bun.com/docs/compiler/explain#read-from-shared-object
+
+2451 | 				map: new module.SourceMap(JSON.parse(source)),
+                           ^
+note: 11. builtin-result: The value is the result of a built-in function whose result type the compiler doesn't know.
+   at .svelte-kit/output/server/chunks/internal.js:2451:21
+
+note: 11 of 2,305 untyped accesses
+note: 2 untyped operators
+note: about 1.1% of the time in untyped operations, by how often the compiler expects each to run
+note: 13 of these stay untyped until other entries are fixed too
+note: in function 'get_source_map'
+note: why (declaration-only): The type comes from a 'declare' or a .d.ts file, which the compiler can't check against the code.
+note: fix: narrow the result.
+note: https://bun.com/docs/compiler/explain#builtin-result
+
+14 | 	const error = new Error(`${code}\n${message}\nhttps://svelte.dev/e/kit/${code}`, options?.cause === void 0 ? void 0 : { cause: options.cause });
+                        ^
+note: 12. not-a-plain-object: An array, a function or a built-in object is used as this type here.
+   at .svelte-kit/output/server/chunks/server-errors.js:14:20
+
+note: 1 of 2,305 untyped accesses
+note: about 0.8% of the time in untyped operations, by how often the compiler expects each to run
+note: in function 'throw_error'
+note: why (not-a-plain-object): A primitive, function, array, built-in object or proxy is used as this object type.
+note: fix: pass an object literal or a class instance, or declare the parameter with the type that is actually passed.
+note: https://bun.com/docs/compiler/explain#not-a-plain-object
+
+764 | 			chunks[i] = previous.then(() => reader.read()).then((chunk) => chunk.value);
+                                                                        ^
+note: 13. read-from-shared-object: An object is handed to code the compiler can't see here, which can write anything into it.
+   at .svelte-kit/output/server/chunks/internal.js:764:67
+
+note: 1 of 2,305 untyped accesses
+note: about 0.8% of the time in untyped operations, by how often the compiler expects each to run
+note: why (written-by-runtime-code): Code that isn't in the executable can write to this object.
+note: fix: hand over a copy, or only the fields that code needs.
+note: https://bun.com/docs/compiler/explain#read-from-shared-object
+
+2261 | 					(data[type] ??= {})[remote_key] = { v };
+                             ^
+note: 14. unknown-callee-result: The value is returned by a call whose callee isn't known at build time.
+   at .svelte-kit/output/server/chunks/internal.js:2261:23
+
+note: 1 of 2,305 untyped accesses
+note: about 0.8% of the time in untyped operations, by how often the compiler expects each to run
+note: why (unknown-callee): The callee isn't known at build time.
+note: fix: give the callee a function type.
+note: https://bun.com/docs/compiler/explain#unknown-callee-result
+
+1268 | 		const priority = parts.findIndex((part) => (part.type === type || part.type === "*") && (part.subtype === subtype || part.subtype === "*"));
+                                          ^
+note: 15. lost-track: The compiler stopped tracking the objects that reach this access.
+   at .svelte-kit/output/server/chunks/internal.js:1268:36
+
+note: 2 untyped operators
+note: about 0.7% of the time in untyped operations, by how often the compiler expects each to run
+note: fix: give the value a declared type, or split the function.
+note: https://bun.com/docs/compiler/explain#lost-track
+
+17 | const options = /** @type {Serve.Options<undefined>} */ ({ ...server_options });
+                                                              ^
+note: 16. not-a-plain-object: An array, a function or a built-in object is used as this type here.
+   at stage/adapter/index.js:17:58
+
+note: 23 of 2,305 untyped accesses
+note: about 0.7% of the time in untyped operations, by how often the compiler expects each to run
+note: why (not-a-plain-object): A primitive, function, array, built-in object or proxy is used as this object type.
+note: fix: pass an object literal or a class instance, or declare the parameter with the type that is actually passed.
+note: https://bun.com/docs/compiler/explain#not-a-plain-object
+
+1246 | 	accept.split(",").forEach((str, i) => {
+                                  ^
+note: 17. lost-track: The compiler stopped tracking the objects that reach this access.
+   at .svelte-kit/output/server/chunks/internal.js:1246:28
+
+note: 1 untyped operator
+note: about 0.7% of the time in untyped operations, by how often the compiler expects each to run
+note: fix: give the value a declared type, or split the function.
+note: https://bun.com/docs/compiler/explain#lost-track
+
+1016 | 			(result[name] ??= []).push(issue);
+                  ^
+note: 18. not-a-plain-object: An array, a function or a built-in object is used as this type here.
+   at .svelte-kit/output/server/chunks/internal.js:1016:12
+
+note: 2 of 2,305 untyped accesses
+note: about 0.7% of the time in untyped operations, by how often the compiler expects each to run
+note: in function 'flatten_issues'
+note: why (not-a-plain-object): A primitive, function, array, built-in object or proxy is used as this object type.
+note: fix: pass an object literal or a class instance, or declare the parameter with the type that is actually passed.
+note: https://bun.com/docs/compiler/explain#not-a-plain-object
+
+722 | 	for (const [field_name, values] of group_formdata(data)) {
+                               ^
+note: 19. builtin-result: The value is the result of a built-in function whose result type the compiler doesn't know.
+   at .svelte-kit/output/server/chunks/internal.js:722:26
+
+note: 26 of 2,305 untyped accesses
+note: 10 untyped operators
+note: about 0.6% of the time in untyped operations, by how often the compiler expects each to run
+note: 35 of these stay untyped until other entries are fixed too
+note: in function 'convert_formdata'
+note: why (declaration-only): The type comes from a 'declare' or a .d.ts file, which the compiler can't check against the code.
+note: fix: narrow the result.
+note: https://bun.com/docs/compiler/explain#builtin-result
+
+1 | /** @import { Serve } from 'bun' */
+    ^
+note: 20. lost-track: The compiler stopped tracking the objects that reach this access.
+   at stage/adapter/index.js:1:1
+
+note: 3 untyped operators
+note: about 0.5% of the time in untyped operations, by how often the compiler expects each to run
+note: fix: give the value a declared type, or split the function.
+note: https://bun.com/docs/compiler/explain#lost-track
+
+note: 1,128 more causes not shown. Use --explain=json to print all of them, one JSON object per line.
+
+note: All property accesses, including dependencies:
+    680  free: one load or store at a fixed offset
+  1,743  tested: a test of its own, then a load or store at a fixed offset
+    933  by name: looked up by name
+Calls: 10,586 direct, 3,727 indirect
+Files with the most untyped accesses:
+  .svelte-kit/output/server/chunks/instance.js  24.9% typed (340 of 1,361)
+  .svelte-kit/output/server/chunks/internal.js  16.6% typed (127 of 764)
+  .svelte-kit/output/server/chunks/server2.js  20.5% typed (89 of 433)
+  .svelte-kit/output/server/chunks/remote.js  5.6% typed (9 of 158)
+  stage/adapter/index.js  0% typed (0 of 36)
+  and 10 more
+Compiler limits hit:
+  MaxGuessedWorkerFiles = 4, hit 1 time (limits embedded code files that are compiled in case a Worker with an unknown path starts them)
+  MaxValueFlowMembersToldApart = 64, hit 1 time (limits receivers of a method call or names of a computed key looked at one by one)
+  MaxOptimizationRounds = 8, hit 1 time (limits optimization passes over a function)
+  MaxDispatchCases = 4, hit 45 times (limits shapes or callees tested inline at one site)
+  MaxDeclarationsPredictedFromNames = 4, hit 123 times (limits object types guessed from the property names used on a value)
+  MaxOutlinedOperands = 6, hit 107 times (limits register arguments of outlined cold code)
+  MaxOutlinedRegionValues = 16, hit 403 times (limits the size of cold code compared for outlining)
+  MaxPromotedParameters = 6, hit 1 time (limits fields of an object parameter passed in registers)
+  MaxParameterWrapperValues = 24, hit 9 times (limits the size of a wrapper that unpacks an object parameter)
+  MaxClonedBytesPerStretch = 512, hit 346 times (limits code size of one fast path)
+  MaxBlocksCopiedBehindStretches = 128, hit 50 times (limits blocks copied for slow paths per guard placement pass)
+  MaxBytesOfSeparatedLoop = 4,096, hit 14 times (limits code size of a loop that gets a separate slow-path copy)
+  MaxThreadedBlockValues = 8, hit 233 times (limits code duplicated per threaded jump)
+  MaxThreadingReachabilitySteps = 128, hit 61 times (limits blocks walked to keep loops intact while threading jumps)
+  MaxMergedReadPredecessors = 4, hit 10 times (limits predecessors merged to remove a repeated read)
+  MaxVirtualObjectVariants = 8, hit 1,132 times (limits shapes of a removed or stack-allocated object at a merge)
+  MaxVirtualArrayLength = 16, hit 6 times (limits elements of an array that can be removed)
+  MaxMaterializations = 2, hit 204 times (limits places one removed allocation may be re-created)
+  MaxDuplicatedTailValues = 200, hit 16 times (limits code duplicated to remove an allocation)
+  MaxIntegerRelationSteps = 64, hit 74 times (limits work per integer range query)
+  MaxInlineDepth = 4, hit 5 times (limits nesting of inlined calls)
+  MaxInlinedCallerBytes = 4,096, hit 138 times (limits the size of a function after inlining)
+  MaxInlineHeadBytes = 48, hit 313 times (limits the size of an inlined fast-path prefix)
+  MaxSelectedHeadOperations = 24, hit 43 times (limits operations of a function copied in front of a hot call of it)
+  MaxSelectedHeadBlocks = 8, hit 502 times (limits blocks of a function copied in front of a hot call of it)
+  MaxConditionChainLength = 8, hit 5 times (limits conditions followed to estimate what inlining folds)
+  MaxExpandedKeyOrders = 4, hit 45 times (limits property orders tested inline by one Object.keys or for...in loop)
+  MaxVersionedIterationBytes = 1,024, hit 34 times (limits code duplicated to specialize a loop per kind of iterable)
+  MaxSelectionGroupSpan = 32, hit 89 times (limits distance between operations fused into a group)
+  MaxSelectionGroupMembers = 16, hit 8 times (limits operations fused into a group)
+  MaxInlineStringCompareLength = 32, hit 1 time (limits characters compared inline)
+  MaxRegisterStringLength = 8, hit 3 times (limits characters of a string constant held in a register)
+  MaxLengthCopiedInline = 16, hit 35 times (limits characters copied inline)
+  MaxExtensionGranules = 64, hit 2 times (limits out-of-line storage per object)
+  MaxLandingPadsSearched = 4, hit 56 times (limits exception landing pads compared for sharing)
+  MaxClonedValuesPerLoopVersion = 48, hit 353 times (limits code size of a specialized loop copy)
+  MaxValuesPerHotRegion = 96, hit 132 times (limits loop specialization work)
+  MaxBlocksScannedBeforeLoop = 4, hit 1,042 times (limits loop specialization work)
+  MaxClonedValuesPerUnswitchedLoop = 64, hit 10 times (limits code size of an unswitched loop)
+  MaxClonedValuesPerExcursion = 128, hit 15 times (limits code size of rare blocks copied with a loop)
+  MaxSourcesOfLoopTest = 16, hit 4 times (limits loop specialization work)
+  MaxCopiedValuesPerRotatedLoop = 12, hit 8 times (limits code size of a rotated loop)
+  MaxRareBlocksPerRotatedLoop = 8, hit 48 times (limits code size of a rotated loop)
+  MaxValuesPerUnrolledLoop = 96, hit 48 times (limits code size of the turns of a counted loop that are written out)
+  MaxThreadedTestCopyCost = 8, hit 1,856 times (limits code duplicated by jump threading)
+  MaxThreadedPathCost = 16, hit 805 times (limits code duplicated by jump threading)
+  MaxBlocksOnThreadedPath = 8, hit 234 times (limits code duplicated by jump threading)
+  MaxTailsCrossedByCopiedValues = 128, hit 3 times (limits copied blocks that the values of one copied block stay live across)
+  MaxThreadedTestDepth = 8, hit 4 times (limits code duplicated by jump threading)
+  MaxPredecessorsForConditionQueries = 8, hit 4,669 times (limits branch condition analysis work)
+  MaxConditionQueriesPerBlock = 32, hit 234 times (limits branch condition analysis work)
+  MaxSelectNestingDepth = 1, hit 2,582 times (limits work speculated on the untaken path)
+  MaxSpeculatedValuesPerSelect = 4, hit 19 times (limits work speculated on the untaken path)
+  MaxValuesSearchedForDominatingLoad = 16, hit 222 times (limits branch-to-select conversion work)
+  MaxLinearDominatorSteps = 32, hit 347 times (limits dominator walk length)
+  MaxPathConstantsScanned = 32, hit 25 times (limits branches on one value that are searched one by one)
+  MaxRangeAnalysisDepth = 5, hit 11 times (limits range analysis depth)
+  MaxBitTestTargets = 3, hit 114 times (limits targets of a switch lowered to bit tests)
+  MaxClobberSitesPerSplit = 32, hit 208 times (limits calls a live range is split around)
+  UncheckedStackBytes = 4,096, hit 292 times (limits stack used between stack checks)
+--trim kept APIs your code doesn't call because the program calls import() or require() with a dynamic path (.svelte-kit/output/server/chunks/server2.js:454:42)
+Dependencies: 15.2% of property accesses are one load: 67 free, 251 tested, 120 by name (438)
+21% of property accesses are one load: 613 free, 1,492 tested, 813 by name (2,918)

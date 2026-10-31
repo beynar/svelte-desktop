@@ -1,0 +1,28 @@
+/* Popover routes: no page background (the native popover/panel draws the
+   translucent material), system font, colors that follow light/dark. */
+:root {
+	font: 13px/1.4 system-ui, -apple-system, sans-serif;
+	color: #1d1d1f;
+	color-scheme: light dark;
+	-webkit-user-select: none;
+	user-select: none;
+	cursor: default;
+}
+@media (prefers-color-scheme: dark) {
+	:root { color: #f5f5f7; }
+}
+h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+input {
+	width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; border-radius: 6px;
+	border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+	background: color-mix(in srgb, currentColor 6%, transparent); color: inherit; outline: none;
+	-webkit-user-select: text; user-select: text;
+}
+input:focus { border-color: AccentColor; }
+button {
+	font: inherit; padding: 4px 10px; border-radius: 6px; border: 0; color: inherit;
+	background: color-mix(in srgb, currentColor 10%, transparent);
+}
+button:hover { background: color-mix(in srgb, currentColor 16%, transparent); }
+ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.muted { opacity: 0.6; font-size: 11px; }

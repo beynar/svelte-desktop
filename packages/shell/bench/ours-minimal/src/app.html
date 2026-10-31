@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Hello</title>
+		<style>body{font-family:-apple-system,sans-serif;text-align:center;margin-top:120px}button{font-size:18px;padding:8px 20px}</style>
+		<script>
+			// Benchmark beacon (same as the Electron/Tauri/Electrobun page).
+			window.addEventListener('load', () => {
+				fetch('http://127.0.0.1:47321/ready', { mode: 'no-cors', cache: 'no-store' }).catch(() => {});
+			});
+		</script>
+		%sveltekit.head%
+	</head>
+	<body>
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>

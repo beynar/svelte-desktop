@@ -1,0 +1,7 @@
+{
+  "name": "hello-electrobun",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": { "build": "electrobun build --env=stable" },
+  "dependencies": { "electrobun": "2.0.5" }
+}

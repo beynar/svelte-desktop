@@ -1,0 +1,30 @@
+{
+	"name": "notes-desktop-example",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"scripts": {
+		"dev": "bunx --bun vite dev",
+		"build": "bunx --bun vite build",
+		"prepare": "svelte-kit sync || echo ''",
+		"postinstall": "ln -sfn ../../../../packages/shell node_modules/@svelte-desktop/shell-link && rm -rf node_modules/@svelte-desktop/shell && mv node_modules/@svelte-desktop/shell-link node_modules/@svelte-desktop/shell",
+		"test": "bun test --timeout 30000 tests/",
+		"test:dev": "DESKTOP_TEST_DEV=1 bun test --timeout 90000 tests/"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-bun": "1.0.0-next.2",
+		"@sveltejs/kit": "^3.0.0-next.0",
+		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"@types/bun": "^1.4.4",
+		"svelte": "^5.56.7",
+		"typescript": "^6.0.3",
+		"vite": "^8.1.5"
+	},
+	"dependencies": {
+		"@svelte-desktop/shell": "file:../../packages/shell"
+	},
+	"imports": {
+		"#lib": "./src/lib/index.js",
+		"#lib/*": "./src/lib/*"
+	}
+}

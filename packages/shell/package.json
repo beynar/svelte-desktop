@@ -1,0 +1,35 @@
+{
+	"name": "@svelte-desktop/shell",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"description": "Desktop apps from an unmodified SvelteKit app: one Vite plugin, one config file, a signed single-binary .app.",
+	"exports": {
+		".": "./src/index.ts",
+		"./server": "./src/server.ts",
+		"./client": "./src/client.ts",
+		"./worker": "./src/worker.ts",
+		"./worker-env": "./src/worker-env.ts",
+		"./adapter": "./src/adapter.js",
+		"./updater": "./src/updater/index.ts",
+		"./platform": "./src/platform/index.ts",
+		"./stores": "./src/platform/stores.svelte.ts",
+		"./platform/MenuBar.svelte": "./src/platform/components/MenuBar.svelte",
+		"./platform/window-state": "./src/platform/windowState.ts",
+		"./platform/store": "./src/platform/store.ts",
+		"./platform/StatusItem.svelte": "./src/platform/components/StatusItem.svelte",
+		"./platform/Popover.svelte": "./src/platform/components/Popover.svelte",
+		"./platform/PopoverContent.svelte": "./src/platform/components/PopoverContent.svelte",
+		"./vite": "./src/vite.ts",
+		"./config": "./src/config.ts",
+		"./test": "./src/test.ts"
+	},
+	"peerDependencies": {
+		"@sveltejs/adapter-bun": "1.0.0-next.2",
+		"@sveltejs/kit": "^3.0.0-next.0",
+		"svelte": "^5.56.0"
+	},
+	"bin": {
+		"svelte-desktop": "./bin/svelte-desktop.ts"
+	}
+}

@@ -1,0 +1,182 @@
+[
+  {
+    "name": "hello-b-canary",
+    "ready_ms_runs": [
+      7.3,
+      5.4,
+      4.1,
+      6.5,
+      6
+    ],
+    "ready_ms_median": 6,
+    "rss_idle_mb": 16,
+    "rss_after_200_mb": 18.7,
+    "ssr_rps_sequential": 15353,
+    "checks_passed": "1/1",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "hello-e-trim-en",
+    "ready_ms_runs": [
+      17.9,
+      5.3,
+      2.6,
+      4.9,
+      6
+    ],
+    "ready_ms_median": 5.3,
+    "rss_idle_mb": 15.7,
+    "rss_after_200_mb": 18.4,
+    "ssr_rps_sequential": 14885,
+    "checks_passed": "1/1",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "hello-f-aot",
+    "ready_ms_runs": [
+      20.7,
+      5,
+      7.4,
+      4.9,
+      2.6
+    ],
+    "ready_ms_median": 5,
+    "rss_idle_mb": 18.8,
+    "rss_after_200_mb": 19.3,
+    "ssr_rps_sequential": 12046,
+    "checks_passed": "1/1",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "hello-g-aot-trim-en",
+    "ready_ms_runs": [
+      24.8,
+      4.9,
+      2.7,
+      6.6,
+      4.5
+    ],
+    "ready_ms_median": 4.9,
+    "rss_idle_mb": 18.8,
+    "rss_after_200_mb": 19.1,
+    "ssr_rps_sequential": 18652,
+    "checks_passed": "1/1",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-b-canary",
+    "ready_ms_runs": [
+      79.8,
+      16.3,
+      18.1,
+      18.8,
+      17.1
+    ],
+    "ready_ms_median": 18.1,
+    "rss_idle_mb": 32.7,
+    "rss_after_200_mb": 58.2,
+    "ssr_rps_sequential": 5721,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-d-trim",
+    "ready_ms_runs": [
+      42.1,
+      22.6,
+      17.6,
+      17.1,
+      17.5
+    ],
+    "ready_ms_median": 17.6,
+    "rss_idle_mb": 32.3,
+    "rss_after_200_mb": 59.6,
+    "ssr_rps_sequential": 5046,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-e-trim-en",
+    "ready_ms_runs": [
+      43.3,
+      19.4,
+      16.7,
+      16.9,
+      18
+    ],
+    "ready_ms_median": 18,
+    "rss_idle_mb": 32.2,
+    "rss_after_200_mb": 63.6,
+    "ssr_rps_sequential": 4520,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-f-aot",
+    "ready_ms_runs": [
+      50.1,
+      4.2,
+      7.5,
+      4.6,
+      4.8
+    ],
+    "ready_ms_median": 4.8,
+    "rss_idle_mb": 30.8,
+    "rss_after_200_mb": 39,
+    "ssr_rps_sequential": 7277,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-g-aot-trim-en",
+    "ready_ms_runs": [
+      44.5,
+      7.5,
+      5,
+      5.3,
+      5.2
+    ],
+    "ready_ms_median": 5.3,
+    "rss_idle_mb": 30.6,
+    "rss_after_200_mb": 38.8,
+    "ssr_rps_sequential": 7141,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  },
+  {
+    "name": "kit-h-aot-trim-en-nosrc",
+    "ready_ms_runs": [
+      41,
+      5.3,
+      5.6,
+      5.3,
+      5.5
+    ],
+    "ready_ms_median": 5.5,
+    "rss_idle_mb": 30.5,
+    "rss_after_200_mb": 38.8,
+    "ssr_rps_sequential": 7116,
+    "checks_passed": "10/10",
+    "failed_checks": [],
+    "exited_early": null,
+    "stderr": ""
+  }
+]

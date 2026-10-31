@@ -1,0 +1,19 @@
+{
+	"name": "hello-ours",
+	"private": true,
+	"version": "1.0.0",
+	"type": "module",
+	"scripts": {
+		"build": "bun ../../scripts/build.ts",
+		"postinstall": "mkdir -p node_modules/@svelte-desktop && ln -sfn ../../../.. node_modules/@svelte-desktop/shell"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-bun": "1.0.0-next.2",
+		"@sveltejs/kit": "^3.0.0-next.0",
+		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"@types/bun": "^1.4.4",
+		"svelte": "^5.56.7",
+		"typescript": "^6.0.3",
+		"vite": "^8.1.5"
+	}
+}

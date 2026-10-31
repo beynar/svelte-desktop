@@ -1,0 +1,93 @@
+/**
+ * Persisted JSON key-value store. Pure JS: a flat record flushed to
+ * `${app.getPath('appData')}/svelte-desktop-store.json` — writes are
+ * debounced 250ms so bursts of set() calls coalesce into one write.
+ * Call load() once at init (the stores-module `store` namespace does it);
+ * failures there land on `store.error` like every other namespace.
+ */
+import { app } from './index';
+
+const FILE_NAME = 'svelte-desktop-store.json';
+const SAVE_DEBOUNCE_MS = 250;
+
+let data: Record<string, unknown> = {};
+let path: string | null = null;
+let timer: ReturnType<typeof setTimeout> | null = null;
+
+async function persist(): Promise<void> {
+	if (!path) return; // flush() guards; a stray timer before load() is a no-op
+	await Bun.write(path, JSON.stringify(data, null, 2));
+}
+
+function scheduleSave(): void {
+	if (timer) clearTimeout(timer);
+	timer = setTimeout(() => {
+		timer = null;
+		// Debounced writes can't propagate — a failed write (permissions,
+		// full disk) must not surface as an unhandled rejection. flush()
+		// is the propagating lane for callers that need the error.
+		void persist().catch(() => {});
+	}, SAVE_DEBOUNCE_MS);
+}
+
+export const store = {
+	/** Resolved JSON path — null until load() runs. */
+	get path() {
+		return path;
+	},
+	/** Live in-memory record — the source of truth between saves. */
+	get data() {
+		return data;
+	},
+
+	get<T = unknown>(key: string): T | undefined {
+		return data[key] as T | undefined;
+	},
+	set(key: string, value: unknown): void {
+		// `undefined` can't round-trip through JSON — treat it as delete so
+		// memory and disk stay in agreement after reload.
+		if (value === undefined) delete data[key];
+		else data[key] = value;
+		scheduleSave();
+	},
+	delete(key: string): void {
+		delete data[key];
+		scheduleSave();
+	},
+	clear(): void {
+		data = {};
+		scheduleSave();
+	},
+
+	/** Resolve the file path and read it into memory. Missing file → {}. */
+	async load(): Promise<Record<string, unknown>> {
+		path = `${await app.getPath('appData')}/${FILE_NAME}`;
+		const file = Bun.file(path);
+		if (!(await file.exists())) {
+			data = {};
+			return data;
+		}
+		let parsed: unknown = null;
+		try {
+			parsed = await file.json();
+		} catch {
+			// Corrupt file falls back to {} — matches windowState.load()'s
+			// tolerance; a broken store must not brick the namespace.
+		}
+		data =
+			parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+				? (parsed as Record<string, unknown>)
+				: {};
+		return data;
+	},
+
+	/** Cancel the pending debounced write and flush to disk immediately. */
+	async flush(): Promise<void> {
+		if (timer) {
+			clearTimeout(timer);
+			timer = null;
+		}
+		if (!path) throw new Error('store.flush() before load() — no path resolved');
+		await persist();
+	},
+};

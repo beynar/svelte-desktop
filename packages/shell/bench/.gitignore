@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+out/
+target/
+artifacts/
+*.zip
+*.dmg
+results.json
+.hutch/
+.cottontail-tmp/
+ours-notes-snapshot/
+ours-builds/
+*.app/
