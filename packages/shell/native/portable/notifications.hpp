@@ -259,7 +259,8 @@ struct Store {
             e["args"].is_object())
           items.push_back(e);
   }
-  void save() const {
+  /// "" when the queue is on disk, else why not (the caller refuses what it couldn't persist).
+  std::string save() const {
     std::error_code ec;
     auto p = std::filesystem::u8path(path);
     std::filesystem::create_directories(p.parent_path(), ec);
@@ -267,11 +268,16 @@ struct Store {
     tmp += ".tmp";
     {
       std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-      if (!f) return;
+      if (!f) return "cannot write " + tmp.string();
       f << items.dump();
+      if (!f.flush()) return "cannot write " + tmp.string();
     }
     std::filesystem::rename(tmp, p, ec);
-    if (ec) std::filesystem::remove(tmp, ec);
+    if (ec) {
+      std::filesystem::remove(tmp, ec);
+      return "cannot save " + p.string();
+    }
+    return "";
   }
   json *find(const std::string &id) {
     for (auto &e : items)

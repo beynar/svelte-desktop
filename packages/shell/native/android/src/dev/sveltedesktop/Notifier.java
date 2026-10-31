@@ -239,7 +239,11 @@ final class Notifier {
             while (at <= now) at = advance(at, repeat);
             s.put("at", at);
             keepImages(c, s);
-            synchronized (Notifier.class) { scheduled(c).edit().putString(id, s.toString()).commit(); }
+            synchronized (Notifier.class) {
+                if (!scheduled(c).edit().putString(id, s.toString()).commit())
+                    throw new MainActivity.OpError("internal", "notifications.show: the schedule could not be saved");
+            }
+            removeDelivered(c, id); // one id = one notification: the new one replaces the shown one
             arm(c, id, at);
             return new JSONObject().put("id", id).put("tag", id).put("scheduled", true);
         }
@@ -471,8 +475,19 @@ final class Notifier {
         }
     }
 
+    private static String sha256(String text) {
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder b = new StringBuilder();
+            for (int i = 0; i < 16; i++) b.append(String.format("%02x", d[i]));
+            return b.toString();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private static File imageFile(Context c, String id, String kind) {
-        return new File(c.getFilesDir(), "sd-notifications/" + Integer.toHexString(id.hashCode()) + "-" + kind);
+        return new File(c.getFilesDir(), "sd-notifications/" + sha256(id) + "-" + kind);
     }
 
     // ------------------------------------------------------------------ scheduling
@@ -554,6 +569,8 @@ final class Notifier {
         } catch (Exception e) {
             Log.w(TAG, "scheduled notification " + id, e);
         }
+        // A one-shot is done with its images once posted (the notification holds the bitmaps).
+        if (str(s, "repeat") == null) for (String k : new String[] { "image", "icon" }) imageFile(c, id, k).delete();
     }
 
     /** At start, on boot and after an update (force-stop and reboots drop alarms): re-arm, deliver missed ones. */
@@ -742,15 +759,6 @@ final class Notifier {
             respond(c, id, kind, action, input == null ? null : input.toString(), payload);
             return true;
         }
-        Bundle x = i.getExtras();
-        if (x != null && (x.containsKey("google.message_id") || x.containsKey("sd_id"))) {
-            String pid = x.getString("sd_id");
-            if (pid == null) pid = x.getString("google.message_id");
-            String payload = x.getString("sd");
-            for (String k : new String[] { "google.message_id", "sd", "sd_id" }) i.removeExtra(k);
-            if (pid != null) respond(c, pid, "click", null, null, payload);
-            return true;
-        }
         return false;
     }
 
@@ -790,63 +798,39 @@ final class Notifier {
         }
     }
 
-    /** A message handed to the app (data messages always; notification messages only when the SDK
-     *  considers the app in the foreground — then we show it ourselves, tag = sd_id, so it dedupes). */
-    static void pushMessage(Context c, Map<String, String> data, String title, String body, String channel, String tag, String imageUrl, String messageId) {
-        String id = data.get("sd_id");
-        if (id == null) id = tag;
-        if (id == null) id = messageId;
-        String payload = data.get("sd");
+    /** A push, from FCM or UnifiedPush, as createPush sends it — `{id, title, body, subtitle, image,
+     *  silent, payload, channel}`, no title for a background push. Every push is displayed here (FCM
+     *  messages are data-only), so its taps carry our nonce like local notifications. The message is
+     *  emitted whether or not displaying it worked. */
+    static void received(Context c, JSONObject m, String fallbackId) {
+        String id = str(m, "id");
+        if (id == null) id = fallbackId;
+        String title = str(m, "title"), payload = str(m, "payload");
         boolean fg = resumed;
-        try {
-            JSONObject msg = new JSONObject().put("data", new JSONObject(data)).put("foreground", fg).put("payload", orNull(payload));
-            if (id != null) msg.put("id", id);
-            if (title != null || body != null) {
-                msg.put("notification", new JSONObject().put("title", orNull(title)).put("body", orNull(body)));
-                if (!fg || showInForeground(c, null)) {
-                    JSONObject s = new JSONObject().put("id", id != null ? id : "push").put("title", title == null ? "" : title);
-                    if (body != null) s.put("body", body);
-                    if (payload != null) s.put("payload", payload);
-                    if (channel != null && nm(c).getNotificationChannel(channel) != null) s.put("channel", channel);
-                    if (imageUrl != null) s.put("image", download(c, imageUrl));
-                    post(c, s, true);
-                }
+        if (title != null && (!fg || showInForeground(c, null))) {
+            try {
+                JSONObject s = new JSONObject().put("id", id != null ? id : "push").put("title", title);
+                for (String k : new String[] { "body", "subtitle", "payload", "group", "channel" }) if (str(m, k) != null) s.put(k, str(m, k));
+                if (m.optBoolean("silent", false)) s.put("silent", true);
+                if (s.has("channel") && nm(c).getNotificationChannel(s.getString("channel")) == null) s.remove("channel");
+                String image = str(m, "image");
+                if (image != null) s.put("image", image.startsWith("https://") ? download(c, image) : image.startsWith("data:") ? image : null);
+                post(c, s, true);
+            } catch (Exception e) {
+                Log.w(TAG, "push not displayed", e);
             }
+        }
+        try {
+            JSONObject msg = new JSONObject().put("data", m).put("foreground", fg).put("payload", orNull(payload));
+            if (id != null) msg.put("id", id);
+            if (title != null) msg.put("notification", new JSONObject().put("title", title).put("body", orNull(str(m, "body"))));
             emit("pushMessage", msg);
         } catch (Exception e) {
             Log.w(TAG, "push message", e);
         }
     }
 
-    /** A UnifiedPush / Web Push message, decrypted: what sendWebPush sends — `{id, title, body, subtitle,
-     *  image, silent, payload}`, or `{id, payload}` for a background push (no title: no notification). */
-    static void webPushMessage(Context c, JSONObject m, String messageId) {
-        String id = str(m, "id");
-        if (id == null) id = messageId;
-        String title = str(m, "title"), body = str(m, "body"), payload = str(m, "payload");
-        boolean fg = resumed;
-        try {
-            JSONObject msg = new JSONObject().put("data", m).put("foreground", fg).put("payload", orNull(payload));
-            if (id != null) msg.put("id", id);
-            if (title != null) {
-                msg.put("notification", new JSONObject().put("title", title).put("body", orNull(body)));
-                if (!fg || showInForeground(c, null)) {
-                    JSONObject s = new JSONObject().put("id", id != null ? id : "push").put("title", title);
-                    for (String k : new String[] { "body", "subtitle", "payload", "group", "channel" }) if (str(m, k) != null) s.put(k, str(m, k));
-                    if (m.optBoolean("silent", false)) s.put("silent", true);
-                    if (s.has("channel") && nm(c).getNotificationChannel(s.getString("channel")) == null) s.remove("channel");
-                    String image = str(m, "image");
-                    if (image != null) s.put("image", image.startsWith("https://") ? download(c, image) : image.startsWith("data:") ? image : null);
-                    post(c, s, true);
-                }
-            }
-            emit("pushMessage", msg);
-        } catch (Exception e) {
-            Log.w(TAG, "web push message", e);
-        }
-    }
-
-    /** FCM's notification.image: fetched on the messaging thread into the cache. */
+    /** A push image (https): fetched on the messaging thread into the cache. */
     private static String download(Context c, String url) {
         if (!url.startsWith("https://")) return null;
         try {

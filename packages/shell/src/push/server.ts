@@ -338,22 +338,24 @@ export function createPush(config: PushConfig): PushSender {
 	async function sendFcm(t: Extract<PushTarget, { provider: 'fcm' }>, n: PushNotification) {
 		if (!config.fcm) throw new PushError('push: no `fcm` config', 'fcm', 0, 'NotConfigured', false);
 		const a = account();
+		// Data-only: the app displays it itself (Notifier), so its taps are authenticated like a local
+		// notification's and the payload / deep link always reach it. FCM data values are strings.
 		const data: Record<string, string> = {};
 		const payload = payloadOf(n);
 		if (payload) data.sd = payload;
 		if (n.id) data.sd_id = n.id;
+		if (!n.background) {
+			if (n.title) data.sd_title = n.title;
+			if (n.body) data.sd_body = n.body;
+			if (n.subtitle) data.sd_subtitle = n.subtitle;
+			if (n.image) data.sd_image = n.image;
+			if (n.channel) data.sd_channel = n.channel;
+			if (n.group) data.sd_group = n.group;
+			if (n.silent) data.sd_silent = 'true';
+		}
 		const android: Record<string, unknown> = { priority: n.priority === 'normal' ? 'NORMAL' : 'HIGH', ttl: `${n.ttl ?? 2419200}s` };
 		if (n.id) android.collapse_key = n.id;
 		const message: Record<string, unknown> = { token: t.token, data, android };
-		if (!n.background) {
-			message.notification = { title: n.title, body: n.body, ...(n.image && { image: n.image }) };
-			android.notification = {
-				...(n.id && { tag: n.id }),
-				...(n.channel && { channel_id: n.channel }),
-				...(n.silent ? { default_sound: false, notification_priority: 'PRIORITY_LOW' } : { default_sound: !n.sound || n.sound === 'default', ...(n.sound && n.sound !== 'default' && { sound: n.sound }) }),
-				...(n.badge != null && { notification_count: n.badge }),
-			};
-		}
 		Object.assign(message, n.fcm);
 		const origin = config.fcm.origin ?? 'https://fcm.googleapis.com';
 		const res = await fetch(`${origin}/v1/projects/${a.project_id}/messages:send`, {

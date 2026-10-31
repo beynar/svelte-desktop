@@ -242,7 +242,7 @@ final class UnifiedPush {
                     if (body == null) return;
                     byte[] plain = WebPushCrypto.decrypt(body, privateKey(c), unb64(prefs(c).getString("p256dh", "")), unb64(prefs(c).getString("auth", "")));
                     JSONObject msg = new JSONObject(new String(plain, StandardCharsets.UTF_8));
-                    Notifier.webPushMessage(c, msg, id);
+                    Notifier.received(c, msg, id);
                     break;
                 }
                 default: // TEMP_UNAVAILABLE: the distributor keeps the registration

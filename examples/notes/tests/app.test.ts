@@ -278,7 +278,7 @@ test('self-hosted push (push.server): register, end-to-end encrypted delivery, d
 	}
 });
 
-test('quitOnLastWindowClosed: false — window closed, the app and its push connection live on; a click reopens the window and deep-links', async () => {
+test('quitOnLastWindowClosed: false — closing the last window hides it; the app and its push connection live on; a click shows it and deep-links', async () => {
 	if (process.env.DESKTOP_TEST_DEV) return; // vite dev owns the window lifecycle
 	const { servePush } = await import('@svelte-desktop/shell/push-server');
 	const { createPush, generateVapidKeys } = await import('@svelte-desktop/shell/push');
@@ -288,8 +288,8 @@ test('quitOnLastWindowClosed: false — window closed, the app and its push conn
 		for (let i = 0; i < 100 && server.push.connected() === 0; i++) await Bun.sleep(50);
 		await app.platform('window', 'close', { windowId: 0 });
 		await Bun.sleep(1000);
-		// Still running, no window, still connected.
-		expect(await app.platform<unknown[]>('window', 'list')).toEqual([]);
+		// Hidden (not destroyed: page and state kept), the app still running and connected.
+		expect(await app.platform<boolean>('window', 'isVisible', { windowId: 0 })).toBe(false);
 		expect(server.push.connected()).toBe(1);
 		const push = createPush({ webpush: { ...(await generateVapidKeys()), subject: 'mailto:ops@example.com' } });
 		await push.send(target, { id: 'closed-1', title: 'While closed', body: 'still delivered', url: '/about' });
@@ -299,15 +299,11 @@ test('quitOnLastWindowClosed: false — window closed, the app and its push conn
 			await Bun.sleep(100);
 		}
 		expect(delivered.map((n) => n.id)).toContain('closed-1');
-		// The click reopens the main window; its page claims the click and navigates.
+		// The click shows the window again; its page (still loaded) navigates.
 		await app.platform('notifications', 'simulateResponse', { id: 'closed-1' });
-		let windows: unknown[] = [];
-		for (let i = 0; i < 100 && !windows.length; i++) {
-			windows = await app.platform<unknown[]>('window', 'list');
-			await Bun.sleep(100);
-		}
-		expect(windows).toHaveLength(1);
 		await app.waitFor(() => location.pathname === '/about', { timeout: 15_000 });
+		expect(await app.platform<boolean>('window', 'isVisible', { windowId: 0 })).toBe(true);
+		expect(await app.platform<unknown[]>('window', 'list')).toHaveLength(1);
 		await app.eval('host.notifications.dismissAll()');
 		await app.eval('host.push.unregister()');
 	} finally {

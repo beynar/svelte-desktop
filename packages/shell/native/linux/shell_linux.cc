@@ -234,6 +234,17 @@ static gboolean on_delete(GtkWidget *, GdkEvent *, gpointer data) {
     emit("willClose", json{{"windowId", public_id(w->id)}});
     return TRUE; // refuse
   }
+  // quitOnLastWindowClosed: false — the last visible window hides instead (as on macOS): the app,
+  // its page and its push connection live on; a notification click or a second launch shows it.
+  if (w && !g_quit_on_last_window && !w->closing) {
+    bool other = false;
+    for (int id : g_order)
+      if (id != w->id && find_window(id) && gtk_widget_get_visible(find_window(id)->window)) other = true;
+    if (!other) {
+      gtk_widget_hide(w->window);
+      return TRUE;
+    }
+  }
   return FALSE;
 }
 

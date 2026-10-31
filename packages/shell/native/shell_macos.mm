@@ -139,7 +139,14 @@ static bool same_origin(NSURL *url) {
 }
 
 // Electrobun #550-style "frozen after sleep / web process died": reload instead of a dead view.
+// A new document is coming (reload, full navigation): the old page can't take responses any more
+// until the new one reports ready (notifications target / claim queue, platform_core.mm).
+- (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation {
+  platform_page_unloaded(self.windowId);
+}
+
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
+  platform_page_unloaded(self.windowId);
   emit(@{@"type" : @"webcontent-terminated", @"window" : @(self.windowId)});
   [webView reload];
 }
@@ -160,6 +167,8 @@ void shell_on_page_ready(int wid) {
 
 // Close veto: webview/webview's window delegate only implements windowWillClose:,
 // so windowShouldClose: is added to its class at runtime.
+static bool g_keep_alive = false; // desktop.config quitOnLastWindowClosed: false
+
 static void install_close_veto_hook(NSWindow *win) {
   Class cls = [win.delegate class];
   if (!cls) return;
@@ -168,6 +177,17 @@ static void install_close_veto_hook(NSWindow *win) {
                     if (w && w->veto) {
                       platform_emit(@"willClose", @{@"windowId" : @(platform_public_window_id(w->id))});
                       return NO;
+                    }
+                    // quitOnLastWindowClosed: false — the last visible window hides instead (macOS apps
+                    // stay alive; a Dock or notification click shows it again, its page still loaded).
+                    if (w && g_keep_alive) {
+                      bool other = false;
+                      for (auto &[id, x] : g_windows)
+                        if (x != w && x->window.isVisible) other = true;
+                      if (!other) {
+                        [sender orderOut:nil];
+                        return NO;
+                      }
                     }
                     return YES;
                   }),
@@ -308,7 +328,10 @@ int shell_window_create(const char *opts_json) {
   NSDictionary *o = parse_json(opts_json) ?: @{};
   if (!g_main_opts) {
     g_main_opts = o;
-    if (o[@"quitOnLastWindowClosed"] && ![o[@"quitOnLastWindowClosed"] boolValue]) webview_sd_keep_running_without_windows(1);
+    if (o[@"quitOnLastWindowClosed"] && ![o[@"quitOnLastWindowClosed"] boolValue]) {
+      g_keep_alive = true;
+      webview_sd_keep_running_without_windows(1); // a window closed by other means doesn't stop the loop either
+    }
   }
   if (!g_app_name) g_app_name = o[@"appName"];
   if (!g_app_identifier) g_app_identifier = o[@"identifier"];
@@ -353,8 +376,18 @@ NSString *platform_window_label(int id) {
   Window *w = find(id);
   return w ? w->label : nil;
 }
-int platform_recreate_main_window(void) {
-  if (!g_windows.empty() || !g_main_opts) return 0;
+int platform_show_main_window(void) {
+  // Hidden (the usual case): show it again, page and state intact.
+  for (int id : g_order) {
+    Window *w = find(id);
+    if (!w) continue;
+    if (w->window.miniaturized) [w->window deminiaturize:nil];
+    [w->window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    return id;
+  }
+  // Closed by other means: a new main window.
+  if (!g_main_opts) return 0;
   NSMutableDictionary *o = [g_main_opts mutableCopy];
   for (NSString *k in @[ @"args", @"cwd", @"singleInstance", @"url" ]) [o removeObjectForKey:k];
   o[@"label"] = @"main";

@@ -100,11 +100,9 @@ static void deliver_response(NSDictionary *base, int origin, BOOL activates, BOO
   if (g_ring.count > 64) [g_ring removeObjectAtIndex:0];
   int target = cold ? 0 : platform_target_window(origin);
   if (!target) [g_unclaimed addObject:r];
-  // No window left (quitOnLastWindowClosed: false): open the main one; its page claims the click.
-  if (!target && activates && !platform_window_ids().count) {
-    platform_recreate_main_window();
-    [NSApp activateIgnoringOtherApps:YES];
-  }
+  // No loaded window (quitOnLastWindowClosed: false and the main one was closed): open it; its page
+  // claims the click. A hidden one is a target already (bring_to_front shows it).
+  if (!target && activates) platform_show_main_window();
   else if (activates) bring_to_front(target);
   platform_emit_targeted(@"notificationResponse", r, target);
 }
@@ -186,6 +184,11 @@ static void install_categories(void) {
   [center() setNotificationCategories:[NSSet setWithArray:g_categories.allValues]];
 }
 
+// Action sets of notifications that may outlive this process (scheduled ones): persisted, so
+// their buttons exist again after a relaunch. Bounded; the oldest go first.
+static NSString *const kCategoriesKey = @"svelte-desktop.notificationCategories";
+static const NSUInteger kMaxStoredCategories = 64;
+
 // One category per distinct action set; we own every category of the app.
 static NSString *category_for(NSArray *actions, NSMutableArray *background, NSString **error) {
   NSMutableArray<UNNotificationAction *> *list = [NSMutableArray array];
@@ -223,8 +226,19 @@ static NSString *category_for(NSArray *actions, NSMutableArray *background, NSSt
                                                        intentIdentifiers:@[]
                                                                  options:UNNotificationCategoryOptionCustomDismissAction];
     install_categories();
+    NSMutableArray *stored = [[NSUserDefaults.standardUserDefaults arrayForKey:kCategoriesKey] ?: @[] mutableCopy];
+    [stored addObject:actions];
+    while (stored.count > kMaxStoredCategories) [stored removeObjectAtIndex:0];
+    [NSUserDefaults.standardUserDefaults setObject:stored forKey:kCategoriesKey];
   }
   return ident;
+}
+
+static void restore_categories(void) {
+  for (id actions in [NSUserDefaults.standardUserDefaults arrayForKey:kCategoriesKey]) {
+    NSString *error = nil;
+    if ([actions isKindOfClass:NSArray.class]) category_for(actions, [NSMutableArray array], &error);
+  }
 }
 
 static NSArray *const kRepeats = @[ @"minute", @"hour", @"day", @"week", @"month", @"year" ];
@@ -246,7 +260,7 @@ static UNNotificationTrigger *trigger_for(double atMs, NSString *repeat) {
   return [UNCalendarNotificationTrigger triggerWithDateMatchingComponents:[cal components:units fromDate:at] repeats:YES];
 }
 
-/// Image bytes from a local path, file:// URL or data: URL (http(s) is fetched by the caller).
+/// Image bytes from a local path, file:// URL or data: URL.
 static NSData *image_bytes(NSString *src, NSString **ext) {
   if ([src hasPrefix:@"data:"]) {
     NSRange comma = [src rangeOfString:@","];
@@ -327,22 +341,7 @@ static void show(PlatformCall *call) {
   }
   if (background.count) info[@"sdb"] = background;
   content.userInfo = info;
-  NSString *image = [call string:@"image"];
-  if ([image hasPrefix:@"http://"] || [image hasPrefix:@"https://"]) {
-    NSURL *url = [NSURL URLWithString:image];
-    [[NSURLSession.sharedSession dataTaskWithURL:url
-                               completionHandler:^(NSData *data, NSURLResponse *, NSError *) {
-                                 on_main(^{
-                                   NSString *e = nil;
-                                   NSString *ext = url.pathExtension.length ? url.pathExtension : @"png";
-                                   UNNotificationAttachment *a = attachment_for(data, ext, image, &e);
-                                   if (!a) return [call fail:@"invalid_args" message:e];
-                                   content.attachments = @[ a ];
-                                   post(call, ident, content, repeat);
-                                 });
-                               }] resume];
-    return;
-  }
+  NSString *image = [call string:@"image"]; // a path, file: or data: URL (TS resolves the others)
   if (image) {
     NSString *ext = nil;
     UNNotificationAttachment *a = attachment_for(image_bytes(image, &ext), ext, image, &error);
@@ -355,6 +354,16 @@ static void show(PlatformCall *call) {
 static void post(PlatformCall *call, NSString *ident, UNMutableNotificationContent *content, NSString *repeat) {
   BOOL scheduled = [call has:@"at"] && ([call number:@"at" or:0] / 1000 > NSDate.date.timeIntervalSince1970 + 0.5 || repeat);
   UNNotificationTrigger *trigger = scheduled ? trigger_for([call number:@"at" or:0], repeat) : nil;
+  // A calendar repeat has no start date: it would fire at its next match, before `at`. Refuse
+  // instead of firing early (start it within one period of `at`, or schedule the first one alone).
+  if (repeat && [trigger isKindOfClass:UNCalendarNotificationTrigger.class]) {
+    NSDate *next = [(UNCalendarNotificationTrigger *)trigger nextTriggerDate];
+    if (next && next.timeIntervalSince1970 * 1000 < [call number:@"at" or:0] - 1000)
+      return [call fail:@"invalid_args"
+                message:[NSString stringWithFormat:@"notifications.show: on Apple platforms a `%@` repeat starts at its next occurrence (%@), "
+                                                   @"before `at` — use an `at` within one %@ from now",
+                                                   repeat, next, repeat]];
+  }
   UNNotificationRequest *req = [UNNotificationRequest requestWithIdentifier:ident content:content trigger:trigger];
   // Same identifier = replaced (dedupe) — for a pending one too, but clear a delivered
   // copy when the new one is only scheduled, so the old one doesn't linger.
@@ -402,6 +411,7 @@ static NSString *aps_environment(void) {
 }
 
 static NSMutableArray<PlatformCall *> *g_register_calls;
+static BOOL g_wants_push; // false after unregister: a late token is dropped
 static NSString *g_token;
 
 static NSString *hex(NSData *data) {
@@ -435,6 +445,7 @@ static void install_app_delegate_hooks(void) {
   Class cls = [delegate class];
   class_addMethod(cls, @selector(application:didRegisterForRemoteNotificationsWithDeviceToken:),
                   imp_implementationWithBlock(^(id, NSApplication *, NSData *token) {
+                    if (!g_wants_push) return [NSApp unregisterForRemoteNotifications];
                     NSString *t = hex(token);
                     BOOL changed = ![t isEqual:g_token];
                     g_token = t;
@@ -466,6 +477,7 @@ static void push_register(PlatformCall *call) {
     return [call fail:@"unavailable"
               message:@"push.register: the app has no aps-environment entitlement — set `push.apns` in desktop.config and "
                       @"sign with a provisioning profile that enables Push Notifications (sign.provisioningProfile)"];
+  g_wants_push = YES;
   if (g_token) return [call ok:token_value()];
   [g_register_calls addObject:call];
   if (g_register_calls.count > 1) return;
@@ -549,7 +561,9 @@ void platform_register_notifications(void) {
 
   // e2e tests (launch() sets SVELTE_DESKTOP_TEST): a user response to a delivered
   // notification, through the same path as a real one. `cold`: as if no page was loaded.
-  if (getenv("SVELTE_DESKTOP_TEST"))
+  // Same condition as the test channel (which already drives the app): ws://127.0.0.1:<port>.
+  const char *test = getenv("SVELTE_DESKTOP_TEST");
+  if (test && !strncmp(test, "ws://127.0.0.1:", 15))
     platform_register(@"notifications", @"simulateResponse", ^(PlatformCall *call) {
       if (!require_bundle(call)) return;
       NSString *ident = [call string:@"id"] ?: @"";
@@ -574,7 +588,9 @@ void platform_register_notifications(void) {
 
   platform_register(@"push", @"register", ^(PlatformCall *call) { push_register(call); });
   platform_register(@"push", @"unregister", ^(PlatformCall *call) {
-    if (g_token) [NSApp unregisterForRemoteNotifications];
+    g_wants_push = NO;
+    finish_register(nil, @"unregistered while registering");
+    [NSApp unregisterForRemoteNotifications];
     g_token = nil;
     [call ok:nil];
   });
@@ -585,6 +601,7 @@ void platform_register_notifications(void) {
   if (has_bundle()) {
     g_delegate = [SDNotificationDelegate new];
     center().delegate = g_delegate;
+    restore_categories();
     install_categories();
   }
 }

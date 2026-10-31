@@ -65,6 +65,7 @@ final class Host: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDe
   var foregroundBanners = true
   var pushToken: String?
   var pushReplies: [Reply] = []
+  var wantsPush = false // false after unregister: a late token is dropped
   private var test: TestChannel?
 
   // Services with no iOS equivalent answer `unsupported`, as on Linux for macOS-only ops.
@@ -337,6 +338,7 @@ final class Host: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDe
   }
 
   func didRegister(token: Data) {
+    guard wantsPush else { return UIApplication.shared.unregisterForRemoteNotifications() }
     let t = token.map { String(format: "%02x", $0) }.joined()
     let changed = t != pushToken
     pushToken = t
@@ -594,7 +596,8 @@ extension Host {
     ]
     center.setNotificationCategories(Set(categories.values))
 
-    func category(_ actions: [[String: Any]]) throws -> String {
+    let categoriesKey = "svelte-desktop.notificationCategories"
+    func category(_ actions: [[String: Any]], persist: Bool = true) throws -> String {
       var list: [UNNotificationAction] = []
       var key: [String] = []
       for a in actions {
@@ -617,9 +620,16 @@ extension Host {
       if categories[ident] == nil {
         categories[ident] = UNNotificationCategory(identifier: ident, actions: list, intentIdentifiers: [], options: [.customDismissAction])
         center.setNotificationCategories(Set(categories.values))
+        if persist {
+          // Scheduled notifications outlive the process: keep their action sets for the next launch.
+          var stored = UserDefaults.standard.array(forKey: categoriesKey) ?? []
+          stored.append(actions)
+          UserDefaults.standard.set(Array(stored.suffix(64)), forKey: categoriesKey)
+        }
       }
       return ident
     }
+    for case let actions as [[String: Any]] in UserDefaults.standard.array(forKey: categoriesKey) ?? [] { _ = try? category(actions, persist: false) }
 
     func trigger(_ atMs: Double, _ rep: String?) -> UNNotificationTrigger {
       let at = Date(timeIntervalSince1970: atMs / 1000)
@@ -633,7 +643,7 @@ extension Host {
       return UNCalendarNotificationTrigger(dateMatching: Calendar.current.dateComponents(units, from: at), repeats: true)
     }
 
-    /** Image bytes from a path, file:// or data: URL; http(s) is downloaded. */
+    /** Image bytes from a path, file:// or data: URL (TS turns the other URLs into data: URLs). */
     func image(_ src: String, _ done: @escaping (Data?, String) -> Void) {
       if src.hasPrefix("data:"), let comma = src.firstIndex(of: ",") {
         let meta = String(src[src.index(src.startIndex, offsetBy: 5)..<comma])
@@ -641,10 +651,6 @@ extension Host {
         let body = String(src[src.index(after: comma)...])
         let data = meta.hasSuffix(";base64") ? Data(base64Encoded: body, options: .ignoreUnknownCharacters) : body.removingPercentEncoding?.data(using: .utf8)
         return done(data, sub == "jpeg" ? "jpg" : sub)
-      }
-      if src.hasPrefix("http://") || src.hasPrefix("https://"), let url = URL(string: src) {
-        URLSession.shared.dataTask(with: url) { data, _, _ in DispatchQueue.main.async { done(data, url.pathExtension.isEmpty ? "png" : url.pathExtension) } }.resume()
-        return
       }
       let path = src.hasPrefix("file:") ? (URL(string: src)?.path ?? src) : src
       done(FileManager.default.contents(atPath: path), (path as NSString).pathExtension.isEmpty ? "png" : (path as NSString).pathExtension)
@@ -680,9 +686,14 @@ extension Host {
       content.userInfo = info
       if let actions = args["actions"] as? [[String: Any]], !actions.isEmpty { content.categoryIdentifier = try category(actions) } else { content.categoryIdentifier = "sd-plain" }
       let scheduled = at.map { $0 / 1000 > Date().timeIntervalSince1970 + 0.5 || rep != nil } ?? false
+      let when = scheduled ? trigger(at!, rep) : nil
+      // A calendar repeat has no start date: it would fire at its next match, before `at`.
+      if let rep, let cal = when as? UNCalendarNotificationTrigger, let next = cal.nextTriggerDate(), next.timeIntervalSince1970 * 1000 < at! - 1000 {
+        throw OpError(code: "invalid_args", message: "notifications.show: on Apple platforms a `\(rep)` repeat starts at its next occurrence (\(next)), before `at` — use an `at` within one \(rep) from now")
+      }
       let post = {
         if scheduled { center.removeDeliveredNotifications(withIdentifiers: [id]) }
-        let req = UNNotificationRequest(identifier: id, content: content, trigger: scheduled ? trigger(at!, rep) : nil)
+        let req = UNNotificationRequest(identifier: id, content: content, trigger: when)
         center.add(req) { error in
           if let error = error as NSError? {
             let denied = error.domain == UNErrorDomain && error.code == UNError.notificationsNotAllowed.rawValue
@@ -795,6 +806,7 @@ extension Host {
     // push.* — APNs
     async("push.register") { [weak self] _, reply in
       guard let self else { return }
+      self.wantsPush = true
       if let t = self.pushTarget { return reply(.success(t)) }
       self.pushReplies.append(reply)
       guard self.pushReplies.count == 1 else { return }
@@ -804,8 +816,13 @@ extension Host {
       }
     }
     sync("push.unregister") { [weak self] _ in
-      if self?.pushToken != nil { UIApplication.shared.unregisterForRemoteNotifications() }
-      self?.pushToken = nil
+      guard let self else { return nil }
+      self.wantsPush = false
+      let pending = self.pushReplies
+      self.pushReplies.removeAll()
+      for r in pending { r(.failure(OpError(code: "unavailable", message: "push.register: unregistered while registering"))) }
+      UIApplication.shared.unregisterForRemoteNotifications()
+      self.pushToken = nil
       return nil
     }
     sync("push.token") { [weak self] _ in self?.pushTarget }

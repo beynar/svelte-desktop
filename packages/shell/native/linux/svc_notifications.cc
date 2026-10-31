@@ -342,7 +342,12 @@ void register_notifications() {
       json args = c->args;
       args["id"] = s.id;
       store().put(s.id, s.at, s.repeat, args);
-      store().save();
+      std::string saved = store().save();
+      if (!saved.empty()) {
+        store().erase(s.id);
+        return c->fail("internal", "notifications.show: the schedule could not be saved: " + saved);
+      }
+      close_live(s.id); // one id = one notification: the scheduled one replaces the shown one
       g_sched_window[s.id] = window;
       rearm();
       return c->ok(json{{"id", s.id}, {"scheduled", true}});

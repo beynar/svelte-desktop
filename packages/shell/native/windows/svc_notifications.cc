@@ -787,6 +787,19 @@ static bool show_balloon(const notif::Show &s, int window, std::string *error) {
   return true;
 }
 
+static void history_remove(const std::string &tag, const std::string &group);
+
+/// The shown toast with this id, wherever it is (popup, Action Center, balloon).
+static void remove_delivered(const std::string &id) {
+  auto it = toast::live.find(id);
+  std::string tag = it != toast::live.end() ? it->second.tag : tag_for(id);
+  std::string group = it != toast::live.end() ? it->second.group : group_for(notif::records().count(id) ? notif::records()[id].group : "");
+  if (it != toast::live.end() && it->second.toast && toast::notifier) toast::notifier->Hide(it->second.toast);
+  history_remove(tag, group);
+  if (toast::balloons) tray_balloon_hide(id);
+  forget(id);
+}
+
 static void history_remove(const std::string &tag, const std::string &group) {
   if (toast::history) toast::history->RemoveGroupedTagWithId(rt::HStr(tag), rt::HStr(group), rt::HStr(aumid()));
 }
@@ -1130,12 +1143,14 @@ void register_notifications() {
     json args = c->args;
     args["id"] = s.id;
     store().put(s.id, at, s.repeat, args);
-    if (!os_schedule(*store().find(s.id), &err)) {
+    std::string saved = store().save();
+    if (!saved.empty() || !os_schedule(*store().find(s.id), &err)) {
+      if (saved.empty()) unschedule(tag_for(s.id)); // partial OS occurrences go with the record
       store().erase(s.id);
       store().save();
-      return c->fail("internal", err);
+      return c->fail("internal", saved.empty() ? err : "notifications.show: the schedule could not be saved: " + saved);
     }
-    store().save();
+    if (future) remove_delivered(s.id); // one id = one notification: the scheduled one replaces the shown one
     g_sched_window[s.id] = window;
     rearm_timer();
     c->ok(json{{"id", s.id}, {"scheduled", true}});
@@ -1146,13 +1161,7 @@ void register_notifications() {
     if (id.empty()) return c->fail("invalid_args", "notifications.dismiss: `id` must be a string");
     toast_unavailable();
     cancel_pending(id);
-    auto it = toast::live.find(id);
-    std::string tag = it != toast::live.end() ? it->second.tag : tag_for(id);
-    std::string group = it != toast::live.end() ? it->second.group : group_for(notif::records().count(id) ? notif::records()[id].group : "");
-    if (it != toast::live.end() && it->second.toast && toast::notifier) toast::notifier->Hide(it->second.toast);
-    history_remove(tag, group);
-    if (toast::balloons) tray_balloon_hide(id);
-    forget(id);
+    remove_delivered(id);
     c->ok();
   });
   reg("notifications", "dismissAll", [](CallPtr c) {

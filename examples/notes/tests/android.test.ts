@@ -407,34 +407,30 @@ describe.skipIf(!process.env.ANDROID_E2E)('android', () => {
 			await shade(false);
 		});
 
-		test('FCM-displayed tap (launcher intent with sd / sd_id); claim when no page is loaded; forged intents ignored', async () => {
-			await listen();
+		test.skipIf(!uiAutomator)('claim when no page is loaded (real tap); forged intents — FCM-style or ours without the nonce — ignored', async () => {
 			const start = (...extras: string[]) => sh('am', 'start', '-n', `${pkg}/dev.sveltedesktop.MainActivity`, ...extras);
-			// live: the page is loaded
-			const live = app.nextEvent<Response>('notificationResponse', (r) => r.id === 'push-live', 20_000);
-			// (no url: a url would navigate the page — the default action — and drop window.__resp)
-			await start('--es', 'google.message_id', '0:live', '--es', 'sd', '{"data":{"chat":1}}', '--es', 'sd_id', 'push-live');
-			expect(await live).toMatchObject({ id: 'push-live', kind: 'click', payload: '{"data":{"chat":1}}' });
-			await app.waitFor(() => (window as any).__resp?.some((x: Response) => x.id === 'push-live' && x.target === true));
-			// no page (a document without the bridge: an image): it waits in the claim queue, the server still sees it
+			await n('dismissAll');
+			await n('show', { id: 'cold1', title: 'Claim me E2E', channel: 'reminders', payload: '{"url":"/claimed"}' });
+			// no page (a document without the bridge): the tap waits in the claim queue, the server still sees it
 			const origin = await app.eval<string>('location.origin');
 			await app.eval("setTimeout(() => { location.href = '/robots.txt'; }, 300); null"); // after this eval's reply
 			await Bun.sleep(1500); // an eval sent mid-navigation polls the next document and stalls: let it land
 			expect(await until(() => app.eval<string>('location.pathname').catch(() => ''), (h) => h === '/robots.txt', 20_000)).toBe('/robots.txt');
-			const queued = app.nextEvent<Response>('notificationResponse', (r) => r.id === 'push-cold', 20_000);
-			await start('--es', 'google.message_id', '0:cold', '--es', 'sd', '{"url":"/claimed"}', '--es', 'sd_id', 'push-cold');
+			const queued = app.nextEvent<Response>('notificationResponse', (r) => r.id === 'cold1', 20_000);
+			await shade(true);
+			await tap(/^Claim me E2E$/);
 			const q = await queued;
+			await shade(false);
 			const claimed = await n<Response[]>('claim');
 			expect(claimed).toHaveLength(1);
-			expect(claimed[0]).toMatchObject({ id: 'push-cold', kind: 'click', payload: '{"url":"/claimed"}', seq: q.seq });
+			expect(claimed[0]).toMatchObject({ id: 'cold1', kind: 'click', payload: '{"url":"/claimed"}', seq: q.seq });
 			expect(await n('claim')).toEqual([]); // once
-			const ring = await n<Response[]>('responses');
-			expect(ring.map((r) => r.id)).toEqual(expect.arrayContaining(['push-live', 'push-cold']));
-			expect(ring.length).toBeLessThanOrEqual(64);
-			// our extras without the per-install nonce: dropped
+			expect((await n<Response[]>('responses')).length).toBeLessThanOrEqual(64);
+			// Any app can start the exported activity: extras alone never make a response.
+			await start('--es', 'google.message_id', '0:forged', '--es', 'sd', '{"url":"/evil"}', '--es', 'sd_id', 'forged-fcm');
 			await start('--es', 'dev.sveltedesktop.notification.id', 'forged', '--es', 'dev.sveltedesktop.notification.kind', 'click');
 			await Bun.sleep(1500);
-			expect((await n<Response[]>('responses')).some((r) => r.id === 'forged')).toBe(false);
+			expect((await n<Response[]>('responses')).some((r) => r.id === 'forged' || r.id === 'forged-fcm')).toBe(false);
 			expect(await n('claim')).toEqual([]);
 			await app.eval(`setTimeout(() => { location.href = ${JSON.stringify(`${origin}/`)}; }, 300); null`);
 			await Bun.sleep(1500);

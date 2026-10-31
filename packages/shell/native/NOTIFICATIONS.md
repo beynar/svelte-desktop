@@ -70,6 +70,13 @@ see below).
 ```
 → `{ "id": "msg-42", "scheduled": false }`
 
+Limits, by platform (refused or documented rather than silently wrong):
+- Apple: a calendar repeat has no start date — a repeating schedule whose next calendar match
+  comes before `at` is refused (`invalid_args`); start it within one period of `at`.
+- Windows: a repeating schedule hands the OS its next 8 occurrences and tops them up while the
+  app runs; closed longer than that, it stops until the next launch.
+- Scheduling an id that is shown replaces the shown one (every backend).
+
 Scheduling must survive the app quitting where the OS can (Apple UN triggers,
 Android AlarmManager + BOOT_COMPLETED, Windows ScheduledToastNotification). Linux
 has no OS scheduler: keep a timer while the app runs and persist the queue

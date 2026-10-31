@@ -12,6 +12,11 @@
 
 #include "linux.hpp"
 
+
+namespace sd::notif {
+void bring_to_front(int native_id); // svc_notifications.cc
+}
+
 namespace sd {
 namespace lx {
 
@@ -85,6 +90,8 @@ static gboolean on_instance_connection(GSocketService *, GSocketConnection *conn
   json msg = json::parse(body, nullptr, false);
   if (msg.is_object()) {
     emit("secondInstance", json{{"argv", msg.value("argv", json::array())}, {"cwd", msg.value("cwd", std::string())}});
+    // Launched again: show the app (its window may be hidden, quitOnLastWindowClosed: false).
+    if (int w = primary_window()) sd::notif::bring_to_front(w);
     // argv[0] is the executable; the rest may be URLs (scheme handler) or documents.
     json args = json::array();
     json argv = msg.value("argv", json::array());

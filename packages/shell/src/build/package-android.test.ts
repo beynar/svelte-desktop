@@ -219,7 +219,12 @@ public class Main {
     const p256dh = b64url(await crypto.subtle.exportKey("raw", pair.publicKey));
     const auth = b64url(crypto.getRandomValues(new Uint8Array(16)));
     const message = JSON.stringify({ id: "m1", title: "Héllo ✓", body: "x".repeat(3000), payload: '{"url":"/a"}' });
-    expect(await decrypt(d, p256dh, auth, b64url(await encryptWebPush(new TextEncoder().encode(message), { p256dh, auth })))).toBe(message);
+    const body = await encryptWebPush(new TextEncoder().encode(message), { p256dh, auth });
+    expect(await decrypt(d, p256dh, auth, b64url(body))).toBe(message);
+    // Malformed bodies are refused: a header with no record, bytes after the last record.
+    const refused = async (b: Uint8Array) => (await Bun.$`${java} -cp ${dir} dev.sveltedesktop.Main ${d} ${p256dh} ${auth} ${b64url(b)}`.quiet().nothrow()).exitCode !== 0;
+    expect(await refused(body.subarray(0, 21 + 65))).toBe(true);
+    expect(await refused(new Uint8Array([...body, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]))).toBe(true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

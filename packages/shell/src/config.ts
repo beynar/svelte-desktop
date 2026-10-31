@@ -116,9 +116,10 @@ export interface DesktopConfig {
   singleInstance?: boolean;
   /** LSUIElement: no Dock icon, no app menu. */
   trayOnly?: boolean;
-  /** Default true. false: the app keeps running when its last window closes — like most macOS apps
-   *  (a Dock click reopens the main window), or a tray app on Windows/Linux — so background work,
-   *  jobs and the self-hosted push connection (`push.server`) go on. Quit with Cmd+Q / `host.app.quit()`. */
+  /** Default true. false: closing the last window hides it and the app keeps running — like most
+   *  macOS apps, or a tray app on Windows/Linux — so background work, jobs and the self-hosted push
+   *  connection (`push.server`) go on, and the page keeps its state. A Dock click, a notification click
+   *  or launching the app again shows it. Quit with Cmd+Q / `host.app.quit()`. */
   quitOnLastWindowClosed?: boolean;
   /** Native plugin sources (Swift/ObjC/C). Default 'native' if the folder exists. */
   native?: string | false;

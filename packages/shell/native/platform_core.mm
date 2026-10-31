@@ -140,6 +140,10 @@ void platform_emit_targeted(NSString *name, NSDictionary *data, int target) {
   else dispatch_async(dispatch_get_main_queue(), send);
 }
 
+void platform_page_unloaded(int native_id) {
+  g_ready_pages.erase(native_id);
+}
+
 int platform_target_window(int preferred) {
   auto ready = [](int id) { return g_ready_pages.count(id) && g_webviews.count(id) && g_webviews[id] && platform_window(id); };
   if (preferred > 0 && ready(preferred)) return preferred;
@@ -306,8 +310,7 @@ static void install_app_delegate_hooks(void) {
                     if (platform_on_reopen) platform_on_reopen(visible);
                     platform_emit(@"reopened", @{@"hasVisibleWindows" : @(visible)});
                     if (!visible) {
-                      if (!platform_window_ids().count) platform_recreate_main_window();
-                      for (NSNumber *n in platform_window_ids()) [platform_window(n.intValue) makeKeyAndOrderFront:nil];
+                      platform_show_main_window();
                     }
                     return YES;
                   }),

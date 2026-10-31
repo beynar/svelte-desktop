@@ -212,10 +212,10 @@ describe("createPush", () => {
     expect(sent!.auth).toBe("Bearer ya29.test");
     const m = sent!.body.message;
     expect(m.token).toBe("fcm-token");
-    expect(m.notification).toEqual({ title: "Alice", body: "Lunch?" });
-    expect(m.data).toEqual({ sd: JSON.stringify({ url: "/chat/42" }), sd_id: "msg-42" });
+    // Data-only (the app displays it, so its taps are authenticated).
+    expect(m.notification).toBeUndefined();
+    expect(m.data).toEqual({ sd: JSON.stringify({ url: "/chat/42" }), sd_id: "msg-42", sd_title: "Alice", sd_body: "Lunch?", sd_channel: "messages" });
     expect(m.android.collapse_key).toBe("msg-42");
-    expect(m.android.notification).toMatchObject({ tag: "msg-42", channel_id: "messages" });
 
     const err = await push.send({ provider: "fcm", token: "gone" }, { title: "x" }).catch((e) => e);
     expect(err).toBeInstanceOf(PushError);

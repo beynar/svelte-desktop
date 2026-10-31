@@ -104,7 +104,11 @@ final class WebPushCrypto {
         byte[] nonce = hkdf(salt, ikm, "Content-Encoding: nonce\0".getBytes(StandardCharsets.US_ASCII), 12);
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
         int at = 21 + idlen;
+        boolean last = false;
+        // One complete message: full-size records, then exactly one final record (delimiter 0x02) that
+        // ends the body. Anything else — no records, no final record, bytes after it — is refused.
         for (long seq = 0; at < body.length; seq++) {
+            if (last) throw new IllegalArgumentException("aes128gcm: data after the last record");
             int end = (int) Math.min(body.length, at + rs);
             byte[] iv = nonce.clone();
             for (int i = 0; i < 8; i++) iv[11 - i] ^= (byte) (seq >>> (8 * i));
@@ -115,11 +119,12 @@ final class WebPushCrypto {
             int k = rec.length - 1;
             while (k >= 0 && rec[k] == 0) k--;
             if (k < 0 || (rec[k] != 1 && rec[k] != 2)) throw new IllegalArgumentException("aes128gcm: no record delimiter");
-            boolean last = rec[k] == 2;
+            last = rec[k] == 2;
+            if (!last && end - at != rs) throw new IllegalArgumentException("aes128gcm: short record before the last");
             out.write(rec, 0, k);
             at = end;
-            if (last) break;
         }
+        if (!last) throw new IllegalArgumentException("aes128gcm: no final record");
         return out.toByteArray();
     }
 }
