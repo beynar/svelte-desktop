@@ -89,7 +89,7 @@ test('drag to reorder: native drag and drop, a line where it lands, the window d
 		const tabs = [...document.querySelectorAll('.app-tabs [role=tab]')];
 		const bar = document.querySelector('.app-tabs');
 		const dt = new DataTransfer();
-		const frame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+		const frame = () => new Promise((r) => setTimeout(r, 50)); // not rAF: it pauses when the window is covered
 		const at = (el, dx) => { const b = el.getBoundingClientRect(); return { clientX: b.right + dx, clientY: b.top + b.height / 2 }; };
 		const fire = (el, type, xy) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, ...xy }));
 		fire(tabs[0], 'dragstart', at(tabs[0], -20));

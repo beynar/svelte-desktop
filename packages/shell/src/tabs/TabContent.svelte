@@ -1,22 +1,22 @@
 <!--
-	The content of a route `Tabs` group: the page (`children`, your `{@render children()}`) for the
+	The content of the route <Tabs> around it: the page (`children`, your `{@render children()}`) for the
 	tabs that are routes of the page, and each isolated tab's own web view (kept alive, hidden
 	while another tab is shown).
 
-	<TabContent {tabs} class="h-full">{@render children()}</TabContent>
+	<TabContent class="h-full">{@render children()}</TabContent>
 -->
-<script lang="ts" generics="D = unknown">
+<script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { Tabs } from './tabs.svelte.ts';
+	import { useTabs } from './tabs.svelte.ts';
 	import { isolatedView } from './isolated.ts';
 
 	interface Props {
-		tabs: Tabs<D>;
 		class?: string;
 		children: Snippet;
 	}
 
-	let { tabs, class: className = '', children }: Props = $props();
+	let { class: className = '', children }: Props = $props();
+	const tabs = useTabs();
 	const isolated = $derived(tabs.items.filter((t) => t.isolated));
 	const page = $derived(!tabs.active?.isolated);
 </script>

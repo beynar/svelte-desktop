@@ -1,71 +1,62 @@
 <script lang="ts">
-	import { Kanban } from 'entasis/kanban';
 	import { Tabs, TabBar, TabPanels } from '@svelte-desktop/shell/tabs';
-	import { boardFor, boards } from '#lib/data.svelte';
+	import { boardFor } from '#lib/data.svelte';
+	import BoardPanel from '#lib/BoardPanel.svelte';
 
 	// Tabs inside a page: one board per tab, plain state (not routes). Kept alive, so each board
 	// keeps its scroll and drag state; restored at the next launch; double-click a tab to rename it.
 	let count = 2;
-	const tabs = new Tabs<{ board: string }>({
-		id: 'boards',
-		restore: true,
-		initial: [
-			{ id: 'current', title: 'Current sprint', data: { board: 'current' }, pinned: true },
-			{ id: 'backlog', title: 'Product backlog', data: { board: 'backlog' } }
-		],
-		create: () => {
-			const board = `board-${Date.now().toString(36)}`;
-			boardFor(board);
-			return { title: `Board ${++count}`, data: { board } };
-		}
-	});
-	// A restored tab's board (from a past session) exists before its panel renders.
-	$effect.pre(() => {
-		for (const t of tabs.items) if (t.data) boardFor(t.data.board);
-	});
+	const initial = [
+		{ id: 'current', title: 'Current sprint', data: { board: 'current' }, pinned: true },
+		{ id: 'backlog', title: 'Product backlog', data: { board: 'backlog' } }
+	];
+	function create() {
+		const board = `board-${Date.now().toString(36)}`;
+		boardFor(board);
+		return { title: `Board ${++count}`, data: { board } };
+	}
 
 	let renaming = $state<string | null>(null);
-	const rename = (id: string, title: string) => {
-		if (title.trim()) tabs.update(id, { title: title.trim() });
-		renaming = null;
-	};
 </script>
 
-<div class="flex h-full flex-col">
-	<TabBar {tabs} label="Boards" newTabLabel="New board" class="board-tabs border-neutral-muted gap-5 border-b px-6">
-		{#snippet tab(t, { close })}
-			{#if renaming === t.id}
-				<!-- svelte-ignore a11y_autofocus -->
-				<input
-					class="text-neutral w-28 bg-transparent outline-none"
-					value={t.title}
-					autofocus
-					onmousedown={(e) => e.stopPropagation()}
-					onblur={(e) => rename(t.id, e.currentTarget.value)}
-					onkeydown={(e) => {
-						if (e.key === 'Enter') rename(t.id, e.currentTarget.value);
-						if (e.key === 'Escape') renaming = null;
-						e.stopPropagation();
-					}}
-				/>
-			{:else}
-				<span class="truncate" ondblclick={() => (renaming = t.id)} role="presentation">{t.title}</span>
-			{/if}
-			{#if !t.pinned}
-				<button type="button" aria-label={`Close ${t.title}`} class="tab-close text-xs" onmousedown={(e) => e.stopPropagation()} onclick={close}>✕</button>
-			{/if}
-		{/snippet}
-	</TabBar>
+<Tabs id="boards" restore {initial} {create}>
+	{#snippet children(tabs)}
+		{@const rename = (id: string, title: string) => {
+			if (title.trim()) tabs.update(id, { title: title.trim() });
+			renaming = null;
+		}}
+		<div class="flex h-full flex-col">
+			<TabBar label="Boards" newTabLabel="New board" class="board-tabs border-neutral-muted gap-5 border-b px-6">
+				{#snippet tab(t, { close })}
+					{#if renaming === t.id}
+						<!-- svelte-ignore a11y_autofocus -->
+						<input
+							class="text-neutral w-28 bg-transparent outline-none"
+							value={t.title}
+							autofocus
+							onmousedown={(e) => e.stopPropagation()}
+							onblur={(e) => rename(t.id, e.currentTarget.value)}
+							onkeydown={(e) => {
+								if (e.key === 'Enter') rename(t.id, e.currentTarget.value);
+								if (e.key === 'Escape') renaming = null;
+								e.stopPropagation();
+							}}
+						/>
+					{:else}
+						<span class="truncate" ondblclick={() => (renaming = t.id)} role="presentation">{t.title}</span>
+					{/if}
+					{#if !t.pinned}
+						<button type="button" aria-label={`Close ${t.title}`} class="tab-close text-xs" onmousedown={(e) => e.stopPropagation()} onclick={close}>✕</button>
+					{/if}
+				{/snippet}
+			</TabBar>
 
-	<TabPanels {tabs} class="min-h-0 flex-1 overflow-x-auto p-6">
-		{#snippet children(t)}
-			{@const board = boards[t.data!.board]}
-			{#if board}
-				<Kanban bind:columns={() => board.columns, (columns) => (board.columns = columns)} columnHeight="calc(100vh - 15rem)" />
-			{/if}
-		{/snippet}
-	</TabPanels>
-</div>
+			<TabPanels class="min-h-0 flex-1 overflow-x-auto p-6">
+				{#snippet children(t)}<BoardPanel id={t.data.board} />{/snippet}
+			</TabPanels>
+		</div>
+	{/snippet}
+</Tabs>
 
 <style>
 	/* An underline tab strip: another look for the same component. */

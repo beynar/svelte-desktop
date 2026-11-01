@@ -1,7 +1,7 @@
 // Dragging tabs, with pragmatic-drag-and-drop: native drag and drop, so the system's drag image
 // follows the pointer — out of the window too, and onto another window's tab bar.
 //   use:tabDrag on each tab, use:tabDrop on the bar.
-import type { Tab, Tabs } from './tabs.svelte.ts';
+import type { Tab, TabGroup } from './tabs.svelte.ts';
 
 /** A tab's data on a drag (the bar of another window reads it on the drop). */
 const TAB_TYPE = 'application/x-svelte-desktop-tab';
@@ -47,7 +47,7 @@ function lazy(wire: (dnd: Dnd) => () => void): () => void {
 }
 
 export interface TabDragParams {
-	tabs: Tabs<any>;
+	tabs: TabGroup<any>;
 	tab: Tab<any>;
 	dragging: (on: boolean) => void;
 }
@@ -96,7 +96,7 @@ export function tabDrag(node: HTMLElement, params: TabDragParams) {
 }
 
 export interface TabDropParams {
-	tabs: Tabs<any>;
+	tabs: TabGroup<any>;
 	/** Where the drop indicator goes (px from the tabs' left edge), or null. */
 	indicate: (x: number | null) => void;
 }

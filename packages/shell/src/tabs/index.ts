@@ -1,6 +1,7 @@
-// Tabs: `Tabs` (state + desktop integration) and the Svelte components that render them.
-//   import { Tabs, TabBar, TabPanels } from '@svelte-desktop/shell/tabs';
-export { Tabs, type Tab, type TabInput, type TabsOptions } from "./tabs.svelte.ts";
+// Tabs: <Tabs> (a tab group, configured by its props) and what goes inside it.
+//   import { Tabs, TabBar, TabContent, TabPanels, useTabs } from '@svelte-desktop/shell/tabs';
+export { TabGroup, useTabs, type Tab, type TabInput, type TabsOptions } from "./tabs.svelte.ts";
+export { default as Tabs } from "./Tabs.svelte";
 export { default as TabBar } from "./TabBar.svelte";
-export { default as TabPanels } from "./TabPanels.svelte";
 export { default as TabContent } from "./TabContent.svelte";
+export { default as TabPanels } from "./TabPanels.svelte";

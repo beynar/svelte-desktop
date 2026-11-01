@@ -1,5 +1,5 @@
 <!--
-	A tab bar for a `Tabs` group: in the title bar (the window's tabs) or anywhere in a page.
+	The bar of the <Tabs> around it: in the title bar (the window's tabs) or anywhere in a page.
 	Clicking activates, a middle click or the × closes, dragging reorders (native drag and drop:
 	a line shows where the tab lands) — and, for a detachable group, a tab dragged out of the
 	window opens in its own window, or joins another window's bar — ←/→ move along. In an isolated tab's own web view it renders nothing.
@@ -8,18 +8,17 @@
 	[data-sd-tab-new], [data-sd-tab-drop] (the drop line, colored by --sd-tab-drop-color) — or
 	render each tab yourself with the `tab` snippet.
 
-	<TabBar {tabs} class="…">
+	<TabBar class="…">
 		{#snippet tab(t, { active, close })}<span>{t.title}</span>{/snippet}
 	</TabBar>
 -->
-<script lang="ts" generics="D = unknown">
+<script lang="ts" generics="D = any">
 	import type { Snippet } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
-	import type { Tab, Tabs } from './tabs.svelte.ts';
+	import { useTabs, type Tab } from './tabs.svelte.ts';
 	import { tabDrag, tabDrop } from './drag.ts';
 
 	interface Props extends HTMLAttributes<HTMLDivElement> {
-		tabs: Tabs<D>;
 		/** Each tab's content (default: its title and a close button). */
 		tab?: Snippet<[Tab<D>, { active: boolean; close: () => void }]>;
 		/** Before / after the tabs (the + button follows the last tab). */
@@ -30,9 +29,8 @@
 		newTabLabel?: string;
 	}
 
-	let { tabs, tab, start, end, label = 'Tabs', newTabLabel = 'New tab', class: className = '', ...rest }: Props = $props();
-
-	$effect(() => tabs.connect());
+	let { tab, start, end, label = 'Tabs', newTabLabel = 'New tab', class: className = '', ...rest }: Props = $props();
+	const tabs = useTabs<D>();
 
 	let dragging = $state<string | null>(null);
 	/** The drop indicator's place while a tab is dragged over the bar (px), or null. */

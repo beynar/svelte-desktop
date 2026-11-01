@@ -18,6 +18,7 @@
 		"./push/service-worker.js": "./src/push/service-worker.js",
 		"./native": "./src/native.ts",
 		"./tabs": "./src/tabs/index.ts",
+		"./tabs/Tabs.svelte": "./src/tabs/Tabs.svelte",
 		"./tabs/TabBar.svelte": "./src/tabs/TabBar.svelte",
 		"./tabs/TabPanels.svelte": "./src/tabs/TabPanels.svelte",
 		"./tabs/TabContent.svelte": "./src/tabs/TabContent.svelte",

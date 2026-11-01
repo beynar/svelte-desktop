@@ -2,14 +2,11 @@
 	import { Tabs, TabBar, TabPanels } from '@svelte-desktop/shell/tabs';
 	import { board, upcoming } from '#lib/data.svelte';
 
-	const lists = new Tabs({
-		id: 'overview-lists',
-		initial: [
-			{ id: 'next', title: 'Next up', closable: false },
-			{ id: 'doing', title: 'In progress', closable: false },
-			{ id: 'done', title: 'Done', closable: false }
-		]
-	});
+	const lists = [
+		{ id: 'next', title: 'Next up', closable: false },
+		{ id: 'doing', title: 'In progress', closable: false },
+		{ id: 'done', title: 'Done', closable: false }
+	];
 
 	const counts = $derived(Object.fromEntries(board.columns.map((c) => [c.id, c.cards.length])));
 	const events = $derived(upcoming());
@@ -37,37 +34,39 @@
 
 	<!-- Tabs inside a card: fixed (no close, no +), a segmented look, only the active panel rendered. -->
 	<section class="border-neutral-muted bg-surface-raised rounded-lg border">
-		<header class="border-neutral-muted flex items-center justify-between gap-3 border-b px-4 py-3">
-			<h2 class="text-neutral font-medium">This week</h2>
-			<TabBar tabs={lists} label="Lists" class="segmented bg-surface-recessed rounded-md p-0.5" />
-		</header>
-		<TabPanels tabs={lists} keepAlive={false} class="p-4">
-			{#snippet children(t)}
-				{#if t.id === 'next'}
-					<ul class="flex flex-col gap-2">
-						{#each events.slice(0, 6) as e (e.id)}
-							<li class="flex items-center justify-between gap-3 text-sm">
-								<span class="text-neutral truncate">{e.title}</span>
-								<span class="text-neutral-readable shrink-0 tabular-nums">{e.allDay ? day.format(e.startsAt) : time.format(e.startsAt)}</span>
-							</li>
-						{:else}
-							<li class="text-neutral-readable text-sm">Nothing scheduled.</li>
-						{/each}
-					</ul>
-				{:else}
-					<ul class="flex flex-col gap-2">
-						{#each board.columns.find((c) => c.id === t.id)?.cards ?? [] as task (task.id)}
-							<li class="text-sm">
-								<p class="text-neutral">{task.title}</p>
-								{#if task.description}<p class="text-neutral-readable text-xs">{task.description}</p>{/if}
-							</li>
-						{:else}
-							<li class="text-neutral-readable text-sm">Nothing here.</li>
-						{/each}
-					</ul>
-				{/if}
-			{/snippet}
-		</TabPanels>
+		<Tabs id="overview-lists" initial={lists}>
+			<header class="border-neutral-muted flex items-center justify-between gap-3 border-b px-4 py-3">
+				<h2 class="text-neutral font-medium">This week</h2>
+				<TabBar label="Lists" class="segmented bg-surface-recessed rounded-md p-0.5" />
+			</header>
+			<TabPanels keepAlive={false} class="p-4">
+				{#snippet children(t)}
+					{#if t.id === 'next'}
+						<ul class="flex flex-col gap-2">
+							{#each events.slice(0, 6) as e (e.id)}
+								<li class="flex items-center justify-between gap-3 text-sm">
+									<span class="text-neutral truncate">{e.title}</span>
+									<span class="text-neutral-readable shrink-0 tabular-nums">{e.allDay ? day.format(e.startsAt) : time.format(e.startsAt)}</span>
+								</li>
+							{:else}
+								<li class="text-neutral-readable text-sm">Nothing scheduled.</li>
+							{/each}
+						</ul>
+					{:else}
+						<ul class="flex flex-col gap-2">
+							{#each board.columns.find((c) => c.id === t.id)?.cards ?? [] as task (task.id)}
+								<li class="text-sm">
+									<p class="text-neutral">{task.title}</p>
+									{#if task.description}<p class="text-neutral-readable text-xs">{task.description}</p>{/if}
+								</li>
+							{:else}
+								<li class="text-neutral-readable text-sm">Nothing here.</li>
+							{/each}
+						</ul>
+					{/if}
+				{/snippet}
+			</TabPanels>
+		</Tabs>
 	</section>
 </div>
 

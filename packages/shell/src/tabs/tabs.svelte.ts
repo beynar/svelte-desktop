@@ -1,15 +1,13 @@
-// Tabs, for a title-bar tab bar or any tab group inside a page: reactive state (Svelte 5 runes)
-// plus the desktop integration — the window title, a Tab menu (⌘T ⌘W ⇧⌘T ⌃⇥), ⌘1–9,
-// ⌘-click / middle-click on links, restoring the tabs at launch, dragging a tab out into its
-// own window or onto another window's bar. Render them with <TabBar>, <TabContent> (route tabs)
-// and <TabPanels> (state tabs), or with your own markup.
-//
-//   const tabs = new Tabs({ id: 'app', route: true, primary: true, create: () => ({ path: '/' }) });
+// A tab group: reactive state (Svelte 5 runes) plus the desktop integration — the window title,
+// a Tab menu (⌘T ⌘W ⇧⌘T ⌃⇥), ⌘1–9, ⌘-click / middle-click on links, restoring the tabs at
+// launch, dragging a tab out into its own window or onto another window's bar. <Tabs> creates
+// one from its props and hands it to <TabBar>, <TabContent>, <TabPanels> and useTabs().
 //
 // `route` tabs are app routes: activating one navigates to its path, and navigating changes the
 // active tab's path (each tab remembers where it was). Otherwise a tab is plain state.
 // `isolated` tabs live in their own web view (their own process): a third-party page (`url`) or
 // an app route kept apart from the page.
+import { getContext, setContext } from 'svelte';
 import { callPlatform, onPlatform, platformReady } from '../platform/bus';
 import { readAppFile, writeAppFile } from '../platform/app-files';
 import type { WindowAnimation } from '../platform/index';
@@ -34,7 +32,7 @@ export interface Tab<D = unknown> {
 export type TabInput<D = unknown> = Partial<Tab<D>> & ({ path: string } | { url: string } | { title: string });
 
 export interface TabsOptions<D = unknown> {
-	/** Names the group (saved tabs, element ids, views): unique per window. */
+	/** Names the group (saved tabs, element ids, views): unique per window; fixed. */
 	id: string;
 	/** Tabs are app routes: activating navigates, navigating updates the active tab. */
 	route?: boolean;
@@ -97,12 +95,12 @@ type Rect = { x: number; y: number; width: number; height: number };
 type WindowInfo = { windowId: number; label: string; focused: boolean; visible?: boolean; bounds: Rect };
 type Message<T> = { channel?: string; data?: T };
 
-export class Tabs<D = unknown> {
+export class TabGroup<D = unknown> {
 	items = $state<Tab<D>[]>([]);
 	activeId = $state<string | null>(null);
 	readonly active = $derived(this.items.find((t) => t.id === this.activeId));
 	readonly id: string;
-	readonly options: TabsOptions<D>;
+	#options: () => TabsOptions<D>;
 	/** This page's window label ('main' for the first window), once connected. */
 	window = $state<string | null>(null);
 	/** This page is an isolated tab's own web view: the group stays local (no menu, nothing
@@ -120,12 +118,19 @@ export class Tabs<D = unknown> {
 	/** The tab being dragged out (its handoff), and whether another window took it. */
 	#outgoing: { id: string; adopted: boolean; off: () => void } | null = null;
 
-	constructor(options: TabsOptions<D>) {
-		this.options = options;
-		this.id = options.id;
-		const initial = options.initial ?? (options.route && isPage ? [{ path: here() }] : []);
+	/** Options, or a function returning them (read each time they're used: live props). */
+	constructor(options: TabsOptions<D> | (() => TabsOptions<D>)) {
+		const fixed = options;
+		this.#options = typeof fixed === 'function' ? fixed : () => fixed;
+		const o = this.options;
+		this.id = o.id;
+		const initial = o.initial ?? (o.route && isPage ? [{ path: here() }] : []);
 		for (const t of initial) this.items.push(this.#make(t));
 		this.activeId = this.items[0]?.id ?? null;
+	}
+
+	get options(): TabsOptions<D> {
+		return this.#options();
 	}
 
 	get canCreate(): boolean {
@@ -332,7 +337,7 @@ export class Tabs<D = unknown> {
 		return this.#detachable;
 	}
 
-	/** Wire the group to the page and the window (<TabBar> calls it); returns the cleanup. */
+	/** Wire the group to the page and the window (<Tabs> does); returns the cleanup. */
 	connect(): () => void {
 		if (!isPage || this.embedded) return () => {};
 		if (this.#connections++ === 0) this.#disconnect = this.#wire();
@@ -496,4 +501,18 @@ export class Tabs<D = unknown> {
 			for (const c of cleanups) c();
 		};
 	}
+}
+
+const KEY = Symbol('svelte-desktop tabs');
+
+/** <Tabs> hands its group to everything inside it. */
+export function setTabs<D>(group: TabGroup<D>): TabGroup<D> {
+	return setContext(KEY, group);
+}
+
+/** The group of the nearest <Tabs> around this component: its tabs, `open`, `close`, … */
+export function useTabs<D = any>(): TabGroup<D> {
+	const group = getContext<TabGroup<D> | undefined>(KEY);
+	if (!group) throw new Error('useTabs(): no <Tabs> around this component');
+	return group;
 }

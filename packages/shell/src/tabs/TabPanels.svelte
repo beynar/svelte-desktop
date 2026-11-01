@@ -1,26 +1,26 @@
 <!--
-	The content of a `Tabs` group, one panel per tab. `keepAlive` (default) keeps every panel
+	The content of the <Tabs> around it, one panel per tab. `keepAlive` (default) keeps every panel
 	mounted and hides the inactive ones, so each tab keeps its state (scroll, inputs, components);
 	`keepAlive={false}` renders the active one only. An `isolated` tab shows its own web view
 	(its `path` or `url`) instead of `children`.
 
-	<TabPanels {tabs}>
+	<TabPanels>
 		{#snippet children(t)}<Board id={t.data.boardId} />{/snippet}
 	</TabPanels>
 -->
-<script lang="ts" generics="D = unknown">
+<script lang="ts" generics="D = any">
 	import type { Snippet } from 'svelte';
-	import type { Tab, Tabs } from './tabs.svelte.ts';
+	import { useTabs, type Tab } from './tabs.svelte.ts';
 	import { isolatedView } from './isolated.ts';
 
 	interface Props {
-		tabs: Tabs<D>;
 		keepAlive?: boolean;
 		class?: string;
 		children: Snippet<[Tab<D>]>;
 	}
 
-	let { tabs, keepAlive = true, class: className = '', children }: Props = $props();
+	let { keepAlive = true, class: className = '', children }: Props = $props();
+	const tabs = useTabs<D>();
 	const shown = $derived(keepAlive ? tabs.items : tabs.active ? [tabs.active] : []);
 </script>
 
