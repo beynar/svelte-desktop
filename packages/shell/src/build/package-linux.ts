@@ -21,6 +21,7 @@ import { $ } from "bun";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
+import { appIcons } from "./icons.ts";
 import { pluginSources as sharedPluginSources } from "./native.ts";
 import { ensureLibshell, writeRelease, type Arch, type PackageResult } from "./package.ts";
 
@@ -216,14 +217,20 @@ export async function packageLinux(c: ResolvedConfig, stage: string): Promise<Pa
     copyFileSync(from, join(app, name));
     chmodSync(join(app, name), 0o755);
   }
-  const hasIcon = !!c.icon && existsSync(c.icon) && c.icon.endsWith(".png");
-  if (hasIcon) copyFileSync(c.icon!, join(app, `${c.identifier}.png`));
-  else if (c.icon) warn(`icon: ${c.icon} is not a PNG (skipped)`);
+  const icons = c.icon ? await appIcons(c.root, c.icon) : null;
+  const hasIcon = !!icons;
+  if (icons) copyFileSync(icons.png(512), join(app, `${c.identifier}.png`));
   writeFileSync(join(app, `${c.identifier}.desktop`), desktopEntry(c, exe, hasIcon));
   // Desktop integration (appimaged, AppImageLauncher, distro packages) reads share/: the entry and,
   // for file types without a common MIME type, a shared-mime-info package.
   mkdirSync(join(app, "share", "applications"), { recursive: true });
   writeFileSync(join(app, "share", "applications", `${c.identifier}.desktop`), desktopEntry(c, exe, hasIcon));
+  for (const size of [16, 32, 48, 64, 128, 256, 512] as const) {
+    if (!icons) break;
+    const dir = join(app, "share", "icons", "hicolor", `${size}x${size}`, "apps");
+    mkdirSync(dir, { recursive: true });
+    copyFileSync(icons.png(size), join(dir, `${c.identifier}.png`));
+  }
   const { declared } = linuxFileTypes(c);
   if (declared.length) {
     mkdirSync(join(app, "share", "mime", "packages"), { recursive: true });

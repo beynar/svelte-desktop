@@ -8,6 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { IconSpec } from "./build/icons.ts";
 import type { UpdateConfig, WindowOptions } from "./types.ts";
 
 export interface FileTypeConfig {
@@ -92,8 +93,13 @@ export interface DesktopConfig {
   identifier: string;
   /** Default: package.json version. */
   version?: string;
-  /** PNG (1024×1024 recommended), relative to the project. Default static/icon.png if present. */
-  icon?: string;
+  /** App icon: one square image (PNG, JPEG or WebP, 1024 px or more; SVG when building on macOS), relative to the project;
+   *  every target's icons are generated from it at build (`svelte-desktop icon` previews them).
+   *  A square artwork is shaped per platform (macOS squircle, Android adaptive layers); one with
+   *  transparent corners is taken as already shaped. `background` (hex): behind the artwork where
+   *  a platform needs it (iOS, Android adaptive) — default the artwork's corner color, else white.
+   *  Default: icon.png, icon.svg, then static/icon.png, if present. */
+  icon?: string | { source: string; background?: string };
   copyright?: string;
   /** Main window. `false` → no main window at start (menu-bar apps). */
   window?: WindowOptions | false;
@@ -266,7 +272,7 @@ export interface ResolvedConfig extends Omit<DesktopConfig, "window" | "native">
   window: WindowOptions | false;
   /** Absolute native sources dir, or null. */
   native: string | null;
-  icon?: string;
+  icon?: IconSpec;
   configFile: string | null;
   /** `permissions` (+ legacy `usageDescriptions`): OS permission → reason. */
   osPermissions: Record<string, string>;
@@ -290,6 +296,16 @@ export async function loadConfig(root = process.cwd(), inline?: Partial<DesktopC
   return resolveConfig(root, { ...fromFile, ...inline }, configFile);
 }
 
+/** Where the app icon is looked for when `icon` isn't set, in order. */
+export const ICON_CANDIDATES = ["icon.png", "icon.svg", "static/icon.png"];
+
+/** The app icon: desktop.config `icon`, else the first ICON_CANDIDATES file that exists. */
+export function findIcon(root: string, option: DesktopConfig["icon"]): IconSpec | undefined {
+  const spec = typeof option === "string" ? { source: option } : option;
+  const source = spec?.source ?? ICON_CANDIDATES.find((f) => existsSync(join(root, f)));
+  return source ? { ...spec, source: resolve(root, source) } : undefined;
+}
+
 export function resolveConfig(root: string, config: Partial<DesktopConfig>, configFile: string | null = null): ResolvedConfig {
   const pkgPath = join(root, "package.json");
   const pkg = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, "utf8")) : {};
@@ -299,7 +315,6 @@ export function resolveConfig(root: string, config: Partial<DesktopConfig>, conf
   if (!/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(identifier))
     throw new Error(`svelte-desktop: identifier "${identifier}" must be reverse-DNS (e.g. com.example.app)`);
   const nativeDir = config.native === false ? null : resolve(root, config.native ?? "native");
-  const iconGuess = config.icon ?? (existsSync(join(root, "static/icon.png")) ? "static/icon.png" : undefined);
   // `SVELTE_DESKTOP_TARGET=android vite build` builds another target without editing the config.
   const envTarget = process.env.SVELTE_DESKTOP_TARGET as BuildConfig["target"] | undefined;
   const envArch = process.env.SVELTE_DESKTOP_TARGET_ARCH as BuildConfig["targetArch"] | undefined;
@@ -324,7 +339,7 @@ export function resolveConfig(root: string, config: Partial<DesktopConfig>, conf
     version: config.version ?? pkg.version ?? "0.0.0",
     window: config.window === false ? false : (config.window ?? {}),
     native: nativeDir && existsSync(nativeDir) ? nativeDir : null,
-    icon: iconGuess ? resolve(root, iconGuess) : undefined,
+    icon: findIcon(root, config.icon),
     configFile,
   };
 }

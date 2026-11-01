@@ -78,6 +78,8 @@ export const app = {
 	/** macOS Dock tile badge text; null clears it. */
 	setDockBadge: (text: string | null) =>
 		callPlatform<boolean>('app', 'setDockBadge', { text }),
+	/** macOS Dock icon: an image path or native icon name; null restores the bundle's. */
+	setDockIcon: (icon: IconSource | null) => callPlatform<null>('app', 'setDockIcon', { icon }),
 	/** Bounce the Dock icon (macOS). */
 	bounceDock: (type: DockBounceType) => callPlatform<boolean>('app', 'bounceDock', { type }),
 	/** Launch at login; resolves to the effective state. */
@@ -817,6 +819,8 @@ export interface MenuItemSpec {
 	disabled?: boolean;
 	/** OS-provided standard item (copy/quit/hide/…). */
 	role?: MenuItemRole;
+	/** Keyboard shortcut: 'CmdOrCtrl+Shift+K', named keys plus, space, tab, enter, escape, arrows, F1…. */
+	accelerator?: string;
 	icon?: MenuItemIcon;
 }
 

@@ -357,6 +357,13 @@ int shell_window_create(const char *opts_json) {
   NSDictionary *o = parse_json(opts_json) ?: @{};
   if (!g_main_opts) {
     g_main_opts = o;
+    // Dev: the app's icon in the Dock instead of bun's. Again once the run loop starts:
+    // finishLaunching gives a bare executable the generic icon.
+    if (NSString *icon = o[@"appIcon"])
+      if (NSImage *image = [[NSImage alloc] initWithContentsOfFile:icon]) {
+        NSApp.applicationIconImage = image;
+        dispatch_async(dispatch_get_main_queue(), ^{ NSApp.applicationIconImage = image; });
+      }
     if (o[@"quitOnLastWindowClosed"] && ![o[@"quitOnLastWindowClosed"] boolValue]) {
       g_keep_alive = true;
       webview_sd_keep_running_without_windows(1); // a window closed by other means doesn't stop the loop either

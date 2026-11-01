@@ -241,6 +241,19 @@ void platform_register_app(void) {
     [tile display];
     [c ok:nil];
   });
+  // The Dock icon (dev mode: the app's icon instead of bun's); null restores the bundle's.
+  platform_register_many(@"app", @[ @"setDockIcon", @"setIcon" ], ^(PlatformCall *c) {
+    id icon = c.args[@"icon"];
+    if (!icon || icon == NSNull.null) {
+      NSApp.applicationIconImage = nil;
+      return [c ok:nil];
+    }
+    NSString *error = nil;
+    NSImage *img = platform_icon(icon, @"app.setDockIcon", &error);
+    if (!img) return [c fail:@"invalid_args" message:error];
+    NSApp.applicationIconImage = img;
+    [c ok:nil];
+  });
   platform_register(@"app", @"getBundleType", ^(PlatformCall *c) { [c ok:@{@"type" : bundled() ? @"app" : @"binary"}]; });
   platform_register(@"app", @"defaultWindowIcon", ^(PlatformCall *c) {
     if (!bundled()) return [c ok:nil];

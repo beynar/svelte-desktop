@@ -24,10 +24,11 @@
 // (+ $ANDROID_KEYSTORE_ALIAS, $ANDROID_KEYSTORE_PASSWORD); otherwise
 // ~/.android/debug.keystore, created on first use like Android Studio does.
 import { $ } from "bun";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ResolvedConfig } from "../config.ts";
+import { appIcons } from "./icons.ts";
 import type { PackageResult } from "./package.ts";
 
 const log = (s: string) => console.log(`  \x1b[36m▸\x1b[0m ${s}`);
@@ -169,7 +170,7 @@ export function androidManifest(c: ResolvedConfig, opts: { icon: boolean; fcm?: 
     .replaceAll("__PACKAGE__", androidPackageName(c.identifier))
     .replaceAll("__LABEL__", xml(c.appName))
     .replaceAll("__IDENTIFIER__", xml(c.identifier))
-    .replace("__ICON__", opts.icon ? '\n        android:icon="@mipmap/ic_launcher"' : "")
+    .replace("__ICON__", opts.icon ? '\n        android:icon="@mipmap/ic_launcher"\n        android:roundIcon="@mipmap/ic_launcher_round"' : "")
     .replace("__SCHEMES__", schemes)
     .replace("__APPLICATION__", application)
     .replace(
@@ -659,14 +660,9 @@ export async function packageAndroid(c: ResolvedConfig, stage: string): Promise<
   const libraries = googleServices ? await fcmLibraries() : [];
   if (googleServices) log(`FCM: Firebase Messaging + ${libraries.length - 1} libraries, ${googleServices.replace(`${c.root}/`, "")}`);
   const res = join(work, "res");
-  const icon = c.icon && existsSync(c.icon) && c.icon.endsWith(".png");
-  if (icon) {
-    mkdirSync(join(res, "mipmap-xxxhdpi"), { recursive: true });
-    // 192 px is the xxxhdpi launcher size; sips is macOS-only, otherwise ship the source PNG.
-    const dest = join(res, "mipmap-xxxhdpi", "ic_launcher.png");
-    const sized = process.platform === "darwin" && (await $`sips -z 192 192 ${c.icon} --out ${dest}`.nothrow().quiet()).exitCode === 0;
-    if (!sized) copyFileSync(c.icon!, dest);
-  }
+  // Launcher icons: every density, round, and the adaptive (8.0+) foreground + background.
+  const icon = !!c.icon;
+  if (c.icon) cpSync((await appIcons(c.root, c.icon)).androidRes, res, { recursive: true });
   if (googleServices) {
     mkdirSync(join(res, "values"), { recursive: true });
     writeFileSync(join(res, "values", "google-services.xml"), googleServicesValues(JSON.parse(readFileSync(googleServices, "utf8")), pkg));

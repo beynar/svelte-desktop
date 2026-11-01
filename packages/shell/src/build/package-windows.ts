@@ -20,6 +20,7 @@ import { $ } from "bun";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
+import { appIcons } from "./icons.ts";
 import { pluginSources } from "./native.ts";
 import type { Arch, PackageResult } from "./package.ts";
 
@@ -199,78 +200,6 @@ export async function buildWindowsAddons(c: ResolvedConfig, arch: Arch, outDir: 
     else warn(`addon "${name}": ${relative(c.root, abs)} is not a Windows binary, not shipped (provide a Windows .node)`);
   }
   return out;
-}
-
-// ---------------------------------------------------------------------------
-// Icon: PNG → .ico (BMP entries ≤ 64 px for NSIS and old shell code paths, PNG above)
-
-function bmpToIconDib(bmp: Buffer): Buffer | null {
-  if (bmp.readUInt16LE(0) !== 0x4d42) return null;
-  const off = bmp.readUInt32LE(10);
-  const w = bmp.readInt32LE(18), hRaw = bmp.readInt32LE(22), bpp = bmp.readUInt16LE(28);
-  if (bpp !== 32) return null;
-  const h = Math.abs(hRaw), topDown = hRaw < 0, stride = w * 4;
-  const maskStride = Math.ceil(w / 32) * 4;
-  const header = Buffer.alloc(40);
-  header.writeUInt32LE(40, 0);
-  header.writeInt32LE(w, 4);
-  header.writeInt32LE(h * 2, 8); // XOR + AND
-  header.writeUInt16LE(1, 12);
-  header.writeUInt16LE(32, 14);
-  header.writeUInt32LE(stride * h + maskStride * h, 20);
-  const xor = Buffer.alloc(stride * h), and = Buffer.alloc(maskStride * h);
-  for (let y = 0; y < h; y++) {
-    const src = off + stride * (topDown ? y : h - 1 - y); // source row in top-down order
-    const dst = h - 1 - y; // icon DIBs are bottom-up
-    bmp.copy(xor, dst * stride, src, src + stride);
-    for (let x = 0; x < w; x++) if (bmp[src + x * 4 + 3]! < 128) and[dst * maskStride + (x >> 3)]! |= 0x80 >> (x & 7);
-  }
-  return Buffer.concat([header, xor, and]);
-}
-
-function icoFile(entries: Array<{ size: number; data: Buffer }>): Buffer {
-  const head = Buffer.alloc(6 + 16 * entries.length);
-  head.writeUInt16LE(1, 2);
-  head.writeUInt16LE(entries.length, 4);
-  let offset = head.length;
-  entries.forEach((e, i) => {
-    const o = 6 + 16 * i;
-    head[o] = e.size >= 256 ? 0 : e.size;
-    head[o + 1] = e.size >= 256 ? 0 : e.size;
-    head.writeUInt16LE(1, o + 4);
-    head.writeUInt16LE(32, o + 6);
-    head.writeUInt32LE(e.data.length, o + 8);
-    head.writeUInt32LE(offset, o + 12);
-    offset += e.data.length;
-  });
-  return Buffer.concat([head, ...entries.map((e) => e.data)]);
-}
-
-export async function buildIco(png: string, work: string): Promise<Buffer> {
-  const dir = join(work, "ico");
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
-  if (!(await onPath("sips"))) {
-    // No resampler outside macOS: one PNG entry, Windows scales it.
-    const data = readFileSync(png);
-    const w = data.readUInt32BE(16);
-    log("icon: sips unavailable, single-size .ico from the PNG");
-    return icoFile([{ size: Math.min(256, w), data }]);
-  }
-  const entries: Array<{ size: number; data: Buffer }> = [];
-  for (const size of [16, 24, 32, 48, 64, 128, 256]) {
-    const p = join(dir, `${size}.png`);
-    await $`sips -z ${size} ${size} ${png} --out ${p}`.quiet();
-    if (size >= 128) {
-      entries.push({ size, data: readFileSync(p) });
-      continue;
-    }
-    const b = join(dir, `${size}.bmp`);
-    await $`sips -s format bmp ${p} --out ${b}`.quiet();
-    const dib = bmpToIconDib(readFileSync(b));
-    entries.push({ size, data: dib ?? readFileSync(p) });
-  }
-  return icoFile(entries);
 }
 
 // ---------------------------------------------------------------------------
@@ -809,12 +738,9 @@ export async function packageWindows(c: ResolvedConfig, stage: string): Promise<
   const exe = windowsExeName(c.appName);
   const tag = `${exe.replace(/\.exe$/i, "")}-${c.version}-windows-${arch}`;
 
-  // 1. icon (.ico from the app PNG)
-  let icoPath: string | null = null;
-  if (c.icon && existsSync(c.icon)) {
-    icoPath = join(work, "app.ico");
-    writeFileSync(icoPath, await buildIco(c.icon, work));
-  }
+  // 1. icon
+  const icons = c.icon ? await appIcons(c.root, c.icon) : null;
+  const icoPath = icons?.ico ?? null;
 
   // 2. executable + resources
   const exeOut = join(work, exe);
@@ -842,7 +768,7 @@ export async function packageWindows(c: ResolvedConfig, stage: string): Promise<
   copyFileSync(exeOut, join(appDir, exe));
   copyFileSync(await ensureShellDll(arch), join(appDir, "shell.dll"));
   // The notifications backend registers it as the toast icon (AppUserModelId IconUri).
-  if (c.icon && existsSync(c.icon) && c.icon.toLowerCase().endsWith(".png")) copyFileSync(c.icon, join(appDir, `${c.identifier}.png`));
+  if (icons) copyFileSync(icons.png(256), join(appDir, `${c.identifier}.png`));
   const plugin = await buildWindowsPlugin(c, arch, join(work, "native"));
   if (plugin) copyFileSync(plugin, join(appDir, "app-native.dll"));
   const addons = await buildWindowsAddons(c, arch, join(work, "addons"));

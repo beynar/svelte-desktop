@@ -12,6 +12,7 @@ import { $ } from "bun";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { USAGE_KEYS, type ResolvedConfig } from "../config.ts";
+import { appIcons } from "./icons.ts";
 import { plistValue, type PackageResult } from "./package.ts";
 
 const log = (s: string) => console.log(`  \x1b[36m▸\x1b[0m ${s}`);
@@ -92,7 +93,7 @@ async function run(what: string, p: Promise<{ exitCode: number; stderr: Buffer; 
   return r;
 }
 
-/** App icon: a single 1024 px PNG → Assets.car via actool. Returns the Info.plist keys actool emits. */
+/** App icon: the opaque 1024 px PNG → Assets.car via actool. Returns the Info.plist keys actool emits. */
 async function compileIcon(png: string, app: string, work: string, platform: string, target: string): Promise<Record<string, unknown> | null> {
   const set = join(work, "Assets.xcassets", "AppIcon.appiconset");
   mkdirSync(set, { recursive: true });
@@ -153,7 +154,7 @@ export async function packageIos(c: ResolvedConfig, stage: string): Promise<Pack
       .quiet(),
   );
 
-  const icon = c.icon && existsSync(c.icon) ? await compileIcon(c.icon, app, work, sdk, target) : null;
+  const icon = c.icon ? await compileIcon((await appIcons(c.root, c.icon)).ios, app, work, sdk, target) : null;
   writeFileSync(join(app, "Info.plist"), iosInfoPlist(c, { exe, serverUrl, debug, device, icon }));
   writeFileSync(join(app, "PkgInfo"), "APPL????");
   if (offline) {

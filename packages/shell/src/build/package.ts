@@ -6,6 +6,7 @@ import { $ } from "bun";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { USAGE_KEYS, sidecarEntries, type ResolvedConfig } from "../config.ts";
+import { appIcons } from "./icons.ts";
 import { buildAddons, buildNativePlugin } from "./native.ts";
 
 const shellRoot = resolve(import.meta.dir, "../..");
@@ -75,7 +76,23 @@ export function plistValue(v: unknown): string {
   return `<string>${xml(String(v))}</string>`;
 }
 
-export function infoPlist(c: ResolvedConfig, exe: string, hasIcon: boolean): string {
+/** The Icon Composer icon → Assets.car (actool, Xcode 26+). Without it macOS 26 shows the .icns
+ *  shrunk inside a gray squircle; older macOS read the .icns either way. */
+async function compileIconCatalog(iconComposer: string, resources: string, work: string): Promise<boolean> {
+  const out = join(work, "icon-catalog");
+  rmSync(out, { recursive: true, force: true });
+  mkdirSync(out, { recursive: true });
+  const r = await $`xcrun actool ${iconComposer} --compile ${out} --platform macosx --minimum-deployment-target 11.0 --app-icon AppIcon --output-partial-info-plist ${join(out, "partial.plist")}`.nothrow().quiet();
+  if (r.exitCode !== 0 || !existsSync(join(out, "Assets.car"))) {
+    log("icon: no Assets.car (needs Xcode 26's actool) — macOS 26 shows the icon inside a gray frame");
+    return false;
+  }
+  copyFileSync(join(out, "Assets.car"), join(resources, "Assets.car"));
+  return true;
+}
+
+/** `icon`: "icns" → AppIcon.icns; "catalog" → also AppIcon in Assets.car (macOS 26's own icon format). */
+export function infoPlist(c: ResolvedConfig, exe: string, icon: "none" | "icns" | "catalog"): string {
   const keys: Record<string, unknown> = {
     CFBundleName: c.appName,
     CFBundleDisplayName: c.appName,
@@ -91,7 +108,8 @@ export function infoPlist(c: ResolvedConfig, exe: string, hasIcon: boolean): str
     NSAppTransportSecurity: { NSAllowsLocalNetworking: true },
     LSApplicationCategoryType: "public.app-category.productivity",
   };
-  if (hasIcon) keys.CFBundleIconFile = "AppIcon";
+  if (icon !== "none") keys.CFBundleIconFile = "AppIcon";
+  if (icon === "catalog") keys.CFBundleIconName = "AppIcon";
   if (c.copyright) keys.NSHumanReadableCopyright = c.copyright;
   if (c.trayOnly) keys.LSUIElement = true;
   if (c.schemes?.length) keys.CFBundleURLTypes = [{ CFBundleURLName: c.identifier, CFBundleURLSchemes: c.schemes }];
@@ -285,19 +303,13 @@ async function packageMac(c: ResolvedConfig, stage: string): Promise<PackageResu
     await $`chmod +x ${join(app, "Contents/MacOS", name)}`;
   }
 
-  let hasIcon = false;
-  if (c.icon && existsSync(c.icon)) {
-    const set = join(work, "AppIcon.iconset");
-    rmSync(set, { recursive: true, force: true });
-    mkdirSync(set);
-    for (const s of [16, 32, 128, 256, 512]) {
-      await $`sips -z ${s} ${s} ${c.icon} --out ${join(set, `icon_${s}x${s}.png`)}`.quiet();
-      await $`sips -z ${s * 2} ${s * 2} ${c.icon} --out ${join(set, `icon_${s}x${s}@2x.png`)}`.quiet();
-    }
-    await $`iconutil -c icns ${set} -o ${join(app, "Contents/Resources/AppIcon.icns")}`.quiet();
-    hasIcon = true;
+  let icon: "none" | "icns" | "catalog" = "none";
+  if (c.icon) {
+    const icons = await appIcons(c.root, c.icon);
+    copyFileSync(icons.icns, join(app, "Contents/Resources/AppIcon.icns"));
+    icon = (await compileIconCatalog(icons.iconComposer, join(app, "Contents/Resources"), work)) ? "catalog" : "icns";
   }
-  await Bun.write(join(app, "Contents/Info.plist"), infoPlist(c, exe, hasIcon));
+  await Bun.write(join(app, "Contents/Info.plist"), infoPlist(c, exe, icon));
   await Bun.write(join(app, "Contents/PkgInfo"), "APPL????");
   log(`${basename(app)}  executable ${mb(join(app, "Contents/MacOS", exe))} (${arches.join("+")})`);
 

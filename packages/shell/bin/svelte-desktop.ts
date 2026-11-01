@@ -5,9 +5,10 @@
 //   doctor   check the toolchain, the project and signing/notarization setup
 //   keygen   create the ed25519 key pair for signed updates
 //   preflight <App.app>  check a bundle against Apple's notarization requirements
+//   icon [source]  generate every target's app icons from one image (the build does it too)
 import { $ } from "bun";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const root = process.cwd();
@@ -124,7 +125,7 @@ async function doctor() {
     const { loadConfig } = await import("../src/config.ts");
     const c = await loadConfig(root);
     ok(`desktop.config: ${c.appName} (${c.identifier}) v${c.version}${c.native ? `, native plugin in ${c.native}` : ""}`);
-    c.icon ? ok(`icon ${c.icon}`) : warn("no icon (static/icon.png or `icon` in desktop.config)");
+    c.icon ? ok(`icon ${relative(root, c.icon.source)}`) : warn("no icon (icon.png, static/icon.png or `icon` in desktop.config)");
     const identity = c.sign?.identity ?? process.env.CODESIGN_IDENTITY;
     const ids = await $`security find-identity -v -p codesigning`.nothrow().text();
     if (identity) ids.includes(identity) ? ok(`signing identity found: ${identity}`) : bad(`signing identity not in keychain: ${identity}`);
@@ -145,8 +146,35 @@ async function doctor() {
   console.log("");
 }
 
+/** `svelte-desktop icon [source] [--background #hex] [--out dir]`: the icons the build ships,
+ *  generated now — into .desktop/icons (what the build uses) or `--out`. */
+async function icon(args: string[]) {
+  const flag = (name: string) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args.splice(i, 2)[1] : undefined;
+  };
+  const background = flag("--background"), out = flag("--out");
+  const { loadConfig } = await import("../src/config.ts");
+  const configured = existsSync(join(root, "desktop.config.ts")) ? (await loadConfig(root)).icon : undefined;
+  const spec = args[0] ? { source: resolve(args[0]), background: configured?.background } : configured;
+  if (!spec) throw new Error("usage: svelte-desktop icon <image> (or set `icon` in desktop.config.ts, or add icon.png)");
+  if (background) spec.background = background;
+  const { generateIcons } = await import("../src/build/icons.ts");
+  const icons = await generateIcons(spec, out ? resolve(out) : join(root, ".desktop", "icons"), { force: true });
+  const rel = (p: string) => relative(root, p) || ".";
+  console.log(`\n  icons from ${rel(spec.source)} → ${rel(icons.dir)}\n`);
+  ok(`macOS    ${rel(icons.icns)}`);
+  ok(`Windows  ${rel(icons.ico)}`);
+  ok(`Linux    ${rel(join(icons.dir, "png"))}/{16…1024}.png`);
+  ok(`iOS      ${rel(icons.ios)}`);
+  ok(`Android  ${rel(icons.androidRes)}/ (mipmap-*, adaptive)`);
+  if (args[0] && configured?.source !== spec.source) warn(`the build uses desktop.config \`icon\`: set icon: '${relative(root, spec.source)}' to ship this one`);
+  console.log("");
+}
+
 try {
   if (cmd === "init") await init();
+  else if (cmd === "icon") await icon(rest);
   else if (cmd === "create") await create(rest[0]);
   else if (cmd === "doctor") await doctor();
   else if (cmd === "preflight") {
@@ -158,7 +186,7 @@ try {
     process.exit(issues.some((i) => i.level === "error") ? 1 : 0);
   } else if (cmd === "keygen") await $`bun ${join(import.meta.dir, "../scripts/updater-cli.ts")} keygen ${rest}`;
   else {
-    console.log("usage: svelte-desktop <create|init|doctor|preflight|keygen> — see packages/shell/README.md");
+    console.log("usage: svelte-desktop <create|init|doctor|icon|preflight|keygen> — see packages/shell/README.md");
     process.exit(cmd ? 1 : 0);
   }
 } catch (err) {

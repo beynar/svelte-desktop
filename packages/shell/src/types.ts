@@ -39,6 +39,8 @@ export interface ShellOptions {
   pagePermissions?: string[];
   /** Main window URL override (dev mode points it at the Vite server). */
   url?: string;
+  /** Dock icon PNG (dev mode: the app's icon instead of bun's; a bundle has its own). */
+  appIcon?: string;
   /** Must be created at the call site so `bun build --compile` sees the Worker entry. */
   createWorker: () => Worker;
   version?: string;

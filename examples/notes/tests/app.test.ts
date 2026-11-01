@@ -35,6 +35,13 @@ test('platform API: window bounds and title', async () => {
 	expect(b.bounds.width).toBeGreaterThan(400);
 });
 
+test('Dock icon: an image file or a native icon; null restores it; a bad one is refused', async () => {
+	await app.platform('app', 'setDockIcon', { icon: new URL('../static/logo.svg', import.meta.url).pathname });
+	await app.platform('app', 'setDockIcon', { icon: 'star.fill' });
+	await app.platform('app', 'setDockIcon', { icon: null });
+	expect((await app.platform('app', 'setDockIcon', { icon: '/nope/missing.png' }).catch((e: unknown) => e)) as object).toMatchObject({ code: 'invalid_args' });
+});
+
 test('native Swift plugin', async () => {
 	expect(await app.platform<string>('greeter', 'hello', { name: 'test' })).toContain('from Swift');
 	expect(await app.platform<number>('greeter', 'add', { a: 1, b: 2 })).toBe(3);

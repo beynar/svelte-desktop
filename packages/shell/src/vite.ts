@@ -29,7 +29,7 @@ interface Plugin {
 }
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { loadConfig, sidecarEntries, type DesktopConfig, type ResolvedConfig } from "./config.ts";
+import { ICON_CANDIDATES, findIcon, loadConfig, sidecarEntries, type DesktopConfig, type ResolvedConfig } from "./config.ts";
 import desktopAdapter from "./adapter.js";
 
 export type { DesktopConfig } from "./config.ts";
@@ -154,6 +154,31 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
       process.env[`SVELTE_DESKTOP_SIDECAR_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`] = path;
   }
 
+  // The app icon, in the Dock the built app will have (dev runs as `bun`): generated like the
+  // build does, and pushed to the running window when the image changes, appears or goes.
+  const explicitIcon = config.icon && !ICON_CANDIDATES.some((f) => resolve(config.root, f) === config.icon!.source) ? config.icon : undefined;
+  const iconFiles = explicitIcon ? [explicitIcon.source] : ICON_CANDIDATES.map((f) => resolve(config.root, f));
+  let icon = config.icon;
+  async function devIcon(): Promise<string | undefined> {
+    if (!icon) return undefined;
+    try {
+      return (await (await import("./build/icons.ts")).appIcons(config.root, icon)).macosPng;
+    } catch (err) {
+      server.config.logger.error(`\x1b[35m[desktop]\x1b[0m ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+  async function iconChanged(file: string) {
+    if (!iconFiles.includes(file)) return;
+    const found = explicitIcon ?? findIcon(config.root, undefined);
+    icon = found && { ...found, background: config.icon?.background };
+    const png = await devIcon();
+    if (!devState.bridge) return;
+    const { app } = await import("./platform/index.ts");
+    await app.setDockIcon(png ?? null).catch(() => {}); // macOS only
+    log(icon ? `icon → ${relative(config.root, icon.source)}` : "icon removed");
+  }
+
   async function startShell(url: string) {
     const { ensureLibshell } = await import("./build/package.ts");
     const { buildNativePlugin } = await import("./build/native.ts");
@@ -166,7 +191,10 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
       server.config.logger.error(`\x1b[35m[desktop]\x1b[0m ${(err as Error).message}`);
     }
 
+    const appIcon = await devIcon();
+
     const dev = {
+      appIcon,
       appName: config.appName,
       identifier: config.identifier,
       version: config.version,
@@ -239,10 +267,13 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
       const natives = prepareServerNatives();
       s.middlewares.use((_req: unknown, _res: unknown, next: () => void) => void natives.then(() => next()));
       if (options.noWindow || process.env.SVELTE_DESKTOP_NO_WINDOW) return;
-      const watched = [config.configFile, config.native].filter(Boolean) as string[];
+      const watched = [config.configFile, config.native, ...iconFiles].filter(Boolean) as string[];
       for (const w of watched) s.watcher.add(w);
+      s.watcher.on("add", (file) => void iconChanged(file));
+      s.watcher.on("unlink", (file) => void iconChanged(file));
       s.watcher.on("change", (file) => {
-        if (config.native && file.startsWith(config.native)) {
+        if (iconFiles.includes(file)) void iconChanged(file);
+        else if (config.native && file.startsWith(config.native)) {
           const url = s.resolvedUrls?.local[0];
           if (url) {
             log(`native plugin changed — rebuilding, restarting the window`);

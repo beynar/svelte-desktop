@@ -47,7 +47,7 @@ Requirements: macOS 12+, Bun ≥ 1.4, Xcode command line tools, `@sveltejs/adapt
 | **Your own native code** | `native/*.swift` / `*.m` / `*.c` → a plugin dylib, ops callable from pages and server (`nativeModule<T>('svc')`); `native/addons/*.c` → Node-API addons (`loadAddon`); `sidecars` for executables. [Native code](#native-code) |
 | **Web view features** | alert/confirm/prompt, file drop with real paths, downloads, print/PDF, find, zoom, context menu control, camera/mic permissions, open-file/file associations, capturePage, executeJavaScript. [WEBVIEW.md](WEBVIEW.md) |
 | **Menu-bar apps & popovers** | `<StatusItem popover="/route">`, `<Popover anchor={el}>`, Spotlight-style panels on a global hotkey, content sized to fit. [POPOVERS.md](POPOVERS.md) |
-| **Distribution** | Info.plist from config (URL schemes, document types, usage strings, LSUIElement), icon from one PNG, hardened runtime + entitlements, Developer ID signing, notarization + stapling, universal arm64+x64, zip, DMG with Applications link |
+| **Distribution** | Info.plist from config (URL schemes, document types, usage strings, LSUIElement), icons for every target from one image, hardened runtime + entitlements, Developer ID signing, notarization + stapling, universal arm64+x64, zip, DMG with Applications link |
 | **Auto-update** | ed25519-signed manifest + sha256-pinned artifacts from any static host; `vite build` writes `release/` including a **delta patch** from the previous release (14 KB instead of 39 MB for a typical change); download → verify every file → swap after quit → relaunch, rollback if the new version doesn't start. [updater README](src/updater/README.md) |
 | **Testing** | `launch()` drives the built app or `vite dev` in its real window: `click`, `fill`, `press`, `waitFor`, `eval`, `platform`, `screenshot`, `nextEvent` |
 | **Production hygiene** | logs to `~/Library/Logs/<id>/app.log` when launched from Finder, graceful quit (signals, ⌘Q, Dock) with `onBeforeQuit`, crash recovery of the web process, single-instance lock, no `.env`/`bunfig.toml` pickup at runtime |
@@ -56,7 +56,7 @@ Requirements: macOS 12+, Bun ≥ 1.4, Xcode command line tools, `@sveltejs/adapt
 
 | key | |
 |---|---|
-| `appName`, `identifier`, `version` (package.json), `icon` (static/icon.png), `copyright` | identity |
+| `appName`, `identifier`, `version` (package.json), `icon` (icon.png / icon.svg / static/icon.png, or `{ source, background }` — see [App icon](#app-icon)), `copyright` | identity |
 | `window` | `{ width, height, minWidth, minHeight, title, autosaveName, visible, hiddenUntilReady, debug, titleBarStyle }` or `false` (menu-bar app) |
 | `schemes` | deep-link URL schemes → `openUrls` event |
 | `fileTypes` | `[{ name, extensions, role, rank, utis, mimeTypes }]` → `openFiles` event (macOS document types; Linux `.desktop` MimeType + shared-mime-info; Windows installer associations) |
@@ -331,6 +331,36 @@ await app.close();
 
 Run with `bun test --timeout 30000` (app startup exceeds bun's 5 s default). The test
 channel exists only when `launch()` sets `SVELTE_DESKTOP_TEST`.
+
+## App icon
+
+One square image — PNG, JPEG or WebP, 1024 px or more (SVG when building on macOS) — at
+`icon.png` / `icon.svg`, or named by `icon` in `desktop.config.ts`. The build generates every
+target's icons from it (cached in `.desktop/icons`, redone when the image or the options
+change); `bunx svelte-desktop icon [image] [--background '#hex'] [--out dir]` generates them
+now, to look at them or ship them elsewhere. No Xcode or ImageMagick needed: any OS builds
+any target's icons.
+
+| target | files |
+|---|---|
+| macOS | `AppIcon.icns` (16–1024 px) + `Assets.car` from an Icon Composer bundle — macOS 26's own format, so the icon isn't shrunk into a gray squircle (compiling it needs Xcode 26's `actool`; without it the `.icns` alone ships) |
+| Windows | `.ico` (16–256 px) in the executable and the installer, PNG for toasts |
+| Linux | `<id>.png` + `share/icons/hicolor/*` (16–512 px) |
+| iOS | opaque 1024 px (the App Store rejects alpha) |
+| Android | `mipmap-*` square and round icons, adaptive (8.0+) foreground over a background color |
+
+A **square artwork** (opaque corners) is shaped per platform: on Apple's 824 px squircle grid
+for the macOS `.icns`, full bleed for iOS and macOS 26 (the system rounds it), inside the
+adaptive safe zone on Android. An image with **transparent corners** is taken as already
+shaped: used as drawn on desktop, placed on `background` where a platform needs an opaque or
+layered icon (iOS, Android adaptive, macOS 26). `background` defaults to the artwork's corner
+color, else white:
+
+```ts
+icon: { source: 'art/logo.png', background: '#0b1020' }
+```
+
+In `vite dev` the Dock shows the app's icon instead of Bun's.
 
 ## Distribution
 

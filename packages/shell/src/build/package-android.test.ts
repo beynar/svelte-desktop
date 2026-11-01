@@ -32,6 +32,7 @@ test("manifest from config", () => {
   expect(m).toContain('android:label="A &amp; &quot;B&quot;"');
   expect(m).toContain('android:value="dev.x-y.app"');
   expect(m).toContain('android:icon="@mipmap/ic_launcher"');
+  expect(m).toContain('android:roundIcon="@mipmap/ic_launcher_round"');
   expect(m).toContain('<data android:scheme="notes" />');
   expect(m).toContain('<data android:scheme="x-app" />');
   expect(m).toContain('android:extractNativeLibs="true"');
