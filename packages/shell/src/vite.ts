@@ -83,6 +83,9 @@ function hydrationMarker(permissionsConfig: Record<string, string>, notification
     name: "svelte-desktop:hydration-marker",
     // desktop.config `permissions` (name → reason) for host.permissions, in page and server code.
     config: () => ({
+      // The client below is imported by absolute path: serve it even when the shell sits
+      // outside the app's allow list (a linked checkout, a monorepo sibling).
+      server: { fs: { allow: [shellRoot] } },
       define: {
         __SVELTE_DESKTOP_PERMISSIONS__: JSON.stringify(permissionsConfig),
         __SVELTE_DESKTOP_NOTIFICATIONS__: JSON.stringify(notificationsConfig),
