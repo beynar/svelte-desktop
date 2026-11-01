@@ -65,7 +65,7 @@ struct Window {
   bool veto;
   NSString *label;
   std::vector<NSObject *> observers; // NotificationCenter tokens
-  bool animateIn = false;            // fade and slide in when it shows (create {animate: true})
+  NSDictionary *animation = nil;     // how it comes in when it shows (create {animate}); nil: at once
 };
 
 static std::map<int, Window *> g_windows; // main thread only
@@ -87,22 +87,39 @@ static Window *find_by_nswindow(NSWindow *win) {
   return nullptr;
 }
 
+static CAMediaTimingFunction *timing_function(id easing) {
+  if ([easing isKindOfClass:NSArray.class] && [easing count] == 4) { // cubic-bezier(x1, y1, x2, y2)
+    NSArray *p = easing;
+    return [CAMediaTimingFunction functionWithControlPoints:[p[0] floatValue]:[p[1] floatValue]:[p[2] floatValue]:[p[3] floatValue]];
+  }
+  NSDictionary *names = @{@"linear" : kCAMediaTimingFunctionLinear, @"easeIn" : kCAMediaTimingFunctionEaseIn, @"easeInOut" : kCAMediaTimingFunctionEaseInEaseOut};
+  return [CAMediaTimingFunction functionWithName:names[easing] ?: kCAMediaTimingFunctionEaseOut];
+}
+
 static void reveal(Window *w) {
   if (w->shown) return;
   w->shown = true;
   NSWindow *win = w->window;
-  if (!w->animateIn) {
+  NSDictionary *a = w->animation;
+  double duration = a[@"duration"] ? [a[@"duration"] doubleValue] / 1000.0 : 0.18;
+  if (!a || duration <= 0) {
     [win setAlphaValue:1.0];
     [win makeKeyAndOrderFront:nil];
     return;
   }
-  // From a few points above, transparent, into place (moving the frame, not resizing it).
+  // From where it starts — offset (CSS points, y down; default 10 above), scaled around its
+  // middle, at an opacity — into place.
   NSRect to = win.frame;
-  [win setFrame:NSOffsetRect(to, 0, 10) display:NO];
+  NSDictionary *offset = [a[@"offset"] isKindOfClass:NSDictionary.class] ? a[@"offset"] : nil;
+  double dx = offset ? [offset[@"x"] doubleValue] : 0, dy = offset ? [offset[@"y"] doubleValue] : -10;
+  double scale = a[@"scale"] ? MAX(0.1, [a[@"scale"] doubleValue]) : 1;
+  NSRect from = NSMakeRect(NSMidX(to) - to.size.width * scale / 2 + dx, NSMidY(to) - to.size.height * scale / 2 - dy, to.size.width * scale, to.size.height * scale);
+  [win setFrame:from display:NO];
+  [win setAlphaValue:a[@"opacity"] ? MIN(1, MAX(0, [a[@"opacity"] doubleValue])) : 0];
   [win makeKeyAndOrderFront:nil];
   [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-    ctx.duration = 0.18;
-    ctx.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+    ctx.duration = duration;
+    ctx.timingFunction = timing_function(a[@"easing"]);
     [[win animator] setFrame:to display:YES];
     [[win animator] setAlphaValue:1.0];
   }];
@@ -291,7 +308,8 @@ static int create_window(NSDictionary *o) {
   w->window = (__bridge NSWindow *)webview_get_window(wv);
   w->webview = (__bridge WKWebView *)webview_get_native_handle(wv, WEBVIEW_NATIVE_HANDLE_KIND_BROWSER_CONTROLLER);
   w->label = o[@"label"] ?: (g_order.empty() ? @"main" : [NSString stringWithFormat:@"window-%d", w->id]);
-  w->animateIn = [o[@"animate"] boolValue];
+  id animate = o[@"animate"];
+  w->animation = [animate isKindOfClass:NSDictionary.class] ? animate : ([animate boolValue] ? @{} : nil);
   g_windows[w->id] = w;
   g_order.push_back(w->id);
 

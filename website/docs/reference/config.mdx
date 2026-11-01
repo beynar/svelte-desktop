@@ -51,6 +51,7 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
     titleBarStyle: { type: '"default" | "transparent" | "hidden" | "hiddenInset"', default: '"default"' },
     visible: { type: "boolean", default: "true" },
     hiddenUntilReady: { type: "boolean", default: "true", description: "Invisible until DOMContentLoaded (no white flash)." },
+    animate: { type: "boolean | WindowAnimation", description: "Come in animated when it shows (macOS): duration, easing, offset, scale, opacity. See Windows › Animation." },
     readyTimeoutMs: { type: "number", default: "3000" },
     debug: { type: "boolean", description: "Web Inspector in the built app." },
   }}

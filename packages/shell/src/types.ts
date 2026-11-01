@@ -1,3 +1,5 @@
+import type { WindowAnimation } from "./platform/index.ts";
+
 export interface WindowOptions {
   /** Shown at launch (default true). false: created hidden (menu-bar apps). */
   visible?: boolean;
@@ -16,6 +18,8 @@ export interface WindowOptions {
    *  `--desktop-controls-width` and `html[data-desktop-titlebar]`. Scrolling over the title bar strip
    *  doesn't scroll the page (title-bar gesture tools such as Swish keep working). */
   titleBarStyle?: "default" | "transparent" | "hidden" | "hiddenInset";
+  /** Come in animated when it shows (macOS): `true` or a WindowAnimation (duration, easing, offset, scale, opacity). */
+  animate?: boolean | WindowAnimation;
   /** Keep the window invisible until DOMContentLoaded to avoid a white flash. Default true. */
   hiddenUntilReady?: boolean;
   readyTimeoutMs?: number;

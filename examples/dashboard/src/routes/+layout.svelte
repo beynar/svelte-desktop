@@ -31,7 +31,9 @@
 		primary: true,
 		create: () => ({ path: '/' }),
 		onLastClose: 'new',
-		title: (url) => pageOf(url.pathname).title
+		title: (url) => pageOf(url.pathname).title,
+		// A tab dragged out of the window: its new window rises into place, growing a little.
+		windowAnimation: { duration: 220, easing: [0.2, 0.9, 0.1, 1], offset: { y: 16 }, scale: 0.97 }
 	});
 	if (import.meta.env.DEV) (globalThis as { __tabs?: Tabs }).__tabs = tabs; // tests/tabs.test.ts drives it
 

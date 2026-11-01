@@ -1,6 +1,6 @@
 ---
 title: Windows
-description: The main window, title bar styles and drag regions, multiple windows, saved frames and full screen.
+description: The main window, title bar styles and drag regions, multiple windows, how they come in, saved frames and full screen.
 ---
 
 The main window is described by `window` in `desktop.config.ts` and controlled at run time through `host.window`.
@@ -21,6 +21,7 @@ window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 
     visible: { type: "boolean", default: "true", description: "Shown at launch. false creates it hidden." },
     hiddenUntilReady: { type: "boolean", default: "true", description: "Keep the window invisible until DOMContentLoaded, to avoid a white flash." },
     readyTimeoutMs: { type: "number", default: "3000", description: "How long hiddenUntilReady waits for the page before showing the window anyway (8000 in dev)." },
+    animate: { type: "boolean | WindowAnimation", description: "Come in animated when it shows (macOS). See Animation below." },
     debug: { type: "boolean", description: "Enable the Web Inspector in the built app (right-click, Inspect Element). On by default in dev." },
   }}
 />
@@ -105,7 +106,7 @@ On desktop, the bridge sets `:where(html, body) { overscroll-behavior: none }`, 
 ## Multiple windows
 
 ```ts
-const { windowId } = await host.windows.create({ title: 'Inspector', width: 520, height: 420, animate: true }); // animate: fades and slides in (macOS)
+const { windowId } = await host.windows.create({ path: '/inspector', title: 'Inspector', width: 520, height: 420, animate: true });
 await host.windows.setTitle('Inspector (2)', windowId);
 host.windows.onClosed(({ windowId }) => console.log('closed', windowId));
 ```
@@ -115,6 +116,8 @@ Every window op takes an optional trailing `windowId`; without it the op targets
 <TypeTable
   type={{
     label: { type: "string", description: "Unique per app; a duplicate rejects invalid_args." },
+    path: { type: "string", description: "The app route to open.", default: '"/"' },
+    url: { type: "string", description: "Another site instead (no native bridge)." },
     title: { type: "string" },
     "x, y, width, height": { type: "number" },
     "minWidth, minHeight": { type: "number" },
@@ -127,14 +130,34 @@ Every window op takes an optional trailing `windowId`; without it the op targets
     opacity: { type: "number", description: "0 to 1, applied before the first frame." },
     titlebarTransparent: { type: "boolean", description: "Title bar blends into the content (macOS)." },
     tabbingIdentifier: { type: "string", description: "Windows with the same id group as native tabs (macOS)." },
+    animate: { type: "boolean | WindowAnimation", description: "Come in animated when it shows (macOS). See Animation below." },
   }}
 />
 
-:::note
-A new window opens the app at `/`. The native op also reads `path` (an app route), which the `WindowCreateOptions` type doesn't declare yet.
-:::
-
 Window events: `onCreated`, `onClosed`, `onFocusChanged`, `onBoundsChanged`, `onScaleFactorChanged`, `onWillClose`. Use [`host.broadcast`](/concepts/host#talking-across-windows-and-the-server) to message between windows.
+
+## Animation
+
+A window can come in animated each time it shows — at launch, `windows.create`, `window.show()`: `animate: true` fades it in while it slides down 10 points into place, in 180 ms. Or describe your own:
+
+```ts
+host.windows.create({
+	path: '/inspector',
+	animate: { duration: 260, easing: [0.2, 0.9, 0.1, 1], offset: { x: 0, y: 24 }, scale: 0.96, opacity: 0 },
+});
+```
+
+<TypeTable
+  type={{
+    duration: { type: "number", default: "180", description: "In ms; 0 shows it at once." },
+    easing: { type: '"easeOut" | "easeIn" | "easeInOut" | "linear" | [x1, y1, x2, y2]', default: '"easeOut"', description: "A named curve or cubic-bezier control points, as in CSS." },
+    offset: { type: "{ x?, y? }", default: "{ x: 0, y: -10 }", description: "Where it starts from its place, in points, y down: y 24 rises from below, x -40 comes in from the left." },
+    scale: { type: "number", default: "1", description: "Its size at the start, around its middle (0.96 grows a little). The page is resized while it runs: keep it short." },
+    opacity: { type: "number", default: "0", description: "Its opacity at the start." },
+  }}
+/>
+
+The same goes in `desktop.config.ts` for the main window (`window: { animate: … }`), and in [Tabs](/ui/tabs) for the windows tabs are dragged into (`windowAnimation`). macOS only for now: elsewhere the window shows at once.
 
 ## Confirm before closing
 

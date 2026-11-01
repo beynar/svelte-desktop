@@ -36,6 +36,23 @@ test('platform API: window bounds and title', async () => {
 	expect(await app.platform('window', 'getInfo')).toMatchObject({ windowId: 0, label: 'main', visible: true, bounds: { width: b.bounds.width } });
 });
 
+test('a window comes in with its own animation: from an offset, scaled, faded, into place', async () => {
+	type Row = { label: string; bounds: { x: number; y: number; width: number; height: number } };
+	const want = { x: 200, y: 200, width: 600, height: 400 };
+	await app.platform('window', 'create', { label: 'animated', path: '/', ...want, animate: { duration: 700, easing: [0.2, 0.8, 0.2, 1], offset: { x: 0, y: 60 }, scale: 0.8, opacity: 0.3 } });
+	const seen: Row['bounds'][] = [];
+	for (let i = 0; i < 120; i++) {
+		const row = (await app.platform<Row[]>('window', 'list')).find((w) => w.label === 'animated');
+		if (row) seen.push(row.bounds);
+		if (seen.length > 5 && JSON.stringify(seen.at(-1)) === JSON.stringify(want)) break;
+		await Bun.sleep(25);
+	}
+	expect(seen.at(-1)).toEqual(want);
+	expect(seen.some((b) => b.width < want.width && b.width >= want.width * 0.8 && b.y > want.y)).toBe(true); // on its way: smaller, lower
+	const { windowId } = (await app.platform<Array<Row & { windowId: number }>>('window', 'list')).find((w) => w.label === 'animated')!;
+	await app.platform('window', 'close', { windowId });
+});
+
 test('Dock icon: an image file or a native icon; null restores it; a bad one is refused', async () => {
 	await app.platform('app', 'setDockIcon', { icon: new URL('../static/logo.svg', import.meta.url).pathname });
 	await app.platform('app', 'setDockIcon', { icon: 'star.fill' });

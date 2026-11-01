@@ -175,6 +175,22 @@ export type TitleBarStyle = 'default' | 'transparent' | 'hidden' | 'hiddenInset'
 export type WindowTheme = 'light' | 'dark' | 'system';
 
 /** Options for windows.create — every field optional. */
+/** How a window comes in when it shows — at launch, window.create, window.show (macOS; elsewhere
+ *  it shows at once). `true` is the default one: 180 ms, ease out, from 10 points above, faded. */
+export type WindowAnimation = {
+	/** In ms (default 180; 0: no animation). */
+	duration?: number;
+	/** 'easeOut' (default), 'easeIn', 'easeInOut', 'linear', or cubic-bezier control points. */
+	easing?: 'easeOut' | 'easeIn' | 'easeInOut' | 'linear' | [x1: number, y1: number, x2: number, y2: number];
+	/** Where it starts from its place, in points, y down (default { x: 0, y: -10 }: 10 above). */
+	offset?: { x?: number; y?: number };
+	/** Its size at the start, around its middle (default 1; 0.96: grows a little). The page is
+	 *  resized while it runs: keep it short. */
+	scale?: number;
+	/** Its opacity at the start (default 0). */
+	opacity?: number;
+};
+
 export type WindowCreateOptions = {
 	/** Unique per app — a duplicate label rejects `invalid_args`. */
 	label?: string;
@@ -202,8 +218,8 @@ export type WindowCreateOptions = {
 	minimizable?: boolean;
 	/** Focus on creation (default true). */
 	focus?: boolean;
-	/** Fade and slide in when it shows (macOS; elsewhere it just shows). */
-	animate?: boolean;
+	/** Come in animated when it shows: `true` (fades and slides down into place) or your own. */
+	animate?: boolean | WindowAnimation;
 	/** Transparent window background (content must paint its own chrome). */
 	transparent?: boolean;
 	/** Window alpha 0–1, applied before the first presented frame — `0`

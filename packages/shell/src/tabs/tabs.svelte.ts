@@ -12,6 +12,7 @@
 // an app route kept apart from the page.
 import { callPlatform, onPlatform, platformReady } from '../platform/bus';
 import { readAppFile, writeAppFile } from '../platform/app-files';
+import type { WindowAnimation } from '../platform/index';
 
 export interface Tab<D = unknown> {
 	id: string;
@@ -55,6 +56,8 @@ export interface TabsOptions<D = unknown> {
 	/** Drag a tab out of the bar: into a new window, or onto another window's bar.
 	 *  Default: `primary` route groups. */
 	detachable?: boolean;
+	/** How a window a tab was dragged into comes in (macOS): `true` (default), `false`, or your own. */
+	windowAnimation?: boolean | WindowAnimation;
 }
 
 const isPage = typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -267,7 +270,7 @@ export class Tabs<D = unknown> {
 				height: innerHeight,
 				...(at && { x: Math.round(at.x - 120), y: Math.round(at.y - 16) }),
 				...(await this.#style),
-				animate: true,
+				animate: this.options.windowAnimation ?? true,
 			});
 			this.#remove(id, 'moved');
 		} catch (e) {

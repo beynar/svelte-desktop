@@ -138,6 +138,7 @@ Fixed tabs (`closable: false`, no `create`) make a segmented control; `keepAlive
     onLastClose: { type: "'window' | 'new' | 'keep'", description: "Closing the last tab.", default: "'window' (primary), 'keep'" },
     title: { type: "(url: URL) => string", description: "A route tab's title from its URL." },
     detachable: { type: "boolean", description: "Drag a route tab out of the bar: into a new window, or onto another window's bar.", default: "primary route groups" },
+    windowAnimation: { type: "boolean | WindowAnimation", description: "How a window a tab was dragged into comes in (macOS): see [Animation](/ui/windows#animation).", default: "true" },
   }}
 />
 
