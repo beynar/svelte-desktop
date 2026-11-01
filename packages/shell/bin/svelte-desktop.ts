@@ -112,9 +112,20 @@ async function doctor() {
   Bun.semver.order(bunVersion, "1.4.0") >= 0 ? ok(`Bun ${bunVersion}`) : bad(`Bun ${bunVersion} (needs ≥ 1.4)`);
   const canary = (await $`bun --revision`.nothrow().text()).includes("canary");
   canary ? ok("Bun canary: --aot/--trim available") : warn("Bun stable: build.aot/trim need canary (SVELTE_DESKTOP_BUN or build.bun)");
-  process.platform === "darwin" ? ok(`macOS ${(await $`sw_vers -productVersion`.text()).trim()} ${process.arch}`) : bad(`${process.platform} is not supported yet (macOS only)`);
-  for (const [tool, why] of [["clang", "libshell + native plugins"], ["swiftc", "Swift native plugins"], ["codesign", "signing"], ["hdiutil", "DMG"], ["lipo", "universal builds"]] as const)
-    (await $`which ${tool}`.nothrow().quiet()).exitCode === 0 ? ok(`${tool} (${why})`) : bad(`${tool} missing — xcode-select --install (${why})`);
+  const has = async (tool: string) => (await $`which ${tool}`.nothrow().quiet()).exitCode === 0;
+  if (process.platform === "darwin") {
+    ok(`macOS ${(await $`sw_vers -productVersion`.text()).trim()} ${process.arch}`);
+    for (const [tool, why] of [["clang", "libshell + native plugins"], ["swiftc", "Swift native plugins"], ["codesign", "signing"], ["hdiutil", "DMG"], ["lipo", "universal builds"]] as const)
+      (await has(tool)) ? ok(`${tool} (${why})`) : bad(`${tool} missing — xcode-select --install (${why})`);
+  } else if (process.platform === "linux") {
+    ok(`Linux ${process.arch}`);
+    (await $`pkg-config --exists webkit2gtk-4.1`.nothrow().quiet()).exitCode === 0 ? ok("WebKitGTK 4.1") : bad("WebKitGTK 4.1 missing — e.g. apt install libwebkit2gtk-4.1-dev (or build in Docker)");
+    for (const [tool, why] of [["c++", "native plugins"], ["appimagetool", "AppImage"]] as const) (await has(tool)) ? ok(`${tool} (${why})`) : warn(`${tool} missing (${why})`);
+  } else if (process.platform === "win32") {
+    ok(`Windows ${process.arch}`);
+    for (const [tool, why] of [["makensis", "installer"], ["osslsigncode", "Authenticode"]] as const) (await has(tool)) ? ok(`${tool} (${why})`) : warn(`${tool} missing (${why})`);
+  } else bad(`${process.platform} is not supported (macOS, Linux, Windows)`);
+  for (const [tool, why] of [["cargo", "Rust plugins"], ["go", "Go plugins"]] as const) if (await has(tool)) ok(`${tool} (${why})`);
 
   try {
     Bun.resolveSync("@sveltejs/adapter-bun", root);

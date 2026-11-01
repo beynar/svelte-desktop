@@ -178,6 +178,12 @@ export type WindowTheme = 'light' | 'dark' | 'system';
 export type WindowCreateOptions = {
 	/** Unique per app — a duplicate label rejects `invalid_args`. */
 	label?: string;
+	/** The app route to open (default '/'), signed in like the main window. */
+	path?: string;
+	/** Open this URL instead of an app route (another origin gets no native bridge). */
+	url?: string;
+	/** Or this HTML document. */
+	html?: string;
 	title?: string;
 	x?: number;
 	y?: number;
@@ -246,8 +252,8 @@ const wid = (windowId?: number) => (windowId === undefined ? {} : { windowId });
 
 export const windows = {
 	// ── multi-window ──────────────────────────────────────────────
-	/** Open another OS window on the shared realm/tree. Labels are unique
-	 *  (duplicate → `invalid_args`); macOS only — `unsupported` elsewhere. */
+	/** Open another window on an app route (`path`). Labels are unique
+	 *  (duplicate → `invalid_args`). */
 	create: (options: WindowCreateOptions = {}) =>
 		callPlatform<{ windowId: number; label: string }>('window', 'create', options),
 	/** Every open window — primary is `windowId` 0. */
