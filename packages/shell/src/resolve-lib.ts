@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { bundledLibDir, libshellName, pluginName } from "./os.ts";
 
@@ -12,11 +12,12 @@ export function resolveLib(): string {
   return bundled;
 }
 
-/** The app's native plugin: dev override, else the bundled copy, else none. */
-export function resolvePlugin(): string | null {
-  if (process.env.SVELTE_DESKTOP_NATIVE_PLUGIN) return process.env.SVELTE_DESKTOP_NATIVE_PLUGIN;
-  const bundled = join(bundledLibDir(), pluginName());
-  return existsSync(bundled) ? bundled : null;
+/** The app's native plugins: libapp-native, then the Rust and Go ones in plugins/ next to it. */
+export function resolvePlugins(): string[] {
+  const dir = bundledLibDir();
+  const main = join(dir, pluginName());
+  const extra = join(dir, "plugins");
+  return [...(existsSync(main) ? [main] : []), ...(existsSync(extra) ? readdirSync(extra).sort().map((f) => join(extra, f)) : [])];
 }
 
 /** Path of a sidecar executable declared in desktop.config `sidecars`. */

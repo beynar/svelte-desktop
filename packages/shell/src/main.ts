@@ -18,9 +18,9 @@ export async function runShell(opts: ShellOptions): Promise<never> {
   );
   if (windowId <= 0) throw new Error(`shell_window_create failed (${windowId})`);
   if (opts.pagePermissions) ui.shell_set_page_permissions(cstr(JSON.stringify(opts.pagePermissions)));
-  if (opts.plugin) {
-    const rc = ui.shell_load_plugin(cstr(opts.plugin));
-    if (rc !== 0) console.error(`[shell] native plugin failed to load (${rc}): ${opts.plugin}`);
+  for (const plugin of opts.plugins ?? []) {
+    const rc = ui.shell_load_plugin(cstr(plugin));
+    if (rc !== 0) console.error(`[shell] native plugin failed to load (${rc}): ${plugin}`);
   }
 
   // One-time secret the Worker trades for an HttpOnly session cookie, so other

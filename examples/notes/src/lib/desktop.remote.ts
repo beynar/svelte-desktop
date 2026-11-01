@@ -1,7 +1,7 @@
 import { command, query } from '$app/server';
 import { desktop, isDesktop, loadAddon } from '@svelte-desktop/shell/server';
 import { getDb } from '#lib/server/db.ts';
-import { greeter } from '#lib/native.ts';
+import { native } from '@svelte-desktop/shell/native';
 
 export const shellInfo = query(async () =>
 	isDesktop()
@@ -59,7 +59,7 @@ export const quitApp = command(async () => {
 
 /** Server code calling the Swift plugin (same API as from a page). */
 export const nativeGreeting = query(async () =>
-	isDesktop() ? greeter.hello({ name: 'server' }).catch(() => 'native plugin not available on this OS (Swift is macOS-only)') : null
+	isDesktop() ? native.greeter.hello({ name: 'server' }).catch(() => 'native plugin not available on this OS (Swift is macOS-only)') : null
 );
 
 /** Server code calling a C Node-API addon (native/addons/fastmath.c). */

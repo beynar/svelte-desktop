@@ -7,7 +7,7 @@
 //   int sd_plugin_init(const sd_host *host);     // return 0 on success
 //
 // and registers ops with host->register_op("service", "op", fn, user). Ops are
-// regular platform ops: callable from pages (`nativeModule('service').op(args)`)
+// regular platform ops: callable from pages (`native.service.op(args)`)
 // and from server code, with the same permission checks. Handlers run on the
 // main thread; resolve/reject may be called later, from any thread.
 #ifndef SVELTE_DESKTOP_H

@@ -13,14 +13,14 @@ const PLATFORM_DIRS = ["macos", "linux", "windows"] as const;
 export type PluginPlatform = (typeof PLATFORM_DIRS)[number];
 
 /** Plugin sources under native/ for one platform: everything except addons/ (Node-API
- *  addons) and sidecars/ (executables), built separately, and the other platforms'
- *  folders (native/<platform>/). */
+ *  addons), sidecars/ (executables), rust/ and go/ (their own plugins, native-langs.ts),
+ *  built separately, and the other platforms' folders (native/<platform>/). */
 export function pluginSources(dir: string, platform: PluginPlatform): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === "addons" || entry.name === "sidecars") continue; // built separately
+      if (["addons", "sidecars", "rust", "go"].includes(entry.name)) continue; // built separately
       if ((PLATFORM_DIRS as readonly string[]).includes(entry.name) && entry.name !== platform) continue;
       out.push(...pluginSources(p, platform));
     } else if (/\.(swift|m|mm|c|cc|cpp)$/.test(entry.name)) out.push(p);

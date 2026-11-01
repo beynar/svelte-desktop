@@ -19,9 +19,10 @@
 // building from macOS those steps are skipped with a warning unless prebuilt.
 import { $ } from "bun";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
 import { appIcons } from "./icons.ts";
+import { buildLanguagePlugins } from "./native-langs.ts";
 import { pluginSources as sharedPluginSources } from "./native.ts";
 import { ensureLibshell, writeRelease, type Arch, type PackageResult } from "./package.ts";
 
@@ -207,6 +208,11 @@ export async function packageLinux(c: ResolvedConfig, stage: string): Promise<Pa
   copyFileSync(await ensureLibshell(arch, "linux"), join(app, "lib", "libshell.so"));
   const plugin = await buildLinuxPlugin(c, arch, join(work, "native"));
   if (plugin) copyFileSync(plugin, join(app, "lib", "libapp-native.so"));
+  if (c.native)
+    for (const l of await buildLanguagePlugins(c, { os: "linux", arches: [arch], outDir: join(work, "plugins"), release: true, warn })) {
+      mkdirSync(join(app, "lib", "plugins"), { recursive: true });
+      copyFileSync(l, join(app, "lib", "plugins", basename(l)));
+    }
   const addons = await buildLinuxAddons(c, arch, join(work, "addons"));
   if (Object.keys(addons).length) {
     mkdirSync(join(app, "lib", "addons"), { recursive: true });

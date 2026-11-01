@@ -1,15 +1,115 @@
 ---
 title: Native code
-description: Swift, Objective-C and C plugins callable from pages and server code, Node-API addons for server code, and sidecar executables.
+description: Rust, Go, Swift, Objective-C and C plugins callable from pages and server code, typed; Node-API addons for server code; sidecar executables.
 ---
 
-Three ways to go beyond the built-in services, all compiled and bundled by the Vite plugin in dev and at build:
+Four ways to go beyond the built-in services, all compiled and bundled by the Vite plugin in dev and at build:
 
 | | Runs | Called from | For |
 | --- | --- | --- | --- |
-| **Native plugin** (`native/`) | On the UI thread, in-process | Pages and server code | OS APIs, AppKit/UIKit, anything on the main thread |
+| **Rust / Go plugin** (`native/rust`, `native/go`) | Off the UI thread, in-process | Pages and server code, typed | Your own libraries, crates and Go packages, CPU work |
+| **Swift / ObjC / C plugin** (`native/`) | On the UI thread, in-process | Pages and server code, typed (Swift) | OS APIs, AppKit, anything on the main thread |
 | **Node-API addon** (`native/addons/`) | In the server Worker | Server code | CPU-heavy native libraries |
 | **Sidecar** (`sidecars`) | Its own process | Server code | Existing executables (ffmpeg, a CLI) |
+
+## One API, typed
+
+Every plugin command, whatever its language, is called the same way, from a page or from server code:
+
+```ts
+import { native } from '@svelte-desktop/shell/native'; // or host.native, no import
+
+await native.text.stats({ text });       // Rust
+await native.clock.countdown({ from: 3 }); // Go
+await native.greeter.hello({ name });    // Swift
+```
+
+The build reads every plugin library back and writes `src/native.d.ts` (keep it in git, like `src/host.d.ts`): the arguments and results come from the Rust (`TS`), Go and Swift (`Codable`) types. Objective-C and C commands are listed too, typed `unknown`. In `vite dev` it's rewritten whenever a plugin changes.
+
+## Rust and Go plugins
+
+A cargo crate in `native/rust` or a Go module in `native/go`, on the SDK shipped with the package. Each command is a native op, typed in `native`.
+
+```sh
+bunx svelte-desktop add rust   # native/rust (needs cargo)
+bunx svelte-desktop add go     # native/go (needs go)
+```
+
+<Tabs>
+<Tab title="Rust">
+
+```rust native/rust/src/lib.rs
+use serde::{Deserialize, Serialize};
+use svelte_desktop::{plugin, Error, Plugin, TS};
+
+#[derive(Deserialize, TS)]
+struct StatsArgs { text: String }
+
+#[derive(Serialize, TS)]
+struct Stats { words: u64, lines: u64, longest: Option<String> }
+
+fn setup(p: &mut Plugin) {
+    p.command("text.stats", |a: StatsArgs| -> Result<Stats, Error> {
+        if a.text.is_empty() { return Err(Error::invalid_args("text is empty")); }
+        let words: Vec<&str> = a.text.split_whitespace().collect();
+        Ok(Stats {
+            words: words.len() as u64,
+            lines: a.text.lines().count() as u64,
+            longest: words.iter().max_by_key(|w| w.len()).map(|w| w.to_string()),
+        })
+    });
+}
+
+plugin!(setup);
+```
+
+`native/rust/Cargo.toml` needs `crate-type = ["cdylib"]` and the dependencies `svelte-desktop` (a path into the package), `serde` and `ts-rs` — `add rust` writes it.
+
+</Tab>
+<Tab title="Go">
+
+```go native/go/main.go
+package main
+
+import "svelte-desktop.dev/go/desktop"
+
+type CountdownArgs struct {
+	From int `json:"from"`
+}
+
+func init() {
+	desktop.Command("clock.countdown", func(a CountdownArgs) (int, error) {
+		if a.From < 0 {
+			return 0, desktop.InvalidArgs("from must be positive")
+		}
+		for n := a.From; n > 0; n-- {
+			desktop.Emit("clock.tick", map[string]int{"n": n})
+		}
+		return a.From, nil
+	})
+}
+
+func main() {}
+```
+
+`native/go/go.mod` requires `svelte-desktop.dev/go/desktop` and replaces it with the path into the package — `add go` writes it.
+
+</Tab>
+</Tabs>
+
+```ts
+import { native } from '@svelte-desktop/shell/native'; // or host.native, no import
+
+const { words, longest } = await native.text.stats({ text }); // typed from Rust
+host.on('clock.tick', ({ n }) => console.log(n));
+await native.clock.countdown({ from: 3 });                   // typed from Go
+```
+
+- **Threads:** handlers run off the UI thread (a thread per call in Rust, a goroutine in Go), so long work never blocks the window.
+- **Errors:** return `Error::invalid_args(…)` / `desktop.InvalidArgs(…)` (also `unsupported`, `unavailable`, `denied`); any other error rejects with `internal`, and so does a panic — it never crashes the app.
+- **Events:** `svelte_desktop::emit(name, &data)` / `desktop.Emit(name, data)` reach `onPlatform(name)` in pages and server code.
+- **Dev and build:** `vite dev` builds them (debug) and restarts the window when a file changes; `vite build` builds them in release and ships them signed next to the app (`Contents/Frameworks/plugins` on macOS, `lib/plugins` on Linux, `plugins\` on Windows).
+- **Limits:** they build on the target's own OS (no cross-compilation yet). One Go plugin per app (a process holds one Go runtime). A name already taken by the shell or another plugin isn't registered (logged).
 
 ## Native plugins
 
@@ -18,51 +118,42 @@ Files in `native/` (`*.swift`, `*.m`, `*.c`) are compiled into one plugin librar
 ```swift native/Greeter.swift
 import AppKit
 
+struct HelloArgs: Codable { let name: String }
+struct AddArgs: Codable { let a: Double; let b: Double }
+
 func desktopSetup() {
-  Desktop.command("greeter.hello") { args in
-    "Hello \(args["name"] as? String ?? "world")"
+  Desktop.command("greeter.hello") { (a: HelloArgs) in
+    "Hello \(a.name)"
   }
 
   // Runs on the main thread: AppKit is safe here.
-  Desktop.command("greeter.windowTitle") { _ in
-    Desktop.window()?.title
-  }
+  Desktop.command("greeter.windowTitle") { Desktop.window()?.title }
 
-  Desktop.command("greeter.add") { args in
+  Desktop.command("greeter.add") { (a: AddArgs) in
     try await Task.sleep(nanoseconds: 50_000_000) // async work is fine
-    guard let a = args["a"] as? Double, let b = args["b"] as? Double else {
-      throw DesktopError.invalidArgs("greeter.add needs numbers a and b")
-    }
-    return a + b
+    return a.a + a.b
   }
 
-  Desktop.command("greeter.ping") { _ in
+  Desktop.command("greeter.ping") { () -> Bool in
     Desktop.emit("greeter.pong", ["at": Date().timeIntervalSince1970])
     return true
   }
 }
 ```
 
-Each `Desktop.command("service.op")` becomes a platform op. Type it with an interface and call it from a page or from server code:
+Codable arguments and results are typed for you, like Rust and Go: arguments that don't decode reject with `invalid_args`.
 
-```ts src/lib/native.ts
-import { nativeModule } from '@svelte-desktop/shell/platform';
-
-export interface Greeter {
-  hello(args: { name: string }): string;
-  windowTitle(): string | null;
-  add(args: { a: number; b: number }): number;
-  ping(): boolean;
-}
-
-export const greeter = nativeModule<Greeter>('greeter'); // also host.nativeModule
-await greeter.hello({ name: 'Ada' });
+```ts
+const message = await native.greeter.hello({ name: 'Ada' }); // string
+const title = await native.greeter.windowTitle();             // string | null
 host.on('greeter.pong', ({ at }) => {});
 ```
 
 | Swift API | |
 | --- | --- |
-| `Desktop.command(name) { args in ... }` | Register an op. The closure is `@MainActor`, may be `async` and may `throw`; its return value goes back as JSON. |
+| `Desktop.command(name) { (a: Args) in ... }` | Register a typed op: `Args` Decodable, the result Encodable. The closure is `@MainActor`, may be `async` and may `throw`. |
+| `Desktop.command(name) { ... }` | The same without arguments. |
+| `Desktop.command(name) { args in ... }` | Untyped: `args` is `[String: Any]`, the result any JSON value; typed `unknown`. |
 | `Desktop.emit(event, data)` | Send an event to every page and server code |
 | `Desktop.window(id)` | The `NSWindow` for a window id (`0`, the main window, by default) |
 | `Desktop.log(message)` | Log through the shell |

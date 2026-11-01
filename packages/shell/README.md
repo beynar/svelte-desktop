@@ -44,7 +44,7 @@ Requirements: macOS 12+, Bun ≥ 1.4, Xcode command line tools, `@sveltejs/adapt
 | **Your app, unchanged** | SvelteKit SSR + remote functions + `bun:sqlite`, served on a random loopback port behind a session-cookie gate (Host check, one-time secret, HttpOnly cookie) |
 | **Dev mode** | `vite dev` opens the native window on the Vite server: HMR in the window, Web Inspector, server code reaches native APIs through an RPC bridge, native plugin rebuilt and window restarted on change, `desktop.config.ts` edits restart. Closing the window ends `vite dev`. |
 | **Native API** | 245 ops in 22 services (incl. aliases), typed, from pages **and** server code, plus reactive stores (`import { theme, window, tray } from '@svelte-desktop/shell/stores'`). [Platform API](#platform-api) |
-| **Your own native code** | `native/*.swift` / `*.m` / `*.c` → a plugin dylib, ops callable from pages and server (`nativeModule<T>('svc')`); `native/addons/*.c` → Node-API addons (`loadAddon`); `sidecars` for executables. [Native code](#native-code) |
+| **Your own native code** | `native/*.swift` / `*.m` / `*.c` → a plugin dylib, commands in Rust, Go, Swift, Objective-C or C, one typed API from pages and server (`native.svc.op()`); `native/addons/*.c` → Node-API addons (`loadAddon`); `sidecars` for executables. [Native code](#native-code) |
 | **Web view features** | alert/confirm/prompt, file drop with real paths, downloads, print/PDF, find, zoom, context menu control, camera/mic permissions, open-file/file associations, capturePage, executeJavaScript. [WEBVIEW.md](WEBVIEW.md) |
 | **Menu-bar apps & popovers** | `<StatusItem popover="/route">`, `<Popover anchor={el}>`, Spotlight-style panels on a global hotkey, content sized to fit. [POPOVERS.md](POPOVERS.md) |
 | **Distribution** | Info.plist from config (URL schemes, document types, usage strings, LSUIElement), icons for every target from one image, hardened runtime + entitlements, Developer ID signing, notarization + stapling, universal arm64+x64, zip, DMG with Applications link |
@@ -134,7 +134,7 @@ const math = host.loadAddon<{ fib(n: number): number }>('fastmath');
 |---|---|
 | reactive stores (+ their methods) | `app` · `window` · `windowState` · `screen` · `clipboard` · `theme` · `system` · `power` · `deepLink` · `menu` · `notifications` · `push` · `capture` · `diagnostics` · `capabilities` · `update` · `tray` · `shortcuts` · `store` · `events` · `jobs` |
 | services | `windows` (multi-window) · `dialog` · `shell` · `secureStorage` · `popover` · `webview` · `view` |
-| functions | `on(event, fn)` · `broadcast` / `onBroadcast` · `nativeModule<T>(name)` · `currentPopover` / `closePopover` · `available` |
+| functions | `on(event, fn)` · `broadcast` / `onBroadcast` · `native` (your native commands) · `currentPopover` / `closePopover` · `available` |
 | server code only | `paths` · `crashInfo()` · `sidecar()` · `loadAddon()` · `onBeforeQuit()` · `ready()` · `jobs.start()` / `jobs.wait()` |
 
 `host.available` is false in a plain browser tab or outside the app. The modules
@@ -289,22 +289,61 @@ macOS (built and `vite dev`) and Linux (Docker).
 
 ## Native code
 
-```swift
-// native/Greeter.swift — compiled by the plugin, loaded on the UI thread
-func desktopSetup() {
-  Desktop.command("greeter.hello") { args in "Hello \(args["name"] as? String ?? "?")" }
-  Desktop.command("greeter.title") { _ in Desktop.window()?.title }      // MainActor: AppKit is fine
-  Desktop.command("greeter.add") { args in
-    guard let a = args["a"] as? Double, let b = args["b"] as? Double else { throw DesktopError.invalidArgs("numbers") }
-    return a + b                                                           // async/await allowed
-  }
+Commands in **Rust**, **Go**, **Swift**, Objective-C or C, all reached the same way, typed:
+
+```ts
+import { native } from '@svelte-desktop/shell/native';     // or host.native, no import
+
+const stats = await native.text.stats({ text });           // Rust → { words: number; longest: string | null }
+const hello = await native.greeter.hello({ name: 'Ada' });  // Swift → string
+```
+
+The build reads every plugin library back and writes `src/native.d.ts` (keep it in git):
+arguments and results are typed from the Rust (`TS`), Go and Swift (`Codable`) types;
+Objective-C and C commands are listed, typed `unknown`.
+
+```sh
+bunx svelte-desktop add rust    # native/rust: a cargo crate on the Rust SDK (native/sdk/rust)
+bunx svelte-desktop add go      # native/go: a Go module on the Go SDK (native/sdk/go)
+```
+
+```rust
+// native/rust/src/lib.rs
+#[derive(Deserialize, TS)] struct StatsArgs { text: String }
+#[derive(Serialize, TS)]   struct Stats { words: u64, longest: Option<String> }
+
+fn setup(p: &mut Plugin) {
+    p.command("text.stats", |a: StatsArgs| -> Result<Stats, Error> { /* … */ });
+}
+plugin!(setup);
+```
+
+```go
+// native/go/main.go
+func init() {
+	desktop.Command("clock.countdown", func(a CountdownArgs) (int, error) {
+		desktop.Emit("clock.tick", map[string]int{"n": 3}) // onPlatform('clock.tick')
+		return a.From, nil
+	})
 }
 ```
 
-```ts
-const greeter = nativeModule<{ hello(a: { name: string }): string }>('greeter');
-await greeter.hello({ name: 'Ada' });            // from a page or from server code
+```swift
+// native/Greeter.swift — on the main thread (AppKit is fine), async allowed
+struct HelloArgs: Codable { let name: String }
+
+func desktopSetup() {
+  Desktop.command("greeter.hello") { (a: HelloArgs) in "Hello \(a.name)" }
+  Desktop.command("greeter.title") { Desktop.window()?.title }   // no arguments
+  Desktop.command("greeter.raw") { args in args["x"] }            // untyped: [String: Any]
+}
 ```
+
+`vite dev` builds them (clang/swiftc, cargo, go), retypes, and restarts the window when they
+change; `vite build` ships them signed next to the app (`Contents/Frameworks`, `lib`, beside
+the `.exe`). Rust and Go handlers run off the UI thread; Swift ones on the main thread. An
+`Error` / `desktop.InvalidArgs` / `DesktopError` rejects with its code, a panic with `internal`.
+Rust and Go plugins build on the target's own OS (no cross-compilation yet).
 
 Objective-C/C: `SDCommand(@"svc.op", ^(NSDictionary *args, SDReply reply) { … })` in
 `void SDSetup(void)`; raw C ABI in [`native/include/svelte_desktop.h`](native/include/svelte_desktop.h).

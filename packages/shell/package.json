@@ -16,6 +16,7 @@
 		"./push-server": "./src/push/push-server.ts",
 		"./push-protocol": "./src/push/protocol.ts",
 		"./push/service-worker.js": "./src/push/service-worker.js",
+		"./native": "./src/native.ts",
 		"./platform": "./src/platform/index.ts",
 		"./stores": "./src/platform/stores.svelte.ts",
 		"./platform/MenuBar.svelte": "./src/platform/components/MenuBar.svelte",

@@ -42,9 +42,27 @@ test('Dock icon: an image file or a native icon; null restores it; a bad one is 
 	expect((await app.platform('app', 'setDockIcon', { icon: '/nope/missing.png' }).catch((e: unknown) => e)) as object).toMatchObject({ code: 'invalid_args' });
 });
 
+test('native Rust and Go plugins: typed commands, errors, events, a panic-free reject', async () => {
+	expect(await app.platform('hello', 'rust', { name: 'Ada' })).toEqual({ message: 'Hello Ada from Rust' });
+	expect(await app.platform('hello', 'go', { name: 'Ada' })).toEqual({ message: 'Hello Ada from Go' });
+	expect(await app.platform('text', 'stats', { text: 'one two\nthree' })).toEqual({ words: 3, lines: 2, longest: 'three' });
+	// The page's own way in: host.native (also `native` from '@svelte-desktop/shell/native').
+	expect(await app.eval(`host.native.hello.go({ name: 'page' })`)).toEqual({ message: 'Hello page from Go' });
+	expect(await app.eval(`host.native.greeter.add({ a: 20, b: 22 })`)).toBe(42);
+	for (const op of ['rust', 'go'])
+		expect((await app.platform('hello', op, { name: '' }).catch((e: unknown) => e)) as object).toMatchObject({ code: 'invalid_args', message: 'name is empty' });
+	expect((await app.platform('hello', 'rust', { name: 42 }).catch((e: unknown) => e)) as object).toMatchObject({ code: 'invalid_args' });
+	const ticks: number[] = [];
+	const done = app.nextEvent<{ n: number }>('clock.tick', (d) => (ticks.push(d.n), d.n === 1));
+	expect(await app.platform('clock', 'countdown', { from: 3 })).toBe(3);
+	await done;
+	expect(ticks).toEqual([3, 2, 1]);
+});
+
 test('native Swift plugin', async () => {
 	expect(await app.platform<string>('greeter', 'hello', { name: 'test' })).toContain('from Swift');
 	expect(await app.platform<number>('greeter', 'add', { a: 1, b: 2 })).toBe(3);
+	expect((await app.platform('greeter', 'add', { a: 'one', b: 2 }).catch((e: unknown) => e)) as object).toMatchObject({ code: 'invalid_args' }); // Codable
 	const pong = app.nextEvent('greeter.pong');
 	await app.platform('greeter', 'ping');
 	expect(await pong).toHaveProperty('at');

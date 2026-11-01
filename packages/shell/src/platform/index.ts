@@ -1220,24 +1220,7 @@ export function onBroadcast<T = unknown>(
 }
 
 // ── native modules ──────────────────────────────────────────────────
-// Ops registered by the app's native plugin (desktop.config `native`, default
-// ./native): Swift `Desktop.command("greeter.hello") { … }`, ObjC
-// `SDCommand(@"greeter.hello", …)`. Typed by an interface you write:
-//
-//   interface Greeter { hello(args: { name: string }): string; title(): string | null }
-//   const greeter = nativeModule<Greeter>('greeter');
-//   await greeter.hello({ name: 'Ada' });          // page or server code
-
-type Promised<T> = { [K in keyof T]: T[K] extends (...a: infer A) => infer R ? (...a: A) => Promise<Awaited<R>> : never };
-
-export function nativeModule<T extends object>(service: string): Promised<T> {
-	return new Proxy({} as Promised<T>, {
-		get: (_, op) =>
-			typeof op === 'string' && op !== 'then'
-				? (args: Record<string, unknown> = {}) => callPlatform(service, op, args)
-				: undefined,
-	});
-}
+// The app's own native commands: `native` from '@svelte-desktop/shell/native' (also host.native).
 
 // ── webview ─────────────────────────────────────────────────────────
 // Features of the page's own web view (windows and popovers). Every op

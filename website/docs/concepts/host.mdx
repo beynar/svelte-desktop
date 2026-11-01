@@ -27,7 +27,7 @@ Every call is async and rejects with a `NativeApiError` carrying a `code` when i
 | --- | --- |
 | Reactive stores and their methods | `app`, `window`, `windowState`, `screen`, `clipboard`, `theme`, `system`, `power`, `deepLink`, `menu`, `notifications`, `push`, `capture`, `diagnostics`, `capabilities`, `update`, `tray`, `shortcuts`, `store`, `events`, `jobs`, `permissions` |
 | Services | `windows` (multi-window), `dialog`, `shell`, `secureStorage`, `popover`, `webview`, `view` |
-| Functions | `on(event, fn)`, `broadcast(channel, data)`, `onBroadcast(channel, fn)`, `nativeModule(name)`, `currentPopover()`, `closePopover()`, `available` |
+| Functions | `on(event, fn)`, `broadcast(channel, data)`, `onBroadcast(channel, fn)`, `native` (your [native commands](/features/native-code), typed), `currentPopover()`, `closePopover()`, `available` |
 | Server code only | `paths`, `crashInfo()`, `sidecar()`, `loadAddon()`, `onBeforeQuit(fn)`, `ready(fn)`, `jobs.start()`, `jobs.wait()` |
 
 A store exposes reactive state and also every op of the service with the same name: `host.window.fullscreen` is a reactive boolean and `host.window.setFullscreen(true)` is the op. `host.capabilities.describe()` lists every op of the running build and whether this platform supports it.
@@ -133,7 +133,7 @@ try {
 
 ## Imports instead of the global
 
-The same API is available as modules, for those who prefer imports: `@svelte-desktop/shell/platform` (services, `nativeModule`, `broadcast`), `@svelte-desktop/shell/stores` (reactive stores), `@svelte-desktop/shell/server` and `@svelte-desktop/shell/client`.
+The same API is available as modules, for those who prefer imports: `@svelte-desktop/shell/platform` (services, `broadcast`), `@svelte-desktop/shell/native` (`native`), `@svelte-desktop/shell/stores` (reactive stores), `@svelte-desktop/shell/server` and `@svelte-desktop/shell/client`.
 
 ```ts
 import { theme, window } from '@svelte-desktop/shell/stores';

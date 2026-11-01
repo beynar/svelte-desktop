@@ -21,6 +21,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
 import { appIcons } from "./icons.ts";
+import { buildLanguagePlugins } from "./native-langs.ts";
 import { pluginSources } from "./native.ts";
 import type { Arch, PackageResult } from "./package.ts";
 
@@ -771,6 +772,11 @@ export async function packageWindows(c: ResolvedConfig, stage: string): Promise<
   if (icons) copyFileSync(icons.png(256), join(appDir, `${c.identifier}.png`));
   const plugin = await buildWindowsPlugin(c, arch, join(work, "native"));
   if (plugin) copyFileSync(plugin, join(appDir, "app-native.dll"));
+  if (c.native)
+    for (const l of await buildLanguagePlugins(c, { os: "windows", arches: [arch], outDir: join(work, "plugins"), release: true, warn })) {
+      mkdirSync(join(appDir, "plugins"), { recursive: true });
+      copyFileSync(l, join(appDir, "plugins", basename(l)));
+    }
   const addons = await buildWindowsAddons(c, arch, join(work, "addons"));
   if (Object.keys(addons).length) {
     mkdirSync(join(appDir, "addons"), { recursive: true });

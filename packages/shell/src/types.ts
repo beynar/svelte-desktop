@@ -29,8 +29,8 @@ export interface ShellOptions {
   window?: WindowOptions | false;
   /** Absolute path of libshell for this platform. */
   lib: string;
-  /** App native plugin (libapp-native.dylib), loaded on the UI thread before the loop starts. */
-  plugin?: string | null;
+  /** App native plugins (libapp-native, the Rust and Go ones), loaded on the UI thread before the loop starts. */
+  plugins?: string[];
   /** desktop.config singleInstance (Linux/Windows). */
   singleInstance?: boolean;
   /** desktop.config quitOnLastWindowClosed (default true). */

@@ -7,6 +7,8 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } fr
 import { basename, dirname, join, resolve } from "node:path";
 import { USAGE_KEYS, sidecarEntries, type ResolvedConfig } from "../config.ts";
 import { appIcons } from "./icons.ts";
+import { buildLanguagePlugins } from "./native-langs.ts";
+import { typeNativePlugins } from "./native-types.ts";
 import { buildAddons, buildNativePlugin } from "./native.ts";
 
 const shellRoot = resolve(import.meta.dir, "../..");
@@ -202,9 +204,11 @@ async function signApp(app: string, exe: string, c: ResolvedConfig, work: string
   );
   // Inside-out: nested code first, the bundle last.
   const fw = join(app, "Contents/Frameworks");
+  const inside = (d: string) => (existsSync(join(fw, d)) ? readdirSync(join(fw, d)).map((f) => join(fw, d, f)) : []);
   const nested = [
-    ...(existsSync(join(fw, "addons")) ? readdirSync(join(fw, "addons")).map((f) => join(fw, "addons", f)) : []),
-    ...readdirSync(fw).filter((f) => f !== "addons").map((f) => join(fw, f)),
+    ...inside("addons"),
+    ...inside("plugins"),
+    ...readdirSync(fw).filter((f) => f !== "addons" && f !== "plugins").map((f) => join(fw, f)),
     ...readdirSync(join(app, "Contents/MacOS")).filter((f) => f !== exe).map((f) => join(app, "Contents/MacOS", f)),
   ];
   for (const f of nested) await codesign(f, identity, { runtime });
@@ -289,6 +293,12 @@ async function packageMac(c: ResolvedConfig, stage: string): Promise<PackageResu
   if (c.native) {
     const plugin = await buildNativePlugin(c, { arches, outDir: join(work, "native") });
     if (plugin) await $`cp ${plugin} ${join(app, "Contents/Frameworks/libapp-native.dylib")}`;
+    const langs = await buildLanguagePlugins(c, { os: "macos", arches, outDir: join(work, "plugins"), release: true });
+    await typeNativePlugins(c.root, [...(plugin ? [plugin] : []), ...langs]);
+    if (langs.length) {
+      mkdirSync(join(app, "Contents/Frameworks/plugins"), { recursive: true });
+      for (const l of langs) copyFileSync(l, join(app, "Contents/Frameworks/plugins", basename(l)));
+    }
   }
   const addons = await buildAddons(c, { arches, outDir: join(work, "addons") });
   if (Object.keys(addons).length) {

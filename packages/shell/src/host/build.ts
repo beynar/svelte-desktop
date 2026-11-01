@@ -5,6 +5,7 @@
 // Reactive in components: the members are the platform stores ($state).
 import * as stores from "../platform/stores.svelte.ts";
 import * as platform from "../platform/index.ts";
+import { native } from "../native.ts";
 
 /** A store, falling back to the platform service of the same name for anything it doesn't wrap. */
 function withService<S extends object, V extends object>(store: S, service: V | undefined): S & V {
@@ -72,11 +73,12 @@ export function buildHost(server?: Record<string, unknown>) {
     popover: platform.popover,
     webview: platform.webview,
     view: platform.view,
+    /** The app's own native commands (Rust, Go, Swift, C plugins), typed by the build. */
+    native,
     // functions
     on: platform.onPlatform,
     broadcast: platform.broadcast,
     onBroadcast: platform.onBroadcast,
-    nativeModule: platform.nativeModule,
     currentPopover: platform.currentPopover,
     closePopover: platform.closePopover,
     /** Running inside the app (false in a plain browser tab or a plain server). */

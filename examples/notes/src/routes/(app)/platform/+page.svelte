@@ -8,9 +8,9 @@
 	import MenuBar from '@svelte-desktop/shell/platform/MenuBar.svelte';
 	import Popover from '@svelte-desktop/shell/platform/Popover.svelte';
 	let paletteOpen = $state(false);
-	import { greeter } from '#lib/native.ts';
+	import { native } from '@svelte-desktop/shell/native';
 	import { nativeGreeting, fib } from '#lib/desktop.remote';
-	const fromPage = greeter.hello({ name: 'page' }).catch((e) => `error: ${e.message}`);
+	const fromPage = native.greeter.hello({ name: 'page' }).catch((e) => `error: ${e.message}`);
 
 	let log = $state<string[]>([]);
 	const note = (s: string) => (log = [`${new Date().toLocaleTimeString()} ${s}`, ...log].slice(0, 10));
@@ -81,8 +81,8 @@
 			{#await fromPage then text}<p data-testid="native-page">{text}</p>{/await}
 			<svelte:boundary><p data-testid="native-server">{await nativeGreeting()}</p></svelte:boundary>
 			<svelte:boundary>{@const f = await fib(30)}<p data-testid="addon">fib(30) = {f.value} in C addon ({f.ms} ms)</p></svelte:boundary>
-			<button onclick={run('add', () => greeter.add({ a: 2, b: 40 }))}>2 + 40 in Swift</button>
-			<button onclick={run('title', () => greeter.windowTitle())}>Window title via AppKit</button>
+			<button onclick={run('add', () => native.greeter.add({ a: 2, b: 40 }))}>2 + 40 in Swift</button>
+			<button onclick={run('title', () => native.greeter.windowTitle())}>Window title via AppKit</button>
 		</section>
 
 		<section class="card">

@@ -46,6 +46,14 @@ bunx svelte-desktop icon [image] [--background '#hex'] [--out dir]
 
 Generates every target's icons now, from `image` or from the configured icon, into `.desktop/icons` (what the build uses) or `--out`. See [App icon](/shipping/app-icon).
 
+## add
+
+```sh
+bunx svelte-desktop add rust|go
+```
+
+Creates a working native plugin in `native/rust` (a cargo crate) or `native/go` (a Go module), wired to the SDK in the package, with one example command. `vite dev` builds it and types it in `src/native.d.ts`. See [Native code](/features/native-code#rust-and-go-plugins).
+
 ## preflight
 
 ```sh

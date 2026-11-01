@@ -184,11 +184,26 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
     const { buildNativePlugin } = await import("./build/native.ts");
     const arch = process.arch === "arm64" ? "arm64" : "x64";
     const lib = await ensureLibshell(arch);
-    let plugin: string | null = null;
+    const plugins: string[] = [];
+    const outDir = join(config.root, ".desktop/dev/native");
     try {
-      plugin = await buildNativePlugin(config, { arches: [arch], outDir: join(config.root, ".desktop/dev/native"), quiet: true });
+      const plugin = await buildNativePlugin(config, { arches: [arch], outDir, quiet: true });
+      if (plugin) plugins.push(plugin);
     } catch (err) {
       server.config.logger.error(`\x1b[35m[desktop]\x1b[0m ${(err as Error).message}`);
+    }
+    // Rust / Go plugins (native/rust, native/go).
+    try {
+      const { buildLanguagePlugins, hostOS } = await import("./build/native-langs.ts");
+      plugins.push(...(await buildLanguagePlugins(config, { os: hostOS(), arches: [arch], outDir, release: false })));
+    } catch (err) {
+      server.config.logger.error(`\x1b[35m[desktop]\x1b[0m ${(err as Error).message}`);
+    }
+    // Every plugin's commands, typed for `native` in src/native.d.ts.
+    if (plugins.length) {
+      const { typeNativePlugins } = await import("./build/native-types.ts");
+      const count = await typeNativePlugins(config.root, plugins);
+      log(`native: ${count} command${count === 1 ? "" : "s"} → src/native.d.ts`);
     }
 
     const appIcon = await devIcon();
@@ -201,7 +216,7 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
       window: config.window,
       pagePermissions: config.bridgeAllow,
       lib,
-      plugin,
+      plugins,
       url,
     };
     const child = Bun.spawn([process.execPath, join(shellRoot, "src/dev/main.ts")], {
@@ -211,7 +226,7 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
       cwd: config.root,
     });
     devState.child = child;
-    log(`window → ${url}${plugin ? ` (native plugin ${relative(config.root, plugin)})` : ""}`);
+    log(`window → ${url}${plugins.length ? ` (native ${plugins.map((p) => relative(config.root, p)).join(", ")})` : ""}`);
 
     // Read the RPC address, forward everything else.
     (async () => {
@@ -273,7 +288,8 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
       s.watcher.on("unlink", (file) => void iconChanged(file));
       s.watcher.on("change", (file) => {
         if (iconFiles.includes(file)) void iconChanged(file);
-        else if (config.native && file.startsWith(config.native)) {
+        // Written by the builds themselves (cargo's lockfile, a target/ from a manual build): not edits.
+        else if (config.native && file.startsWith(config.native) && !/[\\/](target[\\/]|Cargo\.lock$)/.test(file)) {
           const url = s.resolvedUrls?.local[0];
           if (url) {
             log(`native plugin changed — rebuilding, restarting the window`);

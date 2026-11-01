@@ -6,8 +6,9 @@
 //   keygen   create the ed25519 key pair for signed updates
 //   preflight <App.app>  check a bundle against Apple's notarization requirements
 //   icon [source]  generate every target's app icons from one image (the build does it too)
+//   add rust|go    a native plugin in Rust (native/rust) or Go (native/go), typed for the pages
 import { $ } from "bun";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -93,7 +94,7 @@ async function create(dir: string | undefined) {
     "src/app.html": `<!doctype html>\n<html lang="en">\n\t<head>\n\t\t<meta charset="utf-8" />\n\t\t<meta name="viewport" content="width=device-width, initial-scale=1" />\n\t\t%sveltekit.head%\n\t</head>\n\t<body>\n\t\t<div style="display: contents">%sveltekit.body%</div>\n\t</body>\n</html>\n`,
     "src/lib/hello.remote.ts": `import { command, query } from '$app/server';\nimport { isDesktop } from '@svelte-desktop/shell/server';\n\nlet clicks = 0;\nexport const getClicks = query(async () => ({ clicks, runtime: \`bun \${Bun.version}\`, desktop: isDesktop() }));\nexport const click = command(async () => {\n\tclicks++;\n\tawait getClicks().refresh();\n});\n`,
     "src/routes/+page.svelte": `<script lang="ts">\n\timport { click, getClicks } from '#lib/hello.remote';\n\timport { theme } from '@svelte-desktop/shell/stores';\n</script>\n\n<main>\n\t<h1>${title}</h1>\n\t<svelte:boundary>\n\t\t{@const s = await getClicks()}\n\t\t<p>Server: {s.runtime} · {s.desktop ? 'desktop shell' : 'browser'} · {theme.dark ? 'dark' : 'light'} mode</p>\n\t\t<button onclick={() => click()}>Clicked <span id="clicks">{s.clicks}</span> times</button>\n\t</svelte:boundary>\n</main>\n\n<style>\n\tmain { font-family: system-ui; padding: 2rem; }\n</style>\n`,
-    "native/Hello.swift": `// Native plugin: ops callable from pages and server code with nativeModule('hello').\nimport AppKit\n\nfunc desktopSetup() {\n  Desktop.command("hello.greet") { args in "Hello \\(args["name"] as? String ?? "world") from Swift" }\n}\n`,
+    "native/Hello.swift": `// Native plugin: commands callable from pages and server code, typed — native.hello.greet({ name }).\nimport AppKit\n\nstruct GreetArgs: Codable { let name: String }\n\nfunc desktopSetup() {\n  Desktop.command("hello.greet") { (a: GreetArgs) in "Hello \\(a.name) from Swift" }\n}\n`,
     "tests/app.test.ts": `import { afterAll, beforeAll, expect, test } from 'bun:test';\nimport { launch, type AppHandle } from '@svelte-desktop/shell/test';\n\nlet app: AppHandle;\nbeforeAll(async () => (app = await launch(process.env.DESKTOP_TEST_DEV ? { dev: true } : {})));\nafterAll(() => app?.close());\n\ntest('button calls a remote command', async () => {\n\tawait app.click('button');\n\tawait app.waitFor(() => document.querySelector('#clicks')?.textContent === '1');\n});\n\ntest('native plugin', async () => {\n\texpect(await app.platform<string>('hello', 'greet', { name: 'test' })).toContain('from Swift');\n});\n`,
   };
   for (const [rel, content] of Object.entries(files)) {
@@ -170,8 +171,41 @@ async function icon(args: string[]) {
   console.log("");
 }
 
+/** `svelte-desktop add rust|go`: a working native plugin wired to the SDK in this package. */
+function addPlugin(lang: string | undefined) {
+  if (lang !== "rust" && lang !== "go") throw new Error("usage: svelte-desktop add rust|go");
+  const dir = join(root, "native", lang);
+  if (existsSync(dir)) throw new Error(`native/${lang} exists — left as is`);
+  // The SDK through node_modules when the package is installed there (stable), else where it is.
+  const installed = join(root, "node_modules", "@svelte-desktop", "shell");
+  const sdk = join(existsSync(installed) ? installed : resolve(import.meta.dir, ".."), "native", "sdk", lang);
+  const rel = relative(dir, sdk);
+  mkdirSync(join(dir, lang === "rust" ? "src" : "."), { recursive: true });
+  if (lang === "rust") {
+    writeFileSync(
+      join(dir, "Cargo.toml"),
+      `[package]\nname = "app-native"\nversion = "0.1.0"\nedition = "2024"\n\n[lib]\ncrate-type = ["cdylib"]\n\n[dependencies]\nsvelte-desktop = { path = ${JSON.stringify(rel)} }\nserde = { version = "1", features = ["derive"] }\nts-rs = "12"\n`,
+    );
+    writeFileSync(
+      join(dir, "src", "lib.rs"),
+      `// Native plugin in Rust: every command is callable from pages and server code,\n// typed — native.hello.rust({ name }) (types in src/native.d.ts, written by the build).\nuse serde::{Deserialize, Serialize};\nuse svelte_desktop::{plugin, Error, Plugin, TS};\n\n#[derive(Deserialize, TS)]\nstruct GreetArgs {\n    name: String,\n}\n\n#[derive(Serialize, TS)]\nstruct Greeting {\n    message: String,\n}\n\nfn setup(p: &mut Plugin) {\n    p.command("hello.rust", |a: GreetArgs| -> Result<Greeting, Error> {\n        if a.name.is_empty() {\n            return Err(Error::invalid_args("name is empty"));\n        }\n        Ok(Greeting { message: format!("Hello {} from Rust", a.name) })\n    });\n}\n\nplugin!(setup);\n`,
+    );
+    const gi = join(dir, ".gitignore");
+    writeFileSync(gi, "target/\n");
+  } else {
+    writeFileSync(join(dir, "go.mod"), `module app-native\n\ngo 1.22\n\nrequire svelte-desktop.dev/go/desktop v0.0.0\n\nreplace svelte-desktop.dev/go/desktop => ${rel}\n`);
+    writeFileSync(
+      join(dir, "main.go"),
+      `// Native plugin in Go: every command is callable from pages and server code,\n// typed — native.hello.go({ name }) (types in src/native.d.ts, written by the build).\npackage main\n\nimport "svelte-desktop.dev/go/desktop"\n\ntype GreetArgs struct {\n\tName string \`json:"name"\`\n}\n\ntype Greeting struct {\n\tMessage string \`json:"message"\`\n}\n\nfunc init() {\n\tdesktop.Command("hello.go", func(a GreetArgs) (Greeting, error) {\n\t\tif a.Name == "" {\n\t\t\treturn Greeting{}, desktop.InvalidArgs("name is empty")\n\t\t}\n\t\treturn Greeting{Message: "Hello " + a.Name + " from Go"}, nil\n\t})\n}\n\nfunc main() {}\n`,
+    );
+  }
+  ok(`native/${lang} — SDK at ${rel}`);
+  console.log(`\n  \`bun run dev\` builds it (${lang === "rust" ? "cargo" : "go"} needed) and types native.hello in src/native.d.ts.\n`);
+}
+
 try {
   if (cmd === "init") await init();
+  else if (cmd === "add") addPlugin(rest[0]);
   else if (cmd === "icon") await icon(rest);
   else if (cmd === "create") await create(rest[0]);
   else if (cmd === "doctor") await doctor();
@@ -184,7 +218,7 @@ try {
     process.exit(issues.some((i) => i.level === "error") ? 1 : 0);
   } else if (cmd === "keygen") await $`bun ${join(import.meta.dir, "../scripts/updater-cli.ts")} keygen ${rest}`;
   else {
-    console.log("usage: svelte-desktop <create|init|doctor|icon|preflight|keygen> — see packages/shell/README.md");
+    console.log("usage: svelte-desktop <create|init|doctor|icon|add|preflight|keygen> — see packages/shell/README.md");
     process.exit(cmd ? 1 : 0);
   }
 } catch (err) {
