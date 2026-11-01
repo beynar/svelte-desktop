@@ -202,6 +202,8 @@ export type WindowCreateOptions = {
 	minimizable?: boolean;
 	/** Focus on creation (default true). */
 	focus?: boolean;
+	/** Fade and slide in when it shows (macOS; elsewhere it just shows). */
+	animate?: boolean;
 	/** Transparent window background (content must paint its own chrome). */
 	transparent?: boolean;
 	/** Window alpha 0–1, applied before the first presented frame — `0`

@@ -105,7 +105,7 @@ On desktop, the bridge sets `:where(html, body) { overscroll-behavior: none }`, 
 ## Multiple windows
 
 ```ts
-const { windowId } = await host.windows.create({ title: 'Inspector', width: 520, height: 420 });
+const { windowId } = await host.windows.create({ title: 'Inspector', width: 520, height: 420, animate: true }); // animate: fades and slides in (macOS)
 await host.windows.setTitle('Inspector (2)', windowId);
 host.windows.onClosed(({ windowId }) => console.log('closed', windowId));
 ```

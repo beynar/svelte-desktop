@@ -18,7 +18,7 @@ done
 wait
 for o in $OBJS; do [ -f "$o" ] || { echo "missing $o (compile failed)"; exit 1; }; done
 clang++ -arch "$ARCH" -mmacosx-version-min=12.0 -dynamiclib $OBJS \
-  -framework Cocoa -framework WebKit -framework UniformTypeIdentifiers -framework Carbon \
+  -framework Cocoa -framework QuartzCore -framework WebKit -framework UniformTypeIdentifiers -framework Carbon \
   -framework IOKit -framework Security -framework LocalAuthentication -framework UserNotifications \
   -framework ServiceManagement -framework AVFoundation -framework CoreLocation -framework ApplicationServices -framework ScreenCaptureKit \
   -Wl,-dead_strip -install_name @rpath/libshell.dylib -o "$OUT/libshell.dylib"

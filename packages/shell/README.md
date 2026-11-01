@@ -293,7 +293,7 @@ macOS (built and `vite dev`) and Linux (Docker).
 The window's tabs go in the title bar — route tabs (each one a place in the app), the window
 title following the active one, a **Tab** menu (⌘T ⌘W ⇧⌘T ⌃⇥), ⌘1–9, ⌘-click on a link
 opening a background tab, restored at launch, dragged out into its own window or onto another
-window's bar. A tab can be isolated in its own web view (another site's `url`, or `isolated: true`;
+window's bar (native drag and drop). A tab can be isolated in its own web view (another site's `url`, or `isolated: true`;
 there `tabs.embedded` is true: render the page alone).
 Other groups live inside pages (plain state, panels kept alive). The dashboard example has all
 three looks: title bar, underline, segmented.

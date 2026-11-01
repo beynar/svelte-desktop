@@ -1,11 +1,12 @@
 <!--
 	A tab bar for a `Tabs` group: in the title bar (the window's tabs) or anywhere in a page.
-	Clicking activates, a middle click or the × closes, dragging reorders — and, for a detachable
-	group, dragging a tab out of the bar opens it in its own window (or moves it onto another
-	window's bar) — ←/→ move along. In an isolated tab's own web view it renders nothing.
+	Clicking activates, a middle click or the × closes, dragging reorders (native drag and drop:
+	a line shows where the tab lands) — and, for a detachable group, a tab dragged out of the
+	window opens in its own window, or joins another window's bar — ←/→ move along. In an isolated tab's own web view it renders nothing.
 	Unstyled but for layout: style it with `class` and the state attributes —
 	[data-active], [data-pinned], [data-dragging] on each [role=tab], [data-sd-tab-close],
-	[data-sd-tab-new] — or render each tab yourself with the `tab` snippet.
+	[data-sd-tab-new], [data-sd-tab-drop] (the drop line, colored by --sd-tab-drop-color) — or
+	render each tab yourself with the `tab` snippet.
 
 	<TabBar {tabs} class="…">
 		{#snippet tab(t, { active, close })}<span>{t.title}</span>{/snippet}
@@ -15,6 +16,7 @@
 	import type { Snippet } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
 	import type { Tab, Tabs } from './tabs.svelte.ts';
+	import { tabDrag, tabDrop } from './drag.ts';
 
 	interface Props extends HTMLAttributes<HTMLDivElement> {
 		tabs: Tabs<D>;
@@ -33,13 +35,9 @@
 	$effect(() => tabs.connect());
 
 	let dragging = $state<string | null>(null);
-	/** Outside the bar: dropping there detaches the tab. */
-	let detaching = $state(false);
-	let bar = $state<HTMLDivElement>()!;
-	let press: { id: string; x: number; y: number; pointer: number } | null = null;
-	/** While dragging: the bar's box, and the middles of the other tabs (measured again after a move). */
-	let barBox: DOMRect;
-	let middles: number[] | null = null;
+	/** The drop indicator's place while a tab is dragged over the bar (px), or null. */
+	let indicator = $state<number | null>(null);
+	const indicate = (x: number | null) => (indicator = x);
 	const elementId = (t: Tab<D>) => `${tabs.id}-tab-${t.id}`;
 
 	function keydown(e: KeyboardEvent, t: Tab<D>) {
@@ -51,52 +49,6 @@
 		tabs.activate(next.id);
 		document.getElementById(elementId(next))?.focus();
 	}
-
-	// Dragging with pointer events, captured by the bar (it doesn't move while tabs reorder): the
-	// tabs follow the pointer, and a tab let go away from the bar leaves it.
-	function pointerdown(e: PointerEvent, t: Tab<D>) {
-		if (e.button !== 0 || t.pinned) return;
-		press = { id: t.id, x: e.clientX, y: e.clientY, pointer: e.pointerId };
-	}
-	function pointermove(e: PointerEvent) {
-		if (!press || e.pointerId !== press.pointer) return;
-		if (!dragging) {
-			if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < 5) return;
-			dragging = press.id;
-			barBox = bar.getBoundingClientRect();
-			middles = null;
-			try {
-				bar.setPointerCapture(e.pointerId); // keeps the moves coming outside the bar (and the window)
-			} catch {}
-		}
-		const tab = tabs.get(dragging);
-		if (!tab) return;
-		detaching = tabs.canDetach(tab) && (e.clientY < barBox.top - 24 || e.clientY > barBox.bottom + 24 || e.clientX < 0 || e.clientX > innerWidth);
-		if (detaching) return;
-		// Its place: after every other tab whose middle is left of the pointer (never before a pinned one).
-		middles ??= [...bar.querySelectorAll<HTMLElement>('[data-sd-tabs] > [role=tab]')]
-			.filter((el) => el.id !== elementId(tab))
-			.map((el) => {
-				const b = el.getBoundingClientRect();
-				return b.left + b.width / 2;
-			});
-		const index = Math.max(
-			middles.filter((m) => e.clientX > m).length,
-			tabs.items.filter((t) => t.pinned).length,
-		);
-		if (index !== tabs.items.indexOf(tab)) {
-			tabs.move(tab.id, index);
-			middles = null;
-		}
-	}
-	function pointerup(e: PointerEvent) {
-		if (!press || e.pointerId !== press.pointer) return;
-		const id = dragging;
-		if (id && detaching) void tabs.detach(id, { x: e.screenX, y: e.screenY });
-		press = null;
-		dragging = null;
-		detaching = false;
-	}
 </script>
 
 {#if !tabs.embedded}
@@ -104,12 +56,8 @@
 		role="tablist"
 		aria-label={label}
 		data-sd-tabbar
-		data-detaching={detaching || undefined}
 		class={className}
-		bind:this={bar}
-		onpointermove={pointermove}
-		onpointerup={pointerup}
-		onpointercancel={pointerup}
+		use:tabDrop={{ tabs, indicate }}
 		{...rest}
 	>
 		{@render start?.()}
@@ -126,7 +74,7 @@
 					data-active={active || undefined}
 					data-pinned={t.pinned || undefined}
 					data-dragging={dragging === t.id || undefined}
-					onpointerdown={(e) => pointerdown(e, t)}
+					use:tabDrag={{ tabs, tab: t, dragging: (on) => (dragging = on ? t.id : null) }}
 					onmousedown={(e) => e.button === 0 && tabs.activate(t.id)}
 					onauxclick={(e) => e.button === 1 && (e.preventDefault(), tabs.close(t.id))}
 					onkeydown={(e) => keydown(e, t)}
@@ -148,6 +96,9 @@
 					{/if}
 				</div>
 			{/each}
+			{#if indicator !== null}
+				<span data-sd-tab-drop aria-hidden="true" style:left="{indicator}px"></span>
+			{/if}
 			{#if tabs.canCreate}
 				<button type="button" data-sd-tab-new aria-label={newTabLabel} title={newTabLabel} onclick={() => tabs.new()}>+</button>
 			{/if}
@@ -203,9 +154,20 @@
 		visibility: hidden;
 	}
 	:where([data-dragging]) {
-		opacity: 0.6;
+		opacity: 0.5;
 	}
-	:where([data-detaching] [data-dragging]) {
-		opacity: 0.3;
+	/* Where a dragged tab will land. */
+	:where([data-sd-tabs]) {
+		position: relative;
+	}
+	:where([data-sd-tab-drop]) {
+		position: absolute;
+		top: 20%;
+		bottom: 20%;
+		width: 2px;
+		margin-left: -1px;
+		border-radius: 1px;
+		background: var(--sd-tab-drop-color, Highlight);
+		pointer-events: none;
 	}
 </style>

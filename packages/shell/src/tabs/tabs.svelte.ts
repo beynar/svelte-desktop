@@ -61,10 +61,7 @@ const isPage = typeof window !== 'undefined' && typeof document !== 'undefined';
 let seq = 0;
 const newId = () => `t${Date.now().toString(36)}${(seq++).toString(36)}`;
 const here = () => location.pathname + location.search + location.hash;
-const ADOPT = 'tabs:adopt';
 const ADOPTED = 'tabs:adopted';
-/** A drop this close to another window's top lands on its tab bar. */
-const BAR_BAND = 64;
 /** A tab handed to the window it was dragged out into (shared storage: the same origin). */
 const handoffKey = (group: string, label: string) => `sd-tabs:${group}:${label}`;
 
@@ -93,7 +90,8 @@ function watchUrl(fn: () => void): () => void {
 	return () => removeEventListener('desktop:urlchange', fn);
 }
 
-type WindowInfo = { windowId: number; label: string; focused: boolean; visible?: boolean; bounds: { x: number; y: number; width: number; height: number } };
+type Rect = { x: number; y: number; width: number; height: number };
+type WindowInfo = { windowId: number; label: string; focused: boolean; visible?: boolean; bounds: Rect };
 type Message<T> = { channel?: string; data?: T };
 
 export class Tabs<D = unknown> {
@@ -116,6 +114,8 @@ export class Tabs<D = unknown> {
 	 *  document's: an isolated tab's web view having the keyboard still counts. */
 	#focused: boolean | null = null;
 	#style: Promise<{ titleBarStyle?: string }> | undefined;
+	/** The tab being dragged out (its handoff), and whether another window took it. */
+	#outgoing: { id: string; adopted: boolean; off: () => void } | null = null;
 
 	constructor(options: TabsOptions<D>) {
 		this.options = options;
@@ -249,19 +249,12 @@ export class Tabs<D = unknown> {
 		if (tab) Object.assign(tab, patch);
 	}
 
-	/** Move a tab out of this window. With a screen point (a drop), onto the window whose tab bar
-	 *  is there — it leaves only once that window took it — else into a new window of its own,
-	 *  at that point. The last tab only moves onto another window. */
+	/** Open a tab in a new window of its own (at a screen point), and take it out of this one —
+	 *  with its title, data and state. The last tab stays. */
 	async detach(id: string, at?: { x: number; y: number }): Promise<void> {
 		const tab = this.get(id);
-		if (!tab || !this.canDetach(tab) || !isPage) return;
+		if (!tab || !this.canDetach(tab) || !isPage || this.items.length < 2) return;
 		try {
-			if (at) {
-				const windows = await callPlatform<WindowInfo[]>('window', 'list').catch(() => [] as WindowInfo[]);
-				const target = windows.find((w) => w.label !== this.window && w.visible !== false && at.x >= w.bounds.x && at.x <= w.bounds.x + w.bounds.width && at.y >= w.bounds.y && at.y <= w.bounds.y + BAR_BAND);
-				if (target && (await this.#handOver(tab, target.label))) return this.#remove(id, 'moved');
-			}
-			if (this.items.length < 2) return;
 			const label = `${this.id}-${tab.id}`;
 			localStorage.setItem(handoffKey(this.id, label), JSON.stringify($state.snapshot(tab)));
 			this.#style ??= callPlatform<{ style: string }>('window', 'getTitleBarStyle')
@@ -274,22 +267,66 @@ export class Tabs<D = unknown> {
 				height: innerHeight,
 				...(at && { x: Math.round(at.x - 120), y: Math.round(at.y - 16) }),
 				...(await this.#style),
+				animate: true,
 			});
 			this.#remove(id, 'moved');
 		} catch (e) {
-			console.error('[tabs] could not move the tab out', e);
+			console.error('[tabs] could not open the tab in a new window', e);
 		}
 	}
 
-	/** Offer a tab to another window's group; true once that window took it. */
-	#handOver(tab: Tab<D>, target: string): Promise<boolean> {
+	/** What a tab dragged out of the bar carries (<TabBar> puts it on the drag): another window's
+	 *  bar can take it — see `receive`. */
+	handoff(id: string): string {
+		this.#outgoing?.off();
 		const nonce = newId();
-		return new Promise((resolve) => {
-			const done = (ok: boolean) => (off(), clearTimeout(timer), resolve(ok));
-			const off = onPlatform<Message<{ nonce: string }>>('message', (m) => void (m?.channel === ADOPTED && m.data?.nonce === nonce && done(true)));
-			const timer = setTimeout(() => done(false), 800);
-			callPlatform('events', 'emit', { channel: ADOPT, data: { group: this.id, target, nonce, tab: $state.snapshot(tab) } }).catch(() => done(false));
-		});
+		const out = { id, adopted: false, off: () => {} };
+		out.off = onPlatform<Message<{ nonce: string }>>('message', (m) => void (m?.channel === ADOPTED && m.data?.nonce === nonce && (out.adopted = true)));
+		this.#outgoing = out;
+		return JSON.stringify({ group: this.id, nonce, tab: $state.snapshot(this.get(id)) });
+	}
+
+	/** A dragged tab was let go: on this window's bar (`at` null: nothing to do), else away from
+	 *  it — it moved if another window's bar took it, otherwise it opens in a new window there. */
+	async release(id: string, at: { x: number; y: number } | null): Promise<void> {
+		const out = this.#outgoing?.id === id ? this.#outgoing : null;
+		this.#outgoing = null;
+		if (!out) return;
+		try {
+			// The pointer, from the system (the drag's own end point is the drag image's); over
+			// another window, that window's bar may have taken the tab: it says so through the
+			// app, a few ms after the drop.
+			let over = false;
+			if (at) {
+				const [cursor, windows] = await Promise.all([
+					callPlatform<{ x: number; y: number }>('screen', 'getCursorScreenPoint').catch(() => at!),
+					callPlatform<WindowInfo[]>('window', 'list').catch(() => [] as WindowInfo[]),
+				]);
+				at = cursor;
+				over = windows.some((w) => w.label !== this.window && w.visible !== false && cursor.x >= w.bounds.x && cursor.x <= w.bounds.x + w.bounds.width && cursor.y >= w.bounds.y && cursor.y <= w.bounds.y + w.bounds.height);
+			}
+			for (let i = 0; over && !out.adopted && i < 10; i++) await new Promise((r) => setTimeout(r, 30));
+			if (out.adopted) this.#remove(id, 'moved');
+			else if (at) await this.detach(id, at);
+		} finally {
+			out.off();
+		}
+	}
+
+	/** A tab dragged here from another window's bar (its `handoff`), opened at `index`. */
+	receive(handoff: string, index?: number): boolean {
+		const d = JSON.parse(handoff) as { group: string; nonce: string; tab: Tab<D> };
+		if (d.group !== this.id || !this.#detachable) return false;
+		const { id: _id, ...tab } = d.tab;
+		this.open(tab, { index });
+		void callPlatform('events', 'emit', { channel: ADOPTED, data: { nonce: d.nonce } }).catch(() => {});
+		void callPlatform('window', 'focus').catch(() => {});
+		return true;
+	}
+
+	/** Whether tabs dragged from other windows can land here. */
+	get canReceive(): boolean {
+		return this.#detachable;
 	}
 
 	/** Wire the group to the page and the window (<TabBar> calls it); returns the cleanup. */
@@ -350,19 +387,6 @@ export class Tabs<D = unknown> {
 						tab.path = here();
 						if (o.title) tab.title = this.#titleOf(tab.path);
 					}
-				}),
-			);
-
-		// A tab dropped on this window's bar from another window: take it, say so.
-		if (this.#detachable)
-			cleanups.push(
-				onPlatform<Message<{ group: string; target: string; nonce: string; tab: Tab<D> }>>('message', (m) => {
-					const d = m?.channel === ADOPT ? m.data : undefined;
-					if (!d || d.group !== this.id || d.target !== this.window) return;
-					const { id: _id, ...tab } = d.tab;
-					this.open(tab, { index: this.items.length });
-					void callPlatform('events', 'emit', { channel: ADOPTED, data: { nonce: d.nonce } }).catch(() => {});
-					void callPlatform('window', 'focus').catch(() => {});
 				}),
 			);
 

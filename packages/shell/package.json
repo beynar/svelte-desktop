@@ -41,5 +41,8 @@
 	},
 	"bin": {
 		"svelte-desktop": "./bin/svelte-desktop.ts"
+	},
+	"dependencies": {
+		"@atlaskit/pragmatic-drag-and-drop": "^4.0.0"
 	}
 }

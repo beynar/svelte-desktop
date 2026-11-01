@@ -137,13 +137,13 @@ void platform_register_view(void) {
     [c ok:@{@"id" : ident, @"windowId" : @(platform_public_window_id(win))}];
   });
   reg(@"setBounds", ^(PlatformCall *c, SDView *v) {
-    NSView *host = v.webview.superview;
+    NSView *host = host_for(v.windowNative);
     v.webview.frame = to_frame(host, @{@"x" : c.args[@"x"] ?: @0, @"y" : c.args[@"y"] ?: @0, @"width" : c.args[@"width"] ?: @(v.webview.frame.size.width),
                                        @"height" : c.args[@"height"] ?: @(v.webview.frame.size.height)});
     [c ok:nil];
   });
   reg(@"getBounds", ^(PlatformCall *c, SDView *v) {
-    NSView *host = v.webview.superview;
+    NSView *host = host_for(v.windowNative);
     NSRect f = v.webview.frame;
     double y = host.isFlipped ? f.origin.y : host.bounds.size.height - NSMaxY(f);
     [c ok:@{@"x" : @(f.origin.x), @"y" : @(y), @"width" : @(f.size.width), @"height" : @(f.size.height)}];
@@ -154,12 +154,18 @@ void platform_register_view(void) {
     [v.webview loadRequest:[NSURLRequest requestWithURL:url]];
     [c ok:nil];
   });
+  // A hidden view leaves the window (kept alive): left in place, even hidden, it keeps the
+  // keyboard and stops the page's own drag and drop.
   reg(@"show", ^(PlatformCall *c, SDView *v) {
-    v.webview.hidden = NO;
+    if (!v.webview.superview) [host_for(v.windowNative) addSubview:v.webview positioned:NSWindowAbove relativeTo:nil];
     [c ok:nil];
   });
   reg(@"hide", ^(PlatformCall *c, SDView *v) {
-    v.webview.hidden = YES;
+    NSWindow *win = v.webview.window;
+    NSResponder *focus = win.firstResponder;
+    BOOL had = [focus isKindOfClass:NSView.class] && [(NSView *)focus isDescendantOf:v.webview];
+    [v.webview removeFromSuperview];
+    if (had) [win makeFirstResponder:platform_webview(v.windowNative)];
     [c ok:nil];
   });
   reg(@"reload", ^(PlatformCall *c, SDView *v) {
@@ -168,7 +174,7 @@ void platform_register_view(void) {
   });
   reg(@"getInfo", ^(PlatformCall *c, SDView *v) {
     [c ok:@{@"id" : v.ident, @"url" : v.webview.URL.absoluteString ?: NSNull.null, @"title" : v.webview.title ?: @"",
-            @"loading" : @(v.webview.isLoading), @"hidden" : @(v.webview.hidden)}];
+            @"loading" : @(v.webview.isLoading), @"hidden" : @(!v.webview.superview)}];
   });
   reg(@"executeJavaScript", ^(PlatformCall *c, SDView *v) {
     NSString *code = [c string:@"code"];

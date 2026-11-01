@@ -2,6 +2,7 @@
 // Compiled with -fobjc-arc. All UI state lives on the main thread; public
 // functions marked "any thread" only copy their arguments and dispatch_async.
 #import <Cocoa/Cocoa.h>
+#import <QuartzCore/QuartzCore.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <WebKit/WebKit.h>
 #import <objc/runtime.h>
@@ -64,6 +65,7 @@ struct Window {
   bool veto;
   NSString *label;
   std::vector<NSObject *> observers; // NotificationCenter tokens
+  bool animateIn = false;            // fade and slide in when it shows (create {animate: true})
 };
 
 static std::map<int, Window *> g_windows; // main thread only
@@ -89,8 +91,21 @@ static void reveal(Window *w) {
   if (w->shown) return;
   w->shown = true;
   NSWindow *win = w->window;
-  [win setAlphaValue:1.0];
+  if (!w->animateIn) {
+    [win setAlphaValue:1.0];
+    [win makeKeyAndOrderFront:nil];
+    return;
+  }
+  // From a few points above, transparent, into place (moving the frame, not resizing it).
+  NSRect to = win.frame;
+  [win setFrame:NSOffsetRect(to, 0, 10) display:NO];
   [win makeKeyAndOrderFront:nil];
+  [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+    ctx.duration = 0.18;
+    ctx.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+    [[win animator] setFrame:to display:YES];
+    [[win animator] setAlphaValue:1.0];
+  }];
 }
 
 static bool same_origin(NSURL *url) {
@@ -276,6 +291,7 @@ static int create_window(NSDictionary *o) {
   w->window = (__bridge NSWindow *)webview_get_window(wv);
   w->webview = (__bridge WKWebView *)webview_get_native_handle(wv, WEBVIEW_NATIVE_HANDLE_KIND_BROWSER_CONTROLLER);
   w->label = o[@"label"] ?: (g_order.empty() ? @"main" : [NSString stringWithFormat:@"window-%d", w->id]);
+  w->animateIn = [o[@"animate"] boolValue];
   g_windows[w->id] = w;
   g_order.push_back(w->id);
 

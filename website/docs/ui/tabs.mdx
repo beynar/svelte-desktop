@@ -50,11 +50,11 @@ With `titleBarStyle: 'hiddenInset'` the bar sits next to the traffic lights. Tab
 | ⌘1 – ⌘8, ⌘9 | That tab, the last one |
 | ⌘-click or middle-click a link | Open it in a new tab, in the background |
 | Middle-click a tab | Close it |
-| Drag a tab | Reorder |
-| Drag a tab out of the bar | Open it in its own window — or, dropped on another window's tab bar, move it there (isolated tabs stay in their window) |
+| Drag a tab | Reorder (a line shows where it lands) |
+| Drag a tab out of the window | Open it in its own window, right where it's let go — or, dropped on another window's tab bar, move it there (isolated tabs stay in their window) |
 | Tab › Move Tab to New Window | The same, from the menu |
 
-The shortcuts are a **Tab** menu inserted before Window (⌘1–9 in its **Select Tab** submenu), so they show in the menu bar and win over the page — and over an isolated tab's web view. Only the focused window acts on them. The window title follows the active tab. Each window has its own tabs. The main window's are restored at launch; a window a tab was dragged into starts with that tab (its title and `data` included), and closes when its last tab leaves. A tab dropped on another window leaves only once that window took it — a window without that tab group, or a hidden one, doesn't — and the main window's last tab only moves onto another window.
+The shortcuts are a **Tab** menu inserted before Window (⌘1–9 in its **Select Tab** submenu), so they show in the menu bar and win over the page — and over an isolated tab's web view. Only the focused window acts on them. The window title follows the active tab. Each window has its own tabs. The main window's are restored at launch; a window a tab was dragged into starts with that tab (its title and `data` included), and closes when its last tab leaves. The drag is native drag and drop ([pragmatic-drag-and-drop](https://atlassian.design/components/pragmatic-drag-and-drop/)): the system's drag image follows the pointer, beside it, out of the window and over other windows; a tab dropped on another window's bar is a real drop there, and leaves only once that window took it. Let go elsewhere in its own window (or Escape), nothing happens; the main window's last tab only moves onto another window.
 
 ## Isolated tabs
 
@@ -120,6 +120,7 @@ Fixed tabs (`closable: false`, no `create`) make a segmented control; `keepAlive
 | --- | --- |
 | `[role=tablist]` (`data-sd-tabbar`) | The bar; its `gap` spaces the tabs |
 | `[role=tab]`, `[data-active]`, `[data-pinned]`, `[data-dragging]` | A tab and its states |
+| `[data-sd-tab-drop]` | The line where a dragged tab lands (`--sd-tab-drop-color`, default `Highlight`) |
 | `[data-sd-tab-title]`, `[data-sd-tab-close]` | The default content |
 | `[data-sd-tab-new]` | The + button (when `create` is set) |
 | `[role=tabpanel]` (`data-sd-tabpanel`) | A panel (`hidden` when inactive) |
@@ -140,4 +141,4 @@ Fixed tabs (`closable: false`, no `create`) make a segmented control; `keepAlive
   }}
 />
 
-A tab is `{ id, title, path?, url?, isolated, pinned, closable, data? }`. The group's state is reactive — `tabs.items`, `tabs.activeId`, `tabs.active`, `tabs.window` (this window's label), `tabs.embedded` (this page is an isolated tab's view) — and its methods are `open(input, { activate, index })`, `new()`, `activate(id)`, `close(id?)`, `closeOthers(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`, `update(id, patch)`, `get(id)`, `detach(id, at?)` (into a new window — with a screen point, onto the window whose tab bar is there, else a new window at that point). Without `<TabBar>`, call `tabs.connect()` once (it returns its cleanup) to get the desktop integration with your own markup.
+A tab is `{ id, title, path?, url?, isolated, pinned, closable, data? }`. The group's state is reactive — `tabs.items`, `tabs.activeId`, `tabs.active`, `tabs.window` (this window's label), `tabs.embedded` (this page is an isolated tab's view) — and its methods are `open(input, { activate, index })`, `new()`, `activate(id)`, `close(id?)`, `closeOthers(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`, `update(id, patch)`, `get(id)`, `detach(id, at?)` (into a new window, at a screen point). Your own bar can drag tabs between windows with `handoff(id)` (the data a dragged tab carries), `receive(handoff, index)` (in the window it's dropped on) and `release(id, at)` (when it's let go: it leaves if taken, else opens in a new window at `at`). Without `<TabBar>`, call `tabs.connect()` once (it returns its cleanup) to get the desktop integration with your own markup.

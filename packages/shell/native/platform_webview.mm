@@ -383,6 +383,16 @@ static void install_class_patches(void) {
     // Call through: the page still gets its DOM dragenter/dragover/drop with File objects.
     return perform ? ((BOOL(*)(id, SEL, id))perform)(self_, @selector(performDragOperation:), info) : NO;
   }, "c@:@");
+  // A drag let go where nothing takes it ends there, without sliding back to where it started
+  // (WebKit starts page drags with the classic NSView call): a tab dropped out of its window
+  // opens its own window at once, not half a second later.
+  static IMP dragImage;
+  dragImage = swizzle(cls, @selector(dragImage:at:offset:event:pasteboard:source:slideBack:),
+                      ^(WKWebView *self_, NSImage *image, NSPoint at, NSSize offset, NSEvent *event, NSPasteboard *pb, id source, BOOL) {
+                        ((void (*)(id, SEL, id, NSPoint, NSSize, id, id, id, BOOL))dragImage)(
+                            self_, @selector(dragImage:at:offset:event:pasteboard:source:slideBack:), image, at, offset, event, pb, source, NO);
+                      },
+                      "v@:@{CGPoint=dd}{CGSize=dd}@@@c");
   willOpen = swizzle(cls, @selector(willOpenMenu:withEvent:), ^(WKWebView *self_, NSMenu *menu, NSEvent *event) {
     if (willOpen) ((void (*)(id, SEL, id, id))willOpen)(self_, @selector(willOpenMenu:withEvent:), menu, event);
     if (SDWebViewState *s = state_of(self_)) apply_context_menu(s, menu);

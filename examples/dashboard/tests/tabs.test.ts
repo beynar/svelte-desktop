@@ -70,8 +70,6 @@ test('restored after a reload: the window tabs and the boards', async () => {
 	await shot('5-restored');
 });
 
-const pointer = (type: string, el: string, x: number, y: number, extra = '') =>
-	app.eval(`(() => { const el = ${el}; el.dispatchEvent(new PointerEvent('${type}', { bubbles: true, pointerId: 7, button: 0, buttons: 1, clientX: ${x}, clientY: ${y}${extra} })); return true; })()`);
 type Win = { windowId: number; label: string; bounds: { x: number; y: number; width: number; height: number } };
 type View = { id: string; url: string | null };
 const until = async <T>(get: () => Promise<T>, ok: (v: T) => boolean, tries = 50): Promise<T> => {
@@ -83,13 +81,30 @@ const views = () => app.platform<View[]>('view', 'list');
 const inView = <T>(id: string, code: string) => app.platform<T>('view', 'executeJavaScript', { id, code });
 const inWindow = <T>(windowId: number, code: string) => app.platform<T>('webview', 'executeJavaScript', { windowId, code });
 
-test('drag to reorder: pointer events, the window does not move', async () => {
+test('drag to reorder: native drag and drop, a line where it lands, the window does not move', async () => {
 	const order = await titles('.app-tabs');
 	const before = await app.platform<Win>('window', 'getInfo');
-	const box = await app.eval<{ x: number; y: number; right: number }>(`(() => { const t = document.querySelector('.app-tabs [role=tab]'); const b = t.getBoundingClientRect(); const bar = document.querySelector('.app-tabs').getBoundingClientRect(); return { x: b.left + 20, y: b.top + b.height / 2, right: bar.right - 60 }; })()`);
-	await pointer('pointerdown', `document.querySelector('.app-tabs [role=tab]')`, box.x, box.y);
-	for (const x of [box.x + 40, box.x + 200, box.right]) await pointer('pointermove', `document.querySelector('.app-tabs')`, x, box.y);
-	await pointer('pointerup', `document.querySelector('.app-tabs')`, box.right, box.y);
+	// The drag events a real drag makes (a real one: tests/tabs-mouse.test.ts).
+	const ok = await app.eval<{ line: string | null }>(`(async () => {
+		const tabs = [...document.querySelectorAll('.app-tabs [role=tab]')];
+		const bar = document.querySelector('.app-tabs');
+		const dt = new DataTransfer();
+		const frame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+		const at = (el, dx) => { const b = el.getBoundingClientRect(); return { clientX: b.right + dx, clientY: b.top + b.height / 2 }; };
+		const fire = (el, type, xy) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, ...xy }));
+		fire(tabs[0], 'dragstart', at(tabs[0], -20));
+		await frame();
+		const end = at(tabs.at(-1), -10);
+		fire(tabs.at(-1), 'dragenter', end);
+		fire(tabs.at(-1), 'dragover', end);
+		await frame(); await frame();
+		const line = document.querySelector('.app-tabs [data-sd-tab-drop]')?.style.left ?? null;
+		fire(tabs.at(-1), 'drop', end);
+		fire(tabs[0], 'dragend', end);
+		await frame();
+		return { line };
+	})()`);
+	expect(ok.line).toMatch(/px$/);
 	expect(await titles('.app-tabs')).toEqual([...order.slice(1), order[0]!]);
 	expect((await app.platform<Win>('window', 'getInfo')).bounds).toEqual(before.bounds);
 });
@@ -148,20 +163,12 @@ test('an app route isolated in its own view: the page alone, its own group stays
 	await until(views, (v) => !v.some((x) => x.id === `app-${id}`));
 }, 30_000);
 
-test('drag a tab out into its own window (with its title), then drop one on that window\'s bar', async () => {
+test('a tab dragged out opens in its own window (with its title); one taken by another window\'s bar leaves', async () => {
 	const before = await titles('.app-tabs');
-	const tabAt = (i: number) => `document.querySelectorAll('.app-tabs [role=tab]')[${i}]`;
-	const dragOut = async (i: number, screen: { x: number; y: number }) => {
-		const box = await app.eval<{ x: number; y: number }>(`(() => { const b = ${tabAt(i)}.getBoundingClientRect(); return { x: b.left + 20, y: b.top + b.height / 2 }; })()`);
-		await pointer('pointerdown', tabAt(i), box.x, box.y);
-		await pointer('pointermove', `document.querySelector('.app-tabs')`, box.x + 10, box.y + 30);
-		await pointer('pointermove', `document.querySelector('.app-tabs')`, box.x + 40, box.y + 300);
-		await pointer('pointerup', `document.querySelector('.app-tabs')`, box.x + 40, box.y + 300, `, screenX: ${screen.x}, screenY: ${screen.y}`);
-	};
 	const moved = before[1]!;
-	await dragOut(1, { x: 300, y: 300 });
-	await until(() => titles('.app-tabs'), (t) => t.length === before.length - 1);
-	expect(await titles('.app-tabs')).not.toContain(moved);
+	// What <TabBar> does when a tab is let go out of the window, nowhere else taking it.
+	await app.eval(`(async () => { const t = window.__tabs, id = t.items[1].id; t.handoff(id); await t.release(id, { x: 300, y: 300 }); return true; })()`);
+	expect(await until(() => titles('.app-tabs'), (t) => t.length === before.length - 1)).not.toContain(moved);
 	const wins = await until(() => app.platform<Win[]>('window', 'list'), (w) => w.length === 2);
 	const torn = wins.find((w) => w.label !== 'main')!;
 	expect(torn.label).toStartWith('app-');
@@ -169,9 +176,13 @@ test('drag a tab out into its own window (with its title), then drop one on that
 	expect(await until(tornTitles, (t) => !!t?.length)).toEqual([moved]);
 	await shot('8-torn-off');
 
-	// Dropped on the torn window's bar: it moves there once that window took it.
-	const other = (await titles('.app-tabs'))[1]!;
-	await dragOut(1, { x: torn.bounds.x + 200, y: torn.bounds.y + 20 });
+	// Dropped on the torn window's bar: that window takes it (the drop hands it the tab), says so,
+	// and it leaves this one.
+	const other = (await titles('.app-tabs'))[0]!;
+	const handoff = await app.eval<string>(`window.__tabs.handoff(window.__tabs.items[0].id)`);
+	await inWindow(torn.windowId, `window.__tabs.receive(${JSON.stringify(handoff)}, 1)`);
+	await Bun.sleep(200);
+	await app.eval(`window.__tabs.release(window.__tabs.items[0].id, { x: 0, y: 0 }).then(() => true)`);
 	expect(await until(tornTitles, (t) => t?.length === 2)).toEqual([moved, other]);
 	expect(await titles('.app-tabs')).not.toContain(other);
 	await app.platform('window', 'close', { windowId: torn.windowId });
