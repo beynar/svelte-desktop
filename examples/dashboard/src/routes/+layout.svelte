@@ -8,7 +8,8 @@
 	import { kanbanIcon } from 'entasis/icons/kanban';
 	import { calendarIcon } from 'entasis/icons/calendar';
 	import { sidebarIcon } from 'entasis/icons/sidebar';
-	import { Tabs, TabBar } from '@svelte-desktop/shell/tabs';
+	import { globeIcon } from 'entasis/icons/globe';
+	import { Tabs, TabBar, TabContent } from '@svelte-desktop/shell/tabs';
 	import { board, upcoming } from '#lib/data.svelte';
 
 	let { children } = $props();
@@ -61,7 +62,7 @@
 	<header class="titlebar bg-surface-canvas flex shrink-0 items-end gap-2">
 		<TabBar {tabs} label="Open pages" class="app-tabs min-w-0 flex-1 gap-1">
 			{#snippet tab(t, { active, close })}
-				{@const icon = icons[new URL(t.path ?? '/', 'http://x').pathname as keyof typeof icons] ?? squaresFourIcon}
+				{@const icon = t.url ? globeIcon : (icons[new URL(t.path ?? '/', 'http://x').pathname as keyof typeof icons] ?? squaresFourIcon)}
 				{@render icon({ class: `size-3.5 shrink-0 ${active ? 'text-primary' : 'text-neutral-readable'}` })}
 				<span class="min-w-0 flex-1 truncate">{t.title}</span>
 				<button
@@ -75,8 +76,22 @@
 		</TabBar>
 	</header>
 	<div class="min-h-0 flex-1">
-	<AppShell variant="inset" {sidebar} title={current.title} subtitle={current.subtitle} contentWidth="full">
+	<AppShell
+		variant="inset"
+		{sidebar}
+		title={tabs.active?.isolated ? tabs.active.title : current.title}
+		subtitle={tabs.active?.url ? new URL(tabs.active.url).host : current.subtitle}
+		contentWidth="full"
+	>
 		{#snippet headerActions({ sidebar })}
+			<!-- An isolated tab: another site in its own web view (its own process), next to the app's tabs. -->
+			<button
+				type="button"
+				class="state-layer border-neutral-muted text-neutral inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-sm"
+				onclick={() => tabs.open({ url: 'https://svelte.dev/docs/svelte/overview', title: 'Svelte docs' })}
+			>
+				{@render globeIcon({ class: 'size-4' })} Docs
+			</button>
 			<button
 				type="button"
 				class="state-layer border-neutral-muted text-neutral inline-flex size-8 items-center justify-center rounded-md border"
@@ -86,7 +101,7 @@
 				{@render sidebarIcon({ class: 'size-4' })}
 			</button>
 		{/snippet}
-		{@render children()}
+		<TabContent {tabs} class="h-full">{@render children()}</TabContent>
 	</AppShell>
 	</div>
 </div>

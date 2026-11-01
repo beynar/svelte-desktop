@@ -256,6 +256,8 @@ export const windows = {
 	 *  (duplicate → `invalid_args`). */
 	create: (options: WindowCreateOptions = {}) =>
 		callPlatform<{ windowId: number; label: string }>('window', 'create', options),
+	/** This page's own window (or `windowId`'s): its id, label, focus and bounds. */
+	getInfo: (windowId?: number) => callPlatform<WindowInfo>('window', 'getInfo', wid(windowId)),
 	/** Every open window — primary is `windowId` 0. */
 	list: () => callPlatform<WindowInfo[]>('window', 'list'),
 	/** Window info by label — resolves null on an unknown label. */

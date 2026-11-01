@@ -1,6 +1,8 @@
 <!--
 	A tab bar for a `Tabs` group: in the title bar (the window's tabs) or anywhere in a page.
-	Clicking activates, a middle click or the × closes, dragging reorders, ←/→ move along.
+	Clicking activates, a middle click or the × closes, dragging reorders — and, for a detachable
+	group, dragging a tab out of the bar opens it in its own window (or moves it onto another
+	window's bar) — ←/→ move along.
 	Unstyled but for layout: style it with `class` and the state attributes —
 	[data-active], [data-pinned], [data-dragging] on each [role=tab], [data-sd-tab-close],
 	[data-sd-tab-new] — or render each tab yourself with the `tab` snippet.
@@ -31,6 +33,10 @@
 	$effect(() => tabs.connect());
 
 	let dragging = $state<string | null>(null);
+	/** Outside the bar: dropping there detaches the tab. */
+	let detaching = $state(false);
+	let bar: HTMLDivElement;
+	let press: { id: string; x: number; y: number; pointer: number } | null = null;
 	const elementId = (t: Tab<D>) => `${tabs.id}-tab-${t.id}`;
 
 	function keydown(e: KeyboardEvent, t: Tab<D>) {
@@ -43,14 +49,57 @@
 		document.getElementById(elementId(next))?.focus();
 	}
 
-	function drop(e: DragEvent, t: Tab<D>) {
-		e.preventDefault();
-		if (dragging && dragging !== t.id) tabs.move(dragging, tabs.items.indexOf(t));
+	// Dragging with pointer events, captured by the bar (it doesn't move while tabs reorder): the
+	// tabs follow the pointer, and a tab let go away from the bar leaves it.
+	function pointerdown(e: PointerEvent, t: Tab<D>) {
+		if (e.button !== 0 || t.pinned) return;
+		press = { id: t.id, x: e.clientX, y: e.clientY, pointer: e.pointerId };
+	}
+	function pointermove(e: PointerEvent) {
+		if (!press || e.pointerId !== press.pointer) return;
+		if (!dragging) {
+			if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < 5) return;
+			dragging = press.id;
+			try {
+				bar.setPointerCapture(e.pointerId); // keeps the moves coming outside the bar (and the window)
+			} catch {}
+		}
+		const tab = tabs.get(dragging);
+		if (!tab) return;
+		const r = bar.getBoundingClientRect();
+		detaching = tabs.canDetach(tab) && (e.clientY < r.top - 24 || e.clientY > r.bottom + 24 || e.clientX < 0 || e.clientX > innerWidth);
+		if (detaching) return;
+		// Its place: after every other tab whose middle is left of the pointer (never before a pinned one).
+		const others = [...bar.querySelectorAll<HTMLElement>('[data-sd-tabs] > [role=tab]')].filter((el) => el.id !== elementId(tab));
+		let index = others.filter((el) => {
+			const b = el.getBoundingClientRect();
+			return e.clientX > b.left + b.width / 2;
+		}).length;
+		index = Math.max(index, tabs.items.filter((t) => t.pinned).length);
+		if (index !== tabs.items.findIndex((t) => t.id === dragging)) tabs.move(dragging, index);
+	}
+	function pointerup(e: PointerEvent) {
+		if (!press || e.pointerId !== press.pointer) return;
+		const id = dragging;
+		if (id && detaching) void tabs.drop(id, { x: e.screenX, y: e.screenY });
+		press = null;
 		dragging = null;
+		detaching = false;
 	}
 </script>
 
-<div role="tablist" aria-label={label} data-sd-tabbar class={className} {...rest}>
+<div
+	role="tablist"
+	aria-label={label}
+	data-sd-tabbar
+	data-detaching={detaching || undefined}
+	class={className}
+	bind:this={bar}
+	onpointermove={pointermove}
+	onpointerup={pointerup}
+	onpointercancel={pointerup}
+	{...rest}
+>
 	{@render start?.()}
 	<div data-sd-tabs>
 		{#each tabs.items as t (t.id)}
@@ -65,14 +114,11 @@
 				data-active={active || undefined}
 				data-pinned={t.pinned || undefined}
 				data-dragging={dragging === t.id || undefined}
-				draggable={!t.pinned}
+				data-desktop-no-drag
+				onpointerdown={(e) => pointerdown(e, t)}
 				onmousedown={(e) => e.button === 0 && tabs.activate(t.id)}
 				onauxclick={(e) => e.button === 1 && (e.preventDefault(), tabs.close(t.id))}
 				onkeydown={(e) => keydown(e, t)}
-				ondragstart={(e) => ((dragging = t.id), e.dataTransfer?.setData('text/plain', t.title))}
-				ondragover={(e) => dragging && e.preventDefault()}
-				ondrop={(e) => drop(e, t)}
-				ondragend={() => (dragging = null)}
 			>
 				{#if tab}
 					{@render tab(t, { active, close: () => tabs.close(t.id) })}
@@ -145,6 +191,9 @@
 		visibility: hidden;
 	}
 	:where([data-dragging]) {
-		opacity: 0.5;
+		opacity: 0.6;
+	}
+	:where([data-detaching] [data-dragging]) {
+		opacity: 0.3;
 	}
 </style>

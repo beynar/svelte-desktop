@@ -110,7 +110,7 @@ await host.windows.setTitle('Inspector (2)', windowId);
 host.windows.onClosed(({ windowId }) => console.log('closed', windowId));
 ```
 
-Every window op takes an optional trailing `windowId`; without it the op targets the window whose page made the call (`0` is the main window). `host.windows.list()` returns `{ windowId, label, focused, bounds }` rows and `host.windows.get(label)` finds one.
+Every window op takes an optional trailing `windowId`; without it the op targets the window whose page made the call (`0` is the main window). `host.windows.list()` returns `{ windowId, label, focused, bounds }` rows, `host.windows.getInfo()` the calling window's own row, and `host.windows.get(label)` finds one.
 
 <TypeTable
   type={{

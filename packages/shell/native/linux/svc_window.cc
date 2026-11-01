@@ -123,6 +123,8 @@ void register_window() {
   });
 
   // ── geometry ──────────────────────────────────────────────────────────
+  // The calling page's own window (or windowId's): {windowId, label, focused, bounds}.
+  op("getInfo", [](CallPtr c, Window *w) { c->ok(info_row(w->id)); });
   op("getBounds", [](CallPtr c, Window *w) { c->ok(json{{"bounds", bounds_json(w)}, {"state", state_name(w)}}); });
   op("setBounds", [](CallPtr c, Window *w) {
     GdkRectangle f = frame_rect(w);

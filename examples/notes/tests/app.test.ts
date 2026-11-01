@@ -33,6 +33,7 @@ test('platform API: window bounds and title', async () => {
 	expect(await app.platform<string>('window', 'getTitle')).toBe('Under test');
 	const b = await app.platform<{ bounds: { width: number } }>('window', 'getBounds');
 	expect(b.bounds.width).toBeGreaterThan(400);
+	expect(await app.platform('window', 'getInfo')).toMatchObject({ windowId: 0, label: 'main', bounds: { width: b.bounds.width } });
 });
 
 test('Dock icon: an image file or a native icon; null restores it; a bad one is refused', async () => {

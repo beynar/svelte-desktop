@@ -11,6 +11,8 @@ export default async (t: Harness) => {
   t.check("list has primary as windowId 0", list.ok && list.value[0]?.windowId === 0 && list.value[0].label === "main", list.value);
   t.check("get by label", (await t.call("window", "get", { label: "main" })).value?.windowId === 0);
   t.check("get unknown → null", (await t.call("window", "get", { label: "zzz" })).value === null);
+  const me = (await t.call("window", "getInfo")).value;
+  t.check("getInfo → the calling window", me?.windowId === 0 && me.label === "main" && me.bounds?.width > 0, me);
 
   t.check("setTitle/getTitle", (await t.call("window", "setTitle", { title: "Hi ✓" })).ok && (await t.call("window", "getTitle")).value === "Hi ✓");
   t.check("setBounds", (await t.call("window", "setBounds", { x: 120, y: 140, width: 700, height: 450 })).ok);

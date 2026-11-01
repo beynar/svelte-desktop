@@ -196,6 +196,8 @@ void platform_register_window(void) {
   });
 
   // ── geometry ──────────────────────────────────────────────────────────
+  // The calling page's own window (or windowId's): {windowId, label, focused, bounds}.
+  reg(@"getInfo", ^(PlatformCall *c, NSWindow *, int id) { [c ok:info_row(id)]; });
   reg(@"getBounds", ^(PlatformCall *c, NSWindow *w, int) {
     [c ok:@{@"bounds" : platform_rect_dict(platform_to_top_left(w.frame)), @"state" : state_name(w)}];
   });

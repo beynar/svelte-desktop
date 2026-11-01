@@ -3,3 +3,4 @@
 export { Tabs, type Tab, type TabInput, type TabsOptions } from "./tabs.svelte.ts";
 export { default as TabBar } from "./TabBar.svelte";
 export { default as TabPanels } from "./TabPanels.svelte";
+export { default as TabContent } from "./TabContent.svelte";

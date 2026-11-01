@@ -20,6 +20,7 @@
 		"./tabs": "./src/tabs/index.ts",
 		"./tabs/TabBar.svelte": "./src/tabs/TabBar.svelte",
 		"./tabs/TabPanels.svelte": "./src/tabs/TabPanels.svelte",
+		"./tabs/TabContent.svelte": "./src/tabs/TabContent.svelte",
 		"./platform": "./src/platform/index.ts",
 		"./stores": "./src/platform/stores.svelte.ts",
 		"./platform/MenuBar.svelte": "./src/platform/components/MenuBar.svelte",

@@ -69,3 +69,49 @@ test('restored after a reload: the window tabs and the boards', async () => {
 	expect(await titles('.board-tabs')).toEqual(['Current sprint', 'Product backlog', 'Board 3']);
 	await shot('5-restored');
 });
+
+const pointer = (type: string, el: string, x: number, y: number, extra = '') =>
+	app.eval(`(() => { const el = ${el}; el.dispatchEvent(new PointerEvent('${type}', { bubbles: true, pointerId: 7, button: 0, buttons: 1, clientX: ${x}, clientY: ${y}${extra} })); return true; })()`);
+
+test('drag to reorder: pointer events, the window does not move', async () => {
+	const order = await titles('.app-tabs');
+	const box = await app.eval<{ x: number; y: number; right: number }>(`(() => { const t = document.querySelector('.app-tabs [role=tab]'); const b = t.getBoundingClientRect(); const bar = document.querySelector('.app-tabs').getBoundingClientRect(); return { x: b.left + 20, y: b.top + b.height / 2, right: bar.right - 60 }; })()`);
+	await pointer('pointerdown', `document.querySelector('.app-tabs [role=tab]')`, box.x, box.y);
+	for (const x of [box.x + 40, box.x + 200, box.right]) await pointer('pointermove', `document.querySelector('.app-tabs')`, x, box.y);
+	await pointer('pointerup', `document.querySelector('.app-tabs')`, box.right, box.y);
+	expect(await titles('.app-tabs')).toEqual([...order.slice(1), order[0]!]);
+});
+
+test('an isolated tab: another site in its own web view, the page hidden while it shows', async () => {
+	await app.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Docs').click()`);
+	await app.waitFor(() => !!document.querySelector('[data-sd-tabview]:not([hidden])'), { timeout: 10_000 });
+	let views: Array<{ id: string; url: string | null }> = [];
+	for (let i = 0; i < 50 && !views.some((v) => v.id.startsWith('app-')); i++) (views = await app.platform('view', 'list')), await Bun.sleep(100);
+	expect(views.some((v) => v.id.startsWith('app-'))).toBe(true);
+	expect(await app.eval(`document.querySelector('[data-sd-tabcontent]').hidden`)).toBe(true);
+	await shot('6-isolated');
+	await app.eval(`document.querySelectorAll('.app-tabs [role=tab]')[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))`);
+	await app.waitFor(() => !document.querySelector('[data-sd-tabcontent]')!.hasAttribute('hidden'));
+	expect(await app.eval(`document.querySelector('[data-sd-tabview]').hidden`)).toBe(true); // kept, hidden
+});
+
+test('drag a tab out: it opens in its own window; a tab dropped from another window joins this bar', async () => {
+	const before = await titles('.app-tabs');
+	const box = await app.eval<{ x: number; y: number }>(`(() => { const b = document.querySelectorAll('.app-tabs [role=tab]')[1].getBoundingClientRect(); return { x: b.left + 20, y: b.top + b.height / 2 }; })()`);
+	const moved = before[1]!;
+	await pointer('pointerdown', `document.querySelectorAll('.app-tabs [role=tab]')[1]`, box.x, box.y);
+	await pointer('pointermove', `document.querySelector('.app-tabs')`, box.x + 10, box.y + 30);
+	await pointer('pointermove', `document.querySelector('.app-tabs')`, box.x + 40, box.y + 300);
+	await pointer('pointerup', `document.querySelector('.app-tabs')`, box.x + 40, box.y + 300, ', screenX: 300, screenY: 300');
+	await app.waitFor(() => document.querySelectorAll('.app-tabs [role=tab]').length === 3, { timeout: 10_000 });
+	expect(await titles('.app-tabs')).not.toContain(moved);
+	let wins: Array<{ windowId: number; label: string }> = [];
+	for (let i = 0; i < 50 && wins.length < 2; i++) (wins = await app.platform('window', 'list')), await Bun.sleep(100);
+	const torn = wins.find((w) => w.label !== 'main');
+	expect(torn?.label).toStartWith('app-');
+	await shot('7-torn-off');
+	// The reverse: a tab dropped on this window's bar from that window.
+	await app.platform('events', 'emit', { channel: 'tabs:adopt', data: { group: 'app', target: 'main', tab: { id: 'x', title: 'Calendar', path: '/calendar', isolated: false, pinned: false, closable: true } } });
+	await app.waitFor(() => document.querySelectorAll('.app-tabs [role=tab]').length === 4);
+	await app.platform('window', 'close', { windowId: torn!.windowId });
+});

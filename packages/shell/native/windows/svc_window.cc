@@ -141,6 +141,8 @@ void register_window() {
   wreg("getTitleBarStyle", [](CallPtr c, Window *w) {
     c->ok(json{{"style", title_bar_style(w->id)}, {"frameless", (GetWindowLongPtrW(w->hwnd, GWL_STYLE) & WS_CAPTION) != WS_CAPTION}});
   });
+  // The calling page's own window (or windowId's): {windowId, label, focused, bounds}.
+  wreg("getInfo", [](CallPtr c, Window *w) { c->ok(info_row(w)); });
   wreg("getBounds", [](CallPtr c, Window *w) { c->ok(json{{"bounds", window_bounds_json(w->hwnd)}, {"state", state_name(w)}}); });
   wreg("setBounds", [](CallPtr c, Window *w) {
     json b = window_bounds_json(w->hwnd);
