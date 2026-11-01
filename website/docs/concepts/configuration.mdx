@@ -1,0 +1,87 @@
+---
+title: Configuration
+description: desktop.config.ts describes the app as a desktop app; the Vite plugin reads it for dev and build.
+---
+
+Two files make a SvelteKit project a desktop app: the Vite plugin and `desktop.config.ts`.
+
+## The Vite plugin
+
+```ts vite.config.ts
+import { desktop } from '@svelte-desktop/shell/vite';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  plugins: [desktop({ experimental: { remoteFunctions: true } })],
+});
+```
+
+`desktop(kitOptions, options)` is SvelteKit's own plugin with the desktop adapter set (don't pass `adapter`). The first argument takes SvelteKit's plugin options; the second takes:
+
+<TypeTable
+  type={{
+    config: { type: "Partial<DesktopConfig>", description: "Override or extend desktop.config.ts inline." },
+    exitOnClose: { type: "boolean", default: "true", description: "Stop vite dev when the app window is closed." },
+    noWindow: { type: "boolean", default: "$SVELTE_DESKTOP_NO_WINDOW", description: "Don't open the native window in dev (browser-only dev)." },
+  }}
+/>
+
+The plugin also installs the [`host` global](/concepts/host) in page and server code and writes `src/host.d.ts` once.
+
+## desktop.config.ts
+
+```ts desktop.config.ts
+import { defineConfig } from '@svelte-desktop/shell/config';
+
+export default defineConfig({
+  appName: 'Svelte Notes',
+  identifier: 'dev.svelte-desktop.notes',
+  window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 'main', titleBarStyle: 'hiddenInset' },
+  schemes: ['svelte-notes'],
+  quitOnLastWindowClosed: false,
+  fileTypes: [{ name: 'Markdown', extensions: ['md'], role: 'Viewer' }],
+  permissions: {
+    camera: 'Notes can attach photos from your camera.',
+    screenRecording: 'Notes can attach a screenshot of your screen.',
+  },
+  notifications: {
+    channels: [{ id: 'messages', name: 'Messages', importance: 'high' }],
+  },
+  push: { apns: true, server: 'https://push.example.com' },
+});
+```
+
+Only `appName` and `identifier` matter to start; everything else is optional. `appName` falls back to `productName` or `name` in `package.json`, and `version` defaults to the `package.json` version. `identifier` must be reverse-DNS (`com.example.app`): it names the bundle and the data directories.
+
+The plugin loads the file (`desktop.config.ts`, `.js` or `.mjs`) for both `vite dev` (window, native plugin) and `vite build` (bundle, signing, release). Editing it during `vite dev` restarts the dev server.
+
+| Area | Keys | Page |
+| --- | --- | --- |
+| Identity | `appName`, `identifier`, `version`, `icon`, `copyright` | [App icon](/shipping/app-icon) |
+| Main window | `window`, `quitOnLastWindowClosed`, `trayOnly`, `singleInstance` | [Windows](/ui/windows) |
+| OS integration | `schemes`, `fileTypes`, `permissions`, `plist` | [Permissions](/features/permissions) |
+| Notifications | `notifications`, `push` | [Notifications and push](/features/notifications) |
+| Native code | `native`, `addons`, `sidecars` | [Native code](/features/native-code) |
+| Security | `bridge.allow` | [The host API](/concepts/host) |
+| Release | `build`, `sign`, `update`, `ios` | [Distribution](/shipping/distribution) |
+
+Every key is listed in the [configuration reference](/reference/config).
+
+## Environment overrides
+
+Some settings can come from the environment, which keeps secrets and per-build switches out of the file:
+
+| Variable | Overrides |
+| --- | --- |
+| `SVELTE_DESKTOP_TARGET` | `build.target` (`linux`, `windows`, `android`, `ios`) |
+| `SVELTE_DESKTOP_TARGET_ARCH` | `build.targetArch` |
+| `SVELTE_DESKTOP_ANDROID_ARCH` | `build.androidArch` (comma-separated) |
+| `SVELTE_DESKTOP_AAB` | `build.aab` |
+| `SVELTE_DESKTOP_BUN` | `build.bun` (the Bun binary used to compile) |
+| `SVELTE_DESKTOP_IOS_OFFLINE` | `ios.offline` |
+| `SVELTE_DESKTOP_IOS_SERVER_URL` | `ios.serverUrl` |
+| `CODESIGN_IDENTITY` | `sign.identity` |
+| `NOTARY_PROFILE` | `sign.notaryProfile` |
+| `SVELTE_DESKTOP_UPDATE_KEY` | `update.privateKey` |
+| `WINDOWS_CERT_PFX`, `WINDOWS_CERT_PASSWORD` | `sign.windows` |
+| `ANDROID_KEYSTORE` (+ `_ALIAS`, `_PASSWORD`) | `sign.android` |

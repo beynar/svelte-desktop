@@ -1,0 +1,132 @@
+---
+title: Native code
+description: Swift, Objective-C and C plugins callable from pages and server code, Node-API addons for server code, and sidecar executables.
+---
+
+Three ways to go beyond the built-in services, all compiled and bundled by the Vite plugin in dev and at build:
+
+| | Runs | Called from | For |
+| --- | --- | --- | --- |
+| **Native plugin** (`native/`) | On the UI thread, in-process | Pages and server code | OS APIs, AppKit/UIKit, anything on the main thread |
+| **Node-API addon** (`native/addons/`) | In the server Worker | Server code | CPU-heavy native libraries |
+| **Sidecar** (`sidecars`) | Its own process | Server code | Existing executables (ffmpeg, a CLI) |
+
+## Native plugins
+
+Files in `native/` (`*.swift`, `*.m`, `*.c`) are compiled into one plugin library, loaded on the UI thread before the run loop starts. In `vite dev`, editing them rebuilds the plugin and restarts the window.
+
+```swift native/Greeter.swift
+import AppKit
+
+func desktopSetup() {
+  Desktop.command("greeter.hello") { args in
+    "Hello \(args["name"] as? String ?? "world")"
+  }
+
+  // Runs on the main thread: AppKit is safe here.
+  Desktop.command("greeter.windowTitle") { _ in
+    Desktop.window()?.title
+  }
+
+  Desktop.command("greeter.add") { args in
+    try await Task.sleep(nanoseconds: 50_000_000) // async work is fine
+    guard let a = args["a"] as? Double, let b = args["b"] as? Double else {
+      throw DesktopError.invalidArgs("greeter.add needs numbers a and b")
+    }
+    return a + b
+  }
+
+  Desktop.command("greeter.ping") { _ in
+    Desktop.emit("greeter.pong", ["at": Date().timeIntervalSince1970])
+    return true
+  }
+}
+```
+
+Each `Desktop.command("service.op")` becomes a platform op. Type it with an interface and call it from a page or from server code:
+
+```ts src/lib/native.ts
+import { nativeModule } from '@svelte-desktop/shell/platform';
+
+export interface Greeter {
+  hello(args: { name: string }): string;
+  windowTitle(): string | null;
+  add(args: { a: number; b: number }): number;
+  ping(): boolean;
+}
+
+export const greeter = nativeModule<Greeter>('greeter'); // also host.nativeModule
+await greeter.hello({ name: 'Ada' });
+host.on('greeter.pong', ({ at }) => {});
+```
+
+| Swift API | |
+| --- | --- |
+| `Desktop.command(name) { args in ... }` | Register an op. The closure is `@MainActor`, may be `async` and may `throw`; its return value goes back as JSON. |
+| `Desktop.emit(event, data)` | Send an event to every page and server code |
+| `Desktop.window(id)` | The `NSWindow` for a window id (`0`, the main window, by default) |
+| `Desktop.log(message)` | Log through the shell |
+| `DesktopError` | `.invalidArgs`, `.unsupported`, `.unavailable`, `.denied`, `.failed`: rejects with the matching [error code](/concepts/host#errors) |
+
+Frameworks link automatically from `import` / `@import`. Plugin ops go through the same page permission check as built-in ops ([`bridge.allow`](/reference/config)).
+
+### Objective-C and C
+
+Objective-C registers ops with `SDCommand(@"svc.op", ^(NSDictionary *args, SDReply reply) { ... })` inside `void SDSetup(void)`. Plain C implements the raw ABI from `native/include/svelte_desktop.h` in the shell package: export `int sd_plugin_init(const sd_host *host)` and call `host->register_op("service", "op", fn, user)`; handlers run on the main thread and reply once with `host->resolve` or `host->reject`, from any thread. The same C ABI is used on Linux, Windows and Android (through the NDK).
+
+### Per-platform sources
+
+Code for one platform goes in `native/<platform>/` (`macos`, `linux`, `windows`, `android`, `ios`); the rest of `native/` is built everywhere it can be. Swift and Objective-C are Apple-only and skipped elsewhere with a notice. `native: 'path'` in the config points at another folder; `native: false` disables plugins.
+
+## Node-API addons
+
+`native/addons/<name>.c` (or `.cc`, `.cpp`) is compiled to `<name>.node` and loaded from server code:
+
+```c native/addons/fastmath.c
+#include <node_api.h>
+
+static long long fib(int n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
+
+static napi_value Fib(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  int32_t n = 0;
+  napi_get_value_int32(env, argv[0], &n);
+  napi_value out;
+  napi_create_int64(env, fib(n), &out);
+  return out;
+}
+
+static napi_value Init(napi_env env, napi_value exports) {
+  napi_value fn;
+  napi_create_function(env, "fib", NAPI_AUTO_LENGTH, Fib, NULL, &fn);
+  napi_set_named_property(env, exports, "fib", fn);
+  return exports;
+}
+
+NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)
+```
+
+```ts
+const math = host.loadAddon<{ fib(n: number): number }>('fastmath'); // server code
+math.fib(30);
+```
+
+Prebuilt addons ship with `addons: { name: 'path/to/name.node' }` in the config.
+
+## Sidecars
+
+```ts desktop.config.ts
+sidecars: {
+  ffmpeg: { macos: 'bin/ffmpeg', linux: 'bin/ffmpeg-linux', android: 'bin/ffmpeg-android' },
+  tool: 'bin/tool', // one path for every platform
+},
+```
+
+```ts
+const proc = await host.sidecar('ffmpeg', ['-i', input, output]); // server code; Bun.spawn options as a third argument
+await proc.exited;
+```
+
+The executable is resolved inside the bundle (or at its dev path). On Android, C sources in `native/sidecars/` and `native/android/sidecars/` are compiled into sidecars with the NDK.

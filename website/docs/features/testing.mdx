@@ -1,0 +1,70 @@
+---
+title: Testing
+description: Drive the real app window from bun test, built or under vite dev.
+---
+
+`@svelte-desktop/shell/test` launches the app in its real window and drives it from `bun test`: DOM interactions in the page, any native op, screenshots and native events.
+
+```ts tests/app.test.ts
+import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+
+let app: AppHandle;
+beforeAll(async () => (app = await launch(process.env.DESKTOP_TEST_DEV ? { dev: true } : {})));
+afterAll(() => app?.close());
+
+test('adds a note', async () => {
+  await app.fill('input[name=text]', 'hello');
+  await app.press('input[name=text]', 'Enter');
+  await app.waitFor(() => document.body.innerText.includes('hello'));
+});
+
+test('native window', async () => {
+  expect(await app.platform('window', 'getTitle')).toBe('Notes');
+});
+
+test('native plugin', async () => {
+  expect(await app.platform<string>('greeter', 'hello', { name: 'test' })).toContain('Hello');
+});
+```
+
+```sh
+bun test --timeout 30000 tests/
+```
+
+App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without options, `launch()` runs the first built app in `.desktop/dist`, so build first.
+
+## launch(options)
+
+<TypeTable
+  type={{
+    app: { type: "string", description: "Path to a built .app, a Linux app directory or an AppImage. Default: the first one in .desktop/dist." },
+    dev: { type: "boolean | { cwd, port }", description: "Run vite dev in this project instead of a built app." },
+    android: { type: "boolean | { apk, serial, install }", description: "Run the APK on a device or emulator over adb (debug-key builds)." },
+    ios: { type: "boolean | { app, udid, serverUrl }", description: "Run the simulator build on a booted simulator." },
+    args: { type: "string[]", description: "Command-line arguments for a built app (URLs, documents)." },
+    env: { type: "Record<string, string>" },
+    timeout: { type: "number", default: "30000", description: "ms to wait for the app to connect and its page to load." },
+  }}
+/>
+
+## The app handle
+
+| | |
+| --- | --- |
+| `click(selector)`, `fill(selector, value)`, `press(selector, key)` | DOM interactions |
+| `text(selector?)` | Text content |
+| `waitFor(selectorOrPredicate, { timeout })` | Wait for a selector, or a page function returning truthy |
+| `eval(code or fn, ...args)` | Evaluate in the main window's page; promises awaited, JSON result |
+| `goto(path)` | Navigate (client-side when SvelteKit handles the link) |
+| `platform(service, op, args)` | Any native op |
+| `nextEvent(name, filter?, timeout?)` | The next native event matching `filter` |
+| `screenshot(path?)` | PNG of the page |
+| `origin`, `stdout` | The app's server origin and its output |
+| `close()` | Quit the app |
+
+The test channel exists only when `launch()` starts the app (it sets `SVELTE_DESKTOP_TEST`); shipped apps don't expose it.
+
+:::tip
+To assert a rejection, use `expect(await app.platform(...).catch((e) => e))` rather than `await expect(promise).rejects`: the latter has been seen to corrupt the runner's connection in `bun test` (on the Android runner).
+:::

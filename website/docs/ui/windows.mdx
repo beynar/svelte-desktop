@@ -1,0 +1,165 @@
+---
+title: Windows
+description: The main window, title bar styles and drag regions, multiple windows, saved frames and full screen.
+---
+
+The main window is described by `window` in `desktop.config.ts` and controlled at run time through `host.window`.
+
+```ts desktop.config.ts
+window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 'main', titleBarStyle: 'hiddenInset' },
+```
+
+<TypeTable
+  type={{
+    width: { type: "number", description: "Initial content width." },
+    height: { type: "number", description: "Initial content height." },
+    minWidth: { type: "number" },
+    minHeight: { type: "number" },
+    title: { type: "string", description: "Window title. Default: appName." },
+    autosaveName: { type: "string", description: "Persist and restore the window frame under this name (NSUserDefaults on macOS)." },
+    titleBarStyle: { type: '"default" | "transparent" | "hidden" | "hiddenInset"', default: '"default"', description: "See Title bar styles below." },
+    visible: { type: "boolean", default: "true", description: "Shown at launch. false creates it hidden." },
+    hiddenUntilReady: { type: "boolean", default: "true", description: "Keep the window invisible until DOMContentLoaded, to avoid a white flash." },
+    readyTimeoutMs: { type: "number", default: "3000", description: "How long hiddenUntilReady waits for the page before showing the window anyway (8000 in dev)." },
+    debug: { type: "boolean", description: "Enable the Web Inspector in the built app (right-click, Inspect Element). On by default in dev." },
+  }}
+/>
+
+`window: false` starts with no visible main window, for [menu-bar apps](/ui/menu-bar-and-popovers). `quitOnLastWindowClosed: false` keeps the app running when the last window closes, like most macOS apps: background work and push connections go on, and a Dock click, a notification click or a second launch shows the window again.
+
+## At run time
+
+```svelte
+<h1>{host.window.title}</h1>
+{#if host.window.fullscreen}<p>Full screen</p>{/if}
+<button onclick={() => host.window.toggleMaximize()}>Maximize</button>
+<button onclick={() => host.window.setTitle('Untitled')}>Rename</button>
+```
+
+`host.window` is reactive (`title`, `focused`, `maximized`, `fullscreen`, `bounds`, `size`, `position`, `state`, `scaleFactor`) and carries every window op:
+
+| Group | Ops |
+| --- | --- |
+| Geometry | `setSize`, `setPosition`, `setBounds`, `center`, `positionTo(preset)`, `setMinSize`, `setMaxSize`, `getBounds`, `innerSize`, `outerSize` |
+| State | `minimize`, `unminimize`, `maximize`, `unmaximize`, `toggleMaximize`, `restore`, `show`, `hide`, `focus`, `blur`, `close` |
+| Full screen | `setFullscreen`, `toggleFullscreen`, `setSimpleFullscreen` (macOS, non-native) |
+| Chrome | `setTitle`, `setTitleBarStyle`, `setDecorations`, `setResizable`, `setClosable`, `setMinimizable`, `setMaximizable`, `setHasShadow`, `setOpacity`, `setTheme` |
+| Behavior | `setAlwaysOnTop`, `setAlwaysOnBottom`, `setVisibleOnAllWorkspaces`, `setMovable`, `setMovableByWindowBackground`, `setIgnoresMouseEvents`, `setContentProtected`, `setFocusable` |
+| macOS document | `setDocumentEdited` (the dot in the close button), `setRepresentedFilename` (title bar document icon) |
+| Misc | `requestAttention`, `showCharacterPalette`, `getControlsArea`, `setCursorHidden`, `setCursorPosition` |
+
+`positionTo` presets: `center`, `trayCenter`, `trayLeft`, `trayRight`, `trayTop`, `trayBottom`, `cursorTopLeft`, `cursorBottomLeft`.
+
+## Title bar styles
+
+| `titleBarStyle` | macOS |
+| --- | --- |
+| `default` | The normal title bar. |
+| `transparent` | The page extends under the title bar; the title stays. |
+| `hidden` | The page extends under the title bar; traffic lights at the corner. |
+| `hiddenInset` | Same, with the traffic lights inset. |
+
+Your header takes the title bar's place. The shell sets CSS variables and attributes so it can line up with the window controls:
+
+```css src/app.css
+header {
+  --app-region: drag;                                          /* or the data-desktop-drag attribute */
+  min-height: max(var(--desktop-titlebar-height, 0px), 2.5rem);
+  padding-left: max(var(--desktop-controls-width, 0px), 1rem); /* clear the traffic lights */
+}
+.search { --app-region: no-drag; }  /* carve out a region; links, buttons and inputs stay clickable anyway */
+```
+
+| Set by the shell | |
+| --- | --- |
+| `--desktop-titlebar-height` | Height of the title bar strip; `0` in full screen |
+| `--desktop-controls-width` | Width taken by the window controls; `0` in full screen |
+| `html[data-desktop-titlebar]` | Present with a hidden title bar; `fullscreen` while in full screen |
+| `html[data-desktop-controls]` | `native` (macOS keeps its buttons) or `none` (the page draws its own) |
+
+- **Drag regions.** Any element with `--app-region: drag` or the `data-desktop-drag` attribute drags the window. Double-click follows the system setting (zoom or minimize).
+- **The title bar strip behaves like a title bar.** It drags the window whatever the page puts there (controls stay clickable; `--app-region: no-drag` opts an element out). Scrolling over it doesn't scroll the page, so title-bar gesture tools such as Swish keep working. A gesture is routed as a whole by where it began: one started in the page keeps scrolling.
+- **Switch at run time** with `host.window.setTitleBarStyle(style)`.
+
+### Linux and Windows
+
+A hidden title bar there is a frameless window: there are no native buttons to keep, so `html[data-desktop-controls="none"]` tells the page to draw its own. Drag regions and double-click to maximize work the same.
+
+```css
+.window-buttons { display: none; }
+:root[data-desktop-controls="none"] .window-buttons { display: flex; }
+```
+
+```svelte
+<div class="window-buttons">
+  <button onclick={() => host.window.minimize()}>–</button>
+  <button onclick={() => host.window.toggleMaximize()}>□</button>
+  <button onclick={() => host.window.close()}>×</button>
+</div>
+```
+
+## No elastic overscroll
+
+On desktop, the bridge sets `:where(html, body) { overscroll-behavior: none }`, with zero specificity, so the page doesn't rubber-band. Bring it back with `html { overscroll-behavior: auto }`, or set it per scroll container.
+
+## Multiple windows
+
+```ts
+const { windowId } = await host.windows.create({ title: 'Inspector', width: 520, height: 420 });
+await host.windows.setTitle('Inspector (2)', windowId);
+host.windows.onClosed(({ windowId }) => console.log('closed', windowId));
+```
+
+Every window op takes an optional trailing `windowId`; without it the op targets the window whose page made the call (`0` is the main window). `host.windows.list()` returns `{ windowId, label, focused, bounds }` rows and `host.windows.get(label)` finds one.
+
+<TypeTable
+  type={{
+    label: { type: "string", description: "Unique per app; a duplicate rejects invalid_args." },
+    title: { type: "string" },
+    "x, y, width, height": { type: "number" },
+    "minWidth, minHeight": { type: "number" },
+    decorations: { type: "boolean", description: "false: borderless window." },
+    visible: { type: "boolean", default: "true" },
+    focus: { type: "boolean", default: "true" },
+    alwaysOnTop: { type: "boolean" },
+    "resizable, movable, minimizable": { type: "boolean" },
+    transparent: { type: "boolean", description: "Transparent background; the page paints its own chrome." },
+    opacity: { type: "number", description: "0 to 1, applied before the first frame." },
+    titlebarTransparent: { type: "boolean", description: "Title bar blends into the content (macOS)." },
+    tabbingIdentifier: { type: "string", description: "Windows with the same id group as native tabs (macOS)." },
+  }}
+/>
+
+:::note
+A new window opens the app at `/`. The native op also reads `path` (an app route), which the `WindowCreateOptions` type doesn't declare yet.
+:::
+
+Window events: `onCreated`, `onClosed`, `onFocusChanged`, `onBoundsChanged`, `onScaleFactorChanged`, `onWillClose`. Use [`host.broadcast`](/concepts/host#talking-across-windows-and-the-server) to message between windows.
+
+## Confirm before closing
+
+Arm the close veto: the red button and Cmd+W then emit `willClose` instead of closing.
+
+```ts
+await host.windows.setCloseVeto(true);
+host.windows.onWillClose(async () => {
+  const { response } = await host.dialog.showMessageBox({
+    type: 'warning', message: 'Discard unsaved changes?', buttons: ['Discard', 'Cancel'],
+  });
+  if (response === 0) {
+    await host.windows.setCloseVeto(false);
+    await host.windows.close();
+  }
+});
+```
+
+## Saving the frame
+
+`autosaveName` persists the main window's frame natively. For more control, `host.windowState` writes a JSON snapshot (`window-state.json` in the app's data directory). It uses Bun's file API, so call it from server code:
+
+```ts
+await host.windowState.save({ flags: ['size', 'position', 'maximized'] });
+await host.windowState.restore(); // applies what the snapshot captured
+```
+
+Flags: `size`, `position`, `maximized`, `visible`, `fullscreen` (default: all).

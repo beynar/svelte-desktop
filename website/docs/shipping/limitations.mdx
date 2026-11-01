@@ -1,0 +1,38 @@
+---
+title: Limitations
+description: What isn't done, verified or possible yet, by platform.
+---
+
+## Everywhere
+
+- **`build.aot` and `build.trim` need Bun canary** until `--aot` and `--trim` ship in a stable Bun. Without them a hello world is 86 MB (39 MB zipped) instead of 45 MB.
+- **Each preloaded popover costs a WebKit content process** (about 30 to 40 MB). Use `preload: false` for rarely opened ones.
+- **Ops vary by platform.** Many window and app ops are macOS-only and answer `unsupported` elsewhere. `host.capabilities.describe()` tells the truth for the running build.
+
+## macOS
+
+- **Notarization** is implemented and passes a local pre-flight of Apple's requirements, but hasn't been submitted from this repository: that needs a Developer ID certificate and a notary profile.
+- **Screen capture** needs the Screen Recording permission, and macOS 14 for stills.
+- **Compiling the macOS 26 icon** (`Assets.car`) needs Xcode 26's `actool`; without it only the `.icns` ships.
+
+## Windows
+
+- **Not yet run on a real Windows machine.** Every service has a Windows implementation, the build is cross-compiled cleanly for x64 and arm64, and the native layer and installer are smoke-tested under Wine. The first real run must confirm WebView2 start-up, Bun FFI callbacks on Windows and the bridge timing. Bun and WebView2 don't run under Wine.
+- Hidden title bars are implemented but window dragging needs that real run; background jobs are bundled but not run.
+
+## Linux
+
+- Verified in Docker (Ubuntu 24.04 under Xvfb, linux/arm64).
+- Tray hosts don't report icon positions, so tray-anchored popovers open at the pointer.
+- Global shortcuts and screen capture need X11; on Wayland they answer `unsupported`.
+- Compiling native code (plugins, addons) needs a Linux host or Docker.
+
+## Mobile
+
+- **iOS is a thin client**: server code runs on your server, so there's no `bun:sqlite`, addons or `desktop` API on the device. Offline mode serves only prerendered or `ssr = false` pages.
+- No run on a physical iPhone yet (device builds compile and link; installing needs a provisioning profile).
+- Android x86_64 builds are packaged but weren't run (no x86 emulator on Apple Silicon). Side-loaded APKs don't self-update.
+
+## Tooling
+
+- `svelte-desktop doctor` checks a macOS toolchain only (Xcode tools, codesign, notarytool).

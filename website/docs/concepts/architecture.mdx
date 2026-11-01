@@ -1,0 +1,55 @@
+---
+title: Architecture
+description: How one Bun executable runs the native UI, the SvelteKit server, and the bridge between the page and the OS.
+---
+
+A built app is one `bun --compile` executable plus a small native library. Two threads share the process:
+
+```txt
+App.app/Contents/MacOS/App                  one bun --compile executable (UI thread + Worker)
+App.app/Contents/Frameworks/libshell.dylib  ~570 KB: the web view + native services
+                           /libapp-native.dylib, addons/*.node   your native code
+
+main thread: Cocoa run loop (WKWebView)   <->   Worker: Bun.serve (SvelteKit) + desktop API
+             one native dispatcher for the page bridge, FFI and plugins
+```
+
+## The two threads
+
+- **UI thread.** Bun's main thread becomes the native UI thread (Cocoa on macOS, GTK on Linux, Win32 on Windows) and runs the web view. Once the run loop starts, this thread runs no app JavaScript.
+- **Worker.** A Bun Worker runs `Bun.serve` with the SvelteKit handler and the server-side desktop API. Load functions, remote functions, hooks and endpoints all run here, with full Bun APIs.
+
+When the run loop stops (last window closed, Cmd+Q, a signal, `host.app.quit()`), the Worker runs its `onBeforeQuit` hooks and finishes in-flight requests before the process exits.
+
+## The localhost session
+
+The server listens on a random loopback port. A gate in front of SvelteKit keeps other local processes and web pages out:
+
+1. **Host check** against DNS rebinding.
+2. **One-time secret.** The UI thread generates it and the window's first navigation trades it for an HttpOnly, `SameSite=Strict` session cookie. App requests without the cookie get a 403; only the immutable build assets are served without it.
+3. **Cookies that work on http.** SvelteKit marks cookies `Secure` in production; WebKit drops those on `http://127.0.0.1`, so the gate removes `Secure` (the origin is the loopback). It also disables Bun's 10 second idle timeout for slow requests.
+
+## The bridge
+
+Native features are ops (`window.setTitle`, `clipboard.readText`, ...) handled by one native dispatcher, reached two ways:
+
+| Caller | Path |
+| --- | --- |
+| Page code | Straight to native through an origin-checked message handler (only the app origin's main frame is answered). |
+| Server code | Over FFI to the same dispatcher (over an RPC bridge in `vite dev`). |
+
+Both use the same op names, arguments and error codes, which is why [`host`](/concepts/host) is the same object in both places. Pages can be restricted to a list of ops with [`bridge.allow`](/reference/config); server code is never restricted.
+
+Messages flow the other way too: native events (theme changes, menu clicks, notification responses) reach every page and server code, and `host.broadcast(channel, data)` sends to every window, popover and the server.
+
+## Dev mode
+
+`vite dev` starts the dev shell as a child process: the same native window, pointed at the Vite server. HMR and the Web Inspector work in the window; server code (running in Vite) reaches native APIs over the RPC bridge. In dev, the Dock shows the app's icon instead of Bun's.
+
+## Built in
+
+- **Logs.** Launched from Finder, both threads log to `~/Library/Logs/<identifier>/app.log`.
+- **Graceful quit** on signals, Cmd+Q and Dock Quit, with `host.onBeforeQuit(fn)` in server code.
+- **Crash recovery.** If the web content process dies, the page reloads. `host.crashInfo()` reports how the previous run ended and the OS crash reports written since.
+- **Single instance.** On Linux and Windows a second launch hands its arguments (documents, links) to the running app; macOS does this natively.
+- **No `.env` or `bunfig.toml` pickup** at runtime: the app doesn't change behavior based on the directory it's launched from.

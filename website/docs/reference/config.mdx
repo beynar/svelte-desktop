@@ -1,0 +1,150 @@
+---
+title: desktop.config.ts
+description: Every option of desktop.config.ts.
+---
+
+```ts desktop.config.ts
+import { defineConfig } from '@svelte-desktop/shell/config';
+
+export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' });
+```
+
+## Top level
+
+<TypeTable
+  type={{
+    appName: { type: "string", required: true, description: "Display name. Falls back to productName or name in package.json." },
+    identifier: { type: "string", required: true, description: "Reverse-DNS bundle id (com.example.app). Names the bundle and the data directories." },
+    version: { type: "string", default: "package.json version" },
+    icon: { type: "string | { source: string; background?: string }", default: "icon.png, icon.svg, then static/icon.png", description: "One square image for every target. See App icon." },
+    copyright: { type: "string" },
+    window: { type: "WindowOptions | false", description: "The main window; false: no main window at start (menu-bar apps). See Windows." },
+    quitOnLastWindowClosed: { type: "boolean", default: "true", description: "false: closing the last window hides it and the app keeps running (jobs, push connection, page state). A Dock click, a notification click or a second launch shows it." },
+    trayOnly: { type: "boolean", description: "LSUIElement: no Dock icon, no app menu." },
+    singleInstance: { type: "boolean", default: "true", description: "A second launch hands its documents and links to the running app (openFiles / openUrls, secondInstance). Linux and Windows; macOS does it natively." },
+    schemes: { type: "string[]", description: "Deep-link URL schemes, delivered as openUrls events." },
+    fileTypes: { type: "FileTypeConfig[]", description: "Document types the app opens, delivered as openFiles events." },
+    permissions: { type: "Partial<Record<PermissionName, string>>", description: "OS permissions with the reason shown to the user. See Permissions." },
+    notifications: { type: "NotificationsConfig", description: "Android channels and foreground banners." },
+    push: { type: "PushConfig", description: "APNs, FCM, UnifiedPush or your own push server." },
+    native: { type: "string | false", default: '"native" if the folder exists', description: "Native plugin sources (Swift, Objective-C, C)." },
+    addons: { type: "Record<string, string>", description: "Prebuilt Node-API addons (.node) to ship; native/addons/*.c are compiled automatically." },
+    sidecars: { type: "Record<string, string | Partial<Record<'macos' | 'linux' | 'windows' | 'android', string>>>", description: "Executables shipped with the app, started with host.sidecar(name)." },
+    "bridge.allow": { type: "string[]", default: "every op", description: "Ops pages may call ('service.op' or 'service.*'), enforced natively. Server code is never restricted." },
+    plist: { type: "Record<string, unknown>", description: "Extra Info.plist keys." },
+    update: { type: "UpdateConfig", description: "Signed self-update feed. See Self-update." },
+    build: { type: "BuildConfig", description: "Target, architectures and packaging." },
+    sign: { type: "SignConfig", description: "Code signing for every target. See Distribution." },
+    ios: { type: "IosConfig", description: "iOS thin client. See Mobile." },
+  }}
+/>
+
+`usageDescriptions` (same shape as `permissions`) and `permissions.pages` (now `bridge.allow`) are still accepted but deprecated.
+
+## window
+
+<TypeTable
+  type={{
+    "width, height": { type: "number" },
+    "minWidth, minHeight": { type: "number" },
+    title: { type: "string", default: "appName" },
+    autosaveName: { type: "string", description: "Persist and restore the frame under this name." },
+    titleBarStyle: { type: '"default" | "transparent" | "hidden" | "hiddenInset"', default: '"default"' },
+    visible: { type: "boolean", default: "true" },
+    hiddenUntilReady: { type: "boolean", default: "true", description: "Invisible until DOMContentLoaded (no white flash)." },
+    readyTimeoutMs: { type: "number", default: "3000" },
+    debug: { type: "boolean", description: "Web Inspector in the built app." },
+  }}
+/>
+
+## fileTypes[]
+
+<TypeTable
+  type={{
+    name: { type: "string", required: true },
+    extensions: { type: "string[]", required: true },
+    role: { type: '"Editor" | "Viewer" | "Shell" | "None"', default: '"Editor"' },
+    rank: { type: '"Owner" | "Default" | "Alternate"', default: '"Default"' },
+    utis: { type: "string[]", description: "Uniform type identifiers (net.daringfireball.markdown)." },
+    mimeTypes: { type: "string[]", description: "Linux MIME types. Default: the common type of each extension, else a type the build declares." },
+  }}
+/>
+
+## notifications
+
+<TypeTable
+  type={{
+    channels: { type: "NotificationChannelConfig[]", description: "Android channels created at startup; the first is the default. { id, name, description, importance, sound, vibrate, lights, badge, visibility }" },
+    foreground: { type: "boolean", default: "true", description: "Show notifications (local and push) as banners while the app is frontmost." },
+  }}
+/>
+
+## push
+
+<TypeTable
+  type={{
+    apns: { type: "boolean | { environment?: 'development' | 'production' }", description: "macOS and iOS. Adds the aps-environment entitlement; needs a provisioning profile with Push Notifications. true: production for signed release builds, development otherwise." },
+    fcm: { type: "{ googleServices: string }", description: "Android: your Firebase project's google-services.json." },
+    server: { type: "string", description: "Your own Web Push compatible push server for macOS, Windows and Linux. Takes precedence over APNs on macOS." },
+    unifiedPush: { type: "boolean", default: "true when a distributor is installed", description: "Android: UnifiedPush before FCM." },
+  }}
+/>
+
+## update
+
+<TypeTable
+  type={{
+    manifestUrl: { type: "string", required: true, description: "update.json URL; may contain {channel}." },
+    publicKey: { type: "string | string[]", required: true, description: "ed25519 public key(s), base64." },
+    channel: { type: "string", default: '"stable"' },
+    privateKey: { type: "string", default: "$SVELTE_DESKTOP_UPDATE_KEY", description: "Key file vite build signs release/update.json with." },
+    baseUrl: { type: "string", description: "Public base URL where release/ is uploaded." },
+  }}
+/>
+
+## build
+
+<TypeTable
+  type={{
+    target: { type: '"macos" | "linux" | "windows" | "android" | "ios"', default: "the host, or $SVELTE_DESKTOP_TARGET" },
+    targetArch: { type: '"x64" | "arm64"', default: "x64 (Linux, Windows), arm64 (Android)" },
+    androidArch: { type: '"arm64" | "x64" | Array<"arm64" | "x64">', default: "targetArch, else arm64" },
+    aab: { type: "boolean", default: "$SVELTE_DESKTOP_AAB", description: "Also build an Android App Bundle for Play." },
+    universal: { type: "boolean", description: "macOS: also build the x64 slice and lipo a universal app." },
+    aot: { type: "boolean", description: "Bun --aot (needs Bun canary today)." },
+    trim: { type: "boolean", description: "Bun --trim (needs Bun canary today)." },
+    bun: { type: "string", default: "$SVELTE_DESKTOP_BUN or the running Bun", description: "Bun binary used to compile." },
+    dmg: { type: "boolean", default: "true", description: "macOS DMG." },
+    zip: { type: "boolean", default: "true", description: "macOS zip." },
+    outDir: { type: "string", default: '".desktop/dist"' },
+    minimumSystemVersion: { type: "string", default: '"12.0"', description: "Minimum macOS." },
+  }}
+/>
+
+## sign
+
+<TypeTable
+  type={{
+    identity: { type: "string", default: "$CODESIGN_IDENTITY, else ad-hoc", description: "codesign identity ('Developer ID Application: Name (TEAMID)'), or '-' for ad-hoc." },
+    notaryProfile: { type: "string", default: "$NOTARY_PROFILE", description: "notarytool keychain profile; notarizes and staples when set." },
+    hardenedRuntime: { type: "boolean", default: "true unless ad-hoc" },
+    entitlements: { type: "Record<string, boolean | string | string[]>", description: "Merged into the defaults Bun needs (JIT)." },
+    provisioningProfile: { type: "string", description: "macOS .provisionprofile embedded in the bundle." },
+    windows: { type: "{ certificateFile?, password?, timestampUrl? }", default: "$WINDOWS_CERT_PFX, $WINDOWS_CERT_PASSWORD", description: "Authenticode (osslsigncode). timestampUrl defaults to http://timestamp.digicert.com." },
+    ios: { type: "{ identity?, provisioningProfile? }", default: "$IOS_SIGN_IDENTITY or 'Apple Development'", description: "iOS device builds; without a profile, target ios builds for the simulator." },
+    android: { type: "{ keystore?, alias?, password? }", default: "$ANDROID_KEYSTORE, else ~/.android/debug.keystore" },
+  }}
+/>
+
+## ios
+
+<TypeTable
+  type={{
+    serverUrl: { type: "string", default: "$SVELTE_DESKTOP_IOS_SERVER_URL", description: "Deployed SvelteKit server (https; http only for localhost)." },
+    offline: { type: "boolean", description: "Bundle the client build and prerendered pages, served from app://localhost." },
+    deploymentTarget: { type: "string", default: '"17.0"' },
+    device: { type: "boolean", default: "$SVELTE_DESKTOP_IOS_DEVICE" },
+    debug: { type: "boolean", description: "Web Inspector and the test channel in device builds." },
+    plist: { type: "Record<string, unknown>" },
+  }}
+/>

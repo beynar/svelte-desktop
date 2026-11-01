@@ -1,0 +1,55 @@
+---
+title: App icon
+description: One square image becomes every target's icons, generated at build and shown in the Dock during development.
+---
+
+Put one square image at the project root and every target's icons are generated from it.
+
+| Source | |
+| --- | --- |
+| `icon.png`, `icon.svg`, then `static/icon.png` | Picked up automatically, in that order |
+| `icon: 'art/logo.png'` | Any path, in `desktop.config.ts` |
+| `icon: { source: 'art/logo.png', background: '#0b1020' }` | With a background color |
+
+The image is PNG, JPEG or WebP, 1024 px or more (SVG when building on macOS). No Xcode or ImageMagick is needed: any OS builds any target's icons.
+
+## What gets generated
+
+| Target | Files |
+| --- | --- |
+| macOS | `AppIcon.icns` (16 to 1024 px), plus `Assets.car` compiled from an Icon Composer bundle: macOS 26's own format, so the icon isn't shrunk into a gray squircle. Compiling it needs Xcode 26's `actool`; without it the `.icns` alone ships. |
+| Windows | `.ico` (16 to 256 px) in the executable and the installer, and a PNG for toasts |
+| Linux | `<identifier>.png` and `share/icons/hicolor/*` (16 to 512 px) |
+| iOS | An opaque 1024 px PNG (the App Store rejects alpha) |
+| Android | `mipmap-*` square and round icons, and an adaptive icon (8.0+): the artwork over a background color |
+
+## Square artwork or shaped icon
+
+The generator looks at the corners of the image:
+
+- **Opaque corners: square artwork.** It is shaped per platform: placed on Apple's 824 px squircle grid for the macOS `.icns`, full bleed for iOS and macOS 26 (the system rounds it), inside the adaptive safe zone on Android.
+- **Transparent corners: already shaped.** It is used as drawn on desktop, and placed on `background` where a platform needs an opaque or layered icon (iOS, Android adaptive, macOS 26).
+
+`background` defaults to the artwork's corner color, else white.
+
+:::tip
+Ship a full-bleed square artwork without rounded corners or margins and let each platform shape it. Supply a shaped, transparent-corner icon only if you want the exact same silhouette everywhere.
+:::
+
+## Preview and export
+
+```sh
+bunx svelte-desktop icon                          # from desktop.config.ts or icon.png
+bunx svelte-desktop icon art/logo.png --background '#0b1020'
+bunx svelte-desktop icon art/logo.png --out icons/
+```
+
+The command generates the icons now, into `.desktop/icons` (what the build uses) or `--out`, and prints each target's files. Passing an image that isn't the configured one only previews it: set `icon` in the config to ship it.
+
+## Caching
+
+The build writes the icons to `.desktop/icons` and redoes them only when the image or the options change.
+
+## In development
+
+Under `vite dev` the app runs as `bun`, but the Dock shows the app's icon instead of Bun's. Edit the image and the icon is regenerated and updated in the Dock live, without restarting.

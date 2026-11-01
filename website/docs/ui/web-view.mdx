@@ -1,0 +1,93 @@
+---
+title: Web view
+description: File drop with real paths, downloads, print and PDF, find, zoom, context menu control, JavaScript dialogs, page capture and embedded views.
+---
+
+`host.webview` controls the page's own web view (windows and popovers). Every op targets, in order: `popoverId`, `windowId` (`0` is the main window), the page that made the call, then the main window. Events carry `windowId` or `popoverId`.
+
+## Built-in behavior
+
+| Web feature | In the app |
+| --- | --- |
+| `alert`, `confirm`, `prompt` | Native sheets; the run loop is never blocked. Each emits `jsDialog`. |
+| `<input type="file">` | A native open panel, shown as a sheet. |
+| `getUserMedia` | Granted to the app origin only, after the OS prompt. Needs `camera` / `microphone` in [`permissions`](/features/permissions). |
+| `window.open`, external links | Open in the default browser. |
+| `window.close()` | Closes the window (respecting the close veto); in a popover it emits `closeRequested`. |
+| `window.print()` | The native print panel. |
+
+## File drop
+
+The page keeps its normal DOM drag events with `File` objects; the shell adds the real paths, which the DOM can't expose:
+
+```ts
+host.webview.onFileDrop(({ paths, x, y }) => importFiles(paths)); // x, y in CSS px
+host.webview.onFileDragEnter(({ paths }) => (dragging = true));
+host.webview.onFileDragLeave(() => (dragging = false));
+```
+
+Call `preventDefault()` on the DOM `drop` event as usual. `setFileDrop({ enabled: false })` turns it off.
+
+## Downloads
+
+`<a download>`, attachments and responses the web view can't display are saved to the download directory (`~/Downloads` by default) under a unique name.
+
+```ts
+const { id } = await host.webview.download('/export.csv'); // uses the page's cookies
+host.webview.onDownloadProgress(({ id, fraction }) => (progress = fraction));
+host.webview.onDownloadFinished(({ path }) => host.shell.showItemInFolder(path));
+```
+
+Also: `setDownloadDirectory(path | null)`, `getDownloadDirectory`, `cancelDownload(id)`, `listDownloads`, and the `onDownloadStarted` and `onDownloadFailed` events.
+
+## Print and PDF
+
+```ts
+await host.webview.print();                                // the print panel; printFinished follows
+await host.webview.print({ silent: true });                // default printer, no panel
+await host.webview.printToPDF('/Users/me/notes.pdf');      // paginated PDF, no panel
+```
+
+## Find and zoom
+
+```ts
+const { matchFound } = await host.webview.find({ text: 'todo', caseSensitive: false });
+await host.webview.clearFind();
+await host.webview.setZoom(1.25); // 0.25 to 5
+```
+
+## Context menu
+
+```ts
+await host.webview.setContextMenu({ mode: 'custom', items: [{ id: 'paste-plain', label: 'Paste as Plain Text' }] });
+```
+
+| `mode` | |
+| --- | --- |
+| `none` | The production default: no menu, except Cut, Copy, Paste and spelling suggestions on editable text or a selection (`editMenu: false` removes those too). |
+| `default` | WebKit's own menu (the default in debug views). |
+| `custom` | Your items (they fire `menuAction`), with the edit items above them when editing. |
+
+`all: true` applies the setting to every web view, including later ones. Whatever the mode, `onContextMenu` reports `{ x, y, linkURL, srcURL, selectionText, editable }`, and a page can `preventDefault()` its own `contextmenu` event and call `host.menu.popup`.
+
+## Scripting and capture
+
+```ts
+const title = await host.webview.executeJavaScript<string>('document.title'); // promises awaited, JSON result
+const { data } = await host.webview.capturePage({ format: 'jpeg', quality: 0.8 }); // base64 image
+```
+
+Also: `reload({ ignoreCache })`, `stop`, `goBack`, `goForward`, `getInfo`, `setUserAgent` (`''` restores the default), `getUserAgent`, `setInspectable` (macOS 13.3+), and `respondToDialog` / `getDialog` to answer an open JavaScript dialog from automation.
+
+## Embedded views
+
+`host.view` embeds extra web views in a window (like Electron's `BrowserView`): an app route or any URL, at CSS-pixel bounds from the window content's top-left corner. External content can't call native APIs: the bridge only answers the app origin.
+
+```ts
+await host.view.create({ id: 'preview', url: 'https://svelte.dev', bounds: { x: 240, y: 0, width: 600, height: 400 }, autoresize: 'both' });
+await host.view.navigate('preview', { route: '/help' });
+host.view.onTitle(({ id, title }) => {});
+await host.view.destroy('preview');
+```
+
+Also: `setBounds`, `getBounds`, `show`, `hide`, `reload`, `getInfo`, `executeJavaScript`, `list`, and the `onLoaded`, `onNavigated` and `onFailed` events.

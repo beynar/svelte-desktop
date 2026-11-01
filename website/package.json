@@ -1,0 +1,13 @@
+{
+  "name": "svelte-desktop-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "blume dev",
+    "build": "blume build",
+    "deploy": "blume build && bun scripts/cloudflare-output.ts && cf deploy --prebuilt"
+  },
+  "dependencies": {
+    "blume": "^2.2.6"
+  }
+}

@@ -1,0 +1,59 @@
+---
+title: Permissions
+description: Declare the OS permissions the app uses with the reason shown to the user, then check, request and guide them at run time.
+---
+
+Declare what the app uses, with the reason the user will read:
+
+```ts desktop.config.ts
+permissions: {
+  camera: 'Scan documents',
+  screenRecording: 'Share your screen in calls',
+  accessibility: 'Move windows with keyboard shortcuts',
+},
+```
+
+The build turns it into Info.plist usage strings and hardened-runtime entitlements on macOS, the Android manifest, and the iOS keys.
+
+```svelte
+<p>Camera: {host.permissions.camera}</p>   <!-- 'granted' | 'denied' | 'notDetermined' | 'unknown', reactive -->
+<button onclick={() => host.permissions.request('camera')}>Allow camera</button>
+<button onclick={() => host.permissions.request('screenRecording')}>Allow screen recording</button>
+```
+
+## Names
+
+`camera`, `microphone`, `location`, `contacts`, `calendars`, `reminders`, `photos`, `bluetooth`, `speech`, `appleEvents`, `notifications`, `screenRecording`, `accessibility`, `inputMonitoring`, `fullDiskAccess`, `desktopFolder`, `documentsFolder`, `downloadsFolder`.
+
+Raw `NS…UsageDescription` keys in `permissions` pass through to Info.plist as they are.
+
+:::warning
+Some permissions must be declared before they're requested: `camera`, `microphone`, `location`, `contacts`, `calendars`, `reminders`, `photos`, `bluetooth`, `speech`, `appleEvents` and the three folder permissions. The OS kills an app that asks without a reason, so requesting an undeclared one rejects with `undeclared` and the message says what to add.
+:::
+
+## Requesting
+
+`request(name)` shows the system prompt when there is one and resolves with the resulting status.
+
+Screen Recording, Accessibility, Input Monitoring and Full Disk Access have no prompt on macOS: only System Settings can grant them. For those, `request()` runs a **guided flow** (also `host.permissions.guide(name)`): the right Settings pane opens and a small panel floats next to it with the app's icon to drag into the list, the reason from the config and a live status. It closes by itself once granted, with a Relaunch button where macOS applies the grant at the next launch. Pass `{ guide: false }` to skip it.
+
+## API
+
+| | |
+| --- | --- |
+| `host.permissions.<name>` | Reactive status (`unknown` until read) |
+| `status(name)` | Read the status now |
+| `request(name, { guide })` | Prompt, or the guided flow for Settings-only permissions |
+| `guide(name)` | The guided flow; resolves `{ status, canceled }` |
+| `cancelGuide()` | Close an open guide panel |
+| `openSettings(name)` | Open the permission's settings page |
+| `declared()` | The `permissions` map from the config |
+| `settingsOnly(name)` | Whether only System Settings can grant it |
+| `all()` | Every known status, reactive |
+| `on('change', (name, status) => ...)` | Status changes |
+
+Statuses refresh when the app comes back to the front, since the user may have toggled them in System Settings.
+
+## Other platforms
+
+On Windows, `request` opens the privacy settings page. On Android and iOS it shows the system prompt and the app's settings page. Linux has no per-app permission gates.

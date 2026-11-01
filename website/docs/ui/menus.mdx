@@ -1,0 +1,151 @@
+---
+title: Menus
+description: The app menu, extra menu bar entries, context menus and the Dock menu.
+---
+
+## The default menu
+
+Without any code, the app gets a standard macOS menu bar, so the usual shortcuts work in the web view:
+
+| Menu | Items |
+| --- | --- |
+| App name | About, Hide (Cmd+H), Hide Others (Cmd+Alt+H), Show All, Quit (Cmd+Q) |
+| Edit | Undo, Redo, Cut, Copy, Paste, Select All |
+| View | Reload (Cmd+R), Enter Full Screen (Cmd+Ctrl+F) |
+| Window | Minimize (Cmd+M), Zoom, Close (Cmd+W) |
+
+The Window menu is registered as the app's Windows menu, so macOS adds its own items to it (Fill, Center, Move & Resize, the window list) and window tools such as Swish drive them, animated.
+
+## Replacing the app menu
+
+From server code, `desktop.menu.set` takes the whole menu bar; clicks on items with an `id` arrive as `menu` events.
+
+```ts src/hooks.server.ts
+import { onDesktopReady } from '@svelte-desktop/shell/server';
+
+onDesktopReady((desktop) => {
+  desktop.menu.set([
+    {
+      label: desktop.appName,
+      submenu: [
+        { label: `About ${desktop.appName}`, role: 'about' },
+        { type: 'separator' },
+        { label: `Quit ${desktop.appName}`, role: 'quit', accelerator: 'Cmd+Q' },
+      ],
+    },
+    {
+      label: 'File',
+      submenu: [
+        { label: 'New Note', id: 'new-note', accelerator: 'Cmd+N' },
+        { label: 'Export…', id: 'export', accelerator: 'Cmd+Shift+E' },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { label: 'Undo', role: 'undo', accelerator: 'Cmd+Z' },
+        { label: 'Redo', role: 'redo', accelerator: 'Cmd+Shift+Z' },
+        { type: 'separator' },
+        { label: 'Copy', role: 'copy', accelerator: 'Cmd+C' },
+        { label: 'Paste', role: 'paste', accelerator: 'Cmd+V' },
+      ],
+    },
+  ]);
+  // Menu clicks arrive in the server; forward the ones the page handles.
+  desktop.on('menu', (e) => desktop.publish('menu', e.id));
+});
+```
+
+```ts src/routes/+page.svelte
+import { onDesktopEvent } from '@svelte-desktop/shell/client';
+onDesktopEvent('menu', (id) => { if (id === 'new-note') input?.focus(); });
+```
+
+An item is `{ label, id?, role?, accelerator?, enabled?, submenu? }` or `{ type: 'separator' }`. Roles: `undo`, `redo`, `cut`, `copy`, `paste`, `selectAll`, `minimize`, `zoom`, `close`, `hide`, `hideOthers`, `unhide`, `about`, `toggleFullScreen`, `front`, `quit`, `reload`.
+
+:::warning
+Replacing the menu drops the default Edit menu: without Cut, Copy, Paste and Select All items, those shortcuts stop working in text fields. Keep an Edit menu.
+:::
+
+:::note
+A top-level menu labelled `Window` becomes the macOS Windows menu, so it keeps the system's tiling items (Fill, Center, Move & Resize) that window tools such as Swish drive.
+:::
+
+## From any page: host.menu
+
+`host.menu.setAppMenu` builds the menu bar from named menus, from page or server code. Item clicks fire `menuAction`.
+
+```ts
+await host.menu.setAppMenu([
+  { name: 'Notes', items: [{ role: 'about' }, { type: 'separator' }, { role: 'quit' }] },
+  { name: 'File', items: [{ id: 'new', label: 'New Note' }, { id: 'pin', label: 'Pin', checked: true }] },
+  { name: 'Edit', items: [{ role: 'editMenu' }] },
+  { name: 'Window', items: [{ role: 'windowMenu' }] },
+]);
+host.menu.onAction(({ id }) => { if (id === 'new') createNote(); });
+```
+
+| Item field | |
+| --- | --- |
+| `id` | Reported in `menuAction`. Items without a role or id report their label. |
+| `label` | Text. Roles have a default label. |
+| `type` | `action` (default), `separator` or `submenu` |
+| `submenu` | Nested items |
+| `checked`, `disabled` | State |
+| `role` | A standard item (see below) |
+| `icon` | `{ native: 'add' }` (an AppKit image name) or `{ path: './icon.png' }` |
+
+Roles include `about`, `undo`, `redo`, `cut`, `copy`, `paste`, `pasteAndMatchStyle`, `selectAll`, `delete`, `minimize`, `zoom`, `close`, `quit`, `hide`, `hideOthers`, `front`, `reload`, `toggleDevTools`, `resetZoom`, `zoomIn`, `zoomOut`, `toggleFullscreen`, `help`. The preset roles `appMenu`, `fileMenu`, `editMenu`, `viewMenu` and `windowMenu` expand to a full standard submenu. A menu named `Window` becomes the macOS Windows menu (with the system's tiling items) and one named `Help` the Help menu. Unknown roles reject with `invalid_args`.
+
+:::note
+Items take an `accelerator` (`'CmdOrCtrl+Shift+K'`; named keys `plus`, `space`, `tab`, `enter`, `backspace`, `delete`, `escape`, arrows and `F1`…).
+:::
+
+### Updating items
+
+```ts
+await host.menu.update({ id: 'pin', checked: false, text: 'Unpin', enabled: true });
+const item = await host.menu.get('pin');   // current state, or null
+const all = await host.menu.items();       // snapshot of the whole menu
+```
+
+`host.menu.lastAction` holds the last activated id, reactively.
+
+### Extra menu bar entries
+
+`host.menu.insert` adds one top-level entry without replacing the menu (before Window by default); `host.menu.remove(name)` drops it. The `MenuBar` component does the same with a component lifecycle: it renders nothing, and unmounting removes the entry.
+
+```svelte
+<script>
+  import MenuBar from '@svelte-desktop/shell/platform/MenuBar.svelte';
+</script>
+
+<MenuBar label="Tools" items={[
+  { label: 'Refresh', icon: 'refresh', onClick: reload },
+  { label: 'Mode', submenu: [{ label: 'Dark', onClick: () => host.theme.set('dark') }] },
+  'separator',
+  { label: 'Quit', role: 'quit' },
+]} />
+```
+
+Without `items`, `onClick` makes a plain clickable bar entry. `index` sets the position.
+
+## Context menus
+
+Pop a native menu at the cursor or at a screen position (top-left origin). It always resolves `{ dismissed: true }`; the selection arrives as `menuAction`.
+
+```ts
+document.addEventListener('contextmenu', (e) => {
+  e.preventDefault(); // suppresses the web view's own menu
+  host.menu.popup({ items: [{ id: 'rename', label: 'Rename' }, { id: 'delete', label: 'Delete' }] });
+});
+```
+
+The web view's built-in menu is controlled separately with `host.webview.setContextMenu`. The production default is `none`: no menu, except Cut, Copy, Paste and spelling suggestions on editable text. `default` keeps WebKit's menu; `custom` shows your items. See [Web view](/ui/web-view#context-menu).
+
+## Dock menu
+
+```ts
+await host.menu.setDockMenu([{ id: 'new-window', label: 'New Window' }]);
+await host.menu.addRecentDocument('/Users/me/notes.md'); // the system's recent documents list
+```

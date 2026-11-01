@@ -1,0 +1,67 @@
+---
+title: Mobile
+description: The same app, API and desktop.config.ts on Android (the full stack in an APK) and iOS (a native thin client).
+---
+
+The page-facing API (`host`, `@svelte-desktop/shell/platform`, `/stores`, `nativeModule()`), `desktop.config.ts` and the bridge's error codes carry over unchanged. Desktop-shaped services (menus, tray, popovers, Dock, global shortcuts, embedded views, capture, screens, power, multiple windows) answer `unsupported` on mobile.
+
+| | Android 8+ | iOS 17+ |
+| --- | --- | --- |
+| Server code | Runs on the phone: the SvelteKit server compiled for Android | Runs where you deploy it; the app loads `ios.serverUrl` |
+| `bun:sqlite`, addons, sidecars, jobs | Yes | No (server code isn't on the device) |
+| Native plugins | C/C++ through the NDK (`native/android/`) | Swift (`native/ios/`, plus `native/*.swift` that don't import AppKit) |
+| Output | Signed APK, optional AAB | Simulator `.app`, device `.app` |
+| Verified | Pixel 9 emulator, 14/14 e2e | iPhone 17 Pro simulator, 11/11 e2e (offline 4/4) |
+
+## Android
+
+```sh
+SVELTE_DESKTOP_TARGET=android bunx --bun vite build   # or build: { target: 'android' }
+# .desktop/dist/<App>-<version>.apk
+```
+
+The unmodified SvelteKit server is compiled with `bun build --compile` for Android and spawned by a small Java host, behind the same loopback gate as desktop, and shown in an `android.webkit.WebView`. No Gradle: the APK is assembled with the SDK build tools (aapt2, d8, zipalign, apksigner); the NDK is needed for addons and C plugins.
+
+- **Services:** app, clipboard, theme, shell (`openExternal`, the system share sheet), system and permissions, dialogs (Storage Access Framework; picked documents are copied so server code reads a path), notifications, secure storage (Android Keystore), haptics, web view, deep links, broadcast.
+- **Signing:** `sign.android` (`keystore`, `alias`, `password`) or `$ANDROID_KEYSTORE`; without one, the debug key (which also makes the build debuggable, as `launch({ android: true })` needs).
+- **Play:** `build: { aab: true }` (or `SVELTE_DESKTOP_AAB=1`) also writes an Android App Bundle.
+- **ABIs:** `build: { androidArch: ['arm64', 'x64'] }` builds a universal APK and an AAB that Play splits per device.
+- **Push:** FCM with `push.fcm.googleServices`, or UnifiedPush when a distributor app is installed.
+- **Size:** about 47 MB download and 110 MB installed per ABI for the notes example.
+
+## iOS
+
+iOS can't run Bun, so the SvelteKit server runs where you deploy it (any adapter, or `vite dev` on your Mac) and the iOS app is a native WKWebView on that origin, with the same bridge and services.
+
+```ts desktop.config.ts
+ios: { serverUrl: 'https://notes.example.com' }, // http only for localhost dev servers
+```
+
+```sh
+SVELTE_DESKTOP_TARGET=ios bunx --bun vite build   # .desktop/dist/ios-simulator/<App>.app
+```
+
+- **Services:** app, clipboard, theme, shell (`openExternal`, share), `system.info`, dialogs (message box, confirm), notifications, secure storage (Keychain, device-owner authentication), haptics, web view, deep links, broadcast.
+- **Swift plugins:** the macOS plugin API (`Desktop.command`, `Desktop.emit`, `DesktopError`) with `Desktop.window()` and `viewController()` for UIKit. Files importing AppKit are skipped with a notice.
+- **Offline mode:** `ios: { offline: true }` (or `SVELTE_DESKTOP_IOS_OFFLINE=1`) bundles the client build, prerendered pages and an SPA fallback, served from `app://localhost`. For apps with no server `load` or remote functions.
+- **Device builds:** `sign.ios: { provisioningProfile, identity }` builds for devices with the profile embedded. Without a profile, `ios: { device: true }` writes an unsigned device `.app` to sign later.
+- **Push:** APNs only (`push.apns`); Apple allows no other background channel.
+
+<TypeTable
+  type={{
+    serverUrl: { type: "string", default: "$SVELTE_DESKTOP_IOS_SERVER_URL", description: "Where the SvelteKit server is deployed (https; http only for a localhost dev server)." },
+    offline: { type: "boolean", description: "Bundle the client build and prerendered pages; ignores serverUrl." },
+    deploymentTarget: { type: "string", default: '"17.0"' },
+    device: { type: "boolean", default: "$SVELTE_DESKTOP_IOS_DEVICE", description: "Build for devices even without sign.ios (an unsigned .app)." },
+    debug: { type: "boolean", description: "Web Inspector and the e2e test channel in device builds (always on in simulator builds)." },
+    plist: { type: "Record<string, unknown>", description: "Extra Info.plist keys." },
+  }}
+/>
+
+## Testing
+
+`launch({ android: true })` installs the APK on a device or emulator over adb; `launch({ ios: { serverUrl } })` installs the simulator build on a booted simulator. See [Testing](/features/testing).
+
+## Not yet
+
+In-app updates of side-loaded APKs (Play handles updates), `--trim` for the Android target, and a run on a physical iPhone (needs a provisioning profile).

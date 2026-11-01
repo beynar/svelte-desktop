@@ -1,0 +1,72 @@
+---
+title: CLI
+description: The svelte-desktop command and the Vite commands that drive development and builds.
+---
+
+```sh
+bunx svelte-desktop <create|init|doctor|icon|preflight|keygen>
+```
+
+## create
+
+```sh
+bunx svelte-desktop create <directory>
+```
+
+Scaffolds a new desktop app in an empty directory: `package.json` (with `dev`, `build` and `test` scripts), `vite.config.ts`, `desktop.config.ts`, `tsconfig.json`, a SvelteKit page using a remote function, a Swift plugin sample (`native/Hello.swift`) and a test (`tests/app.test.ts`). Then `cd <directory> && bun install && bun run dev`.
+
+## init
+
+```sh
+bunx svelte-desktop init
+```
+
+Adds desktop support to the SvelteKit project in the current directory:
+
+- writes `desktop.config.ts` (left alone if it exists), with `appName` and `identifier` derived from `package.json`;
+- rewrites `sveltekit(` to `desktop(` in `vite.config.ts` and removes the adapter, which the desktop plugin sets;
+- adds the scripts `dev` (`bunx --bun vite dev`), `build` (`bunx --bun vite build`) and `test:desktop`;
+- adds `.desktop` to `.gitignore`.
+
+Then `bun add -d @sveltejs/adapter-bun @svelte-desktop/shell && bun run dev`.
+
+## doctor
+
+```sh
+bunx svelte-desktop doctor
+```
+
+Checks Bun (1.4 or newer, and whether it's a canary for `aot`/`trim`), macOS and the Xcode tools (`clang`, `swiftc`, `codesign`, `hdiutil`, `lipo`), `@sveltejs/adapter-bun`, the config and icon, the signing identity, the notary profile (by querying `notarytool`), and the update signing key when `update` is set.
+
+## icon
+
+```sh
+bunx svelte-desktop icon [image] [--background '#hex'] [--out dir]
+```
+
+Generates every target's icons now, from `image` or from the configured icon, into `.desktop/icons` (what the build uses) or `--out`. See [App icon](/shipping/app-icon).
+
+## preflight
+
+```sh
+bunx svelte-desktop preflight <App.app>
+```
+
+Checks a bundle against Apple's notarization requirements (hardened runtime, timestamps, entitlements, nested signing, SDK). Exits non-zero on errors. The build runs it before submitting.
+
+## keygen
+
+```sh
+bunx svelte-desktop keygen [--out updater.key] [--force]
+```
+
+Creates the ed25519 key pair for [signed updates](/shipping/self-update): the private key (mode 0600) and `<out>.pub` with the base64 public key for `update.publicKey`.
+
+## Vite
+
+| Command | |
+| --- | --- |
+| `bunx --bun vite dev` | The native window on the Vite server. Closing it stops Vite. |
+| `bunx --bun vite build` | Build and package for `build.target` (default: the host) into `.desktop/dist` |
+| `SVELTE_DESKTOP_TARGET=<target> bunx --bun vite build` | Another target without editing the config |
+| `bun test --timeout 30000 tests/` | [End-to-end tests](/features/testing) against the built app |

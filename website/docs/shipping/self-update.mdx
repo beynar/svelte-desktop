@@ -1,0 +1,73 @@
+---
+title: Self-update
+description: Signed updates from any static host, with delta patches, verification of every file, swap after quit and automatic rollback.
+---
+
+The updater fetches a signed `update.json` from any static host (S3, R2, GitHub Releases, a CDN), downloads a sha256-pinned archive or a delta patch, verifies every file, swaps the app after it quits, relaunches, and rolls back if the new version doesn't start.
+
+<Steps>
+  <Step title="Create a key pair">
+    ```sh
+    bunx svelte-desktop keygen --out updater.key   # writes updater.key (0600) and updater.key.pub
+    ```
+    Keep the private key out of git, in your CI secret store.
+  </Step>
+  <Step title="Configure the feed">
+    ```ts desktop.config.ts
+    update: {
+      manifestUrl: 'https://updates.example.com/notes/{channel}/update.json',
+      publicKey: 'q1r…base64…=',           // contents of updater.key.pub
+      channel: 'stable',
+      privateKey: './updater.key',          // or $SVELTE_DESKTOP_UPDATE_KEY; used by vite build only
+      baseUrl: 'https://updates.example.com/notes/stable/',
+    },
+    ```
+  </Step>
+  <Step title="Build and upload">
+    `vite build` writes `release/<version>/` with the archive (and a delta patch from the previous release found in `release/`) and a signed `release/update.json`. Upload the archives first and `update.json` last, so clients never see a manifest pointing at missing files.
+  </Step>
+  <Step title="Check from the app">
+    ```svelte
+    <button onclick={() => host.update.check()} disabled={host.update.checking}>Check for updates</button>
+    {#if host.update.available}
+      <p>Version {host.update.available.version} is available.</p>
+      <button onclick={() => host.update.available.downloadAndInstall()}>Install and relaunch</button>
+    {:else if host.update.upToDate}
+      <p>Up to date.</p>
+    {/if}
+    ```
+  </Step>
+</Steps>
+
+`check()` resolves the available update or `null`. An update has `version`, `currentVersion`, `notes`, `date`, `mandatory` (the installed version is older than the manifest's `minimumVersion`) and `downloadAndInstall()`. Checking is opt-in: nothing hits the network until you call it.
+
+<TypeTable
+  type={{
+    manifestUrl: { type: "string", required: true, description: "update.json URL; may contain {channel}." },
+    publicKey: { type: "string | string[]", required: true, description: "ed25519 public key(s), base64. An array allows key rotation." },
+    channel: { type: "string", default: '"stable"', description: "A signed manifest for another channel is refused." },
+    privateKey: { type: "string", default: "$SVELTE_DESKTOP_UPDATE_KEY", description: "Private key file used by vite build to sign release/update.json. Without it the manifest is written unsigned." },
+    baseUrl: { type: "string", description: "Public base URL where release/ is uploaded (artifact URLs in update.json)." },
+  }}
+/>
+
+## Security
+
+- **Signed manifest.** The client verifies the ed25519 signature before reading any field, then checks the app name, the channel, and that the version is strictly newer (an old signed manifest can't downgrade anyone).
+- **Pinned artifacts.** Every archive's sha256 and size are in the signed manifest and checked while streaming. A compromised CDN can cause a failed update, not a malicious one.
+- **Key rotation.** Ship a release embedding `[oldKey, newKey]`, then sign with the new key, then drop the old one.
+- Code signing and notarization are separate and still needed for Gatekeeper and SmartScreen.
+
+## Delta updates
+
+With a previous release in `release/`, `vite build` also writes a `.sdpatch`: per-file operations (unchanged, rsync-style delta, new) with the size and sha256 of every resulting file. A client on that version downloads the patch, rebuilds the new app from its installed copy, verifies every file and applies it like a full update; any mismatch falls back to the full archive. A one-line change in the example app is a 14 KB patch against a 39 MB archive.
+
+## Install and rollback
+
+The install is swapped by a helper after the app exits; the previous copy is kept as `.old`. The new version confirms itself once it starts cleanly; a version that fails to confirm within two starts is rolled back and not offered again.
+
+The install directory must be writable by the user: `/Applications` for an admin on macOS, a per-user location on Windows (the NSIS installer is per-user) and a user-owned directory on Linux. A translocated (quarantined) macOS app is refused.
+
+:::note
+For manual control (custom download UI, publishing from CI), the lower-level `createUpdater()` from `@svelte-desktop/shell/updater` and the `updater-cli.ts` script in the shell package (`keygen`, `sign`, `verify`, `pack`, `make-manifest`) are documented in the package's `src/updater/README.md`.
+:::

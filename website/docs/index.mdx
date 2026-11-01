@@ -1,0 +1,94 @@
+---
+title: svelte-desktop
+description: "Desktop and mobile apps from an unmodified SvelteKit app: one Vite plugin, one config file, Bun, the system web view, one signed binary."
+sidebar:
+  label: Introduction
+  icon: house
+---
+
+`@svelte-desktop/shell` turns a SvelteKit app into a native app without changing the app. SSR, remote functions, form actions, endpoints and `bun:sqlite` run in-process on Bun. The UI is the system web view: WKWebView on macOS, WebKitGTK on Linux, WebView2 on Windows. The build output is a signed, notarizable bundle containing a single compiled executable.
+
+```ts vite.config.ts
+import { desktop } from '@svelte-desktop/shell/vite';
+import { defineConfig } from 'vite';
+
+// SvelteKit's own plugin, wired with the desktop adapter and dev mode.
+export default defineConfig({ plugins: [desktop({ experimental: { remoteFunctions: true } })] });
+```
+
+```ts desktop.config.ts
+import { defineConfig } from '@svelte-desktop/shell/config';
+
+export default defineConfig({
+  appName: 'Notes',
+  identifier: 'com.example.notes',
+  window: { width: 960, height: 680, autosaveName: 'main' },
+});
+```
+
+```sh
+bunx --bun vite dev     # the real native window on the Vite server: HMR, Web Inspector, native APIs live
+bunx --bun vite build   # .desktop/dist/<App>.app + .zip + .dmg (+ release/ for the auto-updater)
+bun test                # drive the real window from tests
+```
+
+## Why
+
+- **Your app, unchanged.** No SPA rewrite and no IPC layer to design: load functions, remote functions and `+server.ts` endpoints keep working, served on a random loopback port behind a session-cookie gate.
+- **Bun on the server side.** Server code has Bun's APIs, `bun:sqlite`, Node-API addons, sidecars and background jobs in their own processes.
+- **The system web view.** No bundled Chromium. Menus, windows, dialogs and popovers are the OS's own.
+- **One global for native features.** `host.clipboard.writeText()`, `host.notifications.show()`, `host.window.setTitle()`: the same object in page and server code, reactive in components.
+- **Self-hosted push.** Remote notifications on desktop without an Apple or Google account, through a Web Push compatible server you run.
+
+## Compared
+
+Hello-world app on macOS 26.5 (M4 Pro), all processes counted. Numbers from the repository's benchmark.
+
+| | Bundle | Zip | Ready | Memory |
+| --- | --- | --- | --- | --- |
+| Electron 45 | 258 MB | 115 MB | 303 ms | 88–149 MB |
+| Tauri 2.12 | 4 MB | 1.8 MB | 313 ms | 75–170 MB |
+| Electrobun 2.0 | 31 MB (187 MB installed) | 31 MB | 396 ms | 86 MB |
+| svelte-desktop, Bun stable | 86 MB | 39 MB | 378 ms | 87 MB |
+| svelte-desktop, `--aot --trim` (Bun canary) | 45 MB | 19 MB | 334 ms | 85 MB |
+
+- **Electron** ships Chromium and Node; you write the main process and IPC yourself. svelte-desktop is 3 to 6 times smaller and runs your SvelteKit server unchanged.
+- **Tauri** is about 10 times smaller (no JavaScript runtime) but runs a static SPA with native code in Rust. svelte-desktop keeps SSR and server code in TypeScript on Bun, with Swift, C or Node-API for native code.
+- **Electrobun** also uses Bun and the system web view. svelte-desktop adds SvelteKit SSR end to end, signed updates (Electrobun signs neither manifest nor archives) and Android and iOS targets.
+
+## What you get
+
+<CardGroup cols={2}>
+  <Card title="Windows and title bars" href="/ui/windows" icon="app-window">
+    Multiple windows, hidden title bars with drag regions, saved frames, full screen.
+  </Card>
+  <Card title="Menus" href="/ui/menus" icon="menu">
+    App menu, Dock menu, context menus, live item updates.
+  </Card>
+  <Card title="Menu bar and popovers" href="/ui/menu-bar-and-popovers" icon="panel-top">
+    A route of your app in a native popover or a Spotlight-style panel.
+  </Card>
+  <Card title="Notifications and push" href="/features/notifications" icon="bell">
+    Actions, replies, scheduling, deep links; APNs, FCM and Web Push.
+  </Card>
+  <Card title="Native code" href="/features/native-code" icon="cpu">
+    Swift, Objective-C or C plugins, Node-API addons, sidecars.
+  </Card>
+  <Card title="Distribution" href="/shipping/distribution" icon="package">
+    Signing, notarization, DMG, universal builds, installers, signed delta updates.
+  </Card>
+</CardGroup>
+
+## Platforms
+
+| Platform | Web view | Packaging | Status |
+| --- | --- | --- | --- |
+| macOS 12+ | WKWebView | `.app`, zip, DMG, notarization, universal | Primary target, full test suites |
+| Linux | WebKitGTK 4.1 (GTK 3) | App directory, tar.gz, AppImage | Verified in Docker under Xvfb |
+| Windows | WebView2 | Folder, zip, NSIS installer, Authenticode | Cross-compiled and smoke-tested under Wine; not yet run on real Windows |
+| Android 8+ | `android.webkit.WebView` | Signed APK, AAB | Verified on the emulator |
+| iOS 17+ | WKWebView (thin client) | Simulator and device `.app` | Verified on the simulator |
+
+:::note
+iOS can't run Bun: the iOS app is a native WKWebView on your deployed SvelteKit server, or an offline bundle of prerendered pages. See [Mobile](/shipping/mobile).
+:::

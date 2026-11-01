@@ -1,0 +1,164 @@
+---
+title: Dialogs, clipboard and services
+description: Dialogs, clipboard, shell, theme, system, power, screens, secure storage, global shortcuts, deep links, the app and Dock, and a key-value store.
+---
+
+All of these are on `host`, from page and server code. Ops a platform can't provide reject with `unsupported`; `host.capabilities.describe()` lists what the running build supports.
+
+## Dialogs
+
+```ts
+const { canceled, paths } = await host.dialog.showOpenDialog({
+  multiple: true,
+  filters: [{ name: 'Text', extensions: ['txt', 'md'] }],
+});
+const { path } = await host.dialog.showSaveDialog({ suggestedName: 'notes.md' });
+const { response } = await host.dialog.showMessageBox({
+  type: 'warning', message: 'Delete all notes?', detail: 'This cannot be undone.', buttons: ['Delete', 'Cancel'], cancelId: 1,
+});
+```
+
+| Op | Options | Resolves |
+| --- | --- | --- |
+| `showOpenDialog` | `files`, `directories`, `multiple`, `prompt`, `filters` | `{ canceled, paths }` |
+| `showSaveDialog` | `defaultPath`, `suggestedName`, `filters` | `{ canceled, path }` |
+| `showMessageBox` | `type` (`info`, `warning`, `critical`), `title`, `message`, `detail`, `buttons`, `cancelId`; or a string | `{ response, canceled }` |
+
+Dialogs are sheets on the key window and never block the caller. Server code also has a shorter form on the `desktop` object:
+
+```ts src/lib/notes.remote.ts
+import { command } from '$app/server';
+import { desktop } from '@svelte-desktop/shell/server';
+
+export const importNotes = command(async () => {
+  const paths = await desktop.dialog.open({ title: 'Import notes', multiple: true, extensions: ['txt', 'md'] });
+  if (!paths) return { imported: 0 };
+  // read the files with Bun.file(path)...
+});
+```
+
+`desktop.dialog.open({ title, multiple, directories, files, extensions, defaultPath })` resolves the paths or `null`; `save({ title, defaultName, extensions, defaultPath })` a path or `null`; `message({ message, detail, style, buttons })` the button index.
+
+## Clipboard
+
+```ts
+await host.clipboard.writeText('Hello');
+const text = await host.clipboard.readText();
+```
+
+`readText`, `writeText`, `readHtml`, `writeHtml`, `readRtf`, `writeRtf`, `readImage` (base64 PNG), `writeImage(pngBase64)`, `readPaths` (copied files), `has(format)`, `availableFormats`, `clear`. The store keeps `text`, `html`, `formats` and `hasText` current.
+
+## Shell
+
+```ts
+await host.shell.openExternal('https://svelte.dev');   // http(s), mailto, tel, sms, facetime, maps
+await host.shell.openPath('/Users/me/report.pdf');      // default app
+await host.shell.showItemInFolder('/Users/me/report.pdf');
+await host.shell.trashItem('/Users/me/old.txt');
+await host.shell.beep();
+```
+
+Links to other origins clicked in the page open in the default browser.
+
+## Theme
+
+```svelte
+<div class:dark={host.theme.dark}>...</div>
+<button onclick={() => host.theme.set('dark')}>Dark</button>
+```
+
+`host.theme.dark` and `host.theme.name` (`light`, `dark`, `vibrantLight`, `vibrantDark`) follow the system. `set` takes those names or `system`. `host.theme.onChange(fn)` fires on changes. A single window can override it with `host.window.setTheme('light' | 'dark' | 'system')`.
+
+## System
+
+`host.system` exposes `os`, `arch`, `layout` (keyboard layout), `accentColor` (`{ r, g, b, a }`, 0 to 1) and `accessibility` (`reduceMotion`, `highContrast`, `differentiateWithoutColor`, `reduceTransparency`). Permissions have their own page: [Permissions](/features/permissions).
+
+## Power
+
+```ts
+await using blocker = await host.power.acquireSleepBlocker({ type: 'display', reason: 'Exporting' });
+// the display stays awake until the block ends
+```
+
+`blockSleep({ type: 'system' | 'display' | 'idle', reason })` and `unblockSleep(id)` do the same without `await using`. The store has `battery` (`percent`, `charging`, `external`), `thermal` and `idleSeconds`. Events: `onSystemSleep`, `onSystemWake`, `onScreenLocked`, `onScreenUnlocked`, `onThermalStateChange`.
+
+## Screens
+
+`host.screen.displays` lists displays (`id`, `bounds`, `workArea`, `isPrimary`), with `primary`, `nearestWindow` and `scaleFactor`. `getCursorScreenPoint()` returns the global cursor position (macOS). `onDisplaysChanged(fn)` fires when displays are attached or reconfigured.
+
+## Secure storage
+
+Secrets go to the Keychain on macOS (Android Keystore, iOS Keychain on mobile); there is never a plaintext fallback.
+
+```ts
+await host.secureStorage.setPassword('com.example.notes', 'api-token', token);
+const saved = await host.secureStorage.getPassword('com.example.notes', 'api-token'); // or null
+await host.secureStorage.deletePassword('com.example.notes', 'api-token');
+const { authenticated } = await host.secureStorage.authenticate('Unlock your notes'); // Touch ID or password
+```
+
+## Global shortcuts
+
+OS-wide hotkeys that work while the app is in the background:
+
+```ts
+await host.shortcuts.register({ accelerator: 'CmdOrCtrl+Shift+K', id: 'quick' });
+host.shortcuts.onPressed(({ id }) => { if (id === 'quick') host.window.show(); });
+await host.shortcuts.unregister({ id: 'quick' });
+```
+
+`acquire(options)` returns a handle for `await using`; `unregisterAll`, `isRegistered(id)` and `onReleased` complete the set. `host.shortcuts.registered` is reactive. On Linux, global shortcuts need X11.
+
+## Deep links and documents
+
+Declare URL schemes and document types in `desktop.config.ts`:
+
+```ts desktop.config.ts
+schemes: ['svelte-notes'],
+fileTypes: [{ name: 'Markdown', extensions: ['md'], role: 'Viewer' }],
+```
+
+```ts
+host.deepLink.onOpen(({ urls }) => { /* svelte-notes://... */ });
+host.webview.onOpenFiles(({ paths }) => { /* documents opened with the app */ });
+const { paths } = await host.webview.getOpenedFiles(); // documents from a cold launch, read once
+```
+
+`host.deepLink.urls` and `host.deepLink.last` are reactive. `fileTypes` entries take `name`, `extensions`, `role` (`Editor`, `Viewer`, `Shell`, `None`), `rank` (`Owner`, `Default`, `Alternate`), `utis` and `mimeTypes` (Linux); they become macOS document types, a Linux `.desktop` MimeType entry and Windows installer associations.
+
+## App and Dock
+
+| Op | |
+| --- | --- |
+| `host.app.quit()`, `relaunch()`, `hide()`, `show()` | Lifecycle |
+| `host.app.setDockBadge(text)` | Dock badge text; `null` clears it |
+| `host.app.bounceDock('critical' \| 'informational')` | Bounce the Dock icon |
+| `host.app.setDockProgress({ status, completed, total })` | Progress bar on the Dock icon; `status: 'none'` clears it |
+| `host.app.setLoginItem(enabled)` | Launch at login |
+| `host.app.setActivationPolicy('accessory')` | Hide the Dock icon at run time |
+| `host.app.aboutPanel(options)` | The standard About panel |
+| `host.app.getPath(name)` | `home`, `appData`, `userData`, `logs`, `caches`, `documents`, `downloads`, `desktop`, `temp`, ... |
+
+Events: `onReopen` (Dock click), `onOpenUrls`, `onSecondInstance`, `onActivated`, `onDeactivated`, `onWillQuit`.
+
+Server code has `host.paths` (`data`, `cache`, `home`, `logs`), created at startup, for databases and files.
+
+## Status item from code
+
+The [`StatusItem` component](/ui/menu-bar-and-popovers) covers most needs. `host.tray.set({ title, tooltip, icon, imagePath, badgeColor, menu: { items }, popover })` sets the item directly, `host.tray.remove()` removes it and `host.tray.onClick(fn)` reports clicks with the icon's screen rect.
+
+## Key-value store
+
+`host.store` persists a flat JSON record to `svelte-desktop-store.json` in the app data directory (writes debounced by 250 ms). It reads and writes with Bun's file API, so use it from server code:
+
+```ts
+host.store.set('lastOpened', '/Users/me/notes.md');
+const last = host.store.get<string>('lastOpened');
+await host.store.flush(); // write now
+```
+
+`host.store.data` is reactive; `delete(key)`, `clear()` and `load()` complete it. For anything relational, use `bun:sqlite` in server code with `host.paths.data`.
+
+## Screen capture
+
+`host.capture.getSources({ types: ['display', 'window', 'application'] })` lists capturable sources and `captureSource(id, type)` grabs a PNG still (base64). It needs the Screen Recording [permission](/features/permissions) and macOS 14 for stills.

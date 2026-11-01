@@ -1,0 +1,114 @@
+---
+title: Distribution
+description: Build, sign and package for macOS, Windows and Linux, and where mobile builds fit.
+---
+
+`bunx --bun vite build` compiles the server into one executable and packages it for the target. Output goes to `.desktop/dist` (`build.outDir`). The target is the host OS unless `build.target` or `SVELTE_DESKTOP_TARGET` says otherwise; Linux, Windows and Android can be built from macOS.
+
+```sh
+bunx --bun vite build                               # macOS, the host
+SVELTE_DESKTOP_TARGET=linux bunx --bun vite build   # cross-build
+SVELTE_DESKTOP_TARGET=windows SVELTE_DESKTOP_TARGET_ARCH=arm64 bunx --bun vite build
+```
+
+## macOS
+
+```sh
+CODESIGN_IDENTITY="Developer ID Application: You (TEAMID)" NOTARY_PROFILE=notary bunx --bun vite build
+```
+
+| Output | |
+| --- | --- |
+| `<App>.app` | One executable, `libshell.dylib`, your plugin, addons and sidecars; Info.plist from the config |
+| `<Exe>-<version>-darwin-<arch>.zip` | `build.zip: false` to skip |
+| `<Exe>-<version>-darwin-<arch>.dmg` | With an Applications link; `build.dmg: false` to skip |
+| `release/` | Update archives and the signed manifest, when [`update`](/shipping/self-update) is set |
+
+The pipeline:
+
+1. **Info.plist** from the config: `identifier`, `version`, URL `schemes`, document types (`fileTypes`), usage strings (`permissions`), `LSUIElement` (`trayOnly`), `build.minimumSystemVersion` (default `12.0`) and any extra `plist` keys.
+2. **Signing.** Nested code first, then the bundle, with the hardened runtime and the entitlements Bun's JIT needs, plus device entitlements derived from `permissions`. `sign.entitlements` adds more; `sign.provisioningProfile` embeds a profile (needed for push).
+3. **Notarization.** After a local pre-flight of Apple's requirements, the app and the DMG are submitted with `notarytool` and stapled.
+
+Without an identity, builds are ad-hoc signed: they run on your machine, but Gatekeeper blocks them once downloaded.
+
+<Steps>
+  <Step title="Get a Developer ID certificate">
+    A **Developer ID Application** certificate in your keychain. `bunx svelte-desktop doctor` lists the identities it finds.
+  </Step>
+  <Step title="Store notary credentials">
+    Create a keychain profile with Apple's `xcrun notarytool store-credentials notary`, then pass its name as `NOTARY_PROFILE` (or `sign.notaryProfile`).
+  </Step>
+  <Step title="Build">
+    Set `CODESIGN_IDENTITY` (or `sign.identity`) and build. `bunx svelte-desktop preflight .desktop/dist/<App>.app` runs the same pre-flight on any bundle.
+  </Step>
+</Steps>
+
+**Universal builds.** `build: { universal: true }` builds the x64 slice too (Bun cross-compiles it) and lipos the executable, `libshell`, the plugin and addons into one app.
+
+**Smaller builds.** `build: { aot: true, trim: true }` use Bun's `--aot` and `--trim` (86 MB to 45 MB for a hello world). They need Bun canary today (`build.bun` or `SVELTE_DESKTOP_BUN` points at it), and `aot` stays on the host architecture.
+
+## Windows
+
+```sh
+SVELTE_DESKTOP_TARGET=windows bunx --bun vite build
+```
+
+| Output | |
+| --- | --- |
+| `<appName>-windows-<arch>/` | `<Exe>.exe` (icon and version resources), `shell.dll`, `app-native.dll`, addons, sidecars |
+| `.zip` | The folder |
+| NSIS installer | Per-user, with URL schemes and file associations |
+| `release/` | Update archives, when `update` is set |
+
+Cross-builds run the native toolchain (llvm-mingw, the WebView2 SDK, NSIS, osslsigncode) in Docker. Authenticode signing is on when a certificate is given:
+
+```ts desktop.config.ts
+sign: { windows: { certificateFile: 'cert.pfx', password: process.env.CERT_PASSWORD } }, // or $WINDOWS_CERT_PFX + $WINDOWS_CERT_PASSWORD
+```
+
+`timestampUrl` defaults to `http://timestamp.digicert.com`. Data lives in `%APPDATA%\<identifier>`, caches and logs in `%LOCALAPPDATA%`. `build.targetArch` is `x64` (default) or `arm64`.
+
+:::warning
+The Windows build is cross-compiled and smoke-tested under Wine but has not yet run on a real Windows machine. See [Limitations](/shipping/limitations).
+:::
+
+## Linux
+
+```sh
+SVELTE_DESKTOP_TARGET=linux bunx --bun vite build
+```
+
+| Output | |
+| --- | --- |
+| `<appName>/` | Relocatable app directory: the executable, `lib/` (`libshell.so`, plugin, addons), sidecars, `<identifier>.png`, `<identifier>.desktop` |
+| `<exe>-<version>-linux-<arch>.tar.gz` | The directory |
+| `<exe>-<version>-linux-<arch>.AppImage` | When `appimagetool` is on the PATH |
+
+GTK 3 and WebKitGTK 4.1 come from the system, like the system WebKit on macOS; libnotify, appindicator and libsecret are optional. `fileTypes` become the `.desktop` MimeType entry (plus a shared-mime-info package for custom types). Compiling native code (plugins, addons) needs a Linux host or Docker; a cross-build from macOS skips it with a warning unless prebuilt.
+
+## Mobile
+
+The same project builds for Android and iOS:
+
+```sh
+SVELTE_DESKTOP_TARGET=android bunx --bun vite build   # signed APK (+ AAB with build.aab)
+SVELTE_DESKTOP_TARGET=ios bunx --bun vite build       # simulator .app; device builds with sign.ios
+```
+
+See [Mobile](/shipping/mobile) for what runs where and how each is signed.
+
+## Signing options
+
+<TypeTable
+  type={{
+    identity: { type: "string", default: "$CODESIGN_IDENTITY", description: "codesign identity, or '-' for ad-hoc. Without one, builds are ad-hoc." },
+    notaryProfile: { type: "string", default: "$NOTARY_PROFILE", description: "notarytool keychain profile. Notarizes and staples when set." },
+    hardenedRuntime: { type: "boolean", default: "true unless ad-hoc", description: "Required for notarization." },
+    entitlements: { type: "Record<string, boolean | string | string[]>", description: "Merged into the defaults Bun needs." },
+    provisioningProfile: { type: "string", description: "macOS .provisionprofile embedded in the bundle (Push Notifications)." },
+    windows: { type: "{ certificateFile, password, timestampUrl }", description: "Authenticode." },
+    ios: { type: "{ identity, provisioningProfile }", description: "iOS device builds." },
+    android: { type: "{ keystore, alias, password }", default: "$ANDROID_KEYSTORE, else the debug keystore", description: "APK signing." },
+  }}
+/>

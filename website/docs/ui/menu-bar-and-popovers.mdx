@@ -1,0 +1,153 @@
+---
+title: Menu bar and popovers
+description: Status items, routes in native popovers, and Spotlight-style panels on a global shortcut.
+---
+
+A popover is **a route of your SvelteKit app** shown in a native macOS popover (with the arrow) or in a borderless translucent panel. It runs in its own web view with the same server, session cookie, remote functions and `host` API as the main window.
+
+## 1. Write the route
+
+Keep popover routes in their own group so they don't inherit the window's layout:
+
+<FileTree>
+
+- src/routes/
+  - +layout.svelte
+  - (app)/
+    - +layout.svelte
+    - +page.svelte
+  - (popover)/
+    - +layout.svelte
+    - quick/
+      - +page.svelte
+
+</FileTree>
+
+```svelte src/routes/(popover)/quick/+page.svelte
+<script lang="ts">
+  import PopoverContent from '@svelte-desktop/shell/platform/PopoverContent.svelte';
+  import { addNote } from '$lib/data.remote';
+</script>
+
+<!-- transparent page, and the popover is sized to this content -->
+<PopoverContent>
+  <h3>Quick note</h3>
+  <form {...addNote.enhance(async ({ submit }) => { await submit(); await host.broadcast('notes-changed'); })}>
+    <input {...addNote.fields.text.as('text')} />
+  </form>
+  <button onclick={() => host.closePopover()}>Done</button>
+</PopoverContent>
+```
+
+`PopoverContent` props: `fit` (`height`, the default, keeps the given width and follows the content height; `both` also uses the content width; `none`), `padding`, `class`.
+
+## 2. Open it
+
+### From the menu bar
+
+```svelte src/routes/(app)/+layout.svelte
+<script>
+  import StatusItem from '@svelte-desktop/shell/platform/StatusItem.svelte';
+</script>
+
+<StatusItem icon="note.text" tooltip="Quick note" popover={{ route: '/quick', width: 320 }} />
+```
+
+```svelte
+<StatusItem icon="note.text" popover="/quick" bind:open />                    <!-- route string -->
+<StatusItem icon="bolt" style="panel" popover="/palette" position="tray" />     <!-- panel under the icon -->
+<StatusItem icon="note.text" items={[{ label: 'Quit', role: 'quit' }]} />       <!-- a menu instead -->
+<StatusItem icon="note.text" onClick={() => host.window.show()} />              <!-- plain click -->
+```
+
+<TypeTable
+  type={{
+    icon: { type: "string | { native } | { path }", description: "An SF Symbol or AppKit image name ('note.text'), or a file path ('./tray.png'). Rendered as a template image." },
+    label: { type: "string", description: "Text next to the icon." },
+    tooltip: { type: "string" },
+    badgeColor: { type: "string | null", description: "A dot on the icon's top-right corner (any CSS color); null clears it." },
+    items: { type: "MenuBarItem[]", description: "A native dropdown menu. Wins over popover." },
+    popover: { type: "string | PopoverCreateOptions", description: "A route, or full popover options, toggled on click." },
+    style: { type: '"popover" | "panel"', default: '"popover"' },
+    "width, height": { type: "number" },
+    position: { type: "PanelPosition | (placement) => PanelPosition", description: "Panel placement: a preset, { x, y }, or a callback re-run on every resize with { width, height, tray, displays }." },
+    open: { type: "boolean", description: "Popover state, bindable." },
+    onClick: { type: "() => void", description: "Fires on every click." },
+  }}
+/>
+
+Clicks toggle the popover natively, with no round trip through the page, and a click that dismissed a transient popover never reopens it.
+
+A menu-bar-only app sets `trayOnly: true` (no Dock icon, no app menu) and `window: false` or `window: { visible: false }` in `desktop.config.ts`.
+
+### Anchored to an element
+
+```svelte
+<script>
+  import Popover from '@svelte-desktop/shell/platform/Popover.svelte';
+  let button = $state(), open = $state(false);
+</script>
+
+<button bind:this={button} onclick={() => (open = !open)}>Emoji</button>
+<Popover route="/emoji" anchor={button} bind:open width={260} height={120} edge="bottom" />
+```
+
+### A panel on a global shortcut
+
+The shortcut works while the app is in the background:
+
+```svelte
+<Popover route="/palette" style="panel" position="center" shortcut="Ctrl+Alt+Space" width={520} />
+```
+
+### From code
+
+```ts
+await host.popover.create({ id: 'quick', route: '/quick', width: 320, tray: true });
+await host.popover.show('quick', { anchor: 'cursor' });
+await host.popover.toggle('quick');
+await host.popover.hide('quick');
+host.popover.onShown(({ id }) => {});
+host.popover.onHidden(({ id }) => {});
+```
+
+`anchor` is `'tray'`, `'cursor'`, a rect in the page (`{ x, y, width, height }`, CSS px, e.g. from `getBoundingClientRect()`) or `{ screen: { x, y, width, height } }`. Other ops: `setSize`, `setPosition`, `isShown`, `get`, `list`, `eval`, `reload`, `destroy`, and the `onReady` and `onResized` events.
+
+## Popover options
+
+<TypeTable
+  type={{
+    id: { type: "string", description: "Stable id; a page reload replaces the popover instead of leaking a web view." },
+    route: { type: "string", description: "App route, e.g. '/quick'. Or a full url." },
+    style: { type: '"popover" | "panel"', default: '"popover"', description: "Native popover with an arrow, or a borderless translucent panel." },
+    "width, height": { type: "number" },
+    behavior: { type: '"transient" | "semitransient" | "manual"', default: '"transient"', description: "transient closes on an outside click." },
+    edge: { type: '"top" | "bottom" | "left" | "right"', default: '"bottom"', description: "Arrow side relative to the anchor (popover style)." },
+    position: { type: "PanelPosition", default: '"tray"', description: "Panel placement: tray, trayLeft, trayRight, center, cursor, or { x, y }. Falls back to center without a tray." },
+    closeOnEscape: { type: "boolean", default: "true" },
+    activate: { type: "boolean", default: "true", description: "Activate the app on show so inputs take keystrokes." },
+    transparent: { type: "boolean", default: "true", description: "The page background shows the native material." },
+    animate: { type: "boolean" },
+    cornerRadius: { type: "number" },
+    debug: { type: "boolean", description: "Web Inspector." },
+    tray: { type: "boolean", description: "Bind to the status item right away." },
+    preload: { type: "boolean", default: "true", description: "Load the route at create for an instant first open. Each preloaded popover costs one WebKit content process (about 30 to 40 MB); false loads on first open." },
+  }}
+/>
+
+## Talking to the main window
+
+Each popover is a separate page. Share state through:
+
+- **the server**: remote functions hit the same Bun process and database;
+- **the stores**: every page receives native events (`host.theme.dark`, `host.window.*`, ...);
+- **broadcast**: `host.broadcast('channel', data)` and `host.onBroadcast('channel', fn)` reach every window, popover and server code.
+
+Inside a popover, `host.currentPopover()` returns `{ id }`, `host.closePopover()` closes it, and every `host.popover` op defaults to the current popover.
+
+## Built in
+
+- **Instant first open.** The web view is created and loaded at `create` and kept warm.
+- **Sized to content.** `PopoverContent` reports its size; the popover follows.
+- **No white flash.** The page is transparent and the native material shows through.
+- **Light dismiss.** Transient popovers close on an outside click; panels on an outside click, when another window takes focus, or when they lose key status. Escape closes the focused popover.

@@ -1,0 +1,114 @@
+---
+title: Quick start
+description: Create a desktop app, or add desktop support to an existing SvelteKit project, then run it and build it.
+sidebar:
+  icon: rocket
+---
+
+**Requirements:** macOS 12+, Bun 1.4 or newer, the Xcode command line tools (`xcode-select --install`) and `@sveltejs/adapter-bun`. The desktop plugin runs on Bun, so Vite is always started with `bunx --bun`.
+
+<Tabs>
+  <Tab title="New project">
+
+```sh
+bunx svelte-desktop create my-app
+cd my-app && bun install && bun run dev
+```
+
+`create` writes a SvelteKit app with a remote function, `desktop.config.ts`, a Swift plugin sample and a test.
+
+  </Tab>
+  <Tab title="Existing SvelteKit app">
+
+```sh
+bunx svelte-desktop init
+bun add -d @sveltejs/adapter-bun @svelte-desktop/shell
+bun run dev
+```
+
+`init` writes `desktop.config.ts`, rewrites `sveltekit(` to `desktop(` in `vite.config.ts` (and drops the adapter, which the desktop plugin sets), adds the `dev`, `build` and `test:desktop` scripts, and adds `.desktop` to `.gitignore`.
+
+  </Tab>
+</Tabs>
+
+`bunx svelte-desktop doctor` checks Bun, the Xcode tools, the config, signing identities and the notary profile.
+
+## Develop
+
+<Steps>
+  <Step title="Run the app">
+    `bun run dev` (`bunx --bun vite dev`) opens the native window on the Vite server: HMR in the window, the Web Inspector, and server code reaching native APIs through an RPC bridge.
+  </Step>
+  <Step title="Edit freely">
+    Svelte files hot-reload. Editing `desktop.config.ts` restarts the dev server; editing files in `native/` rebuilds the plugin and restarts the window. Closing the window ends `vite dev`.
+  </Step>
+  <Step title="Build">
+    `bun run build` (`bunx --bun vite build`) writes `.desktop/dist/<App>.app`, a zip and a DMG, plus `release/` when [self-update](/shipping/self-update) is configured. Without a signing identity the app is ad-hoc signed: it runs locally, Gatekeeper blocks it once downloaded. See [Distribution](/shipping/distribution).
+  </Step>
+</Steps>
+
+:::tip
+`desktop({ ... }, { noWindow: true })` in `vite.config.ts`, or `SVELTE_DESKTOP_NO_WINDOW=1`, runs `vite dev` without the native window, for browser-only work. Server code still gets addons and sidecars.
+:::
+
+## Project layout
+
+What `create` scaffolds:
+
+<FileTree>
+
+- my-app/
+  - desktop.config.ts
+  - vite.config.ts
+  - package.json
+  - tsconfig.json
+  - native/
+    - Hello.swift
+  - src/
+    - app.html
+    - host.d.ts
+    - lib/
+      - hello.remote.ts
+    - routes/
+      - +page.svelte
+  - tests/
+    - app.test.ts
+  - .desktop/
+
+</FileTree>
+
+| Path | |
+| --- | --- |
+| `desktop.config.ts` | App name, identifier, window, permissions, signing: see [Configuration](/concepts/configuration). |
+| `native/` | Optional [native plugin](/features/native-code), compiled automatically. Delete it if you don't need one. |
+| `src/host.d.ts` | Types for the [`host` global](/concepts/host). Written once by the Vite plugin; keep it in git. |
+| `src/jobs/` | Optional [background jobs](/features/background-jobs), one file per job. |
+| `icon.png` or `icon.svg` | Optional [app icon](/shipping/app-icon) at the project root. |
+| `.desktop/` | Build output and caches (`dist/`, `icons/`, `dev/`). Ignored by git. |
+
+## A first native call
+
+```svelte src/routes/+page.svelte
+<p>{host.app.name} · {host.theme.dark ? 'dark' : 'light'}</p>
+<button onclick={() => host.clipboard.writeText('Hello')}>Copy</button>
+<button onclick={() => host.notifications.show({ title: 'Done' })}>Notify</button>
+```
+
+`host` needs no import and is reactive in components. In a plain browser tab, `host.available` is `false`.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" href="/concepts/architecture" icon="layers">
+    The UI thread, the Worker running SvelteKit, and the bridge between them.
+  </Card>
+  <Card title="The host API" href="/concepts/host" icon="plug">
+    Every native service, from pages and server code.
+  </Card>
+  <Card title="Windows" href="/ui/windows" icon="app-window">
+    Title bar styles, drag regions, multiple windows.
+  </Card>
+  <Card title="Distribution" href="/shipping/distribution" icon="package">
+    Sign, notarize and ship.
+  </Card>
+</CardGroup>

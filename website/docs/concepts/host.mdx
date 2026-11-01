@@ -1,0 +1,141 @@
+---
+title: The host API
+description: One global, the same in page and server code, for everything the app gets beyond the web.
+---
+
+Everything native is on one global, `host`. There is nothing to import, it is the same object in page and server code (like `Bun`), and its members are reactive in components. It is typed through the one-line `src/host.d.ts` the Vite plugin writes.
+
+```svelte
+<p>{host.app.name} · {host.theme.dark ? 'dark' : 'light'}</p>
+<button onclick={() => host.clipboard.writeText(text)}>Copy</button>
+<button onclick={() => host.notifications.show({ title: 'Done' })}>Notify</button>
+```
+
+```ts src/lib/server/db.ts
+import { Database } from 'bun:sqlite';
+import { join } from 'node:path';
+
+// Server code: load functions, remote functions, endpoints, hooks.
+export const db = new Database(join(host.paths.data, 'app.db'));
+```
+
+Every call is async and rejects with a `NativeApiError` carrying a `code` when it fails. In a plain browser tab (or a server outside the app), `host.available` is `false`.
+
+## Members
+
+| Kind | Members |
+| --- | --- |
+| Reactive stores and their methods | `app`, `window`, `windowState`, `screen`, `clipboard`, `theme`, `system`, `power`, `deepLink`, `menu`, `notifications`, `push`, `capture`, `diagnostics`, `capabilities`, `update`, `tray`, `shortcuts`, `store`, `events`, `jobs`, `permissions` |
+| Services | `windows` (multi-window), `dialog`, `shell`, `secureStorage`, `popover`, `webview`, `view` |
+| Functions | `on(event, fn)`, `broadcast(channel, data)`, `onBroadcast(channel, fn)`, `nativeModule(name)`, `currentPopover()`, `closePopover()`, `available` |
+| Server code only | `paths`, `crashInfo()`, `sidecar()`, `loadAddon()`, `onBeforeQuit(fn)`, `ready(fn)`, `jobs.start()`, `jobs.wait()` |
+
+A store exposes reactive state and also every op of the service with the same name: `host.window.fullscreen` is a reactive boolean and `host.window.setFullscreen(true)` is the op. `host.capabilities.describe()` lists every op of the running build and whether this platform supports it.
+
+| Store | Reactive state (examples) |
+| --- | --- |
+| `host.app` | `name`, `version`, `packaged`, `platform`, `active`, `dockBadge` |
+| `host.window` | `title`, `focused`, `maximized`, `fullscreen`, `bounds`, `size`, `position`, `state`, `scaleFactor` |
+| `host.theme` | `dark`, `name`, `preference` |
+| `host.screen` | `displays`, `primary`, `displayCount`, `scaleFactor` |
+| `host.clipboard` | `text`, `html`, `formats`, `hasText` |
+| `host.system` | `os`, `arch`, `layout`, `accentColor`, `accessibility` |
+| `host.power` | `battery`, `thermal`, `idleSeconds` |
+| `host.deepLink` | `urls`, `last` |
+| `host.notifications` | `permission` |
+| `host.permissions` | `camera`, `microphone`, ... (one status per permission) |
+| `host.update` | `checking`, `available`, `upToDate` |
+| `host.jobs` | `list()`, `active()`, `running()` |
+
+## Events
+
+`host.on(event, fn)` listens to any native event and returns an unsubscribe function. Most services also have typed helpers (`host.theme.onChange`, `host.menu.onAction`, `host.webview.onFileDrop`, ...).
+
+```ts
+const off = host.on('appearanceChanged', (info) => console.log(info.dark));
+```
+
+## Talking across windows and the server
+
+`host.broadcast(channel, data)` reaches every window, every popover and server code; `host.onBroadcast(channel, fn)` receives it (with `from`, the sender).
+
+```ts
+// in a popover route
+await host.broadcast('notes-changed');
+
+// in the main window
+host.onBroadcast('notes-changed', () => getState().refresh());
+```
+
+## Server code: the desktop object
+
+Server code can also import a small, explicit API from `@svelte-desktop/shell/server`. App server modules load before the shell is ready, so register menus and listeners in `onDesktopReady`, typically in `hooks.server.ts`:
+
+```ts src/hooks.server.ts
+import { onDesktopReady } from '@svelte-desktop/shell/server';
+
+onDesktopReady((desktop) => {
+  desktop.on('menu', (e) => desktop.publish('menu', e.id)); // forward menu clicks to pages
+  desktop.onBeforeQuit(() => db.close());
+});
+```
+
+| Member | |
+| --- | --- |
+| `appName`, `origin`, `paths` | App name, server origin, and `{ data, cache, home, logs }` directories (created at startup) |
+| `window` | `setTitle`, `setSize`, `show`, `hide`, `focus`, `close`, `eval(js)` |
+| `dialog` | `open(opts)`, `save(opts)`, `message(opts)` (see [Dialogs](/ui/platform-services#dialogs)) |
+| `menu.set(spec)` | The app menu (see [Menus](/ui/menus)) |
+| `on(type, fn)` | Shell events: `focus`, `blur`, `menu`, `external-navigation`, `wake`, ... |
+| `publish(type, data)` | Push a JSON message to every page |
+| `openExternal(url)`, `quit()`, `onBeforeQuit(fn)`, `crashInfo()` | |
+
+`isDesktop()` tells whether the code runs inside the shell. Pages receive `publish` messages with `onDesktopEvent`:
+
+```ts
+import { onDesktopEvent } from '@svelte-desktop/shell/client';
+
+onDesktopEvent('menu', (id) => {
+  if (id === 'new-note') input.focus();
+});
+// '*' receives every type; native shell events arrive as 'native:<type>'.
+```
+
+## Restricting pages
+
+By default pages may call every op. `bridge.allow` limits them, enforced natively; server code is never restricted:
+
+```ts desktop.config.ts
+bridge: { allow: ['window.*', 'clipboard.readText', 'notifications.*'] },
+```
+
+A refused call rejects with `denied`.
+
+## Errors
+
+| Code | Meaning |
+| --- | --- |
+| `invalid_args` | Bad arguments (unknown menu role, duplicate window label, ...) |
+| `unsupported` | The op can't be implemented on this OS through this backend |
+| `unavailable` | Missing at run time (no bundle id, no libnotify, ...) |
+| `denied` | Permission refused, or the op isn't in `bridge.allow` |
+| `undeclared` | A permission requested without its `permissions` entry in the config |
+| `unknown` | No such op |
+| `internal` | The op failed |
+
+```ts
+try {
+  await host.window.setSimpleFullscreen(true);
+} catch (e) {
+  if (e.code === 'unsupported') { /* not on this platform */ }
+}
+```
+
+## Imports instead of the global
+
+The same API is available as modules, for those who prefer imports: `@svelte-desktop/shell/platform` (services, `nativeModule`, `broadcast`), `@svelte-desktop/shell/stores` (reactive stores), `@svelte-desktop/shell/server` and `@svelte-desktop/shell/client`.
+
+```ts
+import { theme, window } from '@svelte-desktop/shell/stores';
+import { popover, broadcast } from '@svelte-desktop/shell/platform';
+```
