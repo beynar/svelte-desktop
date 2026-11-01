@@ -39,12 +39,51 @@ body {
 	margin: 0;
 }
 
-/* Desktop title bar (titleBarStyle: 'hiddenInset'): the traffic lights sit over the sidebar's header,
-   so it starts below them; the page header and the strip above the sidebar move the window
-   (buttons and links inside stay clickable). In full screen the bar height drops to 0. */
-html[data-desktop-titlebar] [data-slot='sidebar-header'] {
-	padding-top: var(--desktop-titlebar-height);
+/* Desktop title bar (titleBarStyle: 'hiddenInset'): a strip across the window, the traffic lights on
+   its left, the window's tabs after them. Its empty parts move the window (the shell's title-bar
+   strip; the tabs and buttons stay clickable). In full screen the controls width drops to 0. */
+.titlebar {
+	height: max(var(--desktop-titlebar-height, 0px), 2.75rem);
+	padding: 0 0.75rem 0 max(var(--desktop-controls-width, 0px), 0.75rem);
 	--app-region: drag;
+}
+.app-tabs [role='tab'] {
+	height: 2rem;
+	margin-bottom: 0.25rem;
+	padding: 0 0.375rem 0 0.625rem;
+	border-radius: 0.5rem;
+	font-size: 0.8125rem;
+	color: var(--color-neutral-readable);
+	transition: background-color 120ms;
+}
+.app-tabs [role='tab']:hover:not([data-active]) {
+	background: color-mix(in oklab, var(--color-neutral) 6%, transparent);
+}
+.app-tabs [role='tab'][data-active] {
+	background: var(--color-surface-raised);
+	color: var(--color-neutral);
+	box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-neutral) 10%, transparent), 0 1px 2px rgb(0 0 0 / 0.06);
+}
+.app-tabs [role='tab']:focus-visible {
+	outline: 2px solid var(--color-focus);
+	outline-offset: -2px;
+}
+.app-tabs [role='tab']:not([data-active]):not(:hover) .tab-close {
+	visibility: hidden;
+}
+.app-tabs [data-sd-tab-new] {
+	display: grid;
+	place-items: center;
+	width: 1.75rem;
+	height: 1.75rem;
+	margin-bottom: 0.375rem;
+	border-radius: 0.5rem;
+	font-size: 1.125rem;
+	color: var(--color-neutral-readable);
+}
+.app-tabs [data-sd-tab-new]:hover {
+	background: color-mix(in oklab, var(--color-neutral) 8%, transparent);
+	color: var(--color-neutral);
 }
 html[data-desktop-titlebar] [data-slot='page-shell-header'] {
 	--app-region: drag;

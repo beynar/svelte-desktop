@@ -20,8 +20,27 @@ const civil = (dayOffset: number) => {
 	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-export const board = $state<{ columns: KanbanColumnData<Task>[] }>({
-	columns: [
+export type Board = { columns: KanbanColumnData<Task>[] };
+
+const emptyColumns = (): KanbanColumnData<Task>[] => [
+	{ id: 'backlog', title: 'Backlog', color: 'neutral', cards: [] },
+	{ id: 'doing', title: 'In progress', color: 'primary', cards: [] },
+	{ id: 'review', title: 'Review', color: 'warning', limit: 3, cards: [] },
+	{ id: 'done', title: 'Done', color: 'success', cards: [] }
+];
+
+/** Every board, by id (the Board page shows one per tab). */
+export const boards = $state<Record<string, Board>>({});
+
+/** A board, created empty the first time it's asked for (a restored tab of a past session). */
+export function boardFor(id: string): Board {
+	if (!boards[id]) boards[id] = { columns: emptyColumns() };
+	return boards[id];
+}
+
+/** The current sprint: the one the overview sums up. */
+export const board: Board = boardFor('current');
+board.columns = [
 		{
 			id: 'backlog',
 			title: 'Backlog',
@@ -43,8 +62,12 @@ export const board = $state<{ columns: KanbanColumnData<Task>[] }>({
 		},
 		{ id: 'review', title: 'Review', color: 'warning', limit: 3, cards: [{ id: 't6', title: 'Q4 roadmap', description: 'Needs sign-off' }] },
 		{ id: 'done', title: 'Done', color: 'success', cards: [{ id: 't7', title: 'SOC 2 evidence' }, { id: 't8', title: 'Release 2.4' }] }
-	]
-});
+	];
+boardFor('backlog').columns[0]!.cards.push(
+	{ id: 'b1', title: 'Dark mode for exports' },
+	{ id: 'b2', title: 'SSO with Okta', description: 'Asked by three customers' },
+	{ id: 'b3', title: 'Bulk edit tasks' }
+);
 
 export const calendar = $state<{ items: EventCalendarItem<Meeting>[] }>({
 	items: [

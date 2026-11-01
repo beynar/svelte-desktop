@@ -1,5 +1,15 @@
 <script lang="ts">
+	import { Tabs, TabBar, TabPanels } from '@svelte-desktop/shell/tabs';
 	import { board, upcoming } from '#lib/data.svelte';
+
+	const lists = new Tabs({
+		id: 'overview-lists',
+		initial: [
+			{ id: 'next', title: 'Next up', closable: false },
+			{ id: 'doing', title: 'In progress', closable: false },
+			{ id: 'done', title: 'Done', closable: false }
+		]
+	});
 
 	const counts = $derived(Object.fromEntries(board.columns.map((c) => [c.id, c.cards.length])));
 	const events = $derived(upcoming());
@@ -25,39 +35,55 @@
 		{/each}
 	</div>
 
-	<div class="grid gap-4 lg:grid-cols-2">
-		<section class="border-neutral-muted bg-surface-raised rounded-lg border p-4">
-			<header class="mb-3 flex items-center justify-between">
-				<h2 class="text-neutral font-medium">Next up</h2>
-				<a href="/calendar" class="text-primary-readable text-sm">Open calendar</a>
-			</header>
-			<ul class="flex flex-col gap-2">
-				{#each events.slice(0, 5) as e (e.id)}
-					<li class="flex items-center justify-between gap-3 text-sm">
-						<span class="text-neutral truncate">{e.title}</span>
-						<span class="text-neutral-readable shrink-0 tabular-nums">{e.allDay ? day.format(e.startsAt) : time.format(e.startsAt)}</span>
-					</li>
+	<!-- Tabs inside a card: fixed (no close, no +), a segmented look, only the active panel rendered. -->
+	<section class="border-neutral-muted bg-surface-raised rounded-lg border">
+		<header class="border-neutral-muted flex items-center justify-between gap-3 border-b px-4 py-3">
+			<h2 class="text-neutral font-medium">This week</h2>
+			<TabBar tabs={lists} label="Lists" class="segmented bg-surface-recessed rounded-md p-0.5" />
+		</header>
+		<TabPanels tabs={lists} keepAlive={false} class="p-4">
+			{#snippet children(t)}
+				{#if t.id === 'next'}
+					<ul class="flex flex-col gap-2">
+						{#each events.slice(0, 6) as e (e.id)}
+							<li class="flex items-center justify-between gap-3 text-sm">
+								<span class="text-neutral truncate">{e.title}</span>
+								<span class="text-neutral-readable shrink-0 tabular-nums">{e.allDay ? day.format(e.startsAt) : time.format(e.startsAt)}</span>
+							</li>
+						{:else}
+							<li class="text-neutral-readable text-sm">Nothing scheduled.</li>
+						{/each}
+					</ul>
 				{:else}
-					<li class="text-neutral-readable text-sm">Nothing scheduled.</li>
-				{/each}
-			</ul>
-		</section>
-
-		<section class="border-neutral-muted bg-surface-raised rounded-lg border p-4">
-			<header class="mb-3 flex items-center justify-between">
-				<h2 class="text-neutral font-medium">In progress</h2>
-				<a href="/board" class="text-primary-readable text-sm">Open board</a>
-			</header>
-			<ul class="flex flex-col gap-2">
-				{#each board.columns.find((c) => c.id === 'doing')?.cards ?? [] as t (t.id)}
-					<li class="text-sm">
-						<p class="text-neutral">{t.title}</p>
-						{#if t.description}<p class="text-neutral-readable text-xs">{t.description}</p>{/if}
-					</li>
-				{:else}
-					<li class="text-neutral-readable text-sm">Nothing in progress.</li>
-				{/each}
-			</ul>
-		</section>
-	</div>
+					<ul class="flex flex-col gap-2">
+						{#each board.columns.find((c) => c.id === t.id)?.cards ?? [] as task (task.id)}
+							<li class="text-sm">
+								<p class="text-neutral">{task.title}</p>
+								{#if task.description}<p class="text-neutral-readable text-xs">{task.description}</p>{/if}
+							</li>
+						{:else}
+							<li class="text-neutral-readable text-sm">Nothing here.</li>
+						{/each}
+					</ul>
+				{/if}
+			{/snippet}
+		</TabPanels>
+	</section>
 </div>
+
+<style>
+	/* A segmented control: the same TabBar, a third look. */
+	:global(.segmented [role='tab']) {
+		flex: 0 0 auto;
+		min-width: 0;
+		padding: 0.25rem 0.75rem;
+		border-radius: 0.375rem;
+		font-size: 0.8125rem;
+		color: var(--color-neutral-readable);
+	}
+	:global(.segmented [role='tab'][data-active]) {
+		background: var(--color-surface-raised);
+		color: var(--color-neutral);
+		box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+	}
+</style>
