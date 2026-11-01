@@ -172,11 +172,12 @@ static NSString *const kBridgeScript =
      "document.addEventListener('DOMContentLoaded',()=>post({t:'ready'}));"
      // No elastic overscroll (rubber band): zero specificity, so the app's CSS can bring it back.
      "const os=()=>{const s=document.createElement('style');s.textContent=':where(html,body){overscroll-behavior:none}';(document.head||document.documentElement).prepend(s);};document.documentElement?os():addEventListener('DOMContentLoaded',os,{once:true});"
-     // Drag regions: [data-desktop-drag] or `--app-region: drag` (inherited, so
-     // `--app-region: no-drag` carves holes); controls stay clickable.
+     // Drag regions: [data-desktop-drag], `--app-region: drag` (inherited, so
+     // `--app-region: no-drag` carves holes) and the title bar strip of a hidden/inset title bar
+     // (like a native title bar: Swish and the like drag it); controls stay clickable.
      "const nd='button,a,input,select,textarea,label,summary,option,[contenteditable],[role=button],[data-desktop-no-drag]';"
-     "const dr=(t)=>t instanceof Element&&!t.closest(nd)&&(!!t.closest('[data-desktop-drag]')||getComputedStyle(t).getPropertyValue('--app-region').trim()==='drag');"
-     "addEventListener('mousedown',(e)=>{if(e.button!==0||!dr(e.target))return;"
+     "const dr=(t,y)=>{if(!(t instanceof Element)||t.closest(nd))return false;if(t.closest('[data-desktop-drag]'))return true;const r=getComputedStyle(t).getPropertyValue('--app-region').trim();return r==='drag'||(r!=='no-drag'&&y<(parseFloat(document.documentElement.style.getPropertyValue('--desktop-titlebar-height'))||0));};"
+     "addEventListener('mousedown',(e)=>{if(e.button!==0||!dr(e.target,e.clientY))return;"
      "if(e.detail===2){e.preventDefault();post({t:'dragDouble'});}else if(e.detail===1)post({t:'drag'});},true);})();";
 
 // Page permissions (desktop.config `permissions.pages`): nil = everything.

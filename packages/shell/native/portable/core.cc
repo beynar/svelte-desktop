@@ -153,8 +153,8 @@ bool page_may_call(const std::string &service, const std::string &op) {
 // macOS bridge (platform_core.mm) — controls stay clickable.
 #define SD_DRAG_LISTENER \
   "const nd='button,a,input,select,textarea,label,summary,option,[contenteditable],[role=button],[data-desktop-no-drag]';" \
-  "const dr=(t)=>t instanceof Element&&!t.closest(nd)&&(!!t.closest('[data-desktop-drag]')||getComputedStyle(t).getPropertyValue('--app-region').trim()==='drag');" \
-  "addEventListener('mousedown',(e)=>{if(e.button!==0||!dr(e.target))return;" \
+  "const dr=(t,y)=>{if(!(t instanceof Element)||t.closest(nd))return false;if(t.closest('[data-desktop-drag]'))return true;const r=getComputedStyle(t).getPropertyValue('--app-region').trim();return r==='drag'||(r!=='no-drag'&&y<(parseFloat(document.documentElement.style.getPropertyValue('--desktop-titlebar-height'))||0));};" \
+  "addEventListener('mousedown',(e)=>{if(e.button!==0||!dr(e.target,e.clientY))return;" \
   "if(e.detail===2){e.preventDefault();raw({t:'dragDouble'});}else if(e.detail===1)raw({t:'drag'});},true);"
 const char *const kBridgeScript =
     "(()=>{if(window.__shell)return;const q=[];let sink=null;"

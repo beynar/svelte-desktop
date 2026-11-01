@@ -96,6 +96,8 @@ system setting (zoom / minimize). `window.setTitleBarStyle(style)` switches at
 runtime. Scrolling over the title bar strip doesn't scroll the page (macOS): it
 behaves like a title bar, and title-bar gesture tools (Swish…) work. A gesture is
 routed as a whole by where it began, so one started in the page keeps scrolling.
+The strip also drags the window like a title bar, whatever the page puts there
+(controls stay clickable; `--app-region: no-drag` opts an element out).
 
 No elastic overscroll (rubber band) on desktop: the bridge sets
 `:where(html, body) { overscroll-behavior: none }`, with zero specificity — bring it

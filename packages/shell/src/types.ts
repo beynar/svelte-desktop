@@ -11,8 +11,8 @@ export interface WindowOptions {
   /** Persist and restore the window frame under this name (NSUserDefaults on macOS). */
   autosaveName?: string;
   /** macOS title bar: 'default', 'transparent' (the page extends under it, title kept), 'hidden' (the page extends under the traffic lights) or
-   *  'hiddenInset' (same, traffic lights inset). Drag the window by any element with
-   *  `data-desktop-drag` or CSS `--app-region: drag`; the page gets `--desktop-titlebar-height`,
+   *  'hiddenInset' (same, traffic lights inset). Drag the window by its title bar strip (unless the element there is a
+   *  control or has `--app-region: no-drag`) or by any element with `data-desktop-drag` or CSS `--app-region: drag`; the page gets `--desktop-titlebar-height`,
    *  `--desktop-controls-width` and `html[data-desktop-titlebar]`. Scrolling over the title bar strip
    *  doesn't scroll the page (title-bar gesture tools such as Swish keep working). */
   titleBarStyle?: "default" | "transparent" | "hidden" | "hiddenInset";
