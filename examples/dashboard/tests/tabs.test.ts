@@ -13,7 +13,7 @@ beforeAll(async () => {
 	await app.waitFor('main', { timeout: 30_000 });
 	// A clean slate: forget the tabs a previous run left.
 	const dir = await app.platform<string>('app', 'getPath', { name: 'userData' });
-	for (const f of ['tabs-app.json', 'tabs-boards.json']) await Bun.file(`${dir}/${f}`).delete().catch(() => {});
+	for (const f of ['tabs-app.json', 'tabs-board-tabs.json']) await Bun.file(`${dir}/${f}`).delete().catch(() => {});
 	await app.eval(`(window.__reloading = true, setTimeout(() => location.assign('/'), 10), true)`);
 	await app.waitFor(() => !(window as any).__reloading && !!document.querySelector('.app-tabs [role=tab]'), { timeout: 20_000 });
 }, 60_000);

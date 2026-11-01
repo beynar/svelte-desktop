@@ -17,8 +17,8 @@
 
 	let { class: className = '', children }: Props = $props();
 	const tabs = useTabs();
-	const isolated = $derived(tabs.items.filter((t) => t.isolated));
-	const page = $derived(!tabs.active?.isolated);
+	const isolated = $derived(tabs.items.filter((t) => tabs.isIsolated(t)));
+	const page = $derived(!tabs.active || !tabs.isIsolated(tabs.active));
 </script>
 
 <div data-sd-tabcontent class={className} hidden={!page}>

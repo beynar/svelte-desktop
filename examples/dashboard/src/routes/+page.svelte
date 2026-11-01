@@ -34,7 +34,7 @@
 
 	<!-- Tabs inside a card: fixed (no close, no +), a segmented look, only the active panel rendered. -->
 	<section class="border-neutral-muted bg-surface-raised rounded-lg border">
-		<Tabs id="overview-lists" initial={lists}>
+		<Tabs id="overview-lists" tabs={lists}>
 			<header class="border-neutral-muted flex items-center justify-between gap-3 border-b px-4 py-3">
 				<h2 class="text-neutral font-medium">This week</h2>
 				<TabBar label="Lists" class="segmented bg-surface-recessed rounded-md p-0.5" />

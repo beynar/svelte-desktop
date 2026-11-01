@@ -2,11 +2,11 @@
 // first time the tab is shown, kept on the element's bounds, hidden while another tab is shown,
 // destroyed with the tab. Its navigations and title flow back into the tab.
 import { callPlatform, onPlatform } from '../platform/bus';
-import type { Tab, TabGroup } from './tabs.svelte.ts';
+import type { TabGroup, TabLike } from './tabs.svelte.ts';
 
 export interface IsolatedParams {
 	tabs: TabGroup<any>;
-	tab: Tab<any>;
+	tab: TabLike;
 	active: boolean;
 }
 

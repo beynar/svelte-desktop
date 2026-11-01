@@ -52,11 +52,9 @@
 	     ⌃⇥, ⌘1–9, the Tab menu), restored at the next launch; a tab dragged out of the window opens in
 	     its own window, which rises into place, growing a little. -->
 	<Tabs
-		id="app"
 		route
 		primary
-		create={() => ({ path: '/' })}
-		onLastClose="new"
+		newTab={() => ({ path: '/' })}
 		title={(url) => pageOf(url.pathname).title}
 		windowAnimation={{ duration: 220, easing: [0.2, 0.9, 0.1, 1], offset: { y: 16 }, scale: 0.97 }}
 	>
@@ -72,10 +70,10 @@
 							{#snippet tab(t, { active, close })}
 								{@const icon = t.url ? globeIcon : (icons[new URL(t.path ?? '/', 'http://x').pathname as keyof typeof icons] ?? squaresFourIcon)}
 								{@render icon({ class: `size-3.5 shrink-0 ${active ? 'text-primary' : 'text-neutral-readable'}` })}
-								<span class="min-w-0 flex-1 truncate">{t.title}</span>
+								<span class="min-w-0 flex-1 truncate">{tabs.titleOf(t)}</span>
 								<button
 									type="button"
-									aria-label={`Close ${t.title}`}
+									aria-label={`Close ${tabs.titleOf(t)}`}
 									class="tab-close state-layer grid size-4 shrink-0 place-items-center rounded text-xs"
 									onmousedown={(e) => e.stopPropagation()}
 									onclick={close}>✕</button
@@ -87,7 +85,7 @@
 						<AppShell
 							variant="inset"
 							{sidebar}
-							title={tabs.active?.isolated ? tabs.active.title : current.title}
+							title={tabs.active && tabs.isIsolated(tabs.active) ? tabs.titleOf(tabs.active) : current.title}
 							subtitle={tabs.active?.url ? new URL(tabs.active.url).host : current.subtitle}
 							contentWidth="full"
 						>

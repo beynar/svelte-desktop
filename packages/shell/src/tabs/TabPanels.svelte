@@ -8,25 +8,25 @@
 		{#snippet children(t)}<Board id={t.data.boardId} />{/snippet}
 	</TabPanels>
 -->
-<script lang="ts" generics="D = any">
+<script lang="ts" generics="T extends TabLike = TabLike & Record<string, any>">
 	import type { Snippet } from 'svelte';
-	import { useTabs, type Tab } from './tabs.svelte.ts';
+	import { useTabs, type TabLike } from './tabs.svelte.ts';
 	import { isolatedView } from './isolated.ts';
 
 	interface Props {
 		keepAlive?: boolean;
 		class?: string;
-		children: Snippet<[Tab<D>]>;
+		children: Snippet<[T]>;
 	}
 
 	let { keepAlive = true, class: className = '', children }: Props = $props();
-	const tabs = useTabs<D>();
+	const tabs = useTabs<T>();
 	const shown = $derived(keepAlive ? tabs.items : tabs.active ? [tabs.active] : []);
 </script>
 
 {#each shown as t (t.id)}
 	{@const active = t.id === tabs.activeId}
-	{#if t.isolated}
+	{#if tabs.isIsolated(t)}
 		<div
 			role="tabpanel"
 			id={`${tabs.id}-panel-${t.id}`}

@@ -1,7 +1,8 @@
 // A tab group: reactive state (Svelte 5 runes) plus the desktop integration — the window title,
 // a Tab menu (⌘T ⌘W ⇧⌘T ⌃⇥), ⌘1–9, ⌘-click / middle-click on links, restoring the tabs at
-// launch, dragging a tab out into its own window or onto another window's bar. <Tabs> creates
-// one from its props and hands it to <TabBar>, <TabContent>, <TabPanels> and useTabs().
+// launch, dragging a tab out into its own window or onto another window's bar. <Tabs> makes one
+// on your tabs (bind:tabs, bind:active) and hands it to <TabBar>, <TabContent>, <TabPanels> and
+// useTabs(); every change goes through its methods, onto your array.
 //
 // `route` tabs are app routes: activating one navigates to its path, and navigating changes the
 // active tab's path (each tab remembers where it was). Otherwise a tab is plain state.
@@ -12,54 +13,64 @@ import { callPlatform, onPlatform, platformReady } from '../platform/bus';
 import { readAppFile, writeAppFile } from '../platform/app-files';
 import type { WindowAnimation } from '../platform/index';
 
-export interface Tab<D = unknown> {
+/** A tab: yours, of any shape — an `id`, the fields the bar knows, and your own. */
+export interface TabLike {
 	id: string;
-	title: string;
-	/** An app path (`route` tabs: where the tab is). */
+	/** Default: from `title(url)` for a route tab, else its url or path. */
+	title?: string;
+	/** An app path: a route tab (activating it navigates there; navigating moves it). */
 	path?: string;
 	/** A page of another site: always `isolated`. */
 	url?: string;
-	/** In its own web view (its own process), not the page. */
-	isolated: boolean;
-	/** Kept in place, and out of "close others". */
-	pinned: boolean;
+	/** In its own web view (its own process), not the page. Default: `url` tabs. */
+	isolated?: boolean;
+	/** Kept first, no close button, out of "close others". */
+	pinned?: boolean;
 	/** false: no close button, not closed by ⌘W. */
-	closable: boolean;
-	/** Your own data, persisted with the tab (JSON). */
-	data?: D;
+	closable?: boolean;
 }
 
-export type TabInput<D = unknown> = Partial<Tab<D>> & ({ path: string } | { url: string } | { title: string });
+/** A tab before it has an id (one is made). */
+export type TabInit<T extends TabLike = TabLike> = Omit<T, 'id'> & { id?: string };
 
-export interface TabsOptions<D = unknown> {
-	/** Names the group (saved tabs, element ids, views): unique per window; fixed. */
-	id: string;
-	/** Tabs are app routes: activating navigates, navigating updates the active tab. */
+export interface TabsOptions<T extends TabLike = TabLike> {
+	/** Names the group: saved tabs, element ids, its windows. Default: 'app' for the window's bar. */
+	id?: string;
+	/** Tabs are app routes: activating navigates, navigating moves the active tab. */
 	route?: boolean;
 	/** The window's own tab bar: the window title follows the active tab, a Tab menu and
 	 *  ⌘T ⌘W ⇧⌘T ⌃⇥ ⌘1–9, ⌘-click / middle-click on a link opens it in a new tab (route). */
 	primary?: boolean;
 	/** Save the tabs and restore them at the next launch (the main window's). Default: `primary`. */
 	restore?: boolean;
-	/** The tabs to start with (nothing restored). Route groups default to the current page. */
-	initial?: TabInput<D>[];
-	/** What a new tab is (⌘T, the + button). Without it, no new-tab affordance. */
-	create?: () => TabInput<D>;
-	/** Closing the last tab: 'window' closes the window (default for `primary`), 'new' opens
-	 *  `create()` instead, 'keep' leaves the group empty (default otherwise). A window a tab
-	 *  was dragged into closes when its last tab leaves. */
-	onLastClose?: 'window' | 'new' | 'keep';
-	/** A route tab's title from its URL. Default: the path. */
+	/** A route tab's title from its URL. Default: its `title`, else the path. */
 	title?: (url: URL) => string;
-	/** Drag a tab out of the bar: into a new window, or onto another window's bar.
-	 *  Default: `primary` route groups. */
-	detachable?: boolean;
+	/** A new tab (⌘T, the + button) — without it, no new-tab affordance. */
+	newTab?: () => TabInit<T>;
+	/** Drag a tab out of the window: into a new window, or onto another window's bar. A function
+	 *  decides per tab. Default: route groups of the window's bar. */
+	detachable?: boolean | ((tab: T) => boolean);
 	/** How a window a tab was dragged into comes in (macOS): `true` (default), `false`, or your own. */
 	windowAnimation?: boolean | WindowAnimation;
+	/** A tab is closing (×, ⌘W, a middle click): return false to keep it. */
+	onclose?: (tab: T) => boolean | void;
+	/** Another tab became the active one. */
+	onactivate?: (tab: T) => void;
+	/** A tab moved to `index` (dragged in the bar). */
+	onmove?: (tab: T, index: number) => void;
+	/** A tab left for another window. */
+	ondetach?: (tab: T) => void;
+}
+
+/** Where the tabs live: the <Tabs> props (bind:tabs, bind:active). */
+export interface TabStore<T> {
+	items: T[] | undefined;
+	active: string | undefined;
 }
 
 const isPage = typeof window !== 'undefined' && typeof document !== 'undefined';
 let seq = 0;
+let groups = 0;
 const newId = () => `t${Date.now().toString(36)}${(seq++).toString(36)}`;
 const here = () => location.pathname + location.search + location.hash;
 const ADOPTED = 'tabs:adopted';
@@ -95,19 +106,17 @@ type Rect = { x: number; y: number; width: number; height: number };
 type WindowInfo = { windowId: number; label: string; focused: boolean; visible?: boolean; bounds: Rect };
 type Message<T> = { channel?: string; data?: T };
 
-export class TabGroup<D = unknown> {
-	items = $state<Tab<D>[]>([]);
-	activeId = $state<string | null>(null);
-	readonly active = $derived(this.items.find((t) => t.id === this.activeId));
+export class TabGroup<T extends TabLike = TabLike> {
 	readonly id: string;
-	#options: () => TabsOptions<D>;
+	#options: () => TabsOptions<T>;
+	#store: TabStore<T>;
 	/** This page's window label ('main' for the first window), once connected. */
 	window = $state<string | null>(null);
 	/** This page is an isolated tab's own web view: the group stays local (no menu, nothing
 	 *  saved) and <TabBar> renders nothing — drop your chrome too and show the page alone. */
 	readonly embedded = isPage && '__desktopView' in globalThis;
 	/** Recently closed, newest last (⇧⌘T). */
-	#closed: Array<{ tab: Tab<D>; index: number }> = [];
+	#closed: Array<{ tab: T; index: number }> = [];
 	#connections = 0;
 	#disconnect: (() => void) | null = null;
 	#windowId: number | undefined;
@@ -118,143 +127,168 @@ export class TabGroup<D = unknown> {
 	/** The tab being dragged out (its handoff), and whether another window took it. */
 	#outgoing: { id: string; adopted: boolean; off: () => void } | null = null;
 
-	/** Options, or a function returning them (read each time they're used: live props). */
-	constructor(options: TabsOptions<D> | (() => TabsOptions<D>)) {
-		const fixed = options;
-		this.#options = typeof fixed === 'function' ? fixed : () => fixed;
+	/** `options` are read each time they're used (live props); the tabs live in `store`. */
+	constructor(options: () => TabsOptions<T>, store: TabStore<T> = { items: undefined, active: undefined }) {
+		this.#options = options;
+		this.#store = store;
 		const o = this.options;
-		this.id = o.id;
-		const initial = o.initial ?? (o.route && isPage ? [{ path: here() }] : []);
-		for (const t of initial) this.items.push(this.#make(t));
-		this.activeId = this.items[0]?.id ?? null;
+		this.id = o.id ?? (o.primary ? 'app' : `tabs-${++groups}`);
+		// A route group starts on the page it's on.
+		if (!this.items.length && o.route && isPage) this.items = [{ id: newId(), path: here() } as T];
+		if (!this.active) this.activeId = this.items[0]?.id ?? null;
 	}
 
-	get options(): TabsOptions<D> {
+	get options(): TabsOptions<T> {
 		return this.#options();
 	}
 
-	get canCreate(): boolean {
-		return !!this.options.create;
+	/** The tabs, in order (your array, with bind:tabs). */
+	get items(): T[] {
+		return this.#store.items ?? [];
+	}
+	set items(items: T[]) {
+		this.#store.items = items;
 	}
 
-	get #detachable(): boolean {
-		return this.options.detachable ?? (!!this.options.primary && !!this.options.route);
+	get activeId(): string | null {
+		return this.#store.active ?? null;
+	}
+	set activeId(id: string | null) {
+		this.#store.active = id ?? undefined;
 	}
 
-	/** Whether a tab can be dragged out of the bar: an app route of a detachable group, closable,
-	 *  not isolated (its own web view stays in its window). */
-	canDetach(tab: Tab<D>): boolean {
-		return this.#detachable && tab.closable && !tab.isolated && tab.path !== undefined;
+	get active(): T | undefined {
+		return this.get(this.activeId ?? '');
 	}
 
-	#make(input: TabInput<D>): Tab<D> {
-		const { path, url } = input;
-		const title = input.title ?? (url ?? (path !== undefined ? this.#titleOf(path) : 'Untitled'));
-		return {
-			id: input.id ?? newId(),
-			title,
-			path,
-			url,
-			isolated: input.isolated ?? url !== undefined,
-			pinned: input.pinned ?? false,
-			closable: input.closable ?? true,
-			data: input.data,
-		};
-	}
-
-	#titleOf(path: string): string {
-		if (!this.options.title || !isPage) return path;
-		return this.options.title(new URL(path, location.origin));
-	}
-
-	get(id: string): Tab<D> | undefined {
+	get(id: string): T | undefined {
 		return this.items.find((t) => t.id === id);
 	}
 
+	/** What the bar shows for a tab. */
+	titleOf(tab: T): string {
+		const title = this.options.title;
+		if (title && isPage && tab.path !== undefined && !this.isIsolated(tab)) return title(new URL(tab.path, location.origin));
+		return tab.title ?? tab.url ?? tab.path ?? 'Untitled';
+	}
+
+	isIsolated(tab: T): boolean {
+		return tab.isolated ?? tab.url !== undefined;
+	}
+
+	isClosable(tab: T): boolean {
+		return tab.closable ?? true;
+	}
+
+	get canCreate(): boolean {
+		return !!this.options.newTab;
+	}
+
+	#detachable(tab?: T): boolean {
+		const d = this.options.detachable ?? (!!this.options.primary && !!this.options.route);
+		return typeof d === 'function' ? (tab ? d(tab) : true) : d;
+	}
+
+	/** Whether a tab can leave the window: an app route of a detachable group, closable, not
+	 *  isolated (its own web view stays in its window). */
+	canDetach(tab: T): boolean {
+		return this.isClosable(tab) && !this.isIsolated(tab) && tab.path !== undefined && this.#detachable(tab);
+	}
+
 	/** Open a tab (an existing id is activated instead), right after the active one by default. */
-	open(input: TabInput<D>, opts: { activate?: boolean; index?: number } = {}): Tab<D> {
-		const existing = input.id ? this.get(input.id) : undefined;
+	open(init: TabInit<T>, opts: { activate?: boolean; index?: number } = {}): T {
+		const existing = init.id ? this.get(init.id) : undefined;
 		if (existing) {
 			if (opts.activate !== false) this.activate(existing.id);
 			return existing;
 		}
-		const tab = this.#make(input);
-		const after = this.items.findIndex((t) => t.id === this.activeId);
-		const index = Math.max(this.items.filter((t) => t.pinned).length, Math.min(opts.index ?? (after >= 0 ? after + 1 : this.items.length), this.items.length));
-		this.items.splice(index, 0, tab);
+		const tab = { ...init, id: init.id ?? newId() } as T;
+		const items = this.items;
+		const after = items.findIndex((t) => t.id === this.activeId);
+		const index = Math.max(items.filter((t) => t.pinned).length, Math.min(opts.index ?? (after >= 0 ? after + 1 : items.length), items.length));
+		this.items = [...items.slice(0, index), tab, ...items.slice(index)];
 		if (opts.activate !== false || !this.activeId) this.activate(tab.id);
-		return this.get(tab.id)!;
+		return this.get(tab.id) ?? tab;
 	}
 
-	/** A new tab from `create()`, at the end (a link opened from a tab goes next to it). */
-	new(): Tab<D> | undefined {
-		return this.options.create ? this.open(this.options.create(), { index: this.items.length }) : undefined;
+	/** A new tab from `newTab()`, at the end (a link opened from a tab goes next to it). */
+	new(): T | undefined {
+		const init = this.options.newTab?.();
+		return init ? this.open(init, { index: this.items.length }) : undefined;
 	}
 
 	activate(id: string): void {
 		const tab = this.get(id);
 		if (!tab) return;
+		const changed = this.activeId !== id;
 		this.activeId = id;
 		// An isolated tab shows its own web view: the page stays where it is.
-		if (this.options.route && !tab.isolated && tab.path !== undefined && isPage && tab.path !== here()) navigate(tab.path);
+		if (this.options.route && !this.isIsolated(tab) && tab.path !== undefined && isPage && tab.path !== here()) navigate(tab.path);
+		if (changed) this.options.onactivate?.(tab);
 	}
 
+	/** Close a tab (the active one by default), unless `onclose` keeps it. The main window's bar
+	 *  keeps its last tab when there's no `newTab` to replace it. */
 	close(id: string = this.activeId ?? ''): void {
 		const tab = this.get(id);
-		if (!tab || !tab.closable) return;
+		if (!tab || !this.isClosable(tab)) return;
+		const o = this.options;
+		if (o.primary && this.items.length === 1 && this.window !== null && this.window === 'main' && !o.newTab) return;
+		if (o.onclose?.(tab) === false) return;
 		this.#remove(id, 'closed');
 	}
 
-	/** Take a tab out, closed or moved to another window. The active one moves on; an empty group
-	 *  does what `onLastClose` says — but a window tabs were dragged into closes, and the main
-	 *  window a tab was moved out of opens `create()`. */
+	/** Take a tab out, closed or moved to another window; the active one moves on. A window tabs
+	 *  were dragged into closes with its last tab; the main window's bar opens `newTab()`. */
 	#remove(id: string, how: 'closed' | 'moved'): void {
-		const index = this.items.findIndex((t) => t.id === id);
+		const items = this.items;
+		const index = items.findIndex((t) => t.id === id);
 		if (index < 0) return;
 		if (how === 'closed') {
-			this.#closed.push({ tab: $state.snapshot(this.items[index]) as Tab<D>, index });
+			this.#closed.push({ tab: $state.snapshot(items[index]) as T, index });
 			if (this.#closed.length > 20) this.#closed.shift();
 		}
-		this.items.splice(index, 1);
+		const rest = items.filter((t) => t.id !== id);
+		this.items = rest;
 		if (this.activeId === id) {
-			const next = this.items[index] ?? this.items[index - 1];
+			const next = rest[index] ?? rest[index - 1];
 			this.activeId = null;
 			if (next) this.activate(next.id);
 		}
-		if (this.items.length) return;
-		const o = this.options;
-		const last = o.primary && this.window && this.window !== 'main' ? 'window' : how === 'moved' ? 'new' : (o.onLastClose ?? (o.primary ? 'window' : 'keep'));
-		if (last === 'new') this.new();
-		else if (last === 'window' && isPage) void callPlatform('window', 'close').catch(() => {});
+		if (rest.length || !this.options.primary) return;
+		if (this.window && this.window !== 'main') void callPlatform('window', 'close').catch(() => {});
+		else this.new();
 	}
 
 	closeOthers(id: string): void {
-		for (const t of [...this.items]) if (t.id !== id && !t.pinned) this.close(t.id);
+		for (const t of this.items) if (t.id !== id && !t.pinned) this.close(t.id);
 	}
 
 	/** Reopen the last closed tab. */
-	reopen(): Tab<D> | undefined {
+	reopen(): T | undefined {
 		const last = this.#closed.pop();
 		return last ? this.open(last.tab, { index: last.index }) : undefined;
 	}
 
 	/** Activate the next (1) or previous (-1) tab, wrapping around. */
 	cycle(step: 1 | -1 = 1): void {
-		if (!this.items.length) return;
-		const i = this.items.findIndex((t) => t.id === this.activeId);
-		this.activate(this.items[(i + step + this.items.length) % this.items.length]!.id);
+		const items = this.items;
+		if (!items.length) return;
+		const i = items.findIndex((t) => t.id === this.activeId);
+		this.activate(items[(i + step + items.length) % items.length]!.id);
 	}
 
 	move(id: string, to: number): void {
-		const from = this.items.findIndex((t) => t.id === id);
-		if (from < 0) return;
-		const [tab] = this.items.splice(from, 1);
-		this.items.splice(Math.max(0, Math.min(to, this.items.length)), 0, tab!);
+		const tab = this.get(id);
+		if (!tab) return;
+		const rest = this.items.filter((t) => t.id !== id);
+		const index = Math.max(0, Math.min(to, rest.length));
+		this.items = [...rest.slice(0, index), tab, ...rest.slice(index)];
+		this.options.onmove?.(tab, index);
 	}
 
-	update(id: string, patch: Partial<Omit<Tab<D>, 'id'>>): void {
-		const tab = this.get(id);
-		if (tab) Object.assign(tab, patch);
+	update(id: string, patch: Partial<Omit<T, 'id'>>): void {
+		if (this.get(id)) this.items = this.items.map((t) => (t.id === id ? ({ ...t, ...patch } as T) : t));
 	}
 
 	/** Open a tab in a new window of its own (at a screen point), and take it out of this one —
@@ -278,6 +312,7 @@ export class TabGroup<D = unknown> {
 				animate: this.options.windowAnimation ?? true,
 			});
 			this.#remove(id, 'moved');
+			this.options.ondetach?.(tab);
 		} catch (e) {
 			console.error('[tabs] could not open the tab in a new window', e);
 		}
@@ -314,8 +349,11 @@ export class TabGroup<D = unknown> {
 				over = windows.some((w) => w.label !== this.window && w.visible !== false && cursor.x >= w.bounds.x && cursor.x <= w.bounds.x + w.bounds.width && cursor.y >= w.bounds.y && cursor.y <= w.bounds.y + w.bounds.height);
 			}
 			for (let i = 0; over && !out.adopted && i < 10; i++) await new Promise((r) => setTimeout(r, 30));
-			if (out.adopted) this.#remove(id, 'moved');
-			else if (at) await this.detach(id, at);
+			const tab = this.get(id);
+			if (out.adopted && tab) {
+				this.#remove(id, 'moved');
+				this.options.ondetach?.(tab);
+			} else if (at) await this.detach(id, at);
 		} finally {
 			out.off();
 		}
@@ -323,10 +361,9 @@ export class TabGroup<D = unknown> {
 
 	/** A tab dragged here from another window's bar (its `handoff`), opened at `index`. */
 	receive(handoff: string, index?: number): boolean {
-		const d = JSON.parse(handoff) as { group: string; nonce: string; tab: Tab<D> };
-		if (d.group !== this.id || !this.#detachable) return false;
-		const { id: _id, ...tab } = d.tab;
-		this.open(tab, { index });
+		const d = JSON.parse(handoff) as { group: string; nonce: string; tab: T };
+		if (d.group !== this.id || !this.#detachable()) return false;
+		this.open({ ...d.tab, id: this.get(d.tab.id) ? undefined : d.tab.id }, { index });
 		void callPlatform('events', 'emit', { channel: ADOPTED, data: { nonce: d.nonce } }).catch(() => {});
 		void callPlatform('window', 'focus').catch(() => {});
 		return true;
@@ -334,7 +371,7 @@ export class TabGroup<D = unknown> {
 
 	/** Whether tabs dragged from other windows can land here. */
 	get canReceive(): boolean {
-		return this.#detachable;
+		return this.#detachable();
 	}
 
 	/** Wire the group to the page and the window (<Tabs> does); returns the cleanup. */
@@ -378,7 +415,8 @@ export class TabGroup<D = unknown> {
 				});
 				// The window title follows the active tab.
 				$effect(() => {
-					const title = this.active?.title;
+					const active = this.active;
+					const title = active && this.titleOf(active);
 					if (o.primary && title && platformReady()) void callPlatform('window', 'setTitle', { title }).catch(() => {});
 				});
 			}),
@@ -391,10 +429,7 @@ export class TabGroup<D = unknown> {
 			cleanups.push(
 				watchUrl(() => {
 					const tab = this.active;
-					if (tab && !tab.isolated && tab.path !== here()) {
-						tab.path = here();
-						if (o.title) tab.title = this.#titleOf(tab.path);
-					}
+					if (tab && !this.isIsolated(tab) && tab.path !== here()) this.update(tab.id, { path: here() } as Partial<Omit<T, 'id'>>);
 				}),
 			);
 
@@ -406,12 +441,12 @@ export class TabGroup<D = unknown> {
 
 	async #restore(): Promise<void> {
 		const text = await readAppFile('userData', `tabs-${this.id}.json`);
-		const saved = text ? (JSON.parse(text) as { items: Tab<D>[]; activeId: string | null }) : null;
+		const saved = text ? (JSON.parse(text) as { items: T[]; activeId: string | null }) : null;
 		if (!saved?.items?.length) return;
-		this.items = saved.items.map((t) => ({ ...t, isolated: t.isolated ?? t.url !== undefined }));
+		this.items = saved.items;
 		this.activeId = saved.activeId && this.get(saved.activeId) ? saved.activeId : saved.items[0]!.id;
 		const active = this.active;
-		if (this.options.route && active && !active.isolated && active.path !== undefined && active.path !== here()) navigate(active.path);
+		if (this.options.route && active && !this.isIsolated(active) && active.path !== undefined && active.path !== here()) navigate(active.path);
 	}
 
 	/** The tab this window was opened for, with its title, data and state. */
@@ -420,7 +455,7 @@ export class TabGroup<D = unknown> {
 		const text = localStorage.getItem(key);
 		if (!text) return;
 		localStorage.removeItem(key);
-		const tab = JSON.parse(text) as Tab<D>;
+		const tab = JSON.parse(text) as T;
 		this.items = [{ ...tab, path: here() }];
 		this.activeId = tab.id;
 	}
@@ -462,7 +497,7 @@ export class TabGroup<D = unknown> {
 						{ id: 'tabs:select:9', label: 'Last Tab', accelerator: 'CmdOrCtrl+9' },
 					],
 				},
-				...(this.#detachable ? [{ type: 'separator' }, { id: 'tabs:detach', label: 'Move Tab to New Window' }] : []),
+				...(this.#detachable() ? [{ type: 'separator' }, { id: 'tabs:detach', label: 'Move Tab to New Window' }] : []),
 			];
 			void callPlatform('menu', 'insert', { name: 'Tab', items })
 				.then(() => (menu = true))
@@ -491,7 +526,7 @@ export class TabGroup<D = unknown> {
 				const a = newTab && e.target instanceof Element ? e.target.closest('a[href]') : null;
 				if (!(a instanceof HTMLAnchorElement) || a.target || a.origin !== location.origin) return;
 				e.preventDefault();
-				this.open({ path: a.pathname + a.search + a.hash }, { activate: false });
+				this.open({ path: a.pathname + a.search + a.hash } as TabInit<T>, { activate: false });
 			};
 			addEventListener('click', links, true);
 			addEventListener('auxclick', links, true);
@@ -506,13 +541,13 @@ export class TabGroup<D = unknown> {
 const KEY = Symbol('svelte-desktop tabs');
 
 /** <Tabs> hands its group to everything inside it. */
-export function setTabs<D>(group: TabGroup<D>): TabGroup<D> {
+export function setTabs<T extends TabLike>(group: TabGroup<T>): TabGroup<T> {
 	return setContext(KEY, group);
 }
 
 /** The group of the nearest <Tabs> around this component: its tabs, `open`, `close`, … */
-export function useTabs<D = any>(): TabGroup<D> {
-	const group = getContext<TabGroup<D> | undefined>(KEY);
+export function useTabs<T extends TabLike = TabLike & Record<string, any>>(): TabGroup<T> {
+	const group = getContext<TabGroup<T> | undefined>(KEY);
 	if (!group) throw new Error('useTabs(): no <Tabs> around this component');
 	return group;
 }

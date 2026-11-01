@@ -1,29 +1,48 @@
 <!--
-	A tab group, configured by its props: everything inside it — <TabBar>, <TabContent>,
-	<TabPanels>, useTabs() — works on it. Its `children` snippet gets the group too.
+	A tab group on your tabs: bind your array and the active id, and everything inside —
+	<TabBar>, <TabContent>, <TabPanels>, useTabs() — shows them and changes them, on your array.
+	Its `children` snippet gets the group too.
 
-	<Tabs id="app" route primary create={() => ({ path: '/' })}>
-		{#snippet children(tabs)}
-			<header class="titlebar"><TabBar label="Open pages" /></header>
-			<TabContent>{@render page()}</TabContent>
-		{/snippet}
+	<Tabs bind:tabs bind:active newTab={() => ({ title: 'New' })} onclose={(t) => confirm(`Close ${t.title}?`)}>
+		<TabBar />
+		<TabPanels>{#snippet children(tab)}…{/snippet}</TabPanels>
 	</Tabs>
 
-	Groups nest: an inner <Tabs> (tabs inside a page) is the one its own content sees.
+	Without bind:, `tabs` is where it starts. Groups nest: an inner <Tabs> is the one its content sees.
 -->
-<script lang="ts" generics="D = any">
+<script lang="ts" generics="T extends TabLike = TabLike">
 	import type { Snippet } from 'svelte';
-	import { TabGroup, setTabs, type TabsOptions } from './tabs.svelte.ts';
+	import { TabGroup, setTabs, type TabLike, type TabsOptions } from './tabs.svelte.ts';
 
-	interface Props extends TabsOptions<D> {
-		children: Snippet<[TabGroup<D>]>;
+	interface Props extends TabsOptions<T> {
+		/** Your tabs (bind:tabs): closing, moving, adding, a tab from another window — your array. */
+		tabs?: T[];
+		/** The active tab's id (bind:active). */
+		active?: string;
+		children: Snippet<[TabGroup<T>]>;
 	}
 
-	// The options are the live props, read when they're used (windowAnimation when a tab leaves,
-	// create on ⌘T…); `id`, `route` and `initial` are read once.
-	const props: Props = $props();
-	const group = setTabs(new TabGroup<D>(() => props));
+	let { tabs = $bindable(), active = $bindable(), ...options }: Props = $props();
+
+	// The options are the live props, read when used (newTab on ⌘T, windowAnimation when a tab
+	// leaves…); `id` and `route` are read once.
+	const group = setTabs(
+		new TabGroup<T>(() => options, {
+			get items() {
+				return tabs;
+			},
+			set items(next) {
+				tabs = next;
+			},
+			get active() {
+				return active;
+			},
+			set active(next) {
+				active = next;
+			},
+		}),
+	);
 	$effect(() => group.connect());
 </script>
 
-{@render props.children(group)}
+{@render options.children(group)}

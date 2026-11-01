@@ -12,15 +12,15 @@
 		{#snippet tab(t, { active, close })}<span>{t.title}</span>{/snippet}
 	</TabBar>
 -->
-<script lang="ts" generics="D = any">
+<script lang="ts" generics="T extends TabLike = TabLike & Record<string, any>">
 	import type { Snippet } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
-	import { useTabs, type Tab } from './tabs.svelte.ts';
+	import { useTabs, type TabLike } from './tabs.svelte.ts';
 	import { tabDrag, tabDrop } from './drag.ts';
 
 	interface Props extends HTMLAttributes<HTMLDivElement> {
 		/** Each tab's content (default: its title and a close button). */
-		tab?: Snippet<[Tab<D>, { active: boolean; close: () => void }]>;
+		tab?: Snippet<[T, { active: boolean; close: () => void }]>;
 		/** Before / after the tabs (the + button follows the last tab). */
 		start?: Snippet;
 		end?: Snippet;
@@ -30,16 +30,16 @@
 	}
 
 	let { tab, start, end, label = 'Tabs', newTabLabel = 'New tab', class: className = '', ...rest }: Props = $props();
-	const tabs = useTabs<D>();
+	const tabs = useTabs<T>();
 
 	let dragging = $state<string | null>(null);
 	/** The drop indicator's place while a tab is dragged over the bar (px), or null. */
 	let indicator = $state<number | null>(null);
 	const indicate = (x: number | null) => (indicator = x);
-	const elementId = (t: Tab<D>) => `${tabs.id}-tab-${t.id}`;
+	const elementId = (t: T) => `${tabs.id}-tab-${t.id}`;
 
-	function keydown(e: KeyboardEvent, t: Tab<D>) {
-		const i = tabs.items.indexOf(t);
+	function keydown(e: KeyboardEvent, t: T) {
+		const i = tabs.items.findIndex((x) => x.id === t.id);
 		const to = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.items.length - 1 : -1;
 		const next = tabs.items[to];
 		if (!next) return;
@@ -68,7 +68,7 @@
 					aria-selected={active}
 					aria-controls={tabs.options.route ? undefined : `${tabs.id}-panel-${t.id}`}
 					tabindex={active ? 0 : -1}
-					title={t.title}
+					title={tabs.titleOf(t)}
 					data-active={active || undefined}
 					data-pinned={t.pinned || undefined}
 					data-dragging={dragging === t.id || undefined}
@@ -80,12 +80,12 @@
 					{#if tab}
 						{@render tab(t, { active, close: () => tabs.close(t.id) })}
 					{:else}
-						<span data-sd-tab-title>{t.title}</span>
-						{#if t.closable && !t.pinned}
+						<span data-sd-tab-title>{tabs.titleOf(t)}</span>
+						{#if tabs.isClosable(t) && !t.pinned}
 							<button
 								type="button"
 								data-sd-tab-close
-								aria-label={`Close ${t.title}`}
+								aria-label={`Close ${tabs.titleOf(t)}`}
 								tabindex="-1"
 								onmousedown={(e) => e.stopPropagation()}
 								onclick={() => tabs.close(t.id)}>×</button

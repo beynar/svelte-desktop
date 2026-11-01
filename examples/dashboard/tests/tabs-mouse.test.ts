@@ -31,7 +31,7 @@ beforeAll(async () => {
 	if (!process.env.DESKTOP_TEST_MOUSE) return;
 	app = await launch({ dev: true });
 	await app.waitFor('.app-tabs [role=tab]', { timeout: 30_000 });
-	await app.eval(`(window.__tabs.items.splice(0), window.__tabs.open({ path: '/' }), window.__tabs.open({ path: '/board' }), window.__tabs.open({ path: '/calendar' }), true)`);
+	await app.eval(`(window.__tabs.items = [], window.__tabs.open({ path: '/' }), window.__tabs.open({ path: '/board' }), window.__tabs.open({ path: '/calendar' }), true)`);
 	await app.platform('window', 'setBounds', { x: 100, y: 100, width: 1200, height: 800 });
 	await app.platform('window', 'focus');
 	await sleep(1000);

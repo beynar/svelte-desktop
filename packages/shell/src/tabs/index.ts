@@ -1,6 +1,6 @@
-// Tabs: <Tabs> (a tab group, configured by its props) and what goes inside it.
+// Tabs: <Tabs> (a tab group on your tabs: bind:tabs, bind:active, callbacks) and what goes inside.
 //   import { Tabs, TabBar, TabContent, TabPanels, useTabs } from '@svelte-desktop/shell/tabs';
-export { TabGroup, useTabs, type Tab, type TabInput, type TabsOptions } from "./tabs.svelte.ts";
+export { TabGroup, useTabs, type TabLike, type TabInit, type TabsOptions } from "./tabs.svelte.ts";
 export { default as Tabs } from "./Tabs.svelte";
 export { default as TabBar } from "./TabBar.svelte";
 export { default as TabContent } from "./TabContent.svelte";
