@@ -59,6 +59,17 @@ test('native Rust and Go plugins: typed commands, errors, events, a panic-free r
 	expect(ticks).toEqual([3, 2, 1]);
 });
 
+test('host.store and host.windowState from the page: the app server owns the files', async () => {
+	await app.eval(`(async () => { await host.store.load(); host.store.set('e2e', { n: 7 }); await host.store.flush(); })()`);
+	await app.eval('(window.__beforeReload = true, setTimeout(() => location.reload(), 10), true)');
+	await app.waitFor(() => !(window as any).__beforeReload && document.documentElement.hasAttribute('data-desktop-hydrated'), { timeout: 15_000 });
+	expect(await app.eval(`host.store.load().then((d) => d.e2e)`)).toEqual({ n: 7 });
+	const saved = await app.eval<{ bounds: { width: number } }>(`host.windowState.save()`);
+	expect(saved.bounds.width).toBeGreaterThan(100);
+	expect(await app.eval(`host.windowState.load().then((s) => s.bounds.width)`)).toBe(saved.bounds.width);
+	await app.eval(`(async () => { host.store.delete('e2e'); await host.store.flush(); })()`);
+});
+
 test('native Swift plugin', async () => {
 	expect(await app.platform<string>('greeter', 'hello', { name: 'test' })).toContain('from Swift');
 	expect(await app.platform<number>('greeter', 'add', { a: 1, b: 2 })).toBe(3);

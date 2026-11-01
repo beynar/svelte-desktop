@@ -1,6 +1,7 @@
 /**
  * Window-bounds persistence. Pure JS: reads/writes a JSON file under
- * `app.getPath('userData')` and applies origin + size through
+ * `app.getPath('userData')` (from a page, through the app's server process:
+ * app-files.ts) and applies origin + size through
  * `windows.setPosition`/`windows.setSize`.
  *
  * `flags` narrow which aspects are captured (save) or applied (restore);
@@ -8,8 +9,8 @@
  * restore() falls back to them when the caller passes none, so a
  * partial snapshot never applies aspects it didn't capture.
  */
-import { app } from './index';
 import { windows } from './index';
+import { readAppFile, writeAppFile } from './app-files';
 import type { WindowStateName } from './index';
 
 export type WindowStateFlag = 'size' | 'position' | 'maximized' | 'visible' | 'fullscreen';
@@ -29,17 +30,12 @@ export interface PersistedWindowState {
 
 const FILE_NAME = 'window-state.json';
 
-async function stateFilePath(): Promise<string> {
-	const dir = await app.getPath('userData');
-	return `${dir}/${FILE_NAME}`;
-}
 
 export const windowState = {
 	/** Snapshot the live window state to disk — `flags` picks which aspects. */
 	async save(options: { flags?: WindowStateFlag[] } = {}): Promise<PersistedWindowState> {
 		const flags = options.flags ?? ALL_FLAGS;
 		const { bounds, state } = await windows.getBounds();
-		const file = await stateFilePath();
 		const persisted: PersistedWindowState = { bounds, savedAt: Date.now(), flags };
 		if (flags.includes('maximized') || flags.includes('fullscreen')) {
 			persisted.state = state;
@@ -50,16 +46,16 @@ export const windowState = {
 			const min = await windows.isMinimized().catch(() => null);
 			persisted.visible = min == null ? true : !(min as { minimized?: boolean }).minimized;
 		}
-		await Bun.write(file, JSON.stringify(persisted, null, 2));
+		await writeAppFile('userData', FILE_NAME, JSON.stringify(persisted, null, 2));
 		return persisted;
 	},
 
 	/** Read the persisted state without applying it. Null when absent/corrupt. */
 	async load(): Promise<PersistedWindowState | null> {
-		const file = Bun.file(await stateFilePath());
-		if (!(await file.exists())) return null;
+		const text = await readAppFile('userData', FILE_NAME);
+		if (text === null) return null;
 		try {
-			const state = (await file.json()) as PersistedWindowState;
+			const state = JSON.parse(text) as PersistedWindowState;
 			// All four fields — restore() applies x/y via setPosition and
 			// undefined coordinates would surface as invalid_args mid-restore.
 			const b = state?.bounds;

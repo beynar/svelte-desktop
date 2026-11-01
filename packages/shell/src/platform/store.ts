@@ -2,21 +2,22 @@
  * Persisted JSON key-value store. Pure JS: a flat record flushed to
  * `${app.getPath('appData')}/svelte-desktop-store.json` — writes are
  * debounced 250ms so bursts of set() calls coalesce into one write.
+ * From a page, the app's server process does the file I/O (app-files.ts).
  * Call load() once at init (the stores-module `store` namespace does it);
  * failures there land on `store.error` like every other namespace.
  */
-import { app } from './index';
+import { readAppFile, writeAppFile } from './app-files';
 
 const FILE_NAME = 'svelte-desktop-store.json';
 const SAVE_DEBOUNCE_MS = 250;
 
 let data: Record<string, unknown> = {};
-let path: string | null = null;
+let loaded = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 async function persist(): Promise<void> {
-	if (!path) return; // flush() guards; a stray timer before load() is a no-op
-	await Bun.write(path, JSON.stringify(data, null, 2));
+	if (!loaded) return; // flush() guards; a stray timer before load() is a no-op
+	await writeAppFile('appData', FILE_NAME, JSON.stringify(data, null, 2));
 }
 
 function scheduleSave(): void {
@@ -31,9 +32,9 @@ function scheduleSave(): void {
 }
 
 export const store = {
-	/** Resolved JSON path — null until load() runs. */
+	/** The file's name in the app data directory — null until load() runs. */
 	get path() {
-		return path;
+		return loaded ? FILE_NAME : null;
 	},
 	/** Live in-memory record — the source of truth between saves. */
 	get data() {
@@ -61,15 +62,15 @@ export const store = {
 
 	/** Resolve the file path and read it into memory. Missing file → {}. */
 	async load(): Promise<Record<string, unknown>> {
-		path = `${await app.getPath('appData')}/${FILE_NAME}`;
-		const file = Bun.file(path);
-		if (!(await file.exists())) {
+		const text = await readAppFile('appData', FILE_NAME);
+		loaded = true;
+		if (text === null) {
 			data = {};
 			return data;
 		}
 		let parsed: unknown = null;
 		try {
-			parsed = await file.json();
+			parsed = JSON.parse(text);
 		} catch {
 			// Corrupt file falls back to {} — matches windowState.load()'s
 			// tolerance; a broken store must not brick the namespace.
@@ -87,7 +88,7 @@ export const store = {
 			clearTimeout(timer);
 			timer = null;
 		}
-		if (!path) throw new Error('store.flush() before load() — no path resolved');
+		if (!loaded) throw new Error('store.flush() before load()');
 		await persist();
 	},
 };

@@ -1178,7 +1178,7 @@ export const shortcuts = new ShortcutsNamespace();
 class StoreNamespace extends PlatformNamespace {
 	/** Live snapshot of the persisted record. */
 	data = $state<Record<string, unknown>>({});
-	/** Resolved JSON path — set once load() runs (init calls it). */
+	/** The JSON file (in the app data directory) — set once load() runs (init calls it). */
 	path = $state<string | null>(null);
 
 	async init(): Promise<this> {
