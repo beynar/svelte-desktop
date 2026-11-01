@@ -9,7 +9,7 @@ import type { Arch } from "./package.ts";
 
 const include = resolve(import.meta.dir, "../../native/include");
 
-const PLATFORM_DIRS = ["macos", "linux", "windows", "android", "ios"] as const;
+const PLATFORM_DIRS = ["macos", "linux", "windows"] as const;
 export type PluginPlatform = (typeof PLATFORM_DIRS)[number];
 
 /** Plugin sources under native/ for one platform: everything except addons/ (Node-API

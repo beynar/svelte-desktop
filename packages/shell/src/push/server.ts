@@ -1,17 +1,16 @@
 /**
  * Send remote pushes from your server (Bun) to what `host.push.register()` returned:
- * APNs (macOS, iOS), Firebase Cloud Messaging (Android) and Web Push (browsers).
+ * APNs (macOS) and Web Push (browsers, and your own push server for macOS / Windows / Linux).
  * No dependencies: WebCrypto for the JWTs and the Web Push encryption, node:http2 for APNs.
  *
  *   import { createPush } from '@svelte-desktop/shell/push';
  *   const push = createPush({
  *     apns: { teamId, keyId, key: await Bun.file('AuthKey.p8').text() },
- *     fcm: { serviceAccount: await Bun.file('service-account.json').json() },
  *     webpush: { publicKey, privateKey, subject: 'mailto:ops@example.com' },
  *   });
  *   await push.send(target, { id: 'msg-42', title: 'Alice', body: 'Lunch?', url: '/chat/42' });
  *
- * `id` dedupes on every channel (apns-collapse-id, FCM tag/collapse_key, Web Push tag/Topic):
+ * `id` dedupes on every channel (apns-collapse-id, Web Push tag/Topic):
  * the device shows one notification per id, and a local `host.notifications.show({ id })`
  * replaces it too. A target the service reports gone throws PushError with `expired: true`:
  * delete it.
@@ -38,10 +37,8 @@ export interface PushNotification {
 	silent?: boolean;
 	/** Thread / group. */
 	group?: string;
-	/** Image URL (FCM, Web Push; APNs needs a notification service extension). */
+	/** Image URL (Web Push; APNs needs a notification service extension). */
 	image?: string;
-	/** Android channel. */
-	channel?: string;
 	/** Seconds the service keeps it while the device is offline. Default 4 weeks. */
 	ttl?: number;
 	/** 'high' (default) wakes the device now; 'normal' may be delayed to save battery. */
@@ -50,7 +47,6 @@ export interface PushNotification {
 	background?: boolean;
 	/** Raw overrides merged into each provider's payload. */
 	apns?: Record<string, unknown>;
-	fcm?: Record<string, unknown>;
 	webpush?: Record<string, unknown>;
 }
 
@@ -69,12 +65,6 @@ export interface PushConfig {
 		/** Test seam: APNs origin. */
 		origin?: string;
 	};
-	fcm?: {
-		/** The Firebase service account JSON (object or string). */
-		serviceAccount: { project_id: string; client_email: string; private_key: string; token_uri?: string } | string;
-		/** Test seam: FCM API origin. */
-		origin?: string;
-	};
 	webpush?: {
 		/** VAPID keys (base64url) from generateVapidKeys(). */
 		publicKey: string;
@@ -89,7 +79,7 @@ export class PushError extends Error {
 		message: string,
 		readonly provider: PushTarget['provider'],
 		readonly status: number,
-		/** The provider's reason (APNs `reason`, FCM error status…). */
+		/** The provider's reason (APNs `reason`, the Web Push service's response…). */
 		readonly reason: string,
 		/** The target is gone (uninstalled, unsubscribed, token rotated): delete it. */
 		readonly expired: boolean,
@@ -121,11 +111,11 @@ function pemBody(pem: string): Uint8Array {
 	return Uint8Array.from(atob(pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '')), (c) => c.charCodeAt(0));
 }
 
-async function jwt(header: object, claims: object, key: CryptoKey, alg: 'ES256' | 'RS256'): Promise<string> {
+/** An ES256 JWT (APNs provider token, VAPID). */
+async function jwt(header: object, claims: object, key: CryptoKey): Promise<string> {
 	const input = `${b64url(enc.encode(JSON.stringify(header)))}.${b64url(enc.encode(JSON.stringify(claims)))}`;
-	const params = alg === 'ES256' ? { name: 'ECDSA', hash: 'SHA-256' } : { name: 'RSASSA-PKCS1-v1_5' };
 	// WebCrypto ECDSA signatures are already raw r||s (what JWS wants).
-	const sig = await crypto.subtle.sign(params, key, enc.encode(input));
+	const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, enc.encode(input));
 	return `${input}.${b64url(sig)}`;
 }
 
@@ -249,7 +239,7 @@ export function createPush(config: PushConfig): PushSender {
 		if (apnsToken && now() - apnsToken.at < 3000) return apnsToken.value;
 		apnsKey ??= crypto.subtle.importKey('pkcs8', pemBody(c.key), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
 		const at = now();
-		apnsToken = { value: await jwt({ alg: 'ES256', kid: c.keyId }, { iss: c.teamId, iat: at }, await apnsKey, 'ES256'), at };
+		apnsToken = { value: await jwt({ alg: 'ES256', kid: c.keyId }, { iss: c.teamId, iat: at }, await apnsKey), at };
 		return apnsToken.value;
 	}
 	function session(origin: string): http2.ClientHttp2Session {
@@ -311,72 +301,13 @@ export function createPush(config: PushConfig): PushSender {
 		throw new PushError(`push: APNs ${res.status} ${reason}`, 'apns', res.status, reason, expired);
 	}
 
-	// FCM HTTP v1: an OAuth2 access token from the service account (RS256 assertion), cached.
-	let fcmToken: { value: string; until: number } | null = null;
-	const account = () => {
-		const a = config.fcm!.serviceAccount;
-		return typeof a === 'string' ? JSON.parse(a) as Exclude<typeof a, string> : a;
-	};
-	async function fcmAccess(): Promise<string> {
-		if (fcmToken && fcmToken.until > now() + 60) return fcmToken.value;
-		const a = account();
-		const uri = a.token_uri ?? 'https://oauth2.googleapis.com/token';
-		const key = await crypto.subtle.importKey('pkcs8', pemBody(a.private_key), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
-		const iat = now();
-		const assertion = await jwt({ alg: 'RS256', typ: 'JWT' }, { iss: a.client_email, scope: 'https://www.googleapis.com/auth/firebase.messaging', aud: uri, iat, exp: iat + 3600 }, key, 'RS256');
-		const res = await fetch(uri, {
-			method: 'POST',
-			headers: { 'content-type': 'application/x-www-form-urlencoded' },
-			body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }),
-		});
-		const json = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string };
-		if (!res.ok || !json.access_token) throw new PushError(`push: FCM OAuth ${res.status} ${json.error ?? ''}`.trim(), 'fcm', res.status, json.error ?? 'OAuth', false);
-		fcmToken = { value: json.access_token, until: iat + (json.expires_in ?? 3600) };
-		return fcmToken.value;
-	}
-
-	async function sendFcm(t: Extract<PushTarget, { provider: 'fcm' }>, n: PushNotification) {
-		if (!config.fcm) throw new PushError('push: no `fcm` config', 'fcm', 0, 'NotConfigured', false);
-		const a = account();
-		// Data-only: the app displays it itself (Notifier), so its taps are authenticated like a local
-		// notification's and the payload / deep link always reach it. FCM data values are strings.
-		const data: Record<string, string> = {};
-		const payload = payloadOf(n);
-		if (payload) data.sd = payload;
-		if (n.id) data.sd_id = n.id;
-		if (!n.background) {
-			if (n.title) data.sd_title = n.title;
-			if (n.body) data.sd_body = n.body;
-			if (n.subtitle) data.sd_subtitle = n.subtitle;
-			if (n.image) data.sd_image = n.image;
-			if (n.channel) data.sd_channel = n.channel;
-			if (n.group) data.sd_group = n.group;
-			if (n.silent) data.sd_silent = 'true';
-		}
-		const android: Record<string, unknown> = { priority: n.priority === 'normal' ? 'NORMAL' : 'HIGH', ttl: `${n.ttl ?? 2419200}s` };
-		if (n.id) android.collapse_key = n.id;
-		const message: Record<string, unknown> = { token: t.token, data, android };
-		Object.assign(message, n.fcm);
-		const origin = config.fcm.origin ?? 'https://fcm.googleapis.com';
-		const res = await fetch(`${origin}/v1/projects/${a.project_id}/messages:send`, {
-			method: 'POST',
-			headers: { authorization: `Bearer ${await fcmAccess()}`, 'content-type': 'application/json' },
-			body: JSON.stringify({ message }),
-		});
-		const json = (await res.json().catch(() => ({}))) as { name?: string; error?: { status?: string; message?: string; details?: { errorCode?: string }[] } };
-		if (res.ok) return { id: json.name };
-		const code = json.error?.details?.find((d) => d.errorCode)?.errorCode ?? json.error?.status ?? `HTTP ${res.status}`;
-		const expired = code === 'UNREGISTERED' || (res.status === 404 && code === 'NOT_FOUND') || (code === 'INVALID_ARGUMENT' && /registration token/i.test(json.error?.message ?? ''));
-		throw new PushError(`push: FCM ${res.status} ${code}${json.error?.message ? `: ${json.error.message}` : ''}`, 'fcm', res.status, code, expired);
-	}
-
 	let vapidKey: Promise<CryptoKey> | null = null;
 	async function sendWebPush(t: Extract<PushTarget, { provider: 'webpush' }>, n: PushNotification) {
 		const c = config.webpush;
 		if (!c) throw new PushError('push: no `webpush` config', 'webpush', 0, 'NotConfigured', false);
 		vapidKey ??= crypto.subtle.importKey('jwk', p256Jwk(fromB64url(c.publicKey), c.privateKey), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
 		const audience = new URL(t.endpoint).origin;
-		const token = await jwt({ typ: 'JWT', alg: 'ES256' }, { aud: audience, exp: now() + 12 * 3600, sub: c.subject }, await vapidKey, 'ES256');
+		const token = await jwt({ typ: 'JWT', alg: 'ES256' }, { aud: audience, exp: now() + 12 * 3600, sub: c.subject }, await vapidKey);
 		const message: Record<string, unknown> = n.background
 			? { payload: payloadOf(n), id: n.id }
 			: { id: n.id, title: n.title, body: n.body, subtitle: n.subtitle, image: n.image, silent: n.silent, payload: payloadOf(n) };
@@ -400,7 +331,6 @@ export function createPush(config: PushConfig): PushSender {
 		send(target, n) {
 			switch (target?.provider) {
 				case 'apns': return sendApns(target, n);
-				case 'fcm': return sendFcm(target, n);
 				case 'webpush': return sendWebPush(target, n);
 				default: return Promise.reject(new Error(`push: unknown target ${JSON.stringify(target)}`));
 			}

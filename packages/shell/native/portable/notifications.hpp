@@ -92,7 +92,6 @@ inline bool parse_show(const json &a, Show &s, std::string *error) {
   if (a.contains("lines") && a["lines"].is_array())
     for (auto &l : a["lines"])
       if (l.is_string()) s.lines.push_back(l.get<std::string>());
-  // summary, color, visibility: Android only
   if (a.contains("payload") && !a["payload"].is_null()) s.payload = a["payload"].is_string() ? a["payload"].get<std::string>() : a["payload"].dump();
   if (a.contains("actions") && !a["actions"].is_null()) {
     if (!a["actions"].is_array()) return fail("`actions` must be an array");

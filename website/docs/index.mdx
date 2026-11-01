@@ -1,6 +1,6 @@
 ---
 title: svelte-desktop
-description: "Desktop and mobile apps from an unmodified SvelteKit app: one Vite plugin, one config file, Bun, the system web view, one signed binary."
+description: "Desktop apps from an unmodified SvelteKit app: one Vite plugin, one config file, Bun, the system web view, one signed binary."
 sidebar:
   label: Introduction
   icon: house
@@ -38,7 +38,7 @@ bun test                # drive the real window from tests
 - **Bun on the server side.** Server code has Bun's APIs, `bun:sqlite`, Node-API addons, sidecars and background jobs in their own processes.
 - **The system web view.** No bundled Chromium. Menus, windows, dialogs and popovers are the OS's own.
 - **One global for native features.** `host.clipboard.writeText()`, `host.notifications.show()`, `host.window.setTitle()`: the same object in page and server code, reactive in components.
-- **Self-hosted push.** Remote notifications on desktop without an Apple or Google account, through a Web Push compatible server you run.
+- **Self-hosted push.** Remote notifications without an Apple account, through a Web Push compatible server you run.
 
 ## Compared
 
@@ -54,7 +54,7 @@ Hello-world app on macOS 26.5 (M4 Pro), all processes counted. Numbers from the 
 
 - **Electron** ships Chromium and Node; you write the main process and IPC yourself. svelte-desktop is 3 to 6 times smaller and runs your SvelteKit server unchanged.
 - **Tauri** is about 10 times smaller (no JavaScript runtime) but runs a static SPA with native code in Rust. svelte-desktop keeps SSR and server code in TypeScript on Bun, with Swift, C or Node-API for native code.
-- **Electrobun** also uses Bun and the system web view. svelte-desktop adds SvelteKit SSR end to end, signed updates (Electrobun signs neither manifest nor archives) and Android and iOS targets.
+- **Electrobun** also uses Bun and the system web view. svelte-desktop adds SvelteKit SSR end to end, and signed updates (Electrobun signs neither manifest nor archives).
 
 ## What you get
 
@@ -69,7 +69,7 @@ Hello-world app on macOS 26.5 (M4 Pro), all processes counted. Numbers from the 
     A route of your app in a native popover or a Spotlight-style panel.
   </Card>
   <Card title="Notifications and push" href="/features/notifications" icon="bell">
-    Actions, replies, scheduling, deep links; APNs, FCM and Web Push.
+    Actions, replies, scheduling, deep links; APNs and Web Push.
   </Card>
   <Card title="Native code" href="/features/native-code" icon="cpu">
     Swift, Objective-C or C plugins, Node-API addons, sidecars.
@@ -86,9 +86,3 @@ Hello-world app on macOS 26.5 (M4 Pro), all processes counted. Numbers from the 
 | macOS 12+ | WKWebView | `.app`, zip, DMG, notarization, universal | Primary target, full test suites |
 | Linux | WebKitGTK 4.1 (GTK 3) | App directory, tar.gz, AppImage | Verified in Docker under Xvfb |
 | Windows | WebView2 | Folder, zip, NSIS installer, Authenticode | Cross-compiled and smoke-tested under Wine; not yet run on real Windows |
-| Android 8+ | `android.webkit.WebView` | Signed APK, AAB | Verified on the emulator |
-| iOS 17+ | WKWebView (thin client) | Simulator and device `.app` | Verified on the simulator |
-
-:::note
-iOS can't run Bun: the iOS app is a native WKWebView on your deployed SvelteKit server, or an offline bundle of prerendered pages. See [Mobile](/shipping/mobile).
-:::

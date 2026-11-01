@@ -255,8 +255,6 @@ export async function packageApp(c: ResolvedConfig, stage: string): Promise<Pack
   const target = c.build?.target ?? (process.platform === "win32" ? "windows" : process.platform === "linux" ? "linux" : "macos");
   if (target === "linux") return (await import("./package-linux.ts")).packageLinux(c, stage);
   if (target === "windows") return (await import("./package-windows.ts")).packageWindows(c, stage);
-  if (target === "android") return (await import("./package-android.ts")).packageAndroid(c, stage);
-  if (target === "ios") return (await import("./package-ios.ts")).packageIos(c, stage);
   return packageMac(c, stage);
 }
 

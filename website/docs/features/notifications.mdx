@@ -1,9 +1,9 @@
 ---
 title: Notifications and push
-description: Local notifications with actions, replies, scheduling and deep links; remote push through APNs, FCM, Web Push or your own server.
+description: Local notifications with actions, replies, scheduling and deep links; remote push through APNs, Web Push or your own server.
 ---
 
-One API, `host.notifications`, on macOS, Linux, Windows, Android, iOS and in a plain browser tab.
+One API, `host.notifications`, on macOS, Linux, Windows and in a plain browser tab.
 
 ```ts
 await host.notifications.show({
@@ -39,7 +39,7 @@ await host.notifications.show({ id: 'standup', title: 'Stand-up', at: tomorrow9a
 await host.notifications.show({ title: 'Tea is ready', delay: 4 * 60_000 });
 ```
 
-`at` (a `Date`, epoch ms or string) or `delay` (ms), with `repeat`: `minute`, `hour`, `day`, `week`, `month`, `year`. Schedules survive the app quitting on macOS, iOS, Android and Windows; Linux keeps the queue on disk and catches up at the next start.
+`at` (a `Date`, epoch ms or string) or `delay` (ms), with `repeat`: `minute`, `hour`, `day`, `week`, `month`, `year`. Schedules survive the app quitting on macOS and Windows; Linux keeps the queue on disk and catches up at the next start.
 
 ## Events and lists
 
@@ -49,7 +49,7 @@ await host.notifications.show({ title: 'Tea is ready', delay: 4 * 60_000 });
 | `on('shown', fn)` | Delivered while the app runs (a scheduled one firing, a push in the foreground) |
 | `delivered()`, `pending()` | What's in the notification center, and what's scheduled |
 | `dismiss(id)`, `dismissAll()` | Remove delivered and cancel pending |
-| `setBadge(count)` | App icon badge (Dock, iOS, Unity launchers on Linux, Windows overlay); `null` or `0` clears it |
+| `setBadge(count)` | App icon badge (Dock, Unity launchers on Linux, Windows overlay); `null` or `0` clears it |
 | `permission`, `requestPermission()` | Reactive `granted`, `denied`, `notDetermined` or `unavailable` |
 
 <Expandable title="All notification options">
@@ -59,22 +59,21 @@ await host.notifications.show({ title: 'Tea is ready', delay: 4 * 60_000 });
     id: { type: "string", description: "Dedupe key. Default: a new id." },
     title: { type: "string", required: true },
     "body, subtitle": { type: "string" },
-    group: { type: "string", description: "Thread or group (Apple threads, Android groups, Windows groups)." },
+    group: { type: "string", description: "Thread or group (macOS threads, Windows groups)." },
     image: { type: "string", description: "A path, a file:, data: or http(s) URL, or an app URL ('/img/x.png')." },
-    icon: { type: "string", description: "Large icon / logo override (Android, Windows, Linux)." },
+    icon: { type: "string", description: "Large icon / logo override (Windows, Linux)." },
     "sound, silent": { type: "string, boolean", description: "'default' or a sound shipped with the app." },
     renotify: { type: "boolean", default: "true", description: "Alert again when replacing an existing id." },
-    badge: { type: "number", description: "App icon badge carried by the notification (Apple, Android)." },
+    badge: { type: "number", description: "App icon badge carried by the notification (macOS)." },
     urgency: { type: '"low" | "normal" | "critical"' },
-    requireInteraction: { type: "boolean", description: "Stay until the user acts (Linux, Windows, Android)." },
+    requireInteraction: { type: "boolean", description: "Stay until the user acts (Linux, Windows)." },
     timestamp: { type: "Date | number" },
     actions: { type: "NotificationAction[]", description: "{ id, title, input?, destructive?, foreground?, url? }" },
-    channel: { type: "string", description: "Android channel id." },
     foreground: { type: "boolean", description: "Show while the app is frontmost." },
     "at, delay, repeat": { type: "Date | number | string, number, string", description: "Scheduling." },
     "url, data": { type: "string, unknown", description: "Navigate on click; JSON handed back in events." },
     replace: { type: "boolean", default: "true" },
-    "lines, summary, ongoing, autoCancel, color, visibility": { type: "Android", description: "Inbox lines, summary text, sticky, auto-cancel, accent color, lock-screen visibility." },
+    "ongoing, autoCancel": { type: "boolean", description: "Sticky; removed when clicked (default true). Linux, Windows." },
     closeButtonText: { type: "string", description: "A dismiss button label (Windows, Linux)." },
     toastXml: { type: "string", description: "Windows: raw toast XML, used as is." },
   }}
@@ -82,27 +81,13 @@ await host.notifications.show({ title: 'Tea is ready', delay: 4 * 60_000 });
 
 </Expandable>
 
-## Android channels
-
-```ts desktop.config.ts
-notifications: {
-  channels: [
-    { id: 'messages', name: 'Messages', importance: 'high' },
-    { id: 'reminders', name: 'Reminders' },
-  ],
-},
-```
-
-Channels are created at startup; the first one is the default. Fields: `id`, `name`, `description`, `importance` (`min`, `low`, `default`, `high`, `max`), `sound`, `vibrate`, `lights`, `badge`, `visibility`.
-
 ## Remote push
 
 `host.push.register()` returns the target your server sends to:
 
 | Platform | Provider | Config |
 | --- | --- | --- |
-| macOS, iOS | APNs | `push: { apns: true }` and a provisioning profile with Push Notifications (`sign.provisioningProfile` on macOS, `sign.ios.provisioningProfile` on iOS). The iOS simulator registers without one. |
-| Android | FCM, or UnifiedPush when a distributor app (such as ntfy) is installed | `push: { fcm: { googleServices: './google-services.json' } }` |
+| macOS | APNs | `push: { apns: true }` and a provisioning profile with Push Notifications (`sign.provisioningProfile`). |
 | macOS, Windows, Linux | Your own push server (Web Push) | `push: { server: 'https://push.example.com' }`. Takes precedence over APNs on macOS. |
 | Browser tab | Web Push | `host.push.register({ vapidPublicKey })` |
 
@@ -117,14 +102,13 @@ Taps on pushes are ordinary notification clicks, with the same `url` and `data`.
 
 ### Sending from Bun
 
-No dependencies; one sender for all three providers:
+No dependencies; one sender for APNs and Web Push (your own push server included):
 
 ```ts server.ts
 import { createPush } from '@svelte-desktop/shell/push';
 
 const push = createPush({
   apns: { teamId, keyId, key: await Bun.file('AuthKey.p8').text() },
-  fcm: { serviceAccount: await Bun.file('firebase-service-account.json').json() },
   webpush: { publicKey, privateKey, subject: 'mailto:ops@example.com' },
 });
 
@@ -132,11 +116,11 @@ const results = await push.sendMany(targets, { id: 'msg-42', title: 'Alice', bod
 // results[i].expired: the target is gone (uninstalled, unsubscribed), delete it
 ```
 
-`push.send(target, notification)` sends one. `generateVapidKeys()` from the same module creates the Web Push keys. A notification also takes `subtitle`, `data`, `badge`, `sound`, `silent`, `group`, `image`, `channel`, `ttl`, `priority` and `background` (data-only, delivered to `host.push.on('message')`).
+`push.send(target, notification)` sends one. `generateVapidKeys()` from the same module creates the Web Push keys. A notification also takes `subtitle`, `data`, `badge`, `sound`, `silent`, `group`, `image`, `ttl`, `priority` and `background` (data-only, delivered to `host.push.on('message')`).
 
 ### Self-hosted push
 
-On desktop you don't need an Apple or Google account. Set `push.server` to a Web Push compatible service you run; the app holds one connection while it runs (window closed included, with `quitOnLastWindowClosed: false`). `register()` then returns a Web Push target and the same `push.send()` delivers to it, end-to-end encrypted.
+No Apple account needed: set `push.server` to a Web Push compatible service you run; the app holds one connection while it runs (window closed included, with `quitOnLastWindowClosed: false`). `register()` then returns a Web Push target and the same `push.send()` delivers to it, end-to-end encrypted.
 
 Run the server anywhere with Bun:
 
@@ -146,6 +130,6 @@ import { servePush } from '@svelte-desktop/shell/push-server';
 servePush({ port: 47123, db: 'push.sqlite' }); // db defaults to ':memory:'
 ```
 
-Or deploy `packages/push-worker` from the repository on Cloudflare (`bunx wrangler deploy`): one Durable Object per device with hibernatable WebSockets. Android can use UnifiedPush the same way; iOS has no alternative to APNs.
+Or deploy `packages/push-worker` from the repository on Cloudflare (`bunx wrangler deploy`): one Durable Object per device with hibernatable WebSockets.
 
 In a plain browser tab, notifications use the Notification API and a small service worker served at `/__desktop/push-sw.js`, in its own scope.

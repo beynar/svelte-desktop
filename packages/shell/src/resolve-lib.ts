@@ -24,9 +24,7 @@ export function sidecarPath(name: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new Error(`invalid sidecar name ${name}`);
   const dev = process.env[`SVELTE_DESKTOP_SIDECAR_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`];
   if (dev) return dev;
-  // Android: lib/<abi>/libsidecar_<name>.so (only lib*.so files are extracted, into an exec-allowed dir).
-  const file =
-    (process.platform as string) === "android" ? `libsidecar_${name}.so` : process.platform === "win32" && !name.endsWith(".exe") ? `${name}.exe` : name;
+  const file = process.platform === "win32" && !name.endsWith(".exe") ? `${name}.exe` : name;
   const bundled = join(dirname(process.execPath), file);
   if (!existsSync(bundled)) throw new Error(`sidecar "${name}" is not bundled (desktop.config sidecars)`);
   return bundled;
@@ -37,12 +35,7 @@ export function addonPath(name: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new Error(`invalid addon name ${name}`);
   const dev = process.env.SVELTE_DESKTOP_ADDONS ? JSON.parse(process.env.SVELTE_DESKTOP_ADDONS)[name] : undefined;
   if (dev) return dev;
-  // Android: lib/<abi>/libaddon_<name>.so in the APK (only lib*.so files are
-  // extracted), next to the server executable in nativeLibraryDir.
-  const bundled =
-    (process.platform as string) === "android"
-      ? join(dirname(process.execPath), `libaddon_${name}.so`)
-      : join(bundledLibDir(), "addons", `${name}.node`);
+  const bundled = join(bundledLibDir(), "addons", `${name}.node`);
   if (!existsSync(bundled)) throw new Error(`addon "${name}" is not bundled (native/addons/${name}.c or desktop.config addons)`);
   return bundled;
 }

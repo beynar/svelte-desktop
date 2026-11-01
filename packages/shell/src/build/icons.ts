@@ -1,6 +1,6 @@
 // App icons: one source image → every target's icon files, generated at build (cached in
 // .desktop/icons) or with `svelte-desktop icon`. Bun.Image decodes and resamples; the
-// shaping (macOS squircle, iOS flatten, Android adaptive layers) and the containers
+// shaping (macOS squircle) and the containers
 // (.icns, .ico) are written here — no sips/iconutil, so any OS builds any target's icons.
 //
 // A full-bleed source (opaque corners: a square artwork) is shaped per platform the way
@@ -15,8 +15,8 @@ import { deflateSync, inflateSync } from "node:zlib";
 export interface IconSpec {
   /** Absolute path of the source: PNG, JPEG or WebP, square, 1024 px or more (SVG on macOS). */
   source: string;
-  /** Hex color behind the artwork where a platform needs an opaque or layered icon
-   *  (iOS, Android adaptive background). Default: the artwork's corner color, else white. */
+  /** Hex color behind a transparent-cornered artwork on macOS 26, whose icons are opaque.
+   *  Default: the artwork's corner color, else white. */
   background?: string;
 }
 
@@ -34,13 +34,9 @@ export interface AppIcons {
   ico: string;
   /** Unshaped PNG at a desktop size (Linux, Windows toasts): 16, 32, 48, 64, 128, 256, 512 or 1024. */
   png: (size: (typeof DESKTOP_SIZES)[number]) => string;
-  /** iOS: opaque 1024 px PNG (the system applies the mask). */
-  ios: string;
-  /** Android `res` tree: mipmap-* (legacy, round, adaptive foreground) + adaptive XML + background color. */
-  androidRes: string;
 }
 
-const VERSION = 2; // bump when the output changes for the same input
+const VERSION = 3; // bump when the output changes for the same input
 const DESKTOP_SIZES = [16, 32, 48, 64, 128, 256, 512, 1024] as const;
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
 // OSType → pixel size; PNG payloads are valid for all of them (macOS 10.7+).
@@ -48,7 +44,6 @@ const ICNS_TYPES: Array<[string, number]> = [
   ["icp4", 16], ["icp5", 32], ["ic07", 128], ["ic08", 256], ["ic09", 512], ["ic10", 1024],
   ["ic11", 32], ["ic12", 64], ["ic13", 256], ["ic14", 512],
 ];
-const ANDROID_DENSITIES: Array<[string, number]> = [["mdpi", 1], ["hdpi", 1.5], ["xhdpi", 2], ["xxhdpi", 3], ["xxxhdpi", 4]];
 const MASTER = 1024;
 
 /** The icons for `spec`, generated into `<root>/.desktop/icons` unless already up to date. */
@@ -69,38 +64,19 @@ export async function generateIcons(spec: IconSpec, dir: string, opts: { force?:
   const background = spec.background !== undefined ? parseColor(spec.background) : bleed ? cornerColor(master) : ([255, 255, 255] as Rgb);
 
   rmSync(dir, { recursive: true, force: true });
-  for (const d of ["macos", "windows", "png", "ios", "android/res/mipmap-anydpi-v26", "android/res/values"]) mkdirSync(join(dir, d), { recursive: true });
+  for (const d of ["macos", "windows", "png"]) mkdirSync(join(dir, d), { recursive: true });
 
   // Desktop (Linux, Windows): the artwork as drawn.
   for (const s of DESKTOP_SIZES) writeFileSync(out.png(s), await resized(master, s));
   writeFileSync(out.ico, await ico(master));
 
   // macOS: a square artwork goes on Apple's grid (824 px squircle on a 1024 canvas).
-  const mac = bleed ? mask(await place(master, 824 / 1024), "squircle", 100 / 1024) : master;
+  const mac = bleed ? squircle(await place(master, 824 / 1024), 100 / 1024) : master;
   writeFileSync(out.macosPng, encodePng(mac));
   writeFileSync(out.icns, await icns(mac));
   mkdirSync(join(out.iconComposer, "Assets"), { recursive: true });
   writeFileSync(join(out.iconComposer, "Assets", "artwork.png"), encodePng(bleed ? master : await place(master, 0.8)));
   writeFileSync(join(out.iconComposer, "icon.json"), iconComposerJson(background));
-
-  // iOS: opaque, full-bleed (the system rounds it); a shaped artwork sits on the background.
-  writeFileSync(out.ios, encodePng(flatten(bleed ? master : await place(master, 0.8), background), { opaque: true }));
-
-  // Android: legacy (pre-8.0) square and round icons, and the adaptive foreground (108 dp,
-  // content kept inside the 72 dp visible area) over a background color.
-  const round = mask(bleed ? master : flatten(await place(master, 0.8), background), "circle", 0);
-  const foreground = await place(master, bleed ? 72 / 108 : 0.6);
-  for (const [density, scale] of ANDROID_DENSITIES) {
-    const res = join(out.androidRes, `mipmap-${density}`);
-    mkdirSync(res, { recursive: true });
-    writeFileSync(join(res, "ic_launcher.png"), await resized(mac, Math.round(48 * scale)));
-    writeFileSync(join(res, "ic_launcher_round.png"), await resized(round, Math.round(48 * scale)));
-    writeFileSync(join(res, "ic_launcher_foreground.png"), await resized(foreground, Math.round(108 * scale)));
-  }
-  const adaptive = `<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n    <background android:drawable="@color/ic_launcher_background" />\n    <foreground android:drawable="@mipmap/ic_launcher_foreground" />\n</adaptive-icon>\n`;
-  writeFileSync(join(out.androidRes, "mipmap-anydpi-v26", "ic_launcher.xml"), adaptive);
-  writeFileSync(join(out.androidRes, "mipmap-anydpi-v26", "ic_launcher_round.xml"), adaptive);
-  writeFileSync(join(out.androidRes, "values", "ic_launcher_background.xml"), `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">${hex(background)}</color>\n</resources>\n`);
 
   writeFileSync(stampFile, stamp);
   return out;
@@ -114,8 +90,6 @@ function paths(dir: string): AppIcons {
     iconComposer: join(dir, "macos", "AppIcon.icon"),
     ico: join(dir, "windows", "app.ico"),
     png: (size) => join(dir, "png", `${size}.png`),
-    ios: join(dir, "ios", "AppIcon.png"),
-    androidRes: join(dir, "android", "res"),
   };
 }
 
@@ -171,21 +145,11 @@ function cornerColor(r: Raster): Rgb {
   return [r.px[i]!, r.px[i + 1]!, r.px[i + 2]!];
 }
 
-function flatten(r: Raster, bg: Rgb): Raster {
-  const px = new Uint8Array(r.px.length);
-  for (let i = 0; i < px.length; i += 4) {
-    const a = r.px[i + 3]! / 255;
-    for (let c = 0; c < 3; c++) px[i + c] = Math.round(r.px[i + c]! * a + bg[c]! * (1 - a));
-    px[i + 3] = 255;
-  }
-  return { w: r.w, h: r.h, px };
-}
-
 /** Multiply alpha by the coverage of a centered squircle (Apple's continuous-corner shape,
- *  approximated by a superellipse, n = 5) or circle, `inset` (fraction) from each edge. */
-function mask(r: Raster, shape: "squircle" | "circle", inset: number): Raster {
+ *  approximated by a superellipse, n = 5), `inset` (fraction) from each edge. */
+function squircle(r: Raster, inset: number): Raster {
   const px = r.px.slice();
-  const half = (r.w * (1 - 2 * inset)) / 2, c = r.w / 2, n = shape === "circle" ? 2 : 5;
+  const half = (r.w * (1 - 2 * inset)) / 2, c = r.w / 2, n = 5;
   const inside = (x: number, y: number) => Math.abs((x - c) / half) ** n + Math.abs((y - c) / half) ** n <= 1;
   const SS = 4; // 4×4 supersampling on the edge
   for (let y = 0; y < r.h; y++)
@@ -206,8 +170,6 @@ function parseColor(s: string): Rgb {
   const h = m[1]!.length === 3 ? [...m[1]!].map((d) => d + d).join("") : m[1]!;
   return [0, 2, 4].map((o) => parseInt(h.slice(o, o + 2), 16)) as Rgb;
 }
-
-const hex = (c: Rgb) => `#${c.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 
 // ---------------------------------------------------------------------------
 // Containers
@@ -344,14 +306,10 @@ export function decodePng(buf: Uint8Array): Raster {
   return { w, h, px };
 }
 
-/** RGBA, or RGB with `opaque` (the App Store rejects an iOS icon that has an alpha channel). */
-export function encodePng(r: Raster, opts: { opaque?: boolean } = {}): Uint8Array {
-  const ch = opts.opaque ? 3 : 4, stride = r.w * ch;
+export function encodePng(r: Raster): Uint8Array {
+  const stride = r.w * 4;
   const rows = Buffer.alloc((stride + 1) * r.h); // filter 0 on every row
-  for (let i = 0; i < r.w * r.h; i++) {
-    const d = Math.floor(i / r.w) * (stride + 1) + 1 + (i % r.w) * ch;
-    for (let c = 0; c < ch; c++) rows[d + c] = r.px[i * 4 + c]!;
-  }
+  for (let y = 0; y < r.h; y++) rows.set(r.px.subarray(y * stride, (y + 1) * stride), y * (stride + 1) + 1);
   const chunk = (name: string, data: Buffer) => {
     const len = Buffer.alloc(4), crc = Buffer.alloc(4), body = Buffer.concat([Buffer.from(name, "latin1"), data]);
     len.writeUInt32BE(data.length);
@@ -362,6 +320,6 @@ export function encodePng(r: Raster, opts: { opaque?: boolean } = {}): Uint8Arra
   ihdr.writeUInt32BE(r.w, 0);
   ihdr.writeUInt32BE(r.h, 4);
   ihdr[8] = 8;
-  ihdr[9] = opts.opaque ? 2 : 6;
+  ihdr[9] = 6;
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(rows, { level: 6 })), chunk("IEND", Buffer.alloc(0))]);
 }

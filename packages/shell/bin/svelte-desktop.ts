@@ -166,8 +166,6 @@ async function icon(args: string[]) {
   ok(`macOS    ${rel(icons.icns)}`);
   ok(`Windows  ${rel(icons.ico)}`);
   ok(`Linux    ${rel(join(icons.dir, "png"))}/{16…1024}.png`);
-  ok(`iOS      ${rel(icons.ios)}`);
-  ok(`Android  ${rel(icons.androidRes)}/ (mipmap-*, adaptive)`);
   if (args[0] && configured?.source !== spec.source) warn(`the build uses desktop.config \`icon\`: set icon: '${relative(root, spec.source)}' to ship this one`);
   console.log("");
 }

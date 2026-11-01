@@ -25,17 +25,16 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
     schemes: { type: "string[]", description: "Deep-link URL schemes, delivered as openUrls events." },
     fileTypes: { type: "FileTypeConfig[]", description: "Document types the app opens, delivered as openFiles events." },
     permissions: { type: "Partial<Record<PermissionName, string>>", description: "OS permissions with the reason shown to the user. See Permissions." },
-    notifications: { type: "NotificationsConfig", description: "Android channels and foreground banners." },
-    push: { type: "PushConfig", description: "APNs, FCM, UnifiedPush or your own push server." },
+    notifications: { type: "NotificationsConfig", description: "Foreground banners." },
+    push: { type: "PushConfig", description: "APNs or your own push server." },
     native: { type: "string | false", default: '"native" if the folder exists', description: "Native plugin sources (Swift, Objective-C, C)." },
     addons: { type: "Record<string, string>", description: "Prebuilt Node-API addons (.node) to ship; native/addons/*.c are compiled automatically." },
-    sidecars: { type: "Record<string, string | Partial<Record<'macos' | 'linux' | 'windows' | 'android', string>>>", description: "Executables shipped with the app, started with host.sidecar(name)." },
+    sidecars: { type: "Record<string, string | Partial<Record<'macos' | 'linux' | 'windows', string>>>", description: "Executables shipped with the app, started with host.sidecar(name)." },
     "bridge.allow": { type: "string[]", default: "every op", description: "Ops pages may call ('service.op' or 'service.*'), enforced natively. Server code is never restricted." },
     plist: { type: "Record<string, unknown>", description: "Extra Info.plist keys." },
     update: { type: "UpdateConfig", description: "Signed self-update feed. See Self-update." },
     build: { type: "BuildConfig", description: "Target, architectures and packaging." },
     sign: { type: "SignConfig", description: "Code signing for every target. See Distribution." },
-    ios: { type: "IosConfig", description: "iOS thin client. See Mobile." },
   }}
 />
 
@@ -74,7 +73,6 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
 
 <TypeTable
   type={{
-    channels: { type: "NotificationChannelConfig[]", description: "Android channels created at startup; the first is the default. { id, name, description, importance, sound, vibrate, lights, badge, visibility }" },
     foreground: { type: "boolean", default: "true", description: "Show notifications (local and push) as banners while the app is frontmost." },
   }}
 />
@@ -83,10 +81,8 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
 
 <TypeTable
   type={{
-    apns: { type: "boolean | { environment?: 'development' | 'production' }", description: "macOS and iOS. Adds the aps-environment entitlement; needs a provisioning profile with Push Notifications. true: production for signed release builds, development otherwise." },
-    fcm: { type: "{ googleServices: string }", description: "Android: your Firebase project's google-services.json." },
+    apns: { type: "boolean | { environment?: 'development' | 'production' }", description: "macOS. Adds the aps-environment entitlement; needs a provisioning profile with Push Notifications. true: production for signed release builds, development otherwise." },
     server: { type: "string", description: "Your own Web Push compatible push server for macOS, Windows and Linux. Takes precedence over APNs on macOS." },
-    unifiedPush: { type: "boolean", default: "true when a distributor is installed", description: "Android: UnifiedPush before FCM." },
   }}
 />
 
@@ -106,10 +102,8 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
 
 <TypeTable
   type={{
-    target: { type: '"macos" | "linux" | "windows" | "android" | "ios"', default: "the host, or $SVELTE_DESKTOP_TARGET" },
-    targetArch: { type: '"x64" | "arm64"', default: "x64 (Linux, Windows), arm64 (Android)" },
-    androidArch: { type: '"arm64" | "x64" | Array<"arm64" | "x64">', default: "targetArch, else arm64" },
-    aab: { type: "boolean", default: "$SVELTE_DESKTOP_AAB", description: "Also build an Android App Bundle for Play." },
+    target: { type: '"macos" | "linux" | "windows"', default: "the host, or $SVELTE_DESKTOP_TARGET" },
+    targetArch: { type: '"x64" | "arm64"', default: "x64", description: "Linux and Windows." },
     universal: { type: "boolean", description: "macOS: also build the x64 slice and lipo a universal app." },
     aot: { type: "boolean", description: "Bun --aot (needs Bun canary today)." },
     trim: { type: "boolean", description: "Bun --trim (needs Bun canary today)." },
@@ -131,20 +125,5 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
     entitlements: { type: "Record<string, boolean | string | string[]>", description: "Merged into the defaults Bun needs (JIT)." },
     provisioningProfile: { type: "string", description: "macOS .provisionprofile embedded in the bundle." },
     windows: { type: "{ certificateFile?, password?, timestampUrl? }", default: "$WINDOWS_CERT_PFX, $WINDOWS_CERT_PASSWORD", description: "Authenticode (osslsigncode). timestampUrl defaults to http://timestamp.digicert.com." },
-    ios: { type: "{ identity?, provisioningProfile? }", default: "$IOS_SIGN_IDENTITY or 'Apple Development'", description: "iOS device builds; without a profile, target ios builds for the simulator." },
-    android: { type: "{ keystore?, alias?, password? }", default: "$ANDROID_KEYSTORE, else ~/.android/debug.keystore" },
-  }}
-/>
-
-## ios
-
-<TypeTable
-  type={{
-    serverUrl: { type: "string", default: "$SVELTE_DESKTOP_IOS_SERVER_URL", description: "Deployed SvelteKit server (https; http only for localhost)." },
-    offline: { type: "boolean", description: "Bundle the client build and prerendered pages, served from app://localhost." },
-    deploymentTarget: { type: "string", default: '"17.0"' },
-    device: { type: "boolean", default: "$SVELTE_DESKTOP_IOS_DEVICE" },
-    debug: { type: "boolean", description: "Web Inspector and the test channel in device builds." },
-    plist: { type: "Record<string, unknown>" },
   }}
 />

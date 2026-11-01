@@ -72,11 +72,11 @@ Frameworks link automatically from `import` / `@import`. Plugin ops go through t
 
 ### Objective-C and C
 
-Objective-C registers ops with `SDCommand(@"svc.op", ^(NSDictionary *args, SDReply reply) { ... })` inside `void SDSetup(void)`. Plain C implements the raw ABI from `native/include/svelte_desktop.h` in the shell package: export `int sd_plugin_init(const sd_host *host)` and call `host->register_op("service", "op", fn, user)`; handlers run on the main thread and reply once with `host->resolve` or `host->reject`, from any thread. The same C ABI is used on Linux, Windows and Android (through the NDK).
+Objective-C registers ops with `SDCommand(@"svc.op", ^(NSDictionary *args, SDReply reply) { ... })` inside `void SDSetup(void)`. Plain C implements the raw ABI from `native/include/svelte_desktop.h` in the shell package: export `int sd_plugin_init(const sd_host *host)` and call `host->register_op("service", "op", fn, user)`; handlers run on the main thread and reply once with `host->resolve` or `host->reject`, from any thread. The same C ABI is used on Linux and Windows.
 
 ### Per-platform sources
 
-Code for one platform goes in `native/<platform>/` (`macos`, `linux`, `windows`, `android`, `ios`); the rest of `native/` is built everywhere it can be. Swift and Objective-C are Apple-only and skipped elsewhere with a notice. `native: 'path'` in the config points at another folder; `native: false` disables plugins.
+Code for one platform goes in `native/<platform>/` (`macos`, `linux`, `windows`); the rest of `native/` is built everywhere it can be. Swift and Objective-C are Apple-only and skipped elsewhere with a notice. `native: 'path'` in the config points at another folder; `native: false` disables plugins.
 
 ## Node-API addons
 
@@ -119,7 +119,7 @@ Prebuilt addons ship with `addons: { name: 'path/to/name.node' }` in the config.
 
 ```ts desktop.config.ts
 sidecars: {
-  ffmpeg: { macos: 'bin/ffmpeg', linux: 'bin/ffmpeg-linux', android: 'bin/ffmpeg-android' },
+  ffmpeg: { macos: 'bin/ffmpeg', linux: 'bin/ffmpeg-linux', windows: 'bin/ffmpeg.exe' },
   tool: 'bin/tool', // one path for every platform
 },
 ```
@@ -129,4 +129,4 @@ const proc = await host.sidecar('ffmpeg', ['-i', input, output]); // server code
 await proc.exited;
 ```
 
-The executable is resolved inside the bundle (or at its dev path). On Android, C sources in `native/sidecars/` and `native/android/sidecars/` are compiled into sidecars with the NDK.
+The executable is resolved inside the bundle (or at its dev path).

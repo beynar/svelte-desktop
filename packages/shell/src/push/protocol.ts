@@ -10,7 +10,6 @@
 /** What `host.push.register()` returns: send it to your server, give it to `createPush().send()`. */
 export type PushTarget =
 	| { provider: 'apns'; token: string; topic: string; environment: 'development' | 'production' }
-	| { provider: 'fcm'; token: string }
 	| WebPushTarget;
 
 export interface WebPushTarget {

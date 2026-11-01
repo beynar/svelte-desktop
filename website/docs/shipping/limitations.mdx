@@ -3,6 +3,8 @@ title: Limitations
 description: What isn't done, verified or possible yet, by platform.
 ---
 
+Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target; for mobile, deploy the SvelteKit app and ship it as a PWA or wrap it (e.g. Capacitor).
+
 ## Everywhere
 
 - **`build.aot` and `build.trim` need Bun canary** until `--aot` and `--trim` ship in a stable Bun. Without them a hello world is 86 MB (39 MB zipped) instead of 45 MB.
@@ -26,12 +28,6 @@ description: What isn't done, verified or possible yet, by platform.
 - Tray hosts don't report icon positions, so tray-anchored popovers open at the pointer.
 - Global shortcuts and screen capture need X11; on Wayland they answer `unsupported`.
 - Compiling native code (plugins, addons) needs a Linux host or Docker.
-
-## Mobile
-
-- **iOS is a thin client**: server code runs on your server, so there's no `bun:sqlite`, addons or `desktop` API on the device. Offline mode serves only prerendered or `ssr = false` pages.
-- No run on a physical iPhone yet (device builds compile and link; installing needs a provisioning profile).
-- Android x86_64 builds are packaged but weren't run (no x86 emulator on Apple Silicon). Side-loaded APKs don't self-update.
 
 ## Tooling
 

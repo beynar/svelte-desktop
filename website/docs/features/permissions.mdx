@@ -13,7 +13,7 @@ permissions: {
 },
 ```
 
-The build turns it into Info.plist usage strings and hardened-runtime entitlements on macOS, the Android manifest, and the iOS keys.
+The build turns it into Info.plist usage strings and hardened-runtime entitlements on macOS.
 
 ```svelte
 <p>Camera: {host.permissions.camera}</p>   <!-- 'granted' | 'denied' | 'notDetermined' | 'unknown', reactive -->
@@ -56,4 +56,4 @@ Statuses refresh when the app comes back to the front, since the user may have t
 
 ## Other platforms
 
-On Windows, `request` opens the privacy settings page. On Android and iOS it shows the system prompt and the app's settings page. Linux has no per-app permission gates.
+On Windows, `request` opens the privacy settings page. Linux has no per-app permission gates.

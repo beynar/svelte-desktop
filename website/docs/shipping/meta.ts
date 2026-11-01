@@ -4,5 +4,5 @@ export default defineMeta({
   title: "Shipping",
   icon: "package",
   order: 5,
-  pages: ["app-icon", "distribution", "self-update", "mobile", "limitations"],
+  pages: ["app-icon", "distribution", "self-update", "limitations"],
 });

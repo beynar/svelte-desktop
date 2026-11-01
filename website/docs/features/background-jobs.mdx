@@ -67,4 +67,4 @@ A job's info: `id`, `name`, `state`, `progress` (0 to 1), `message`, `args`, `re
 
 In the built app, each job is the app's own executable acting as Bun, running the job's bundle embedded at build time. Under `vite dev` the `.ts` file runs directly. Jobs are killed when the app quits; ended jobs (state, result, error, last log lines) are kept in `<data>/jobs.json` and come back after a restart with `restored: true`.
 
-Verified on macOS (built and dev), Linux and Android, where the job also runs in its own process.
+Verified on macOS (built and dev) and Linux.

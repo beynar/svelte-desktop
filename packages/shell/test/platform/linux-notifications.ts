@@ -118,7 +118,6 @@ export default async (t: Harness) => {
   t.check("show missing title → invalid_args", (await t.call("notifications", "show", { body: "x" })).error?.code === "invalid_args");
   t.check("repeat without at → invalid_args", (await t.call("notifications", "show", { title: "x", repeat: "day" })).error?.code === "invalid_args");
   t.check("dismiss missing id → invalid_args", (await t.call("notifications", "dismiss", {})).error?.code === "invalid_args");
-  t.check("channels → unsupported", (await t.call("notifications", "createChannel", { id: "a", name: "A" })).error?.code === "unsupported");
   t.check("push.register → unsupported", (await t.call("push", "register")).error?.code === "unsupported");
   const viaPage = (await t.pageCall("notifications", "show", { title: "from page", id: "p1" })) as any;
   t.check("page bridge: notifications.show", viaPage.ok && viaPage.value.id === "p1", viaPage);

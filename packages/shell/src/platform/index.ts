@@ -737,7 +737,7 @@ export {
 } from './notifications';
 export type {
 	NotificationAction, NotificationOptions, NotificationInfo, PendingNotification, NotificationEvent,
-	NotificationEventKind, NotificationShownEvent, NotificationChannel, NotificationEventMap,
+	NotificationEventKind, NotificationShownEvent, NotificationEventMap,
 	NotificationUrgency, NotificationRepeat, NotificationPermission, PushTarget, PushMessage,
 } from './notifications';
 

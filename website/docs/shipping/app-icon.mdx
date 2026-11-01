@@ -20,20 +20,18 @@ The image is PNG, JPEG or WebP, 1024 px or more (SVG when building on macOS). No
 | macOS | `AppIcon.icns` (16 to 1024 px), plus `Assets.car` compiled from an Icon Composer bundle: macOS 26's own format, so the icon isn't shrunk into a gray squircle. Compiling it needs Xcode 26's `actool`; without it the `.icns` alone ships. |
 | Windows | `.ico` (16 to 256 px) in the executable and the installer, and a PNG for toasts |
 | Linux | `<identifier>.png` and `share/icons/hicolor/*` (16 to 512 px) |
-| iOS | An opaque 1024 px PNG (the App Store rejects alpha) |
-| Android | `mipmap-*` square and round icons, and an adaptive icon (8.0+): the artwork over a background color |
 
 ## Square artwork or shaped icon
 
 The generator looks at the corners of the image:
 
-- **Opaque corners: square artwork.** It is shaped per platform: placed on Apple's 824 px squircle grid for the macOS `.icns`, full bleed for iOS and macOS 26 (the system rounds it), inside the adaptive safe zone on Android.
-- **Transparent corners: already shaped.** It is used as drawn on desktop, and placed on `background` where a platform needs an opaque or layered icon (iOS, Android adaptive, macOS 26).
+- **Opaque corners: square artwork.** It is placed on Apple's 824 px squircle grid for the macOS `.icns` and used full bleed for macOS 26 (the system rounds it).
+- **Transparent corners: already shaped.** It is used as drawn, and placed on `background` behind the artwork on macOS 26, where the system needs an opaque icon.
 
 `background` defaults to the artwork's corner color, else white.
 
 :::tip
-Ship a full-bleed square artwork without rounded corners or margins and let each platform shape it. Supply a shaped, transparent-corner icon only if you want the exact same silhouette everywhere.
+Ship a full-bleed square artwork without rounded corners or margins and let macOS shape it. Supply a shaped, transparent-corner icon only if you want the exact same silhouette everywhere.
 :::
 
 ## Preview and export

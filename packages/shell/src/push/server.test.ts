@@ -168,60 +168,6 @@ describe("createPush", () => {
     push.close();
   });
 
-  test("fcm: OAuth assertion from the service account, v1 message, UNREGISTERED = expired", async () => {
-    const pair = (await crypto.subtle.generateKey(
-      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-      true,
-      ["sign", "verify"],
-    )) as CryptoKeyPair;
-    let assertion = "";
-    let sent: { auth: string | null; body: any; path: string } | null = null;
-    const server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname === "/token") {
-          assertion = new URLSearchParams(await req.text()).get("assertion")!;
-          return Response.json({ access_token: "ya29.test", expires_in: 3600 });
-        }
-        sent = { auth: req.headers.get("authorization"), body: await req.json(), path: url.pathname };
-        if (sent.body.message.token === "gone")
-          return Response.json({ error: { status: "NOT_FOUND", message: "Requested entity was not found.", details: [{ errorCode: "UNREGISTERED" }] } }, { status: 404 });
-        return Response.json({ name: "projects/notes-app/messages/0:1" });
-      },
-    });
-    servers.push(server);
-    const origin = `http://127.0.0.1:${server.port}`;
-    const push = createPush({
-      fcm: {
-        serviceAccount: {
-          project_id: "notes-app",
-          client_email: "push@notes-app.iam.gserviceaccount.com",
-          private_key: pem(await crypto.subtle.exportKey("pkcs8", pair.privateKey), "PRIVATE KEY"),
-          token_uri: `${origin}/token`,
-        },
-        origin,
-      },
-    });
-    const r = await push.send({ provider: "fcm", token: "fcm-token" }, { id: "msg-42", title: "Alice", body: "Lunch?", url: "/chat/42", channel: "messages" });
-    expect(r.id).toBe("projects/notes-app/messages/0:1");
-    const jwt = await verifyJwt(assertion, pair.publicKey, { name: "RSASSA-PKCS1-v1_5" });
-    expect(jwt.ok).toBe(true);
-    expect(jwt.claims).toMatchObject({ iss: "push@notes-app.iam.gserviceaccount.com", aud: `${origin}/token`, scope: "https://www.googleapis.com/auth/firebase.messaging" });
-    expect(sent!.path).toBe("/v1/projects/notes-app/messages:send");
-    expect(sent!.auth).toBe("Bearer ya29.test");
-    const m = sent!.body.message;
-    expect(m.token).toBe("fcm-token");
-    // Data-only (the app displays it, so its taps are authenticated).
-    expect(m.notification).toBeUndefined();
-    expect(m.data).toEqual({ sd: JSON.stringify({ url: "/chat/42" }), sd_id: "msg-42", sd_title: "Alice", sd_body: "Lunch?", sd_channel: "messages" });
-    expect(m.android.collapse_key).toBe("msg-42");
-
-    const err = await push.send({ provider: "fcm", token: "gone" }, { title: "x" }).catch((e) => e);
-    expect(err).toBeInstanceOf(PushError);
-    expect(err.expired).toBe(true);
-    expect(err.reason).toBe("UNREGISTERED");
-  });
 });
 
 test("web push refuses messages push services would reject (> 4096-byte bodies)", async () => {

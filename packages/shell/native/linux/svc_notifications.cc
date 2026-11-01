@@ -412,11 +412,8 @@ void register_notifications() {
     c->ok();
   });
   reg("notifications", "setForeground", [](CallPtr c) { c->ok(); }); // banners always show on Linux
-  reg_many("notifications", {"createChannel", "deleteChannel", "channels"}, [](CallPtr c) {
-    c->fail("unsupported", "notifications." + c->op + ": notification channels are Android-only");
-  });
   reg_many("push", {"register", "unregister", "token"}, [](CallPtr c) {
-    c->fail("unsupported", "push." + c->op + ": Linux desktops have no push notification service (APNs/FCM); use your own connection");
+    c->fail("unsupported", "push." + c->op + ": Linux desktops have no push notification service; use push.server (your own push server)");
   });
 }
 

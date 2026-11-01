@@ -29,15 +29,12 @@ const alphaAt = (png: string, fx: number, fy: number) => {
 const bleed = source("bleed.png", true);
 const shaped = source("shaped.png", false);
 
-test("png codec round-trips RGBA and writes opaque RGB", () => {
+test("png codec round-trips RGBA", () => {
   const px = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 0, 9, 9, 9, 255]);
   expect(decodePng(encodePng({ w: 2, h: 2, px })).px).toEqual(px);
-  const rgb = Buffer.from(encodePng({ w: 2, h: 2, px }, { opaque: true }));
-  expect(rgb[25]).toBe(2); // IHDR color type: truecolor, no alpha
-  expect([...decodePng(rgb).px.subarray(4, 8)]).toEqual([0, 255, 0, 255]);
 });
 
-test("a square artwork: macOS squircle on Apple's grid, opaque iOS, every container", async () => {
+test("a square artwork: macOS squircle on Apple's grid, every container", async () => {
   const icons = await generateIcons({ source: bleed }, join(tmp, "bleed"));
   expect(alphaAt(icons.macosPng, 0.5, 0.5)).toBe(255);
   expect(alphaAt(icons.macosPng, 0.05, 0.5)).toBe(0); // 100/1024 margin
@@ -59,24 +56,14 @@ test("a square artwork: macOS squircle on Apple's grid, opaque iOS, every contai
   expect(composer.groups[0].layers[0]["image-name"]).toBe("artwork.png");
   expect(composer.fill.solid).toBe("srgb:0.15686,0.35294,0.78431,1.00000"); // the corner color
   expect(decodePng(readFileSync(join(icons.iconComposer, "Assets", "artwork.png"))).w).toBe(1024);
-
-  const ios = readFileSync(icons.ios);
-  expect(ios[25]).toBe(2); // the App Store rejects an alpha channel
-  expect(decodePng(ios).w).toBe(1024);
-
-  for (const [density, px] of [["mdpi", 48], ["xxxhdpi", 192]] as const)
-    expect(decodePng(readFileSync(join(icons.androidRes, `mipmap-${density}`, "ic_launcher.png"))).w).toBe(px);
-  expect(decodePng(readFileSync(join(icons.androidRes, "mipmap-xxxhdpi", "ic_launcher_foreground.png"))).w).toBe(432);
-  expect(readFileSync(join(icons.androidRes, "mipmap-anydpi-v26", "ic_launcher.xml"), "utf8")).toContain("@mipmap/ic_launcher_foreground");
-  expect(readFileSync(join(icons.androidRes, "values", "ic_launcher_background.xml"), "utf8")).toContain("#285ac8"); // the corner color
 });
 
-test("transparent corners: taken as shaped; iOS and Android get the background", async () => {
+test("transparent corners: taken as shaped; on the background in macOS 26's icon", async () => {
   const icons = await generateIcons({ source: shaped, background: "#123456" }, join(tmp, "shaped"));
   expect(readFileSync(icons.macosPng)).toEqual(readFileSync(icons.png(1024))); // no squircle
-  const ios = decodePng(readFileSync(icons.ios));
-  expect([...ios.px.subarray(0, 3)]).toEqual([0x12, 0x34, 0x56]);
-  expect(readFileSync(join(icons.androidRes, "values", "ic_launcher_background.xml"), "utf8")).toContain("#123456");
+  const composer = JSON.parse(readFileSync(join(icons.iconComposer, "icon.json"), "utf8"));
+  expect(composer.fill.solid).toBe("srgb:0.07059,0.20392,0.33725,1.00000");
+  expect(alphaAt(join(icons.iconComposer, "Assets", "artwork.png"), 0.05, 0.05)).toBe(0); // artwork inset over the fill
 });
 
 test("generated once per source and options; rejects bad input before any work", async () => {

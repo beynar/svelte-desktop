@@ -47,30 +47,28 @@ export interface NotificationOptions<D = unknown> {
 	title: string;
 	body?: string;
 	subtitle?: string;
-	/** Thread / group them (Apple threads, Android groups, Windows groups). */
+	/** Thread / group them (macOS threads, Windows groups). */
 	group?: string;
 	/** Picture shown in the notification: a path, a file:// / data: / http(s) URL, or an app URL ('/img/x.png'). */
 	image?: string;
-	/** Large icon / logo override (Android, Windows, Linux). Same forms as `image`. */
+	/** Large icon / logo override (Windows, Linux). Same forms as `image`. */
 	icon?: string;
 	/** 'default' or the name of a sound shipped with the app. */
 	sound?: string;
 	silent?: boolean;
 	/** Alert again when replacing an existing id. Default true. */
 	renotify?: boolean;
-	/** App icon badge carried by the notification (Apple, Android). */
+	/** App icon badge carried by the notification (macOS). */
 	badge?: number;
 	urgency?: NotificationUrgency;
-	/** Stay on screen until the user acts (Linux, Windows, Android). */
+	/** Stay on screen until the user acts (Linux, Windows). */
 	requireInteraction?: boolean;
 	/** Time shown on it. */
 	timestamp?: Date | number;
 	actions?: NotificationAction[];
-	/** Android channel (desktop.config `notifications.channels`). */
-	channel?: string;
 	/** Show it while the app is frontmost (default: desktop.config `notifications.foreground`, true). */
 	foreground?: boolean;
-	/** Deliver later. Survives the app quitting where the OS schedules (macOS, iOS, Android, Windows). */
+	/** Deliver later. Survives the app quitting where the OS schedules (macOS, Windows). */
 	at?: Date | number | string;
 	/** Deliver in `delay` ms. */
 	delay?: number;
@@ -82,18 +80,12 @@ export interface NotificationOptions<D = unknown> {
 	data?: D;
 	/** false: if this id is already delivered or pending, do nothing. Default true. */
 	replace?: boolean;
-	/** Inbox style (Android); joined into `body` elsewhere when there is no body. */
+	/** Several lines of content; joined into `body` when there is no body. */
 	lines?: string[];
-	/** Summary text under the content (Android). */
-	summary?: string;
-	/** Can't be swiped away (Android), stays in the list (Linux, Windows). */
+	/** Stays in the list (Linux, Windows). */
 	ongoing?: boolean;
 	/** Removed when clicked. Default true. */
 	autoCancel?: boolean;
-	/** Accent color, '#rrggbb' (Android). */
-	color?: string;
-	/** Lock-screen visibility (Android). */
-	visibility?: 'public' | 'private' | 'secret';
 	/** Label of a dismiss button (Windows, Linux). */
 	closeButtonText?: string;
 	/** Windows: raw toast XML, used as is. */
@@ -145,17 +137,6 @@ export interface NotificationShownEvent<D = unknown> {
 	push: boolean;
 }
 
-export interface NotificationChannel {
-	id: string;
-	name: string;
-	description?: string;
-	importance?: 'min' | 'low' | 'default' | 'high' | 'max';
-	sound?: boolean | string;
-	vibrate?: boolean;
-	lights?: boolean;
-	badge?: boolean;
-	visibility?: 'public' | 'private' | 'secret';
-}
 
 export interface PushMessage<D = unknown> {
 	id?: string;
@@ -207,7 +188,7 @@ declare const __SVELTE_DESKTOP_PUSH__: { server?: string | null } | undefined;
 function selfHostedPush(): boolean {
 	const c = typeof __SVELTE_DESKTOP_PUSH__ !== 'undefined' ? __SVELTE_DESKTOP_PUSH__ : undefined;
 	if (!c?.server || !native()) return false;
-	return isPage ? !/Android|iPhone|iPad/i.test(navigator.userAgent) : !process.env.SVELTE_DESKTOP_ANDROID_HOST;
+	return true;
 }
 async function desktopPush<O extends DesktopPushOp>(op: O): Promise<DesktopPushOps[O]> {
 	if (!isPage) {
@@ -593,9 +574,9 @@ export const notifications = {
 		const args: Record<string, unknown> = {
 			id, title: o.title, body: o.body, subtitle: o.subtitle, group: o.group, image, icon, sound: o.sound,
 			silent: o.silent, renotify: o.renotify, badge: o.badge, urgency: o.urgency, requireInteraction: o.requireInteraction,
-			timestamp: o.timestamp != null ? +o.timestamp : undefined, channel: o.channel, foreground: o.foreground,
-			at: at ?? undefined, repeat: o.repeat, payload, lines: o.lines, summary: o.summary, ongoing: o.ongoing,
-			autoCancel: o.autoCancel, color: o.color, visibility: o.visibility, closeButtonText: o.closeButtonText, toastXml: o.toastXml,
+			timestamp: o.timestamp != null ? +o.timestamp : undefined, foreground: o.foreground,
+			at: at ?? undefined, repeat: o.repeat, payload, lines: o.lines, ongoing: o.ongoing,
+			autoCancel: o.autoCancel, closeButtonText: o.closeButtonText, toastXml: o.toastXml,
 			actions: o.actions?.map(({ url: _url, label, ...a }) => ({ ...a, title: a.title ?? label })),
 		};
 		for (const k of Object.keys(args)) if (args[k] === undefined) delete args[k];
@@ -622,7 +603,7 @@ export const notifications = {
 		const list = native() ? await callPlatform<WireInfo[]>('notifications', 'pending') : [...web.pending.values()].map((p) => ({ ...p, at: p.at?.getTime(), payload: JSON.stringify({ url: p.url, data: p.data }) }));
 		return (list ?? []).map((w) => ({ ...toInfo<D>(w as WireInfo), at: w.at ? new Date(w.at) : null, ...(w.repeat && { repeat: w.repeat }) }));
 	},
-	/** App icon badge (Dock, iOS icon, Linux docks, Windows taskbar). null/0 clears it. */
+	/** App icon badge (Dock, Linux docks, Windows taskbar). null/0 clears it. */
 	setBadge: (count: number | null) => {
 		if (native()) return callPlatform<null>('notifications', 'setBadge', { count });
 		const nav = isPage ? (navigator as Navigator & { setAppBadge?(n?: number): Promise<void>; clearAppBadge?(): Promise<void> }) : null;
@@ -630,10 +611,6 @@ export const notifications = {
 	},
 	/** Banners while the app is frontmost, for notifications without `foreground` and pushes. */
 	setForeground: (show: boolean) => (native() ? callPlatform<null>('notifications', 'setForeground', { show }) : Promise.resolve(null)),
-	/** Android channels. */
-	createChannel: (channel: NotificationChannel) => callPlatform<null>('notifications', 'createChannel', channel as unknown as Record<string, unknown>),
-	deleteChannel: (id: string) => callPlatform<null>('notifications', 'deleteChannel', { id }),
-	channels: () => callPlatform<NotificationChannel[]>('notifications', 'channels'),
 	/** Notifications can be shown here (a bundled app, a notification server, a browser with the API). */
 	async isSupported(): Promise<boolean> {
 		return (await notifications.getPermissionStatus().catch(() => ({ status: 'unavailable' as const }))).status !== 'unavailable';
@@ -668,7 +645,7 @@ export function onNotification<E extends keyof NotificationEventMap>(event: E, f
 export const push = {
 	/**
 	 * Register for remote pushes (asks for the notification permission). Returns the target
-	 * your server sends to — APNs on Apple, FCM on Android, Web Push in a browser
+	 * your server sends to — your push server (`push.server`), APNs on macOS, Web Push in a browser
 	 * (`vapidPublicKey` required there).
 	 */
 	async register(opts: { vapidPublicKey?: string } = {}): Promise<PushTarget> {

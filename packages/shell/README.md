@@ -61,17 +61,16 @@ Requirements: macOS 12+, Bun ≥ 1.4, Xcode command line tools, `@sveltejs/adapt
 | `schemes` | deep-link URL schemes → `openUrls` event |
 | `fileTypes` | `[{ name, extensions, role, rank, utis, mimeTypes }]` → `openFiles` event (macOS document types; Linux `.desktop` MimeType + shared-mime-info; Windows installer associations) |
 | `singleInstance` | default `true`: launching again (a document, a link) hands the arguments to the running app (`openUrls` / `openFiles`, `secondInstance`) — Linux/Windows; macOS does it natively |
-| `permissions` | OS permissions with the reason shown to the user: `{ camera: 'Scan documents', screenRecording: 'Share your screen' }` → Info.plist usage strings, entitlements, Android manifest, iOS keys; checked/requested/guided by `host.permissions` (`usageDescriptions` still accepted) |
-| `notifications` | `{ channels: [{ id, name, importance, sound, vibrate, … }], foreground }` — Android channels; banners while frontmost (default true) |
-| `push` | `{ apns: true \| { environment }, fcm: { googleServices: './google-services.json' } }` — APNs entitlement (+ `sign.provisioningProfile`), Firebase Messaging in the APK |
+| `permissions` | OS permissions with the reason shown to the user: `{ camera: 'Scan documents', screenRecording: 'Share your screen' }` → Info.plist usage strings, entitlements; checked/requested/guided by `host.permissions` (`usageDescriptions` still accepted) |
+| `notifications` | `{ foreground }` — banners while frontmost (default true) |
+| `push` | `{ apns: true \| { environment }, server }` — APNs entitlement on macOS (+ `sign.provisioningProfile`); `server`: your own Web Push compatible push server (macOS, Windows, Linux) |
 | `trayOnly` | no Dock icon / app menu |
 | `native` | native plugin folder (default `native/`), `false` to disable |
 | `addons` | prebuilt `.node` files to ship |
-| `sidecars` | `{ name: 'bin/tool' }` or per platform `{ name: { macos, linux, windows, android } }` → `sidecar(name, args)` |
+| `sidecars` | `{ name: 'bin/tool' }` or per platform `{ name: { macos, linux, windows } }` → `sidecar(name, args)` |
 | `bridge.allow` | ops pages may call (`'window.*'`, `'clipboard.readText'`); enforced natively; server code unrestricted (`permissions.pages` still accepted) |
 | `update` | `{ manifestUrl, publicKey, channel, privateKey, baseUrl }` |
-| `build` | `{ target, targetArch, androidArch, aab, aot, trim, bun, universal, dmg, zip, outDir, minimumSystemVersion }` — `aot`/`trim` need Bun canary today |
-| `ios` | `{ serverUrl, offline, device, deploymentTarget, debug, plist }` (MOBILE.md) |
+| `build` | `{ target, targetArch, aot, trim, bun, universal, dmg, zip, outDir, minimumSystemVersion }` — `aot`/`trim` need Bun canary today |
 | `sign` | `{ identity, entitlements, hardenedRuntime, notaryProfile, provisioningProfile }` — or `$CODESIGN_IDENTITY`, `$NOTARY_PROFILE` |
 | `plist` | extra Info.plist keys |
 
@@ -117,7 +116,7 @@ double-click-to-maximize work the same (macOS sets `data-desktop-controls="nativ
 
 Everything the app gets beyond the web is on one global, `host` — no import, the
 same in page and server code (like `Bun`), typed through a one-line `src/host.d.ts`
-the Vite plugin writes once. The name works on desktop and mobile.
+the Vite plugin writes once.
 
 ```svelte
 <p>{host.app.name} · {host.theme.dark ? 'dark' : 'light'}</p>          <!-- reactive -->
@@ -163,8 +162,7 @@ permissions: {
 }
 ```
 
-The build turns it into the Info.plist usage strings and entitlements (macOS), the
-Android manifest and the iOS keys. Some permissions must be declared (camera,
+The build turns it into the Info.plist usage strings and entitlements (macOS). Some permissions must be declared (camera,
 microphone, location, contacts…): the OS kills an app that asks without a reason, so
 asking for an undeclared one rejects with `undeclared` and says what to add.
 
@@ -182,8 +180,7 @@ to drag into the list, the reason from the config and a live status; it closes b
 itself once granted (with a Relaunch button where macOS applies the grant at the next
 launch). Statuses refresh when the app comes back to the front;
 `host.permissions.on('change', (name, status) => …)` follows them. On Windows the
-privacy settings page opens; on Android and iOS the system prompts and the app's
-settings page; Linux has no per-app gates.
+privacy settings page opens; Linux has no per-app gates.
 
 ## Notifications and push
 
@@ -218,13 +215,12 @@ await host.notifications.delivered() / .pending() / .dismiss(id) / .dismissAll()
   `+server.ts`), replayed at start.
 - **Several windows**: listeners and navigation run in one page only — the window
   that showed it, else the focused one — and that window comes to the front.
-- **Scheduling** (`at`, `delay`, `repeat`) survives the app quitting on macOS, iOS,
-  Android and Windows; Linux keeps the queue on disk and catches up at the next start.
+- **Scheduling** (`at`, `delay`, `repeat`) survives the app quitting on macOS and
+  Windows; Linux keeps the queue on disk and catches up at the next start.
 
 Remote push — `host.push.register()` gives the target to send to your server: APNs on
-macOS/iOS (`push.apns` + a provisioning profile with Push Notifications; the iOS
-simulator registers without one), FCM on Android (`push.fcm.googleServices`), Web Push
-in a browser (`register({ vapidPublicKey })`). `host.push.on('message')` gets pushes
+macOS (`push.apns` + a provisioning profile with Push Notifications), your own push
+server on macOS, Windows and Linux (`push.server`, below), Web Push in a browser (`register({ vapidPublicKey })`). `host.push.on('message')` gets pushes
 received while the app runs, `on('token')` rotations; taps on pushes are ordinary
 notification clicks (same `url`/`data`). Send from Bun, no dependencies:
 
@@ -232,19 +228,17 @@ notification clicks (same `url`/`data`). Send from Bun, no dependencies:
 import { createPush, generateVapidKeys } from '@svelte-desktop/shell/push';
 const push = createPush({
   apns: { teamId, keyId, key: await Bun.file('AuthKey.p8').text() },
-  fcm: { serviceAccount: await Bun.file('firebase-service-account.json').json() },
   webpush: { publicKey, privateKey, subject: 'mailto:ops@example.com' },
 });
 const results = await push.sendMany(targets, { id: 'msg-42', title: 'Alice', body: 'Lunch?', url: '/chat/42' });
 // results[i].expired → the target is gone (uninstalled, unsubscribed): delete it
 ```
 
-No Apple or Google account on desktop: set `push.server` to your own push service — deploy
+No Apple account needed: set `push.server` to your own push service — deploy
 `packages/push-worker` on Cloudflare (`bunx wrangler deploy`: Workers + one Durable Object per
 device, hibernatable WebSockets) or run `servePush()` from `@svelte-desktop/shell/push-server`
 anywhere. The app holds one connection while it runs; `register()` then returns a Web Push
-target and the same `push.send()` delivers to it, end-to-end encrypted. Android can use
-UnifiedPush (a distributor app such as ntfy); iOS has no alternative to APNs.
+target and the same `push.send()` delivers to it, end-to-end encrypted.
 
 In a plain browser tab, `host.notifications` uses the Notification API and a small
 service worker (`/__desktop/push-sw.js`, its own scope: it never competes with the
@@ -291,8 +285,7 @@ executable acting as Bun (`BUN_BE_BUN=1`) running the job's bundle, embedded at
 build time; under `vite dev` the `.ts` file runs directly. Jobs are killed when the
 app quits; ended jobs (state, result, error, last log lines) are kept in
 `<data>/jobs.json` and come back after a restart (`restored: true`). Verified on
-macOS (built and `vite dev`), Linux (Docker) and Android (the phone runs the job in
-its own process too).
+macOS (built and `vite dev`) and Linux (Docker).
 
 ## Native code
 
@@ -346,15 +339,12 @@ any target's icons.
 | macOS | `AppIcon.icns` (16–1024 px) + `Assets.car` from an Icon Composer bundle — macOS 26's own format, so the icon isn't shrunk into a gray squircle (compiling it needs Xcode 26's `actool`; without it the `.icns` alone ships) |
 | Windows | `.ico` (16–256 px) in the executable and the installer, PNG for toasts |
 | Linux | `<id>.png` + `share/icons/hicolor/*` (16–512 px) |
-| iOS | opaque 1024 px (the App Store rejects alpha) |
-| Android | `mipmap-*` square and round icons, adaptive (8.0+) foreground over a background color |
 
-A **square artwork** (opaque corners) is shaped per platform: on Apple's 824 px squircle grid
-for the macOS `.icns`, full bleed for iOS and macOS 26 (the system rounds it), inside the
-adaptive safe zone on Android. An image with **transparent corners** is taken as already
-shaped: used as drawn on desktop, placed on `background` where a platform needs an opaque or
-layered icon (iOS, Android adaptive, macOS 26). `background` defaults to the artwork's corner
-color, else white:
+A **square artwork** (opaque corners) goes on Apple's 824 px squircle grid for the macOS
+`.icns` and full bleed for macOS 26 (the system rounds it). An image with **transparent
+corners** is taken as already shaped: used as drawn, and placed on `background` behind the
+artwork on macOS 26, where the system needs an opaque icon. `background` defaults to the
+artwork's corner color, else white:
 
 ```ts
 icon: { source: 'art/logo.png', background: '#0b1020' }
@@ -411,16 +401,17 @@ main thread: Cocoa run loop (WKWebView)   ←→   Worker: Bun.serve (SvelteKit)
 | macOS 12+ | `native/*.mm` (Cocoa, WKWebView) | .app, zip, DMG, notarization, universal | full suites on this Mac |
 | Linux | `native/linux` (GTK3, WebKitGTK 4.1) on `native/portable` | app dir, tar.gz, AppImage | Docker under Xvfb (`test/docker/run.sh platform|notes`) |
 | Windows | `native/windows` (Win32, WebView2) on `native/portable` | folder, zip, NSIS installer, Authenticode | cross-compiled + Wine smoke of the native layer; **not yet run on real Windows** (AUDIT.md) |
-| iOS 17+ (thin client) | `native/ios` (Swift, WKWebView on `ios.serverUrl`) | simulator .app; device .app with a provisioning profile; offline mode | iPhone 17 Pro simulator, `tests/ios.test.ts` 11/11, offline 4/4 (MOBILE.md) |
-| Android 8+ | `native/android` (Java host, android.webkit.WebView, ~60 ops) | signed APK (aapt2/d8/zipalign/apksigner, no Gradle; NDK for addons and C plugins) | Pixel 9 emulator, `tests/android.test.ts` 14/14, APK and AAB (MOBILE.md) |
 
-Platform-specific native code goes in `native/<platform>/` (`macos`, `linux`, `windows`, `android`, `ios`); the rest of `native/` is built everywhere it can be.
+Platform-specific native code goes in `native/<platform>/` (`macos`, `linux`, `windows`); the rest of `native/` is built everywhere it can be.
 
-`build: { target: 'linux' | 'windows' | 'android' | 'ios' }` selects the target, or
-`SVELTE_DESKTOP_TARGET=android vite build` without editing the config. The portable core
+`build: { target: 'macos' | 'linux' | 'windows' }` selects the target, or
+`SVELTE_DESKTOP_TARGET=linux vite build` without editing the config. The portable core
 (`native/portable`) carries the dispatcher, bridge, permissions and plugin host
 shared by Linux and Windows.
 
 ## Limits
- `aot`/`trim` need Bun canary. Notarization needs your Developer ID
+
+Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target; for mobile, deploy the SvelteKit app and ship it as a PWA or wrap it (e.g. Capacitor).
+
+`aot`/`trim` need Bun canary. Notarization needs your Developer ID
 (the pipeline is implemented, not exercised here). See [AUDIT.md](AUDIT.md).

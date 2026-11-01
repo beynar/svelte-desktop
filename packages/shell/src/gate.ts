@@ -1,5 +1,4 @@
-// The loopback gate in front of the SvelteKit handler, shared by the desktop
-// Worker and the Android server: Host check (DNS rebinding), one-time secret →
+// The loopback gate in front of the SvelteKit handler: Host check (DNS rebinding), one-time secret →
 // HttpOnly SameSite=Strict session cookie, then the app. Static build assets
 // (adapter-bun `routes`) are served as-is.
 import type { Server } from "bun";
@@ -17,17 +16,8 @@ export interface GateOptions {
   secret: string;
   /** Extra gated routes (after the cookie check), e.g. the updater endpoints. */
   extra?: (req: Request, url: URL, origin: string) => Response | Promise<Response> | undefined;
-  /** Rewrite HTML responses (Android injects the page bridge). */
-  transformHtml?: (html: string) => string;
   debug?: boolean;
   port?: number;
-  /** A token-protected WebSocket route outside the cookie session (the Android e2e test channel). */
-  socket?: {
-    path: string;
-    token: string;
-    open(ws: import("bun").ServerWebSocket<unknown>): void;
-    message(ws: import("bun").ServerWebSocket<unknown>, data: string): void;
-  };
 }
 
 /**
@@ -65,20 +55,9 @@ export function startGate(o: GateOptions): { server: Server<any>; origin: string
     // loopback-only server has no idle clients to shed.
     idleTimeout: 0,
     routes: o.routes ?? {},
-    ...(o.socket && {
-      websocket: {
-        open: (ws: import("bun").ServerWebSocket<unknown>) => o.socket!.open(ws),
-        message: (ws: import("bun").ServerWebSocket<unknown>, m: string | Buffer) => o.socket!.message(ws, String(m)),
-      },
-    }),
-    async fetch(req, srv): Promise<Response | undefined> {
+    async fetch(req, srv): Promise<Response> {
       if (req.headers.get("host") !== host) return new Response("Misdirected Request", { status: 421 });
       const url = new URL(req.url);
-
-      if (o.socket && url.pathname === o.socket.path) {
-        if (!timingSafeEqual(url.searchParams.get("t") ?? "", o.socket.token)) return new Response("Forbidden", { status: 403 });
-        return srv.upgrade(req) ? undefined : new Response("Upgrade Required", { status: 426 });
-      }
 
       if (url.pathname === AUTH_PATH) {
         const t = url.searchParams.get("t") ?? "";
@@ -102,12 +81,7 @@ export function startGate(o: GateOptions): { server: Server<any>; origin: string
       if (extra) return extra;
 
       req.headers.set(PROTOCOL_HEADER, "http");
-      let res = secureCookiesForLoopback(await o.handler(req, srv));
-      if (o.transformHtml && res.headers.get("content-type")?.startsWith("text/html")) {
-        const headers = new Headers(res.headers);
-        headers.delete("content-length");
-        res = new Response(o.transformHtml(await res.text()), { status: res.status, statusText: res.statusText, headers });
-      }
+      const res = secureCookiesForLoopback(await o.handler(req, srv));
       if (o.debug) console.log(`[shell] ${req.method} ${url.pathname}${url.search} → ${res.status}`);
       return res;
     },

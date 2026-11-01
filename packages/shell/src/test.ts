@@ -27,12 +27,6 @@ export interface LaunchOptions {
   app?: string;
   /** Run `vite dev` in this project instead of a built app (true = cwd). */
   dev?: boolean | { cwd?: string; port?: number };
-  /** Run the APK on an Android device or emulator over adb (debug-key builds only):
-   *  installs it, `adb reverse`s the runner port and starts the app with the test URL. */
-  android?: boolean | { apk?: string; serial?: string; install?: boolean };
-  /** Run the iOS app (simulator build) on a booted simulator: installs it and launches it with the
-   *  test URL; `serverUrl` overrides the baked ios.serverUrl (e.g. a `vite dev` you started). */
-  ios?: boolean | { app?: string; udid?: string; serverUrl?: string };
   env?: Record<string, string>;
   /** Command-line arguments for a built app (URLs, documents to open). */
   args?: string[];
@@ -93,7 +87,7 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
       },
     },
   });
-  // Frames from the app, whichever side connected (the app here; the runner on Android).
+  // Frames from the app.
   function route(ws: { send(data: string): unknown }, raw: string) {
     try {
       routeFrame(ws, raw);
@@ -124,11 +118,6 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
   }
 
   const env = { ...process.env, ...options.env, SVELTE_DESKTOP_TEST: `ws://127.0.0.1:${server.port}` };
-  if (options.ios) return launchIos(options, server, hello, resolveHello, () => socket, pending, waiters, () => nextId++, timeout);
-  if (options.android) {
-    server.stop(true); // the runner connects to the app instead
-    return launchAndroid(options, route, hello, resolveHello, () => socket, pending, waiters, () => nextId++, timeout);
-  }
   if (options.connect) {
     const timer = setTimeout(() => resolveHello({ origin: "" }), timeout);
     await options.connect(env.SVELTE_DESKTOP_TEST);
@@ -305,138 +294,6 @@ async function makeHandle(o: {
   await handle.waitFor(() => document.readyState !== "loading" && !!document.body, { timeout });
   await handle.waitFor(() => document.documentElement.hasAttribute("data-desktop-hydrated"), { timeout: 10_000 }).catch(() => {});
   return handle;
-}
-
-function adbPath(): string {
-  const sdk = [process.env.ANDROID_HOME, process.env.ANDROID_SDK_ROOT, join(require("node:os").homedir(), "Library/Android/sdk"), join(require("node:os").homedir(), "Android/Sdk")].find(
-    (p) => p && existsSync(join(p, "platform-tools", "adb")),
-  );
-  return sdk ? join(sdk, "platform-tools", "adb") : "adb";
-}
-
-async function launchAndroid(
-  options: LaunchOptions,
-  route: (ws: { send(data: string): unknown }, raw: string) => void,
-  hello: Promise<{ origin: string }>,
-  resolveHello: (h: { origin: string }) => void,
-  socket: () => { send(data: string): unknown } | null,
-  pending: Pending,
-  waiters: Waiters,
-  nextId: () => number,
-  timeout: number,
-): Promise<AppHandle> {
-  const a = typeof options.android === "object" ? options.android : {};
-  const adb = adbPath();
-  const target = a.serial ? ["-s", a.serial] : [];
-  const run = async (...args: string[]) => {
-    const p = Bun.spawn([adb, ...target, ...args], { stdout: "pipe", stderr: "pipe" });
-    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-    if (code !== 0) throw new Error(`adb ${args.join(" ")}: ${err || out}`);
-    return out;
-  };
-  const apk = resolve(a.apk ?? findApk(process.cwd()));
-  const { androidToolchain } = await import("./build/package-android.ts");
-  const badging = await new Response(Bun.spawn([androidToolchain().aapt2, "dump", "badging", apk]).stdout).text();
-  const pkg = badging.match(/package: name='([^']+)'/)?.[1];
-  if (!pkg) throw new Error(`launch: cannot read the package name of ${apk}`);
-  if (a.install !== false) await run("install", "-r", apk);
-  await run("shell", "am", "force-stop", pkg);
-  await run("logcat", "-c").catch(() => {});
-
-  // The app's server listens on a random loopback port inside the device and
-  // accepts the runner on /__desktop/test?t=<token> (debuggable builds only):
-  // read the port from the host's log, forward the same port number, connect.
-  let stdout = "";
-  let resolvePort!: (port: number) => void;
-  const port = new Promise<number>((r) => (resolvePort = r));
-  const logcat = Bun.spawn([adb, ...target, "logcat", "-v", "brief", "SvelteDesktop:*", "*:S"], { stdout: "pipe", stderr: "ignore" });
-  void (async () => {
-    for await (const chunk of logcat.stdout as ReadableStream<Uint8Array>) {
-      stdout += new TextDecoder().decode(chunk);
-      const m = /server ready at http:\/\/127\.0\.0\.1:(\d+)/.exec(stdout);
-      if (m) resolvePort(Number(m[1]));
-    }
-  })();
-  const token = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString("hex");
-  await run("shell", "am", "start", "-W", "-n", `${pkg}/dev.sveltedesktop.MainActivity`, "--es", "dev.sveltedesktop.test", `listen:${token}`);
-
-  let ws: WebSocket | null = null;
-  let forwarded = 0;
-  const cleanup = async () => {
-    ws?.close();
-    await run("shell", "am", "force-stop", pkg).catch(() => {});
-    if (forwarded) await run("forward", "--remove", `tcp:${forwarded}`).catch(() => {});
-    logcat.kill();
-  };
-  const devicePort = await Promise.race([port, Bun.sleep(timeout).then(() => 0)]);
-  if (!devicePort) {
-    await cleanup();
-    throw new Error(`launch: the Android app's server did not start within ${timeout} ms\n${stdout.slice(-2000)}`);
-  }
-  await run("forward", `tcp:${devicePort}`, `tcp:${devicePort}`);
-  forwarded = devicePort;
-  ws = new WebSocket(`ws://127.0.0.1:${devicePort}/__desktop/test?t=${token}`);
-  const sock = ws;
-  sock.onmessage = (e) => route(sock, String(e.data));
-  sock.onerror = () => resolveHello({ origin: "" });
-  const timer = setTimeout(() => resolveHello({ origin: "" }), timeout);
-  const h = await hello;
-  clearTimeout(timer);
-  if (!socket()) {
-    await cleanup();
-    throw new Error(`launch: cannot open the test channel of the Android app (is the APK built with the debug key?)\n${stdout.slice(-2000)}`);
-  }
-  return makeHandle({ origin: h.origin, socket: socket()!, pending, waiters, nextId, timeout, stdout: () => stdout, stop: () => cleanup() });
-}
-
-async function launchIos(
-  options: LaunchOptions,
-  server: import("bun").Server<unknown>,
-  hello: Promise<{ origin: string }>,
-  resolveHello: (h: { origin: string }) => void,
-  socket: () => { send(data: string): unknown } | null,
-  pending: Pending,
-  waiters: Waiters,
-  nextId: () => number,
-  timeout: number,
-): Promise<AppHandle> {
-  const o = typeof options.ios === "object" ? options.ios : {};
-  const app = resolve(o.app ?? join(process.cwd(), ".desktop/dist/ios-simulator", (require("node:fs").readdirSync(join(process.cwd(), ".desktop/dist/ios-simulator")) as string[]).find((f) => f.endsWith(".app")) ?? ""));
-  const plist = JSON.parse(new TextDecoder().decode(Bun.spawnSync(["plutil", "-convert", "json", "-o", "-", join(app, "Info.plist")]).stdout));
-  const bundleId: string = plist.CFBundleIdentifier;
-  const udid = o.udid ?? "booted";
-  const simctl = (...args: string[]) => {
-    const r = Bun.spawnSync(["xcrun", "simctl", ...args], { env: { ...process.env, ...env } });
-    if (r.exitCode !== 0) throw new Error(`simctl ${args[0]}: ${r.stderr.toString()}`);
-    return r.stdout.toString();
-  };
-  // SIMCTL_CHILD_* variables reach the launched app's environment.
-  const env: Record<string, string> = { SIMCTL_CHILD_SVELTE_DESKTOP_TEST: `ws://127.0.0.1:${server.port}` };
-  if (o.serverUrl) env.SIMCTL_CHILD_SVELTE_DESKTOP_SERVER_URL = o.serverUrl;
-  simctl("install", udid, app);
-  simctl("launch", "--terminate-running-process", udid, bundleId);
-  const cleanup = async () => {
-    try {
-      simctl("terminate", udid, bundleId);
-    } catch {}
-    server.stop(true);
-  };
-  const timer = setTimeout(() => resolveHello({ origin: "" }), timeout);
-  const h = await hello;
-  clearTimeout(timer);
-  const ws = socket();
-  if (!ws) {
-    await cleanup();
-    throw new Error(`launch: the iOS app did not connect within ${timeout} ms (simulator build?)`);
-  }
-  return makeHandle({ origin: h.origin, socket: ws, pending, waiters, nextId, timeout, stdout: () => "", stop: () => cleanup() });
-}
-
-function findApk(cwd: string): string {
-  const dist = join(cwd, ".desktop/dist");
-  const apk = existsSync(dist) ? (require("node:fs").readdirSync(dist) as string[]).find((f) => f.endsWith(".apk")) : undefined;
-  if (!apk) throw new Error("launch: no .apk in .desktop/dist (SVELTE_DESKTOP_TARGET=android vite build, or pass { android: { apk } })");
-  return join(dist, apk);
 }
 
 /** Linux app directory (package-linux.ts): the `.desktop` entry's Exec, relative to it. An AppImage runs as is. */

@@ -1251,9 +1251,6 @@ void register_notifications() {
     c->ok();
   });
   reg("notifications", "setForeground", [](CallPtr c) { c->ok(); }); // toasts always show on Windows
-  reg_many("notifications", {"createChannel", "deleteChannel", "channels"}, [](CallPtr c) {
-    c->fail("unsupported", "notifications." + c->op + ": notification channels are Android-only");
-  });
   reg_many("push", {"register", "unregister", "token"}, [](CallPtr c) {
     c->fail("unsupported", "push." + c->op + ": no push service for unpackaged Windows apps (WNS needs a packaged app); use your own connection");
   });

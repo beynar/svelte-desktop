@@ -44,9 +44,7 @@ export default defineConfig({
     camera: 'Notes can attach photos from your camera.',
     screenRecording: 'Notes can attach a screenshot of your screen.',
   },
-  notifications: {
-    channels: [{ id: 'messages', name: 'Messages', importance: 'high' }],
-  },
+  notifications: { foreground: true },
   push: { apns: true, server: 'https://push.example.com' },
 });
 ```
@@ -63,7 +61,7 @@ The plugin loads the file (`desktop.config.ts`, `.js` or `.mjs`) for both `vite 
 | Notifications | `notifications`, `push` | [Notifications and push](/features/notifications) |
 | Native code | `native`, `addons`, `sidecars` | [Native code](/features/native-code) |
 | Security | `bridge.allow` | [The host API](/concepts/host) |
-| Release | `build`, `sign`, `update`, `ios` | [Distribution](/shipping/distribution) |
+| Release | `build`, `sign`, `update` | [Distribution](/shipping/distribution) |
 
 Every key is listed in the [configuration reference](/reference/config).
 
@@ -73,15 +71,10 @@ Some settings can come from the environment, which keeps secrets and per-build s
 
 | Variable | Overrides |
 | --- | --- |
-| `SVELTE_DESKTOP_TARGET` | `build.target` (`linux`, `windows`, `android`, `ios`) |
+| `SVELTE_DESKTOP_TARGET` | `build.target` (`macos`, `linux`, `windows`) |
 | `SVELTE_DESKTOP_TARGET_ARCH` | `build.targetArch` |
-| `SVELTE_DESKTOP_ANDROID_ARCH` | `build.androidArch` (comma-separated) |
-| `SVELTE_DESKTOP_AAB` | `build.aab` |
 | `SVELTE_DESKTOP_BUN` | `build.bun` (the Bun binary used to compile) |
-| `SVELTE_DESKTOP_IOS_OFFLINE` | `ios.offline` |
-| `SVELTE_DESKTOP_IOS_SERVER_URL` | `ios.serverUrl` |
 | `CODESIGN_IDENTITY` | `sign.identity` |
 | `NOTARY_PROFILE` | `sign.notaryProfile` |
 | `SVELTE_DESKTOP_UPDATE_KEY` | `update.privateKey` |
 | `WINDOWS_CERT_PFX`, `WINDOWS_CERT_PASSWORD` | `sign.windows` |
-| `ANDROID_KEYSTORE` (+ `_ALIAS`, `_PASSWORD`) | `sign.android` |

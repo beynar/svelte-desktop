@@ -585,11 +585,7 @@ class ClipboardNamespace extends PlatformNamespace {
 	get hasText() { return this.formats.includes('text/plain'); }
 
 	async init(): Promise<this> {
-		// iOS shows a paste prompt for every content read: start from the formats
-		// only there; `refresh()` reads the content when the app asks for it.
-		const info = await appSvc.getInfo().catch(() => null);
-		if (info?.platform === 'ios') this.formats = await clipboardSvc.availableFormats().catch(() => []);
-		else await this.refresh();
+		await this.refresh();
 		this.ready = true;
 		return this;
 	}

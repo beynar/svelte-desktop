@@ -40,8 +40,6 @@ App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without o
   type={{
     app: { type: "string", description: "Path to a built .app, a Linux app directory or an AppImage. Default: the first one in .desktop/dist." },
     dev: { type: "boolean | { cwd, port }", description: "Run vite dev in this project instead of a built app." },
-    android: { type: "boolean | { apk, serial, install }", description: "Run the APK on a device or emulator over adb (debug-key builds)." },
-    ios: { type: "boolean | { app, udid, serverUrl }", description: "Run the simulator build on a booted simulator." },
     args: { type: "string[]", description: "Command-line arguments for a built app (URLs, documents)." },
     env: { type: "Record<string, string>" },
     timeout: { type: "number", default: "30000", description: "ms to wait for the app to connect and its page to load." },
@@ -64,7 +62,3 @@ App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without o
 | `close()` | Quit the app |
 
 The test channel exists only when `launch()` starts the app (it sets `SVELTE_DESKTOP_TEST`); shipped apps don't expose it.
-
-:::tip
-To assert a rejection, use `expect(await app.platform(...).catch((e) => e))` rather than `await expect(promise).rejects`: the latter has been seen to corrupt the runner's connection in `bun test` (on the Android runner).
-:::

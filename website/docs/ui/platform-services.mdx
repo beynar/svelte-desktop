@@ -88,7 +88,7 @@ await using blocker = await host.power.acquireSleepBlocker({ type: 'display', re
 
 ## Secure storage
 
-Secrets go to the Keychain on macOS (Android Keystore, iOS Keychain on mobile); there is never a plaintext fallback.
+Secrets go to the Keychain on macOS, libsecret on Linux and the Credential Manager on Windows; there is never a plaintext fallback.
 
 ```ts
 await host.secureStorage.setPassword('com.example.notes', 'api-token', token);

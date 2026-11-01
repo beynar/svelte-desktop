@@ -1,9 +1,6 @@
 // Test channel: when SVELTE_DESKTOP_TEST is set (by `launch()` from
 // '@svelte-desktop/shell/test'), the shell connects to the test runner's
 // WebSocket and executes platform calls for it. Never active otherwise.
-// On Android the direction is reversed: the server exposes a token-protected
-// route and the runner connects through `adb forward` (no `adb reverse` or
-// emulator-only addresses; src/android/server.ts, attachTestChannel).
 //   runner → app  {id, service, op, args}
 //   app → runner  {t:'result', id, ok, value|error} | {t:'event', name, data} | {t:'hello', origin}
 import { callPlatform, onAnyPlatform } from "./platform/bus.ts";

@@ -1,9 +1,9 @@
 ---
 title: Distribution
-description: Build, sign and package for macOS, Windows and Linux, and where mobile builds fit.
+description: Build, sign and package for macOS, Windows and Linux.
 ---
 
-`bunx --bun vite build` compiles the server into one executable and packages it for the target. Output goes to `.desktop/dist` (`build.outDir`). The target is the host OS unless `build.target` or `SVELTE_DESKTOP_TARGET` says otherwise; Linux, Windows and Android can be built from macOS.
+`bunx --bun vite build` compiles the server into one executable and packages it for the target. Output goes to `.desktop/dist` (`build.outDir`). The target is the host OS unless `build.target` or `SVELTE_DESKTOP_TARGET` says otherwise; Linux and Windows can be built from macOS.
 
 ```sh
 bunx --bun vite build                               # macOS, the host
@@ -87,17 +87,6 @@ SVELTE_DESKTOP_TARGET=linux bunx --bun vite build
 
 GTK 3 and WebKitGTK 4.1 come from the system, like the system WebKit on macOS; libnotify, appindicator and libsecret are optional. `fileTypes` become the `.desktop` MimeType entry (plus a shared-mime-info package for custom types). Compiling native code (plugins, addons) needs a Linux host or Docker; a cross-build from macOS skips it with a warning unless prebuilt.
 
-## Mobile
-
-The same project builds for Android and iOS:
-
-```sh
-SVELTE_DESKTOP_TARGET=android bunx --bun vite build   # signed APK (+ AAB with build.aab)
-SVELTE_DESKTOP_TARGET=ios bunx --bun vite build       # simulator .app; device builds with sign.ios
-```
-
-See [Mobile](/shipping/mobile) for what runs where and how each is signed.
-
 ## Signing options
 
 <TypeTable
@@ -108,7 +97,5 @@ See [Mobile](/shipping/mobile) for what runs where and how each is signed.
     entitlements: { type: "Record<string, boolean | string | string[]>", description: "Merged into the defaults Bun needs." },
     provisioningProfile: { type: "string", description: "macOS .provisionprofile embedded in the bundle (Push Notifications)." },
     windows: { type: "{ certificateFile, password, timestampUrl }", description: "Authenticode." },
-    ios: { type: "{ identity, provisioningProfile }", description: "iOS device builds." },
-    android: { type: "{ keystore, alias, password }", default: "$ANDROID_KEYSTORE, else the debug keystore", description: "APK signing." },
   }}
 />

@@ -551,9 +551,6 @@ void platform_register_notifications(void) {
     g_foreground = [call boolean:@"show" or:YES];
     [call ok:nil];
   });
-  platform_register_many(@"notifications", @[ @"createChannel", @"deleteChannel", @"channels" ], ^(PlatformCall *call) {
-    [call fail:@"unsupported" message:[NSString stringWithFormat:@"notifications.%@: channels are Android-only", call.op]];
-  });
   platform_register(@"notifications", @"getPermissionStatus",
                     ^(PlatformCall *call) { platform_notifications_permission(call, NO); });
   platform_register(@"notifications", @"requestPermission",
