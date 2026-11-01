@@ -631,10 +631,12 @@ static void set_menu(NSArray *spec) {
 }
 
 // Without an Edit menu, Cmd+C/V/X/A/Z do nothing in a WKWebView, and without an
-// app menu there is no Cmd+Q. webview/webview installs neither.
+// app menu there is no Cmd+Q. webview/webview installs neither. Built like menu.setAppMenu
+// (platform_menu.mm): the Window menu becomes NSApp.windowsMenu, so macOS adds its tiling
+// items (Fill, Center, Move & Resize) — which window tools such as Swish drive, animated.
 static void install_default_menu(NSString *appName) {
   NSString *name = appName ?: NSRunningApplication.currentApplication.localizedName ?: @"App";
-  set_menu(@[
+  NSArray *spec = @[
     @{@"label" : name, @"submenu" : @[
       @{@"label" : [@"About " stringByAppendingString:name], @"role" : @"about"}, @{@"type" : @"separator"},
       @{@"label" : [@"Hide " stringByAppendingString:name], @"role" : @"hide", @"accelerator" : @"Cmd+H"},
@@ -659,7 +661,12 @@ static void install_default_menu(NSString *appName) {
       @{@"label" : @"Zoom", @"role" : @"zoom"},
       @{@"label" : @"Close", @"role" : @"close", @"accelerator" : @"Cmd+W"}
     ]}
-  ]);
+  ];
+  NSString *error = nil;
+  NSMenu *bar = platform_build_menu(spec, @"default menu", &error);
+  if (!bar) return (void)fprintf(stderr, "[shell] default menu: %s\n", error.UTF8String);
+  NSApp.mainMenu = bar;
+  g_menu_installed = true;
 }
 
 int shell_menu_set(const char *spec_json) {
