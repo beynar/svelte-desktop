@@ -657,8 +657,8 @@ static void on_activated(const std::string &args, const json &inputs, const std:
     auto f = rec->second.foreground.find(action);
     foreground = f == rec->second.foreground.end() || f->second;
   } else if (kind == "action") foreground = true;
-  // No window (quitOnLastWindowClosed: false): reopen the main one; its page claims the response.
-  if (foreground && window_order().empty()) recreate_main_window();
+  // No visible window (quitOnLastWindowClosed: false): show the main one; its page claims the response.
+  if (foreground) show_main_window();
   notif::respond(id, kind, action, input, payload, 0);
   auto keep = g_keep.find(id);
   std::string err;

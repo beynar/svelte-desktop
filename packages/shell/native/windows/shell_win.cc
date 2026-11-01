@@ -1014,6 +1014,18 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         emit("willClose", json{{"windowId", window_event_id(w->id)}});
         return 0;
       }
+      // quitOnLastWindowClosed: false — the last visible window hides instead (as on macOS and
+      // Linux): the app, its page and its push connection live on; a toast click or a second
+      // launch shows it again (show_main_window).
+      if (!g_quit_on_last_window) {
+        bool other = false;
+        for (int id : g_order)
+          if (Window *o = find_window(id); o && o != w && IsWindowVisible(o->hwnd)) other = true;
+        if (!other) {
+          ShowWindow(hwnd, SW_HIDE);
+          return 0;
+        }
+      }
       DestroyWindow(hwnd);
       return 0;
     case WM_DESTROY:
@@ -1187,12 +1199,25 @@ static int create_window(const json &o) {
 
 // quitOnLastWindowClosed: false and no window left: a toast click / second instance
 // reopens the main one (like a Dock click on macOS), at the app's origin.
-int recreate_main_window() {
+static int recreate_main_window() {
   if (!g_order.empty() || !g_main_opts.is_object()) return 0;
   json o = g_main_opts;
   for (const char *k : {"args", "cwd", "singleInstance", "url", "html"}) o.erase(k);
   o["label"] = "main";
   return create_app_window(o);
+}
+
+// quitOnLastWindowClosed: false: with no visible window, a toast click or a second launch shows
+// the hidden main window again (page and state kept), or recreates it if it was destroyed.
+int show_main_window() {
+  for (int id : g_order)
+    if (Window *w = find_window(id); w && IsWindowVisible(w->hwnd)) return 0;
+  if (g_order.empty()) return recreate_main_window();
+  Window *w = find_window(g_order.front());
+  if (!w) return 0;
+  ShowWindow(w->hwnd, IsIconic(w->hwnd) ? SW_RESTORE : SW_SHOW);
+  SetForegroundWindow(w->hwnd);
+  return w->id;
 }
 
 int create_app_window(const json &opts) {

@@ -398,7 +398,7 @@ void register_app() {
       handle_open_args(args);
       SetCurrentDirectoryW(prev.c_str());
       if (d.contains("toast")) toast_activation_forwarded(d["toast"]);
-      else if (window_order().empty()) recreate_main_window(); // quitOnLastWindowClosed: false
+      else show_main_window(); // quitOnLastWindowClosed: false: the hidden window comes back
     }
     *result = TRUE;
     return true;

@@ -548,27 +548,31 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		throw new Error(`timed out: ${what}`);
 	};
 
-	test('quitOnLastWindowClosed: false — no window left: the app lives; a toast click reopens the main window, so does a second instance', async () => {
+	test('quitOnLastWindowClosed: false — closing the last window hides it (page kept); a toast click shows it, so does a second instance', async () => {
 		await home();
 		await show({ id: 'q1', title: 'Reopen me', body: 'No window open', url: '/about', requireInteraction: true });
+		await app.eval('(window.__kept = 42, true)');
+		const visible = () => app.platform<boolean>('window', 'isVisible', { windowId: 0 });
 		await app.platform('window', 'close', { windowId: 0 });
-		await until('window closed', async () => (await windows()).length === 0, 10_000);
+		await until('window hidden', async () => !(await visible()), 10_000);
+		expect(await windows()).toHaveLength(1); // hidden, not destroyed
 		expect((await app.platform<{ identifier: string }>('app', 'getInfo')).identifier).toBe(ID); // still answering
 		const r = await uia('act', { title: 'Reopen me' });
 		log('act', r);
 		expect(JSON.parse(r).error).toBeUndefined();
-		await until('main window reopened', async () => (await windows()).length === 1);
+		await until('main window shown', visible);
 		await app.waitFor(() => location.pathname === '/about', { timeout: 30_000 });
 		await app.waitFor(() => /click q1/.test(document.querySelector('#notification-log')?.textContent ?? ''), { timeout: 10_000 });
+		expect(await app.eval('window.__kept')).toBe(42); // the same page: shown, not reloaded
 		await shot('reopened-by-toast.png');
-		// A second launch with no window: the instance it hands over to reopens the main window.
+		// A second launch with the window hidden: the instance it hands over to shows it.
 		await app.platform('window', 'close', { windowId: 0 });
-		await until('window closed again', async () => (await windows()).length === 0, 10_000);
+		await until('window hidden again', async () => !(await visible()), 10_000);
 		const exe = join(APP, readdirSync(APP).find((f) => /\.exe$/i.test(f))!);
 		const second = Bun.spawn([exe], { stdout: 'ignore', stderr: 'ignore' });
 		expect(await Promise.race([second.exited, Bun.sleep(20_000).then(() => 'running')])).toBe(0); // handed over and left
-		await until('main window reopened by the second instance', async () => (await windows()).length === 1);
-		await app.waitFor('#counter', { timeout: 30_000 });
+		await until('main window shown by the second instance', visible);
+		expect(await app.eval('window.__kept')).toBe(42);
 	});
 
 	test('cold start: the activator launches the app (-ToastActivated), the click reaches it with its whole payload', async () => {
