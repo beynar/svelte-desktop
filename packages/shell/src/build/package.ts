@@ -7,6 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } fr
 import { basename, dirname, join, resolve } from "node:path";
 import { USAGE_KEYS, sidecarEntries, type ResolvedConfig } from "../config.ts";
 import { appIcons } from "./icons.ts";
+import { compileStaged, sizeFlags } from "./bun-compile.ts";
 import { buildLanguagePlugins } from "./native-langs.ts";
 import { typeNativePlugins } from "./native-types.ts";
 import { buildAddons, buildNativePlugin } from "./native.ts";
@@ -237,19 +238,13 @@ async function notarize(path: string, profile: string) {
 
 async function compile(c: ResolvedConfig, stage: string, out: string, arch: Arch): Promise<void> {
   const bun = c.build?.bun ?? process.env.SVELTE_DESKTOP_BUN ?? process.execPath;
-  const aot = !!c.build?.aot && arch === hostArch; // --aot can't cross-compile
-  const trim = !!c.build?.trim;
   // A desktop app must not pick up bunfig.toml / .env from whatever directory it
   // is launched in (behavior changes, environment injection).
-  const flags = ["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv", ...(aot ? ["--aot"] : []), ...(trim ? ["--trim", "--trim-locales=en"] : [])];
+  const flags = ["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv", ...(await sizeFlags(c, bun, { aot: arch === hostArch, warn: (m) => console.log(`  \x1b[33m!\x1b[0m ${m}`) }))]; // --aot can't cross-compile
   if (arch !== hostArch) flags.push(`--target=bun-darwin-${arch}`);
   const rev = (await $`${bun} --revision`.text()).trim();
   log(`bun build --compile ${flags.join(" ")} (${rev}, ${arch})`);
-  const r = await $`${bun} build --compile ${flags} ${join(stage, "desktop-main.js")} ${join(stage, "desktop-worker.js")} --outfile ${out}`
-    .cwd(stage)
-    .nothrow()
-    .quiet();
-  if (r.exitCode !== 0) throw new Error(`bun build --compile failed:\n${r.stderr.toString()}${r.stdout.toString().slice(-4000)}`);
+  await compileStaged(bun, stage, out, flags, (m) => console.log(`  \x1b[33m!\x1b[0m ${m}`));
 }
 
 // ---------------------------------------------------------------------------

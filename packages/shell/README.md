@@ -70,7 +70,7 @@ Requirements: macOS 12+, Bun ≥ 1.4, Xcode command line tools, `@sveltejs/adapt
 | `sidecars` | `{ name: 'bin/tool' }` or per platform `{ name: { macos, linux, windows } }` → `sidecar(name, args)` |
 | `bridge.allow` | ops pages may call (`'window.*'`, `'clipboard.readText'`); enforced natively; server code unrestricted (`permissions.pages` still accepted) |
 | `update` | `{ manifestUrl, publicKey, channel, privateKey, baseUrl }` |
-| `build` | `{ target, targetArch, aot, trim, bun, universal, dmg, zip, outDir, minimumSystemVersion }` — `aot`/`trim` need Bun canary today |
+| `build` | `{ target, targetArch, aot, trim, bun, universal, dmg, zip, outDir, minimumSystemVersion }` — `trim` is on when the Bun compiling has it (canary today; `false` to opt out), `aot` opt-in |
 | `sign` | `{ identity, entitlements, hardenedRuntime, notaryProfile, provisioningProfile }` — or `$CODESIGN_IDENTITY`, `$NOTARY_PROFILE` |
 | `plist` | extra Info.plist keys |
 
@@ -452,5 +452,5 @@ shared by Linux and Windows.
 
 Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target; for mobile, deploy the SvelteKit app and ship it as a PWA or wrap it (e.g. Capacitor).
 
-`aot`/`trim` need Bun canary. Notarization needs your Developer ID
+`trim`/`aot` need a Bun that has them (canary today): with it, notes is 51 MB instead of 86 (`--trim` drops the Bun command line, ~45 MB; background jobs don't need it). Cross builds aren't trimmed (the target's runtime can't be). Notarization needs your Developer ID
 (the pipeline is implemented, not exercised here). See [AUDIT.md](AUDIT.md).

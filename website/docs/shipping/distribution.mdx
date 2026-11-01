@@ -46,7 +46,7 @@ Without an identity, builds are ad-hoc signed: they run on your machine, but Gat
 
 **Universal builds.** `build: { universal: true }` builds the x64 slice too (Bun cross-compiles it) and lipos the executable, `libshell`, the plugin and addons into one app.
 
-**Smaller builds.** `build: { aot: true, trim: true }` use Bun's `--aot` and `--trim` (86 MB to 45 MB for a hello world). They need Bun canary today (`build.bun` or `SVELTE_DESKTOP_BUN` points at it), and `aot` stays on the host architecture.
+**Smaller builds.** When the Bun compiling has `--trim` (canary today: `build.bun` or `SVELTE_DESKTOP_BUN` points at it), it's on by default: unused Bun APIs go, the Bun command line first (~45 MB). `build: { aot: true }` takes a few MB more off. The notes example: 86 MB → 66 MB (`trim`) → 51 MB (`trim` + `aot`). `trim: false` opts out; `aot` stays on the host architecture, and cross builds aren't trimmed.
 
 ## Windows
 

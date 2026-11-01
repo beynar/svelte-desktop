@@ -20,6 +20,7 @@ import { $ } from "bun";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
+import { compileStaged, sizeFlags } from "./bun-compile.ts";
 import { appIcons } from "./icons.ts";
 import { buildLanguagePlugins } from "./native-langs.ts";
 import { pluginSources } from "./native.ts";
@@ -457,7 +458,7 @@ async function compileExe(c: ResolvedConfig, stage: string, out: string, arch: A
   const bun = c.build?.bun ?? process.env.SVELTE_DESKTOP_BUN ?? process.execPath;
   // A desktop app must not pick up bunfig.toml / .env from its working directory.
   const flags = ["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv", `--target=bun-windows-${arch}`, "--windows-hide-console"];
-  if (c.build?.trim) flags.push("--trim", "--trim-locales=en");
+  flags.push(...(await sizeFlags(c, bun, { aot: false, warn })));
   if (c.build?.aot) warn("build.aot is ignored for Windows (Bun's --aot can't cross-compile)");
   // Bun edits PE resources only on a Windows host; elsewhere patchExeResources does it after.
   if (isWindowsHost) {
@@ -468,8 +469,7 @@ async function compileExe(c: ResolvedConfig, stage: string, out: string, arch: A
   }
   const rev = (await $`${bun} --revision`.text()).trim();
   log(`bun build --compile ${flags.filter((f) => !f.startsWith("--windows-") || f === "--windows-hide-console").join(" ")} (${rev})`);
-  const r = await $`${bun} build --compile ${flags} ${join(stage, "desktop-main.js")} ${join(stage, "desktop-worker.js")} --outfile ${out}`.cwd(stage).nothrow().quiet();
-  if (r.exitCode !== 0) throw new Error(`bun build --compile (windows-${arch}) failed:\n${r.stderr.toString()}${r.stdout.toString().slice(-4000)}`);
+  await compileStaged(bun, stage, out, flags, warn);
 }
 
 function publisher(c: ResolvedConfig): string {

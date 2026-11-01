@@ -54,9 +54,10 @@ export interface BuildConfig {
   target?: "macos" | "linux" | "windows";
   /** Linux/Windows target architecture. Default: x64. */
   targetArch?: "x64" | "arm64";
-  /** Bun `--aot` (canary today). */
+  /** Bun `--aot`: machine code at build time, a few MB smaller (needs a Bun that has it: canary today). */
   aot?: boolean;
-  /** Bun `--trim` (canary today). */
+  /** Bun `--trim`: drop the Bun APIs the app never calls, the Bun command line first (~45 MB).
+   *  Default: on when the Bun compiling has it (canary today); `false` turns it off. */
   trim?: boolean;
   /** Bun binary used to compile. Default: $SVELTE_DESKTOP_BUN or the running Bun. */
   bun?: string;

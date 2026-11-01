@@ -21,6 +21,7 @@ import { $ } from "bun";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
+import { compileStaged, sizeFlags } from "./bun-compile.ts";
 import { appIcons } from "./icons.ts";
 import { buildLanguagePlugins } from "./native-langs.ts";
 import { pluginSources as sharedPluginSources } from "./native.ts";
@@ -115,15 +116,10 @@ async function compile(c: ResolvedConfig, stage: string, out: string, arch: Arch
   const native = process.platform === "linux" && arch === hostArch;
   // A desktop app must not pick up bunfig.toml / .env from its launch directory.
   const flags = ["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv", `--target=bun-linux-${arch}`];
-  if (c.build?.aot && native) flags.push("--aot"); // --aot can't cross-compile
-  if (c.build?.trim) flags.push("--trim", "--trim-locales=en");
+  flags.push(...(await sizeFlags(c, bun, { aot: native, warn }))); // --aot can't cross-compile
   const rev = (await $`${bun} --revision`.text()).trim();
   log(`bun build --compile ${flags.join(" ")} (${rev})`);
-  const r = await $`${bun} build --compile ${flags} ${join(stage, "desktop-main.js")} ${join(stage, "desktop-worker.js")} --outfile ${out}`
-    .cwd(stage)
-    .nothrow()
-    .quiet();
-  if (r.exitCode !== 0) throw new Error(`bun build --compile failed:\n${r.stderr.toString()}${r.stdout.toString().slice(-4000)}`);
+  await compileStaged(bun, stage, out, flags, warn);
 }
 
 const KNOWN_MIME: Record<string, string> = {

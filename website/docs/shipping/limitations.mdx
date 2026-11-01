@@ -7,7 +7,7 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 
 ## Everywhere
 
-- **`build.aot` and `build.trim` need Bun canary** until `--aot` and `--trim` ship in a stable Bun. Without them a hello world is 86 MB (39 MB zipped) instead of 45 MB.
+- **Smaller builds need Bun canary** until `--trim` and `--aot` ship in a stable Bun: with it, `trim` is on by default and the notes example is 51 MB (with `aot`) instead of 86 MB. Cross builds (Linux or Windows from a Mac) aren't trimmed: build on the target OS, for instance in CI.
 - **Each preloaded popover costs a WebKit content process** (about 30 to 40 MB). Use `preload: false` for rarely opened ones.
 - **Ops vary by platform.** Many window and app ops are macOS-only and answer `unsupported` elsewhere. `host.capabilities.describe()` tells the truth for the running build.
 
