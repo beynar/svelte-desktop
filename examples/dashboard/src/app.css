@@ -1,0 +1,51 @@
+@import 'tailwindcss';
+
+@plugin 'entasis/tailwind-plugin/theme' {
+	name: light;
+	default: true;
+	colorscheme: light;
+	surface: #fafafa;
+	neutral: #18181b;
+	primary: #5f62ef;
+	secondary: #e4e4e7;
+	danger: #dc2626;
+	success: #15803d;
+	warning: #f59e0b;
+	info: #2563eb;
+}
+@plugin 'entasis/tailwind-plugin/theme' {
+	name: dark;
+	colorscheme: dark;
+	prefersDark: true;
+	surface: #09090b;
+	surface-floating: #27272a;
+	neutral: #fafafa;
+	primary: #5f62ef;
+	secondary: #27272a;
+	danger: #dc2626;
+	success: #15803d;
+	warning: #f59e0b;
+	info: #2563eb;
+	state-hover-opacity: 0.16;
+	state-pressed-opacity: 0.32;
+}
+
+/* entasis components live in node_modules: let Tailwind see their classes. */
+@source '../node_modules/entasis/dist';
+
+html,
+body {
+	height: 100%;
+	margin: 0;
+}
+
+/* Desktop title bar (titleBarStyle: 'hiddenInset'): the traffic lights sit over the sidebar's header,
+   so it starts below them; the page header and the strip above the sidebar move the window
+   (buttons and links inside stay clickable). In full screen the bar height drops to 0. */
+html[data-desktop-titlebar] [data-slot='sidebar-header'] {
+	padding-top: var(--desktop-titlebar-height);
+	--app-region: drag;
+}
+html[data-desktop-titlebar] [data-slot='page-shell-header'] {
+	--app-region: drag;
+}
