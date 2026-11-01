@@ -1,0 +1,122 @@
+---
+title: Tabs
+description: Tabs in the title bar or inside a page — state, Svelte components, and the desktop integration (window title, Tab menu, shortcuts, restore).
+---
+
+`@svelte-desktop/shell/tabs` gives you a tab group (`Tabs`, Svelte 5 runes) and two components to render it, `<TabBar>` and `<TabPanels>`. One group is the window's own tab bar, in the title bar; others can live anywhere inside your pages. Drawing tabs is the easy part — the module brings what makes them feel native: the window title, a **Tab** menu with ⌘T ⌘W ⇧⌘T ⌃⇥, ⌘1–9, ⌘-click on a link, restoring the tabs at launch.
+
+## In the title bar
+
+Route tabs are places in your app: activating a tab navigates to its path, and navigating (a link, the sidebar) changes the active tab's path — each tab remembers where it was.
+
+```svelte src/routes/+layout.svelte
+<script lang="ts">
+	import { Tabs, TabBar } from '@svelte-desktop/shell/tabs';
+
+	let { children } = $props();
+
+	const tabs = new Tabs({
+		id: 'app',
+		route: true,      // tabs are app routes
+		primary: true,    // the window's tab bar: title, Tab menu, shortcuts, restored at launch
+		create: () => ({ path: '/' }),
+		onLastClose: 'new',
+		title: (url) => titles[url.pathname] ?? 'Untitled'
+	});
+</script>
+
+<header class="titlebar">
+	<TabBar {tabs} label="Open pages" />
+</header>
+{@render children()}
+
+<style>
+	.titlebar {
+		height: max(var(--desktop-titlebar-height, 0px), 2.75rem);
+		padding-left: max(var(--desktop-controls-width, 0px), 0.75rem); /* clear the traffic lights */
+		--app-region: drag; /* its empty parts move the window */
+	}
+</style>
+```
+
+With `titleBarStyle: 'hiddenInset'` the bar sits next to the traffic lights. Tabs and buttons stay clickable, the empty parts of the strip move the window, and a double-click on them zooms it.
+
+| Shortcut | |
+| --- | --- |
+| ⌘T / the + button | A new tab from `create()`, at the end |
+| ⌘W | Close the active tab (`onLastClose` decides what the last one does) |
+| ⇧⌘T | Reopen the last closed tab |
+| ⌃⇥ / ⌃⇧⇥ | Next / previous tab |
+| ⌘1 – ⌘8, ⌘9 | That tab, the last one |
+| ⌘-click or middle-click a link | Open it in a new tab, in the background |
+| Middle-click a tab | Close it |
+| Drag a tab | Reorder |
+
+The shortcuts are a **Tab** menu inserted before Window, so they show in the menu bar and win over the page. The window title follows the active tab.
+
+## Inside a page
+
+Any other group is plain state: show each tab's content with `<TabPanels>`. Panels are kept alive by default — every tab keeps its components, scroll and inputs.
+
+```svelte src/routes/board/+page.svelte
+<script lang="ts">
+	import { Tabs, TabBar, TabPanels } from '@svelte-desktop/shell/tabs';
+
+	const boards = new Tabs<{ board: string }>({
+		id: 'boards',
+		restore: true,
+		initial: [{ id: 'current', title: 'Current sprint', data: { board: 'current' }, pinned: true }],
+		create: () => ({ title: 'New board', data: { board: crypto.randomUUID() } })
+	});
+</script>
+
+<TabBar tabs={boards} class="underline-tabs" />
+<TabPanels tabs={boards}>
+	{#snippet children(tab)}<Board id={tab.data!.board} />{/snippet}
+</TabPanels>
+```
+
+Fixed tabs (`closable: false`, no `create`) make a segmented control; `keepAlive={false}` renders only the active panel. The [dashboard example](https://github.com/beynar/svelte-desktop/tree/bun-webview-shell/examples/dashboard) shows all three — title-bar tabs, underline tabs with rename and +, and a segmented control.
+
+## Styling
+
+`<TabBar>` only lays out (zero-specificity styles). Style it with `class` and the state attributes, or render each tab yourself with the `tab` snippet:
+
+```svelte
+<TabBar {tabs} class="my-tabs">
+	{#snippet tab(t, { active, close })}
+		<Icon name={t.data.icon} />
+		<span>{t.title}</span>
+		<button onclick={close} onmousedown={(e) => e.stopPropagation()}>×</button>
+	{/snippet}
+</TabBar>
+```
+
+| Selector | |
+| --- | --- |
+| `[role=tablist]` (`data-sd-tabbar`) | The bar; its `gap` spaces the tabs |
+| `[role=tab]`, `[data-active]`, `[data-pinned]`, `[data-dragging]` | A tab and its states |
+| `[data-sd-tab-title]`, `[data-sd-tab-close]` | The default content |
+| `[data-sd-tab-new]` | The + button (when `create` is set) |
+| `[role=tabpanel]` (`data-sd-tabpanel`) | A panel (`hidden` when inactive) |
+
+## API
+
+<TypeTable
+  type={{
+    id: { type: "string", description: "Names the group (saved tabs, element ids); unique per window.", required: true },
+    route: { type: "boolean", description: "Tabs are app routes: activating navigates, navigating updates the active tab." },
+    primary: { type: "boolean", description: "The window's tab bar: window title, Tab menu and shortcuts, ⌘-click on links." },
+    restore: { type: "boolean", description: "Save the tabs and restore them at the next launch.", default: "primary" },
+    initial: { type: "TabInput[]", description: "The tabs to start with when nothing is restored. Route groups default to the current page." },
+    create: { type: "() => TabInput", description: "What a new tab is (⌘T, +). Without it, no new-tab affordance." },
+    onLastClose: { type: "'window' | 'new' | 'keep'", description: "Closing the last tab.", default: "'window' (primary), 'keep'" },
+    title: { type: "(url: URL) => string", description: "A route tab's title from its URL." },
+  }}
+/>
+
+A tab is `{ id, title, path?, pinned, closable, data? }`. The group's state is reactive — `tabs.items`, `tabs.activeId`, `tabs.active` — and its methods are `open(input, { activate, index })`, `new()`, `activate(id)`, `close(id?)`, `closeOthers(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`, `update(id, patch)`, `get(id)`. Without `<TabBar>`, call `tabs.connect()` once (it returns its cleanup) to get the desktop integration with your own markup.
+
+:::note
+Tabs here share the page: switching is instant and state is shared. A tab isolated in its own web view (its own process, for third-party content or heavy independent documents) is the next step; meanwhile, [`host.view`](/ui/web-view) embeds a native web view in a region of the window.
+:::

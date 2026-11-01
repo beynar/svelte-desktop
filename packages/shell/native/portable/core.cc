@@ -152,7 +152,7 @@ bool page_may_call(const std::string &service, const std::string &op) {
 // Drag regions, inside each bridge script (uses its `raw` sender): same rules as the
 // macOS bridge (platform_core.mm) — controls stay clickable.
 #define SD_DRAG_LISTENER \
-  "const nd='button,a,input,select,textarea,label,summary,option,[contenteditable],[role=button],[data-desktop-no-drag]';" \
+  "const nd='button,a,input,select,textarea,label,summary,option,[contenteditable],[role=button],[role=tab],[data-desktop-no-drag]';" \
   "const dr=(t,y)=>{if(!(t instanceof Element)||t.closest(nd))return false;if(t.closest('[data-desktop-drag]'))return true;const r=getComputedStyle(t).getPropertyValue('--app-region').trim();return r==='drag'||(r!=='no-drag'&&y<(parseFloat(document.documentElement.style.getPropertyValue('--desktop-titlebar-height'))||0));};" \
   "addEventListener('mousedown',(e)=>{if(e.button!==0||!dr(e.target,e.clientY))return;" \
   "if(e.detail===2){e.preventDefault();raw({t:'dragDouble'});}else if(e.detail===1)raw({t:'drag'});},true);"

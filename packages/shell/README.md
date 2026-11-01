@@ -287,6 +287,25 @@ app quits; ended jobs (state, result, error, last log lines) are kept in
 `<data>/jobs.json` and come back after a restart (`restored: true`). Verified on
 macOS (built and `vite dev`) and Linux (Docker).
 
+## Tabs
+
+`@svelte-desktop/shell/tabs`: a tab group (`Tabs`, runes) and `<TabBar>` / `<TabPanels>`.
+The window's tabs go in the title bar — route tabs (each one a place in the app), the window
+title following the active one, a **Tab** menu (⌘T ⌘W ⇧⌘T ⌃⇥), ⌘1–9, ⌘-click on a link
+opening a background tab, restored at launch. Other groups live inside pages (plain state,
+panels kept alive). The dashboard example has all three looks: title bar, underline, segmented.
+
+```svelte
+<script lang="ts">
+  import { Tabs, TabBar } from '@svelte-desktop/shell/tabs';
+  const tabs = new Tabs({ id: 'app', route: true, primary: true, create: () => ({ path: '/' }) });
+</script>
+
+<header style="height: max(var(--desktop-titlebar-height, 0px), 2.75rem); padding-left: var(--desktop-controls-width); --app-region: drag">
+  <TabBar {tabs} />
+</header>
+```
+
 ## Native code
 
 Commands in **Rust**, **Go**, **Swift**, Objective-C or C, all reached the same way, typed:

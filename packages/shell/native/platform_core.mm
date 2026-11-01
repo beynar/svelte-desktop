@@ -175,7 +175,7 @@ static NSString *const kBridgeScript =
      // Drag regions: [data-desktop-drag], `--app-region: drag` (inherited, so
      // `--app-region: no-drag` carves holes) and the title bar strip of a hidden/inset title bar
      // (like a native title bar: Swish and the like drag it); controls stay clickable.
-     "const nd='button,a,input,select,textarea,label,summary,option,[contenteditable],[role=button],[data-desktop-no-drag]';"
+     "const nd='button,a,input,select,textarea,label,summary,option,[contenteditable],[role=button],[role=tab],[data-desktop-no-drag]';"
      "const dr=(t,y)=>{if(!(t instanceof Element)||t.closest(nd))return false;if(t.closest('[data-desktop-drag]'))return true;const r=getComputedStyle(t).getPropertyValue('--app-region').trim();return r==='drag'||(r!=='no-drag'&&y<(parseFloat(document.documentElement.style.getPropertyValue('--desktop-titlebar-height'))||0));};"
      "addEventListener('mousedown',(e)=>{if(e.button!==0||!dr(e.target,e.clientY))return;"
      "if(e.detail===2){e.preventDefault();post({t:'dragDouble'});}else if(e.detail===1)post({t:'drag'});},true);})();";
