@@ -71,7 +71,7 @@ static json bounds_json(Window *w) {
 
 static json info_row(int id) {
   Window *w = find_window(id);
-  return json{{"windowId", public_id(id)}, {"label", w->label}, {"focused", (bool)gtk_window_is_active(GTK_WINDOW(w->window))}, {"bounds", bounds_json(w)}};
+  return json{{"windowId", public_id(id)}, {"label", w->label}, {"focused", (bool)gtk_window_is_active(GTK_WINDOW(w->window))}, {"visible", (bool)gtk_widget_get_visible(w->window)}, {"bounds", bounds_json(w)}};
 }
 
 /// Decoration size (frame − client area); 0 before the window is mapped.
@@ -123,7 +123,7 @@ void register_window() {
   });
 
   // ── geometry ──────────────────────────────────────────────────────────
-  // The calling page's own window (or windowId's): {windowId, label, focused, bounds}.
+  // The calling page's own window (or windowId's): {windowId, label, focused, visible, bounds}.
   op("getInfo", [](CallPtr c, Window *w) { c->ok(info_row(w->id)); });
   op("getBounds", [](CallPtr c, Window *w) { c->ok(json{{"bounds", bounds_json(w)}, {"state", state_name(w)}}); });
   op("setBounds", [](CallPtr c, Window *w) {

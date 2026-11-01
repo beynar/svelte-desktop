@@ -109,8 +109,11 @@ static NSString *json_string(id obj) {
   return d ? [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] : @"null";
 }
 
+// Events reach the app's own pages only: a view showing another site gets none.
 static void deliver_to_page(WKWebView *wv, NSString *name, id data) {
-  NSString *js = [NSString stringWithFormat:@"window.__shell&&window.__shell.deliver(%@,%@)", json_string(name),
+  NSString *app = platform_app_origin();
+  NSString *guard = app ? [NSString stringWithFormat:@"location.origin===%@&&", json_string(app)] : @"";
+  NSString *js = [NSString stringWithFormat:@"%@window.__shell&&window.__shell.deliver(%@,%@)", guard, json_string(name),
                                             json_string(data ?: NSNull.null)];
   [wv evaluateJavaScript:js completionHandler:nil];
 }

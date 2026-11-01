@@ -219,6 +219,8 @@ export interface WindowInfo {
 	windowId: number;
 	label: string;
 	focused: boolean;
+	/** On screen (not hidden or minimized away). */
+	visible: boolean;
 	bounds: WindowBounds;
 }
 

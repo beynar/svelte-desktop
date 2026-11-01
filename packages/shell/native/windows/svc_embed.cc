@@ -1,6 +1,7 @@
 // view.* — extra WebView2 controllers embedded in a window (Electron's BrowserView),
 // same ops and events as native/platform_view.mm and native/linux/svc_view.cc:
 //   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, debug?} → {id, windowId}
+//   (the view's page has window.__desktopView = its id)
 //   setBounds · getBounds · navigate {url|route} · show · hide · reload · getInfo
 //   executeJavaScript {code} → JSON · list · destroy
 // Each view is a child HWND of the window (DIP bounds × the monitor scale) hosting
@@ -154,6 +155,7 @@ static void register_view_ops() {
     e->view.contextMenu = e->view.debug;
     e->view.transparent = c->flag("transparent", false);
     e->view.browserView = ident;
+    e->view.extraScript = "if(window.top===window)window.__desktopView=" + json(ident).dump() + ";"; // the page knows it's a view
     views()[e->view.id] = &e->view;
     place(e);
     view_create(&e->view);

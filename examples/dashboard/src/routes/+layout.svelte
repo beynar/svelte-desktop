@@ -33,6 +33,7 @@
 		onLastClose: 'new',
 		title: (url) => pageOf(url.pathname).title
 	});
+	if (import.meta.env.DEV) (globalThis as { __tabs?: Tabs }).__tabs = tabs; // tests/tabs.test.ts drives it
 
 	let displayState = $state<SidebarDisplayState>('expanded');
 	const openTasks = $derived(board.columns.filter((c) => c.id !== 'done').reduce((n, c) => n + c.cards.length, 0));
@@ -58,6 +59,10 @@
 </script>
 
 <Theme>
+{#if tabs.embedded}
+	<!-- An isolated tab's own web view (tabs.open({ path, isolated: true })): the page alone. -->
+	<div class="h-full overflow-auto p-6">{@render children()}</div>
+{:else}
 <div class="app flex h-full flex-col">
 	<header class="titlebar bg-surface-canvas flex shrink-0 items-end gap-2">
 		<TabBar {tabs} label="Open pages" class="app-tabs min-w-0 flex-1 gap-1">
@@ -88,7 +93,7 @@
 			<button
 				type="button"
 				class="state-layer border-neutral-muted text-neutral inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-sm"
-				onclick={() => tabs.open({ url: 'https://svelte.dev/docs/svelte/overview', title: 'Svelte docs' })}
+				onclick={() => tabs.open({ id: 'docs', url: 'https://svelte.dev/docs/svelte/overview', title: 'Svelte docs' })}
 			>
 				{@render globeIcon({ class: 'size-4' })} Docs
 			</button>
@@ -105,4 +110,5 @@
 	</AppShell>
 	</div>
 </div>
+{/if}
 </Theme>

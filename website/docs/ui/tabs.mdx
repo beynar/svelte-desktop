@@ -51,10 +51,10 @@ With `titleBarStyle: 'hiddenInset'` the bar sits next to the traffic lights. Tab
 | ⌘-click or middle-click a link | Open it in a new tab, in the background |
 | Middle-click a tab | Close it |
 | Drag a tab | Reorder |
-| Drag a tab out of the bar | Open it in its own window — or, dropped on another window's tab bar, move it there |
+| Drag a tab out of the bar | Open it in its own window — or, dropped on another window's tab bar, move it there (isolated tabs stay in their window) |
 | Tab › Move Tab to New Window | The same, from the menu |
 
-The shortcuts are a **Tab** menu inserted before Window, so they show in the menu bar and win over the page. The window title follows the active tab. Each window has its own tabs: the main window's are restored at launch; a window a tab was dragged into starts with that tab, and closes when its last tab leaves.
+The shortcuts are a **Tab** menu inserted before Window (⌘1–9 in its **Select Tab** submenu), so they show in the menu bar and win over the page — and over an isolated tab's web view. Only the focused window acts on them. The window title follows the active tab. Each window has its own tabs. The main window's are restored at launch; a window a tab was dragged into starts with that tab (its title and `data` included), and closes when its last tab leaves. A tab dropped on another window leaves only once that window took it — a window without that tab group, or a hidden one, doesn't — and the main window's last tab only moves onto another window.
 
 ## Isolated tabs
 
@@ -65,7 +65,18 @@ tabs.open({ url: 'https://svelte.dev/docs', title: 'Svelte docs' }); // another 
 tabs.open({ path: '/editor/big-file', isolated: true });            // an app route in its own process
 ```
 
-`<TabContent>` shows the page for ordinary route tabs and each isolated tab's web view in the same place (kept alive, hidden while another tab shows); in state groups `<TabPanels>` does the same. Isolate a third-party page, a heavy document whose crash or memory must stay apart, or something that must keep running on its own — each one costs a web content process (40–100 MB). External pages can't call native APIs: the bridge only answers the app origin.
+`<TabContent>` shows the page for ordinary route tabs and each isolated tab's web view in the same place (kept alive, hidden while another tab shows); in state groups `<TabPanels>` does the same. Isolate a third-party page, a heavy document whose crash or memory must stay apart, or something that must keep running on its own — each one costs a web content process (40–100 MB). A page of another site can't call native APIs and receives none of the app's events: the bridge and the events are the app origin's only.
+
+A web view is drawn over the page: your page's popovers and dialogs can't cover an isolated tab, so show them from a route tab. An app route isolated in its own view runs your layout again, in that view: there `tabs.embedded` is true — the group stays local (no Tab menu, nothing saved) and `<TabBar>` renders nothing — so render the page alone:
+
+```svelte
+{#if tabs.embedded}
+	{@render children()}
+{:else}
+	<header class="titlebar"><TabBar {tabs} /></header>
+	<TabContent {tabs}>{@render children()}</TabContent>
+{/if}
+```
 
 ## Inside a page
 
@@ -125,8 +136,8 @@ Fixed tabs (`closable: false`, no `create`) make a segmented control; `keepAlive
     create: { type: "() => TabInput", description: "What a new tab is (⌘T, +). Without it, no new-tab affordance." },
     onLastClose: { type: "'window' | 'new' | 'keep'", description: "Closing the last tab.", default: "'window' (primary), 'keep'" },
     title: { type: "(url: URL) => string", description: "A route tab's title from its URL." },
-    detachable: { type: "boolean", description: "Drag a tab out of the bar: into a new window, or onto another window's bar.", default: "primary route groups" },
+    detachable: { type: "boolean", description: "Drag a route tab out of the bar: into a new window, or onto another window's bar.", default: "primary route groups" },
   }}
 />
 
-A tab is `{ id, title, path?, url?, isolated, pinned, closable, data? }`. The group's state is reactive — `tabs.items`, `tabs.activeId`, `tabs.active`, `tabs.window` (this window's label) — and its methods are `open(input, { activate, index })`, `new()`, `activate(id)`, `close(id?)`, `closeOthers(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`, `update(id, patch)`, `get(id)`, `detach(id, at?)` (into a new window) and `drop(id, at)` (onto the window under a screen point, else a new one). Without `<TabBar>`, call `tabs.connect()` once (it returns its cleanup) to get the desktop integration with your own markup.
+A tab is `{ id, title, path?, url?, isolated, pinned, closable, data? }`. The group's state is reactive — `tabs.items`, `tabs.activeId`, `tabs.active`, `tabs.window` (this window's label), `tabs.embedded` (this page is an isolated tab's view) — and its methods are `open(input, { activate, index })`, `new()`, `activate(id)`, `close(id?)`, `closeOthers(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`, `update(id, patch)`, `get(id)`, `detach(id, at?)` (into a new window — with a screen point, onto the window whose tab bar is there, else a new window at that point). Without `<TabBar>`, call `tabs.connect()` once (it returns its cleanup) to get the desktop integration with your own markup.

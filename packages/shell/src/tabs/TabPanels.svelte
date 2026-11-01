@@ -32,7 +32,6 @@
 			id={`${tabs.id}-panel-${t.id}`}
 			aria-labelledby={`${tabs.id}-tab-${t.id}`}
 			hidden={!active}
-			style:display={active ? null : 'none'}
 			data-sd-tabpanel
 			data-sd-tabview
 			class={className}
@@ -51,3 +50,10 @@
 		</div>
 	{/if}
 {/each}
+
+<style>
+	/* Hidden even with a display class (flex, grid) on it. */
+	:global(:where([data-sd-tabcontent], [data-sd-tabview], [data-sd-tabpanel])[hidden]) {
+		display: none !important;
+	}
+</style>

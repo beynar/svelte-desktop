@@ -51,6 +51,7 @@ static json info_row(Window *w) {
   return json{{"windowId", backend_public_window_id(w->id)},
               {"label", w->label},
               {"focused", GetForegroundWindow() == w->hwnd},
+              {"visible", IsWindowVisible(w->hwnd) != FALSE},
               {"bounds", window_bounds_json(w->hwnd)}};
 }
 
@@ -141,7 +142,7 @@ void register_window() {
   wreg("getTitleBarStyle", [](CallPtr c, Window *w) {
     c->ok(json{{"style", title_bar_style(w->id)}, {"frameless", (GetWindowLongPtrW(w->hwnd, GWL_STYLE) & WS_CAPTION) != WS_CAPTION}});
   });
-  // The calling page's own window (or windowId's): {windowId, label, focused, bounds}.
+  // The calling page's own window (or windowId's): {windowId, label, focused, visible, bounds}.
   wreg("getInfo", [](CallPtr c, Window *w) { c->ok(info_row(w)); });
   wreg("getBounds", [](CallPtr c, Window *w) { c->ok(json{{"bounds", window_bounds_json(w->hwnd)}, {"state", state_name(w)}}); });
   wreg("setBounds", [](CallPtr c, Window *w) {

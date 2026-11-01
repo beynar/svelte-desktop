@@ -62,6 +62,11 @@ let seq = 0;
 const newId = () => `t${Date.now().toString(36)}${(seq++).toString(36)}`;
 const here = () => location.pathname + location.search + location.hash;
 const ADOPT = 'tabs:adopt';
+const ADOPTED = 'tabs:adopted';
+/** A drop this close to another window's top lands on its tab bar. */
+const BAR_BAND = 64;
+/** A tab handed to the window it was dragged out into (shared storage: the same origin). */
+const handoffKey = (group: string, label: string) => `sd-tabs:${group}:${label}`;
 
 /** A navigation, with SvelteKit's client router when it's there (the desktop plugin exposes it). */
 function navigate(path: string) {
@@ -88,7 +93,8 @@ function watchUrl(fn: () => void): () => void {
 	return () => removeEventListener('desktop:urlchange', fn);
 }
 
-type WindowInfo = { windowId: number; label: string; bounds: { x: number; y: number; width: number; height: number } };
+type WindowInfo = { windowId: number; label: string; focused: boolean; visible?: boolean; bounds: { x: number; y: number; width: number; height: number } };
+type Message<T> = { channel?: string; data?: T };
 
 export class Tabs<D = unknown> {
 	items = $state<Tab<D>[]>([]);
@@ -98,9 +104,18 @@ export class Tabs<D = unknown> {
 	readonly options: TabsOptions<D>;
 	/** This page's window label ('main' for the first window), once connected. */
 	window = $state<string | null>(null);
+	/** This page is an isolated tab's own web view: the group stays local (no menu, nothing
+	 *  saved) and <TabBar> renders nothing — drop your chrome too and show the page alone. */
+	readonly embedded = isPage && '__desktopView' in globalThis;
 	/** Recently closed, newest last (⇧⌘T). */
 	#closed: Array<{ tab: Tab<D>; index: number }> = [];
 	#connections = 0;
+	#disconnect: (() => void) | null = null;
+	#windowId: number | undefined;
+	/** Whether this window is the focused one (null: not known yet). Window focus, not the
+	 *  document's: an isolated tab's web view having the keyboard still counts. */
+	#focused: boolean | null = null;
+	#style: Promise<{ titleBarStyle?: string }> | undefined;
 
 	constructor(options: TabsOptions<D>) {
 		this.options = options;
@@ -114,9 +129,14 @@ export class Tabs<D = unknown> {
 		return !!this.options.create;
 	}
 
-	/** Whether a tab can be dragged out of the bar (route and external tabs of a detachable group). */
+	get #detachable(): boolean {
+		return this.options.detachable ?? (!!this.options.primary && !!this.options.route);
+	}
+
+	/** Whether a tab can be dragged out of the bar: an app route of a detachable group, closable,
+	 *  not isolated (its own web view stays in its window). */
 	canDetach(tab: Tab<D>): boolean {
-		return (this.options.detachable ?? (!!this.options.primary && !!this.options.route)) && (tab.path !== undefined || tab.url !== undefined);
+		return this.#detachable && tab.closable && !tab.isolated && tab.path !== undefined;
 	}
 
 	#make(input: TabInput<D>): Tab<D> {
@@ -174,15 +194,16 @@ export class Tabs<D = unknown> {
 	close(id: string = this.activeId ?? ''): void {
 		const tab = this.get(id);
 		if (!tab || !tab.closable) return;
-		this.#remove(id, true);
+		this.#remove(id, 'closed');
 	}
 
-	/** Take a tab out (closed, moved to another window): the active one moves on, an empty group
-	 *  does what `onLastClose` says (a window tabs were dragged into closes). */
-	#remove(id: string, remember: boolean): void {
+	/** Take a tab out, closed or moved to another window. The active one moves on; an empty group
+	 *  does what `onLastClose` says — but a window tabs were dragged into closes, and the main
+	 *  window a tab was moved out of opens `create()`. */
+	#remove(id: string, how: 'closed' | 'moved'): void {
 		const index = this.items.findIndex((t) => t.id === id);
 		if (index < 0) return;
-		if (remember) {
+		if (how === 'closed') {
 			this.#closed.push({ tab: $state.snapshot(this.items[index]) as Tab<D>, index });
 			if (this.#closed.length > 20) this.#closed.shift();
 		}
@@ -193,7 +214,8 @@ export class Tabs<D = unknown> {
 			if (next) this.activate(next.id);
 		}
 		if (this.items.length) return;
-		const last = this.window && this.window !== 'main' && this.options.primary ? 'window' : (this.options.onLastClose ?? (this.options.primary ? 'window' : 'keep'));
+		const o = this.options;
+		const last = o.primary && this.window && this.window !== 'main' ? 'window' : how === 'moved' ? 'new' : (o.onLastClose ?? (o.primary ? 'window' : 'keep'));
 		if (last === 'new') this.new();
 		else if (last === 'window' && isPage) void callPlatform('window', 'close').catch(() => {});
 	}
@@ -227,61 +249,76 @@ export class Tabs<D = unknown> {
 		if (tab) Object.assign(tab, patch);
 	}
 
-	/** A tab dropped outside its bar at a screen point: onto another window's bar (it moves there),
-	 *  else into a new window of its own. */
-	async drop(id: string, at: { x: number; y: number }): Promise<void> {
-		const tab = this.get(id);
-		if (!tab || !this.canDetach(tab) || !isPage) return;
-		const windows = await callPlatform<WindowInfo[]>('window', 'list').catch(() => [] as WindowInfo[]);
-		const target = windows.find((w) => w.label !== this.window && at.x >= w.bounds.x && at.x <= w.bounds.x + w.bounds.width && at.y >= w.bounds.y && at.y <= w.bounds.y + 64);
-		if (target) {
-			await callPlatform('events', 'emit', { channel: ADOPT, data: { group: this.id, target: target.label, tab: $state.snapshot(tab) } });
-			this.#remove(id, false);
-			return;
-		}
-		await this.detach(id, at);
-	}
-
-	/** Open a tab in a new window of its own (at a screen point), and take it out of this one. */
+	/** Move a tab out of this window. With a screen point (a drop), onto the window whose tab bar
+	 *  is there — it leaves only once that window took it — else into a new window of its own,
+	 *  at that point. The last tab only moves onto another window. */
 	async detach(id: string, at?: { x: number; y: number }): Promise<void> {
 		const tab = this.get(id);
-		if (!tab || !isPage) return;
-		const me = await callPlatform<WindowInfo>('window', 'getInfo').catch(() => null);
-		const style = await callPlatform<{ style: string }>('window', 'getTitleBarStyle').catch(() => null);
-		const size = me?.bounds ?? { width: 1100, height: 760 };
-		await callPlatform('window', 'create', {
-			label: `${this.id}-${tab.id}`,
-			...(tab.url && !tab.path ? { url: tab.url } : { path: tab.path ?? '/' }),
-			width: size.width,
-			height: size.height,
-			...(at && { x: Math.round(at.x - 120), y: Math.round(at.y - 16) }),
-			...(style?.style && style.style !== 'default' && { titleBarStyle: style.style }),
+		if (!tab || !this.canDetach(tab) || !isPage) return;
+		try {
+			if (at) {
+				const windows = await callPlatform<WindowInfo[]>('window', 'list').catch(() => [] as WindowInfo[]);
+				const target = windows.find((w) => w.label !== this.window && w.visible !== false && at.x >= w.bounds.x && at.x <= w.bounds.x + w.bounds.width && at.y >= w.bounds.y && at.y <= w.bounds.y + BAR_BAND);
+				if (target && (await this.#handOver(tab, target.label))) return this.#remove(id, 'moved');
+			}
+			if (this.items.length < 2) return;
+			const label = `${this.id}-${tab.id}`;
+			localStorage.setItem(handoffKey(this.id, label), JSON.stringify($state.snapshot(tab)));
+			this.#style ??= callPlatform<{ style: string }>('window', 'getTitleBarStyle')
+				.then((s) => (s.style && s.style !== 'default' ? { titleBarStyle: s.style } : {}))
+				.catch(() => ({}));
+			await callPlatform('window', 'create', {
+				label,
+				path: tab.path,
+				width: innerWidth,
+				height: innerHeight,
+				...(at && { x: Math.round(at.x - 120), y: Math.round(at.y - 16) }),
+				...(await this.#style),
+			});
+			this.#remove(id, 'moved');
+		} catch (e) {
+			console.error('[tabs] could not move the tab out', e);
+		}
+	}
+
+	/** Offer a tab to another window's group; true once that window took it. */
+	#handOver(tab: Tab<D>, target: string): Promise<boolean> {
+		const nonce = newId();
+		return new Promise((resolve) => {
+			const done = (ok: boolean) => (off(), clearTimeout(timer), resolve(ok));
+			const off = onPlatform<Message<{ nonce: string }>>('message', (m) => void (m?.channel === ADOPTED && m.data?.nonce === nonce && done(true)));
+			const timer = setTimeout(() => done(false), 800);
+			callPlatform('events', 'emit', { channel: ADOPT, data: { group: this.id, target, nonce, tab: $state.snapshot(tab) } }).catch(() => done(false));
 		});
-		this.#remove(id, false);
 	}
 
 	/** Wire the group to the page and the window (<TabBar> calls it); returns the cleanup. */
 	connect(): () => void {
-		if (!isPage || this.#connections++ > 0) return () => void this.#connections--;
+		if (!isPage || this.embedded) return () => {};
+		if (this.#connections++ === 0) this.#disconnect = this.#wire();
+		return () => {
+			if (--this.#connections === 0) this.#disconnect?.();
+		};
+	}
+
+	#wire(): () => void {
 		const cleanups: Array<() => void> = [];
 		const o = this.options;
 		const persist = o.restore ?? o.primary;
-		let restored = !persist;
+		let restored = false;
 
 		// Which window this is: the main window restores and saves its tabs; a window a tab was
-		// dragged into starts from that tab.
-		void (platformReady() ? callPlatform<WindowInfo>('window', 'getInfo') : Promise.reject())
-			.then((info) => (this.window = info.label))
-			.catch(() => (this.window = 'main'))
-			.then(() => (persist && this.window === 'main' ? readAppFile('userData', `tabs-${this.id}.json`) : null))
-			.then((text) => {
-				const saved = text ? (JSON.parse(text) as { items: Tab<D>[]; activeId: string | null }) : null;
-				if (!saved?.items?.length) return;
-				this.items = saved.items.map((t) => ({ ...t, isolated: t.isolated ?? t.url !== undefined }));
-				this.activeId = saved.activeId && this.get(saved.activeId) ? saved.activeId : saved.items[0]!.id;
-				const active = this.active;
-				if (o.route && active && !active.isolated && active.path !== undefined && active.path !== here()) navigate(active.path);
-			})
+		// dragged into starts from that tab. Without the shell (a browser), it's the main one.
+		void (platformReady() ? callPlatform<WindowInfo>('window', 'getInfo') : Promise.resolve(null))
+			.then(
+				(info) => {
+					this.window = info?.label ?? 'main';
+					this.#windowId = info?.windowId;
+					this.#focused = info?.focused ?? null;
+					return this.window === 'main' ? (persist ? this.#restore() : undefined) : this.#adoptHandoff();
+				},
+				(e) => console.warn('[tabs] window.getInfo failed: the tabs are not saved', e),
+			)
 			.catch(() => {})
 			.finally(() => (restored = true));
 
@@ -302,6 +339,8 @@ export class Tabs<D = unknown> {
 			}),
 		);
 
+		cleanups.push(onPlatform<{ windowId: number; focused: boolean }>('focusChanged', (e) => void (e?.windowId === this.#windowId && (this.#focused = e.focused))));
+
 		// Route tabs follow navigation: the active tab is wherever the page went.
 		if (o.route)
 			cleanups.push(
@@ -314,21 +353,44 @@ export class Tabs<D = unknown> {
 				}),
 			);
 
-		// A tab dropped on this window's bar from another window.
-		cleanups.push(
-			onPlatform<{ channel?: string; data?: { group: string; target: string; tab: Tab<D> } }>('message', (m) => {
-				if (m?.channel !== ADOPT || m.data?.group !== this.id || m.data.target !== this.window) return;
-				const { id: _id, ...tab } = m.data.tab;
-				this.open(tab, { index: this.items.length });
-				void callPlatform('window', 'focus').catch(() => {});
-			}),
-		);
+		// A tab dropped on this window's bar from another window: take it, say so.
+		if (this.#detachable)
+			cleanups.push(
+				onPlatform<Message<{ group: string; target: string; nonce: string; tab: Tab<D> }>>('message', (m) => {
+					const d = m?.channel === ADOPT ? m.data : undefined;
+					if (!d || d.group !== this.id || d.target !== this.window) return;
+					const { id: _id, ...tab } = d.tab;
+					this.open(tab, { index: this.items.length });
+					void callPlatform('events', 'emit', { channel: ADOPTED, data: { nonce: d.nonce } }).catch(() => {});
+					void callPlatform('window', 'focus').catch(() => {});
+				}),
+			);
 
 		if (o.primary) cleanups.push(this.#primary());
 		return () => {
-			if (--this.#connections > 0) return;
 			for (const c of cleanups) c();
 		};
+	}
+
+	async #restore(): Promise<void> {
+		const text = await readAppFile('userData', `tabs-${this.id}.json`);
+		const saved = text ? (JSON.parse(text) as { items: Tab<D>[]; activeId: string | null }) : null;
+		if (!saved?.items?.length) return;
+		this.items = saved.items.map((t) => ({ ...t, isolated: t.isolated ?? t.url !== undefined }));
+		this.activeId = saved.activeId && this.get(saved.activeId) ? saved.activeId : saved.items[0]!.id;
+		const active = this.active;
+		if (this.options.route && active && !active.isolated && active.path !== undefined && active.path !== here()) navigate(active.path);
+	}
+
+	/** The tab this window was opened for, with its title, data and state. */
+	#adoptHandoff(): void {
+		const key = handoffKey(this.id, this.window!);
+		const text = localStorage.getItem(key);
+		if (!text) return;
+		localStorage.removeItem(key);
+		const tab = JSON.parse(text) as Tab<D>;
+		this.items = [{ ...tab, path: here() }];
+		this.activeId = tab.id;
 	}
 
 	/** The window's tab bar: a Tab menu, shortcuts, links opened in new tabs. */
@@ -340,12 +402,18 @@ export class Tabs<D = unknown> {
 			else if (id === 'tabs:reopen') this.reopen();
 			else if (id === 'tabs:next') this.cycle(1);
 			else if (id === 'tabs:previous') this.cycle(-1);
-			else if (id === 'tabs:detach' && this.active && this.canDetach(this.active)) void this.detach(this.active.id);
-			else return false;
+			else if (id === 'tabs:detach' && this.active) void this.detach(this.active.id);
+			else if (id.startsWith('tabs:select:')) {
+				const n = Number(id.slice('tabs:select:'.length));
+				const tab = n === 9 ? this.items.at(-1) : this.items[n - 1];
+				if (tab) this.activate(tab.id);
+			} else return false;
 			return true;
 		};
-		// A Tab menu (before Window): its key equivalents win over the page and the default Close.
-		// Every window's page inserts the same one; only the focused window acts on it.
+		// A Tab menu (before Window): its key equivalents win over the page — and over an isolated
+		// tab's web view, which the page's own key listener doesn't hear. Every window's page
+		// inserts the same one (it stays for the others when this page goes); the focused window
+		// acts on it.
 		let menu = false;
 		if (platformReady()) {
 			const items = [
@@ -355,24 +423,28 @@ export class Tabs<D = unknown> {
 				{ type: 'separator' },
 				{ id: 'tabs:next', label: 'Show Next Tab', accelerator: 'Ctrl+Tab' },
 				{ id: 'tabs:previous', label: 'Show Previous Tab', accelerator: 'Ctrl+Shift+Tab' },
-				...(this.options.detachable ?? this.options.route ? [{ type: 'separator' }, { id: 'tabs:detach', label: 'Move Tab to New Window' }] : []),
+				{
+					label: 'Select Tab',
+					submenu: [
+						...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ id: `tabs:select:${n}`, label: `Tab ${n}`, accelerator: `CmdOrCtrl+${n}` })),
+						{ id: 'tabs:select:9', label: 'Last Tab', accelerator: 'CmdOrCtrl+9' },
+					],
+				},
+				...(this.#detachable ? [{ type: 'separator' }, { id: 'tabs:detach', label: 'Move Tab to New Window' }] : []),
 			];
 			void callPlatform('menu', 'insert', { name: 'Tab', items })
 				.then(() => (menu = true))
 				.catch(() => {});
-			cleanups.push(onPlatform<{ id?: string }>('menuAction', (e) => void (e?.id && document.hasFocus() && act(e.id))));
+			cleanups.push(onPlatform<{ id?: string }>('menuAction', (e) => void (e?.id && (this.#focused ?? document.hasFocus()) && act(e.id))));
 		}
+		// Without the menu (it failed, or a browser): the same keys from the page.
 		const keys = (e: KeyboardEvent) => {
+			if (menu) return;
 			const mod = e.metaKey || e.ctrlKey;
-			if (mod && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
-				const tab = e.key === '9' ? this.items.at(-1) : this.items[Number(e.key) - 1];
-				if (tab) (e.preventDefault(), this.activate(tab.id));
-				return;
-			}
-			if (menu) return; // the menu has them
 			const k = e.key.toLowerCase();
 			const id =
-				e.ctrlKey && k === 'tab' ? (e.shiftKey ? 'tabs:previous' : 'tabs:next')
+				mod && !e.shiftKey && !e.altKey && /^[1-9]$/.test(k) ? `tabs:select:${k}`
+				: e.ctrlKey && k === 'tab' ? (e.shiftKey ? 'tabs:previous' : 'tabs:next')
 				: mod && k === 't' ? (e.shiftKey ? 'tabs:reopen' : 'tabs:new')
 				: mod && k === 'w' && !e.shiftKey ? 'tabs:close'
 				: null;

@@ -1,6 +1,7 @@
 // view.* — extra web views embedded in a window (Electron's BrowserView), same ops
 // and events as native/platform_view.mm:
 //   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, debug?} → {id, windowId}
+//   (the view's page has window.__desktopView = its id)
 //   setBounds {id, x, y, width, height} · getBounds · navigate {id, url|route} · show · hide · reload
 //   getInfo · executeJavaScript {id, code} → JSON · list · destroy
 // Bounds are CSS px from the top-left of the window's page area. `autoresize`:
@@ -157,7 +158,7 @@ void register_view() {
     v->bottom = std::max(0, alloc.height - v->y - v->h);
     g_views[ident] = v;
     // The shell's web view (bridge, origin tracking), with browser-style navigation.
-    v->wv = make_webview(v->nativeId, c->flag("debug", false), "");
+    v->wv = make_webview(v->nativeId, c->flag("debug", false), "window.__desktopView=" + json(ident).dump() + ";"); // the page knows it's a view
     g_signal_handlers_disconnect_matched(v->wv, G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, GINT_TO_POINTER(v->nativeId));
     gpointer key = (gpointer)v->ident.c_str();
     g_signal_connect(v->wv, "decide-policy", G_CALLBACK(on_view_policy), key);

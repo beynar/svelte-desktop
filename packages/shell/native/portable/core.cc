@@ -110,8 +110,11 @@ void emit_raw(const json &event) {
   fn(buf); // receiver frees with shell_free
 }
 
+// Events reach the app's own pages only: a view showing another site gets none.
 std::string deliver_js(const std::string &name, const json &data) {
-  return "window.__shell&&window.__shell.deliver(" + json(name).dump() + "," + data.dump() + ")";
+  std::string origin = app_origin();
+  std::string guard = origin.empty() ? "" : "location.origin===" + json(origin).dump() + "&&";
+  return guard + "window.__shell&&window.__shell.deliver(" + json(name).dump() + "," + data.dump() + ")";
 }
 
 void emit(const std::string &name, const json &data) {

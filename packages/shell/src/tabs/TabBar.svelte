@@ -2,7 +2,7 @@
 	A tab bar for a `Tabs` group: in the title bar (the window's tabs) or anywhere in a page.
 	Clicking activates, a middle click or the × closes, dragging reorders — and, for a detachable
 	group, dragging a tab out of the bar opens it in its own window (or moves it onto another
-	window's bar) — ←/→ move along.
+	window's bar) — ←/→ move along. In an isolated tab's own web view it renders nothing.
 	Unstyled but for layout: style it with `class` and the state attributes —
 	[data-active], [data-pinned], [data-dragging] on each [role=tab], [data-sd-tab-close],
 	[data-sd-tab-new] — or render each tab yourself with the `tab` snippet.
@@ -35,8 +35,11 @@
 	let dragging = $state<string | null>(null);
 	/** Outside the bar: dropping there detaches the tab. */
 	let detaching = $state(false);
-	let bar: HTMLDivElement;
+	let bar = $state<HTMLDivElement>()!;
 	let press: { id: string; x: number; y: number; pointer: number } | null = null;
+	/** While dragging: the bar's box, and the middles of the other tabs (measured again after a move). */
+	let barBox: DOMRect;
+	let middles: number[] | null = null;
 	const elementId = (t: Tab<D>) => `${tabs.id}-tab-${t.id}`;
 
 	function keydown(e: KeyboardEvent, t: Tab<D>) {
@@ -60,89 +63,98 @@
 		if (!dragging) {
 			if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < 5) return;
 			dragging = press.id;
+			barBox = bar.getBoundingClientRect();
+			middles = null;
 			try {
 				bar.setPointerCapture(e.pointerId); // keeps the moves coming outside the bar (and the window)
 			} catch {}
 		}
 		const tab = tabs.get(dragging);
 		if (!tab) return;
-		const r = bar.getBoundingClientRect();
-		detaching = tabs.canDetach(tab) && (e.clientY < r.top - 24 || e.clientY > r.bottom + 24 || e.clientX < 0 || e.clientX > innerWidth);
+		detaching = tabs.canDetach(tab) && (e.clientY < barBox.top - 24 || e.clientY > barBox.bottom + 24 || e.clientX < 0 || e.clientX > innerWidth);
 		if (detaching) return;
 		// Its place: after every other tab whose middle is left of the pointer (never before a pinned one).
-		const others = [...bar.querySelectorAll<HTMLElement>('[data-sd-tabs] > [role=tab]')].filter((el) => el.id !== elementId(tab));
-		let index = others.filter((el) => {
-			const b = el.getBoundingClientRect();
-			return e.clientX > b.left + b.width / 2;
-		}).length;
-		index = Math.max(index, tabs.items.filter((t) => t.pinned).length);
-		if (index !== tabs.items.findIndex((t) => t.id === dragging)) tabs.move(dragging, index);
+		middles ??= [...bar.querySelectorAll<HTMLElement>('[data-sd-tabs] > [role=tab]')]
+			.filter((el) => el.id !== elementId(tab))
+			.map((el) => {
+				const b = el.getBoundingClientRect();
+				return b.left + b.width / 2;
+			});
+		const index = Math.max(
+			middles.filter((m) => e.clientX > m).length,
+			tabs.items.filter((t) => t.pinned).length,
+		);
+		if (index !== tabs.items.indexOf(tab)) {
+			tabs.move(tab.id, index);
+			middles = null;
+		}
 	}
 	function pointerup(e: PointerEvent) {
 		if (!press || e.pointerId !== press.pointer) return;
 		const id = dragging;
-		if (id && detaching) void tabs.drop(id, { x: e.screenX, y: e.screenY });
+		if (id && detaching) void tabs.detach(id, { x: e.screenX, y: e.screenY });
 		press = null;
 		dragging = null;
 		detaching = false;
 	}
 </script>
 
-<div
-	role="tablist"
-	aria-label={label}
-	data-sd-tabbar
-	data-detaching={detaching || undefined}
-	class={className}
-	bind:this={bar}
-	onpointermove={pointermove}
-	onpointerup={pointerup}
-	onpointercancel={pointerup}
-	{...rest}
->
-	{@render start?.()}
-	<div data-sd-tabs>
-		{#each tabs.items as t (t.id)}
-			{@const active = t.id === tabs.activeId}
-			<div
-				role="tab"
-				id={elementId(t)}
-				aria-selected={active}
-				aria-controls={`${tabs.id}-panel-${t.id}`}
-				tabindex={active ? 0 : -1}
-				title={t.title}
-				data-active={active || undefined}
-				data-pinned={t.pinned || undefined}
-				data-dragging={dragging === t.id || undefined}
-				data-desktop-no-drag
-				onpointerdown={(e) => pointerdown(e, t)}
-				onmousedown={(e) => e.button === 0 && tabs.activate(t.id)}
-				onauxclick={(e) => e.button === 1 && (e.preventDefault(), tabs.close(t.id))}
-				onkeydown={(e) => keydown(e, t)}
-			>
-				{#if tab}
-					{@render tab(t, { active, close: () => tabs.close(t.id) })}
-				{:else}
-					<span data-sd-tab-title>{t.title}</span>
-					{#if t.closable && !t.pinned}
-						<button
-							type="button"
-							data-sd-tab-close
-							aria-label={`Close ${t.title}`}
-							tabindex="-1"
-							onmousedown={(e) => e.stopPropagation()}
-							onclick={() => tabs.close(t.id)}>×</button
-						>
+{#if !tabs.embedded}
+	<div
+		role="tablist"
+		aria-label={label}
+		data-sd-tabbar
+		data-detaching={detaching || undefined}
+		class={className}
+		bind:this={bar}
+		onpointermove={pointermove}
+		onpointerup={pointerup}
+		onpointercancel={pointerup}
+		{...rest}
+	>
+		{@render start?.()}
+		<div data-sd-tabs>
+			{#each tabs.items as t (t.id)}
+				{@const active = t.id === tabs.activeId}
+				<div
+					role="tab"
+					id={elementId(t)}
+					aria-selected={active}
+					aria-controls={tabs.options.route ? undefined : `${tabs.id}-panel-${t.id}`}
+					tabindex={active ? 0 : -1}
+					title={t.title}
+					data-active={active || undefined}
+					data-pinned={t.pinned || undefined}
+					data-dragging={dragging === t.id || undefined}
+					onpointerdown={(e) => pointerdown(e, t)}
+					onmousedown={(e) => e.button === 0 && tabs.activate(t.id)}
+					onauxclick={(e) => e.button === 1 && (e.preventDefault(), tabs.close(t.id))}
+					onkeydown={(e) => keydown(e, t)}
+				>
+					{#if tab}
+						{@render tab(t, { active, close: () => tabs.close(t.id) })}
+					{:else}
+						<span data-sd-tab-title>{t.title}</span>
+						{#if t.closable && !t.pinned}
+							<button
+								type="button"
+								data-sd-tab-close
+								aria-label={`Close ${t.title}`}
+								tabindex="-1"
+								onmousedown={(e) => e.stopPropagation()}
+								onclick={() => tabs.close(t.id)}>×</button
+							>
+						{/if}
 					{/if}
-				{/if}
-			</div>
-		{/each}
-		{#if tabs.canCreate}
-			<button type="button" data-sd-tab-new aria-label={newTabLabel} title={newTabLabel} onclick={() => tabs.new()}>+</button>
-		{/if}
+				</div>
+			{/each}
+			{#if tabs.canCreate}
+				<button type="button" data-sd-tab-new aria-label={newTabLabel} title={newTabLabel} onclick={() => tabs.new()}>+</button>
+			{/if}
+		</div>
+		{@render end?.()}
 	</div>
-	{@render end?.()}
-</div>
+{/if}
 
 <style>
 	/* Layout only, at zero specificity: the app's classes win. */

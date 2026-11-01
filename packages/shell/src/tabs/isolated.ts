@@ -13,46 +13,54 @@ export interface IsolatedParams {
 export function isolatedView(node: HTMLElement, params: IsolatedParams) {
 	let p = params;
 	const id = `${p.tabs.id}-${p.tab.id}`;
-	let created: Promise<unknown> | null = null;
-	let shown = false;
+	let view: 'none' | 'shown' | 'hidden' = 'none';
+	let placed = '';
+	let queue: Promise<unknown> = Promise.resolve();
+	let frame = 0;
+	let gone = false;
+	const call = (op: string, args: object = {}) => callPlatform('view', op, { id, ...args });
 
-	// The area the view covers: the element's own box, or — with no height of its own (a parent
-	// sized by the page it hides) — down to the bottom of the nearest scrolling container, else
-	// of the window.
-	const scroller = (() => {
-		for (let el = node.parentElement; el && el !== document.body; el = el.parentElement)
-			if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(el).overflowY) && el.clientHeight > 0) return el;
-		return null;
-	})();
+	// The element's box — with no height of its own (a parent sized by the page it hides), down to
+	// the bottom of the window.
 	const bounds = () => {
 		const r = node.getBoundingClientRect();
-		const bottom = r.height > 1 ? r.bottom : scroller ? scroller.getBoundingClientRect().bottom : innerHeight;
+		const bottom = r.height > 1 ? r.bottom : innerHeight;
 		return { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(bottom - r.top) };
 	};
+
+	// One step at a time, each on the latest state: a quick switch can't leave the view over the page.
 	async function sync() {
+		if (gone) return;
 		if (!p.active) {
-			if (created && shown) await created.then(() => callPlatform('view', 'hide', { id })).catch(() => {});
-			shown = false;
+			if (view === 'shown') (view = 'hidden'), await call('hide').catch(() => {});
 			return;
 		}
 		const b = bounds();
 		if (!b.width || !b.height) return;
-		if (!created) {
+		const key = `${b.x},${b.y},${b.width},${b.height}`;
+		if (view === 'none') {
 			const target = p.tab.url && !p.tab.path ? { url: p.tab.url } : { route: p.tab.path ?? '/' };
-			created = callPlatform('view', 'create', { id, ...target, bounds: b }).catch(() => (created = null));
-			shown = true;
-			return;
+			if (!(await call('create', { ...target, bounds: b }).then(() => true, () => false))) return;
+			view = 'shown';
+			placed = key;
+			return void run(); // the tab may have changed meanwhile (not awaited: the queue is waiting on this step)
 		}
-		await created;
-		await callPlatform('view', 'setBounds', { id, ...b }).catch(() => {});
-		if (!shown) await callPlatform('view', 'show', { id }).catch(() => {});
-		shown = true;
+		if (key !== placed) (placed = key), await call('setBounds', b).catch(() => {});
+		if (view === 'hidden') (view = 'shown'), await call('show').catch(() => {});
 	}
+	const run = () => (queue = queue.then(sync).catch((e) => console.error('[tabs] isolated view', e)));
+	// Layout changes: once per frame.
+	const schedule = () => {
+		if (!frame) frame = requestAnimationFrame(() => ((frame = 0), run()));
+	};
 
-	const observer = new ResizeObserver(() => void sync());
+	// The page going (a reload) takes its views along: they belong to the window, not the page.
+	const unload = () => void (view !== 'none' && call('destroy').catch(() => {}));
+	const observer = new ResizeObserver(schedule);
 	observer.observe(node);
-	if (scroller) observer.observe(scroller);
-	addEventListener('resize', sync);
+	addEventListener('resize', schedule);
+	addEventListener('scroll', schedule, true);
+	addEventListener('pagehide', unload);
 	const offNav = onPlatform<{ id: string; url: string }>('viewNavigated', (e) => {
 		if (e?.id !== id) return;
 		const url = new URL(e.url, location.origin);
@@ -62,19 +70,25 @@ export function isolatedView(node: HTMLElement, params: IsolatedParams) {
 	const offTitle = onPlatform<{ id: string; title: string }>('viewTitle', (e) => {
 		if (e?.id === id && e.title) p.tabs.update(p.tab.id, { title: e.title });
 	});
-	void sync();
+	run();
 
 	return {
 		update(next: IsolatedParams) {
+			const switched = next.active !== p.active;
 			p = next;
-			void sync();
+			if (switched) run(); // shown / hidden now, not a frame later
+			else schedule();
 		},
 		destroy() {
+			gone = true;
+			cancelAnimationFrame(frame);
 			observer.disconnect();
-			removeEventListener('resize', sync);
+			removeEventListener('resize', schedule);
+			removeEventListener('scroll', schedule, true);
+			removeEventListener('pagehide', unload);
 			offNav();
 			offTitle();
-			if (created) void created.then(() => callPlatform('view', 'destroy', { id })).catch(() => {});
+			queue = queue.then(() => view !== 'none' && call('destroy').catch(() => {}));
 		},
 	};
 }

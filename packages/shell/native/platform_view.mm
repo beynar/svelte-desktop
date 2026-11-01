@@ -5,6 +5,7 @@
 // Bounds are CSS px from the window content's top-left. `autoresize`:
 // "width" | "height" | "both" | "none" (default) — follow window resizes.
 // Events: viewLoaded {id, url}, viewNavigated {id, url}, viewFailed {id, error}, viewTitle {id, title}.
+// The view's page has window.__desktopView = its id.
 // Any origin may load (it's a browser view); the platform bridge still only
 // answers the app origin's main frame, so third-party content can't call native.
 #include "platform_internal.h"
@@ -117,6 +118,11 @@ void platform_register_view(void) {
     v.windowNative = win;
     v.autoresize = [c string:@"autoresize"] ?: @"none";
     WKWebViewConfiguration *cfg = [WKWebViewConfiguration new];
+    // The page knows it's a view (an isolated tab), not a window: window.__desktopView = its id.
+    NSString *mark = [NSString stringWithFormat:@"window.__desktopView=%@;",
+                                                [[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:ident options:NSJSONWritingFragmentsAllowed error:nil]
+                                                                      encoding:NSUTF8StringEncoding]];
+    [cfg.userContentController addUserScript:[[WKUserScript alloc] initWithSource:mark injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
     v.webview = [[WKWebView alloc] initWithFrame:to_frame(host, b) configuration:cfg];
     v.webview.autoresizingMask = mask_for(v.autoresize, host.isFlipped);
     if ([c boolean:@"transparent" or:NO]) [v.webview setValue:@NO forKey:@"drawsBackground"];

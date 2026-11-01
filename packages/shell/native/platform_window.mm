@@ -114,6 +114,7 @@ static NSDictionary *info_row(int id) {
     @"windowId" : @(platform_public_window_id(id)),
     @"label" : platform_window_label(id) ?: @"",
     @"focused" : @(w.isKeyWindow),
+    @"visible" : @(w.isVisible),
     @"bounds" : platform_rect_dict(platform_to_top_left(w.frame)),
   };
 }
@@ -196,7 +197,7 @@ void platform_register_window(void) {
   });
 
   // ── geometry ──────────────────────────────────────────────────────────
-  // The calling page's own window (or windowId's): {windowId, label, focused, bounds}.
+  // The calling page's own window (or windowId's): {windowId, label, focused, visible, bounds}.
   reg(@"getInfo", ^(PlatformCall *c, NSWindow *, int id) { [c ok:info_row(id)]; });
   reg(@"getBounds", ^(PlatformCall *c, NSWindow *w, int) {
     [c ok:@{@"bounds" : platform_rect_dict(platform_to_top_left(w.frame)), @"state" : state_name(w)}];

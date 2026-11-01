@@ -21,7 +21,7 @@
 	const page = $derived(!tabs.active?.isolated);
 </script>
 
-<div data-sd-tabcontent class={className} hidden={!page} style:display={page ? null : 'none'}>
+<div data-sd-tabcontent class={className} hidden={!page}>
 	{@render children()}
 </div>
 {#each isolated as t (t.id)}
@@ -30,7 +30,13 @@
 		data-sd-tabview
 		class={className}
 		hidden={!active}
-		style:display={active ? null : 'none'}
 		use:isolatedView={{ tabs, tab: t, active }}
 	></div>
 {/each}
+
+<style>
+	/* Hidden even with a display class (flex, grid) on it. */
+	:global(:where([data-sd-tabcontent], [data-sd-tabview], [data-sd-tabpanel])[hidden]) {
+		display: none !important;
+	}
+</style>
