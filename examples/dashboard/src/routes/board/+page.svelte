@@ -1,62 +1,70 @@
 <script lang="ts">
-	import { Tabs, TabBar, TabPanels } from '@svelte-desktop/shell/tabs';
+	import { Tabs } from '@svelte-desktop/shell/tabs';
 	import { boardFor } from '#lib/data.svelte';
 	import BoardPanel from '#lib/BoardPanel.svelte';
 
-	// Tabs inside a page: one board per tab — your own list (bind:tabs), each tab with its own
-	// `board` field. Kept alive, so each board keeps its scroll and drag state; restored at the next
-	// launch; double-click a tab to rename it.
-	let boards = $state([
-		{ id: 'current', title: 'Current sprint', pinned: true, board: 'current' },
-		{ id: 'backlog', title: 'Product backlog', board: 'backlog' }
+	// Tabs in a page, on your own list: one board per tab. Adding, closing and dragging write back to
+	// `boards`; a board stays mounted once shown (scroll, drag state); restored at the next launch;
+	// double-click a tab to rename it.
+	type BoardTab = { value: string; label: string; board: string; pinned?: boolean };
+	let boards = $state<BoardTab[]>([
+		{ value: 'current', label: 'Current sprint', pinned: true, board: 'current' },
+		{ value: 'backlog', label: 'Product backlog', board: 'backlog' }
 	]);
 	let active = $state('current');
 	let count = 2;
-	function newBoard() {
+	function newBoard(): BoardTab {
 		const board = `board-${Date.now().toString(36)}`;
 		boardFor(board);
-		return { title: `Board ${++count}`, board };
+		return { value: board, label: `Board ${++count}`, board };
 	}
 
 	let renaming = $state<string | null>(null);
-	function rename(id: string, title: string) {
-		const tab = boards.find((b) => b.id === id);
-		if (tab && title.trim()) tab.title = title.trim();
-		renaming = null;
-	}
 </script>
 
-<Tabs id="board-tabs" restore bind:tabs={boards} bind:active newTab={newBoard}>
-	<div class="flex h-full flex-col">
-		<TabBar label="Boards" newTabLabel="New board" class="board-tabs border-neutral-muted gap-5 border-b px-6">
-			{#snippet tab(t, { close })}
-				{#if renaming === t.id}
-					<!-- svelte-ignore a11y_autofocus -->
-					<input
-						class="text-neutral w-28 bg-transparent outline-none"
-						value={t.title}
-						autofocus
-						onmousedown={(e) => e.stopPropagation()}
-						onblur={(e) => rename(t.id, e.currentTarget.value)}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') rename(t.id, e.currentTarget.value);
-							if (e.key === 'Escape') renaming = null;
-							e.stopPropagation();
-						}}
-					/>
-				{:else}
-					<span class="truncate" ondblclick={() => (renaming = t.id)} role="presentation">{t.title}</span>
-				{/if}
-				{#if !t.pinned}
-					<button type="button" aria-label={`Close ${t.title}`} class="tab-close text-xs" onmousedown={(e) => e.stopPropagation()} onclick={close}>✕</button>
-				{/if}
-			{/snippet}
-		</TabBar>
+<svelte:head><title>Board</title></svelte:head>
 
-		<TabPanels class="min-h-0 flex-1 overflow-x-auto p-6">
-			{#snippet children(t)}<BoardPanel id={t.board} />{/snippet}
-		</TabPanels>
-	</div>
+<Tabs
+	bind:items={boards}
+	bind:value={active}
+	mount="once"
+	persist="board-tabs"
+	closable={(b) => !b.pinned}
+	reorderable
+	onAdd={newBoard}
+	label="Boards"
+	class="board-tabs border-neutral-muted gap-5 border-b px-6"
+>
+	{#snippet tab({ item, closable, close })}
+		{#if renaming === item.value}
+			<!-- svelte-ignore a11y_autofocus -->
+			<input
+				class="text-neutral w-28 bg-transparent outline-none"
+				value={item.label}
+				autofocus
+				onblur={(e) => ((item.label = e.currentTarget.value.trim() || item.label), (renaming = null))}
+				onkeydown={(e) => {
+					if (e.key === 'Enter') e.currentTarget.blur();
+					if (e.key === 'Escape') renaming = null;
+					e.stopPropagation();
+				}}
+			/>
+		{:else}
+			<span class="truncate" ondblclick={() => (renaming = item.value)} role="presentation">{item.label}</span>
+		{/if}
+		{#if closable}
+			<button type="button" aria-label={`Close ${item.label}`} class="tab-close text-xs" onclick={close}>✕</button>
+		{/if}
+	{/snippet}
+
+	{#snippet layout({ bar, content })}
+		<div class="flex h-full flex-col">
+			{@render bar()}
+			{@render content({ class: 'min-h-0 flex-1 overflow-x-auto p-6' })}
+		</div>
+	{/snippet}
+
+	{#snippet children({ item })}<BoardPanel id={item.board} />{/snippet}
 </Tabs>
 
 <style>

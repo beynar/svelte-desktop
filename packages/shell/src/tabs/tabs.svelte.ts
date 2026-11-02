@@ -30,6 +30,22 @@ export interface TabLike {
 	closable?: boolean;
 }
 
+/** An in-page tab: a string, or a value and a label plus your own fields. */
+export type TabItem = string | { value?: string; label: string; pinned?: boolean; closable?: boolean; [key: string]: any };
+
+/** What a `tab` snippet gets. */
+export interface TabRender<Item> {
+	/** The tab (a window tab: its path, url, title). */
+	tab: TabLike;
+	/** Your item (in-page tabs); the tab itself for window tabs. */
+	item: Item;
+	index: number;
+	active: boolean;
+	/** Whether it shows a close control. */
+	closable: boolean;
+	close: () => void;
+}
+
 /** A tab before it has an id (one is made). */
 export type TabInit<T extends TabLike = TabLike> = Omit<T, 'id'> & { id?: string };
 
@@ -43,8 +59,11 @@ export interface TabsOptions<T extends TabLike = TabLike> {
 	primary?: boolean;
 	/** Save the tabs and restore them at the next launch (the main window's). Default: `primary`. */
 	restore?: boolean;
-	/** A route tab's title from its URL. Default: its `title`, else the path. */
-	title?: (url: URL) => string;
+	/** Routes that keep running when their tab isn't shown (SvelteKit route ids: '/chat',
+	 *  '/terminal/[id]'): their tabs live in their own web view. */
+	keepAlive?: string[];
+	/** Tabs can be dragged to another place in the bar. Default true. */
+	reorderable?: boolean;
 	/** A new tab (⌘T, the + button) — without it, no new-tab affordance. */
 	newTab?: () => TabInit<T>;
 	/** Drag a tab out of the window: into a new window, or onto another window's bar. A function
@@ -54,8 +73,9 @@ export interface TabsOptions<T extends TabLike = TabLike> {
 	windowAnimation?: boolean | WindowAnimation;
 	/** A tab is closing (×, ⌘W, a middle click): return false to keep it. */
 	onclose?: (tab: T) => boolean | void;
-	/** Another tab became the active one. */
-	onactivate?: (tab: T) => void;
+	/** Another tab became the active one: 'user' (a click, a key, a link, your code) or
+	 *  'missing' (the active one was closed or left). */
+	onactivate?: (tab: T, reason: 'user' | 'missing') => void;
 	/** A tab moved to `index` (dragged in the bar). */
 	onmove?: (tab: T, index: number) => void;
 	/** A tab left for another window. */
@@ -77,12 +97,31 @@ const ADOPTED = 'tabs:adopted';
 /** A tab handed to the window it was dragged out into (shared storage: the same origin). */
 const handoffKey = (group: string, label: string) => `sd-tabs:${group}:${label}`;
 
+/** This page is a kept-alive tab's own web view (the app again, in its own process): render the
+ *  page alone there. */
+export const embedded = isPage && '__desktopView' in globalThis;
+
 /** A navigation, with SvelteKit's client router when it's there (the desktop plugin exposes it). */
-function navigate(path: string) {
-	const goto = (globalThis as { __desktopGoto?: (url: string) => unknown }).__desktopGoto;
-	if (goto) void goto(path);
+function navigate(path: string, replace = false) {
+	const goto = (globalThis as { __desktopGoto?: (url: string, opts?: object) => unknown }).__desktopGoto;
+	if (goto) void goto(path, { replaceState: replace });
+	else if (replace) location.replace(path);
 	else location.assign(path);
 }
+
+/** A SvelteKit route id ('/terminal/[id]', '/docs/[...rest]', '/(app)/[[lang]]/home') as a
+ *  matcher of paths. */
+export function routeMatcher(id: string): RegExp {
+	let re = '';
+	for (const part of id.split('/').filter(Boolean)) {
+		if (/^\(.+\)$/.test(part)) continue; // (group): not in the URL
+		if (/^\[\.\.\.\w+(=\w+)?\]$/.test(part)) re += '(?:/.*)?';
+		else if (/^\[\[\w+(=\w+)?\]\]$/.test(part)) re += '(?:/[^/]+)?';
+		else re += '/' + part.replace(/[.+?^${}()|\\]/g, '\\$&').replace(/\[\w+(=\w+)?\]/g, '[^/]+');
+	}
+	return new RegExp(`^${re || '/'}/?$`);
+}
+const pathOnly = (path: string) => path.replace(/[?#].*$/, '');
 
 /** One `desktop:urlchange` event per client-side navigation (pushState, replaceState, back/forward). */
 function watchUrl(fn: () => void): () => void {
@@ -114,7 +153,7 @@ export class TabGroup<T extends TabLike = TabLike> {
 	window = $state<string | null>(null);
 	/** This page is an isolated tab's own web view: the group stays local (no menu, nothing
 	 *  saved) and <TabBar> renders nothing — drop your chrome too and show the page alone. */
-	readonly embedded = isPage && '__desktopView' in globalThis;
+	readonly embedded = embedded;
 	/** Recently closed, newest last (⇧⌘T). */
 	#closed: Array<{ tab: T; index: number }> = [];
 	#connections = 0;
@@ -165,15 +204,25 @@ export class TabGroup<T extends TabLike = TabLike> {
 		return this.items.find((t) => t.id === id);
 	}
 
-	/** What the bar shows for a tab. */
+	/** What the bar shows for a tab: its title (a route tab's is its page's <title>), else its
+	 *  address. */
 	titleOf(tab: T): string {
-		const title = this.options.title;
-		if (title && isPage && tab.path !== undefined && !this.isIsolated(tab)) return title(new URL(tab.path, location.origin));
-		return tab.title ?? tab.url ?? tab.path ?? 'Untitled';
+		return tab.title || tab.url || tab.path || 'Untitled';
 	}
 
+	/** In its own web view: another site, a kept-alive route, or `isolated`. */
 	isIsolated(tab: T): boolean {
-		return tab.isolated ?? tab.url !== undefined;
+		return tab.isolated ?? (tab.url !== undefined || (tab.path !== undefined && this.keepsAlive(tab.path)));
+	}
+
+	/** Whether a path is one of the `keepAlive` routes. */
+	keepsAlive(path: string): boolean {
+		const routes = this.options.keepAlive;
+		return !!routes?.length && routes.some((id) => routeMatcher(id).test(pathOnly(path)));
+	}
+
+	get canReorder(): boolean {
+		return this.options.reorderable ?? true;
 	}
 
 	isClosable(tab: T): boolean {
@@ -195,9 +244,12 @@ export class TabGroup<T extends TabLike = TabLike> {
 		return this.isClosable(tab) && !this.isIsolated(tab) && tab.path !== undefined && this.#detachable(tab);
 	}
 
-	/** Open a tab (an existing id is activated instead), right after the active one by default. */
-	open(init: TabInit<T>, opts: { activate?: boolean; index?: number } = {}): T {
-		const existing = init.id ? this.get(init.id) : undefined;
+	/** Open a tab — a path or a URL, or a tab — right after the active one by default. An existing
+	 *  id, or a kept-alive route already open, is activated instead. */
+	open(target: string | TabInit<T>, opts: { activate?: boolean; background?: boolean; index?: number } = {}): T {
+		const init = (typeof target === 'string' ? (/^[a-z][a-z0-9+.-]*:/i.test(target) ? { url: target } : { path: target }) : target) as TabInit<T>;
+		if (opts.background) opts = { ...opts, activate: false };
+		const existing = init.id ? this.get(init.id) : init.path !== undefined && this.keepsAlive(init.path) ? this.items.find((t) => t.path !== undefined && pathOnly(t.path) === pathOnly(init.path!)) : undefined;
 		if (existing) {
 			if (opts.activate !== false) this.activate(existing.id);
 			return existing;
@@ -217,14 +269,14 @@ export class TabGroup<T extends TabLike = TabLike> {
 		return init ? this.open(init, { index: this.items.length }) : undefined;
 	}
 
-	activate(id: string): void {
+	activate(id: string, reason: 'user' | 'missing' = 'user'): void {
 		const tab = this.get(id);
 		if (!tab) return;
 		const changed = this.activeId !== id;
 		this.activeId = id;
 		// An isolated tab shows its own web view: the page stays where it is.
 		if (this.options.route && !this.isIsolated(tab) && tab.path !== undefined && isPage && tab.path !== here()) navigate(tab.path);
-		if (changed) this.options.onactivate?.(tab);
+		if (changed) this.options.onactivate?.(tab, reason);
 	}
 
 	/** Close a tab (the active one by default), unless `onclose` keeps it. The main window's bar
@@ -253,7 +305,7 @@ export class TabGroup<T extends TabLike = TabLike> {
 		if (this.activeId === id) {
 			const next = rest[index] ?? rest[index - 1];
 			this.activeId = null;
-			if (next) this.activate(next.id);
+			if (next) this.activate(next.id, 'missing');
 		}
 		if (rest.length || !this.options.primary) return;
 		if (this.window && this.window !== 'main') void callPlatform('window', 'close').catch(() => {});
@@ -402,7 +454,10 @@ export class TabGroup<T extends TabLike = TabLike> {
 				(e) => console.warn('[tabs] window.getInfo failed: the tabs are not saved', e),
 			)
 			.catch(() => {})
-			.finally(() => (restored = true));
+			.finally(() => {
+				restored = true;
+				if (o.route) this.#syncTitle(); // the restored / handed-over tab is this page
+			});
 
 		cleanups.push(
 			$effect.root(() => {
@@ -429,14 +484,38 @@ export class TabGroup<T extends TabLike = TabLike> {
 			cleanups.push(
 				watchUrl(() => {
 					const tab = this.active;
-					if (tab && !this.isIsolated(tab) && tab.path !== here()) this.update(tab.id, { path: here() } as Partial<Omit<T, 'id'>>);
+					if (!tab || this.isIsolated(tab) || tab.path === here()) return;
+					// A kept-alive route reached by goto / back: it opens in its own tab, this one
+					// stays where it was.
+					if (this.keepsAlive(here()) && tab.path !== undefined) {
+						const to = here();
+						navigate(tab.path, true);
+						this.open(to);
+						return;
+					}
+					this.update(tab.id, { path: here(), title: undefined } as Partial<Omit<T, 'id'>>);
 				}),
 			);
+
+		// A route tab's title is its page's <title>.
+		if (o.route) {
+			const observer = new MutationObserver(() => this.#syncTitle());
+			observer.observe(document.head, { subtree: true, childList: true, characterData: true });
+			queueMicrotask(() => this.#syncTitle());
+			cleanups.push(() => observer.disconnect());
+		}
 
 		if (o.primary) cleanups.push(this.#primary());
 		return () => {
 			for (const c of cleanups) c();
 		};
+	}
+
+	/** The active route tab takes the page's <title>. */
+	#syncTitle(): void {
+		const tab = this.active;
+		const title = document.title.trim();
+		if (tab && !this.isIsolated(tab) && tab.path === here() && title && tab.title !== title) this.update(tab.id, { title } as Partial<Omit<T, 'id'>>);
 	}
 
 	async #restore(): Promise<void> {
@@ -521,12 +600,19 @@ export class TabGroup<T extends TabLike = TabLike> {
 		cleanups.push(() => removeEventListener('keydown', keys, true));
 		// ⌘-click / middle-click on an app link: a new tab, in the background.
 		if (this.options.route) {
+			// App links: ⌘-click / middle click → a tab in the background, target="_blank" → a tab in
+			// front, a kept-alive route → its own tab (the one already open, or a new one).
 			const links = (e: MouseEvent) => {
-				const newTab = (e.type === 'click' && (e.metaKey || e.ctrlKey)) || (e.type === 'auxclick' && e.button === 1);
-				const a = newTab && e.target instanceof Element ? e.target.closest('a[href]') : null;
-				if (!(a instanceof HTMLAnchorElement) || a.target || a.origin !== location.origin) return;
+				if (e.defaultPrevented || (e.type === 'click' && e.button !== 0) || (e.type === 'auxclick' && e.button !== 1)) return;
+				const a = e.target instanceof Element ? e.target.closest('a[href]') : null;
+				if (!(a instanceof HTMLAnchorElement) || a.origin !== location.origin || a.hasAttribute('download')) return;
+				const path = a.pathname + a.search + a.hash;
+				const background = e.type === 'auxclick' || e.metaKey || e.ctrlKey;
+				const blank = a.target === '_blank';
+				if (!background && !blank && !(this.keepsAlive(path) && !(this.active && this.isIsolated(this.active) && this.active.path === path))) return;
+				if (a.target && !blank) return;
 				e.preventDefault();
-				this.open({ path: a.pathname + a.search + a.hash } as TabInit<T>, { activate: false });
+				this.open(path, { background });
 			};
 			addEventListener('click', links, true);
 			addEventListener('auxclick', links, true);

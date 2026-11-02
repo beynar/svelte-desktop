@@ -32,7 +32,7 @@ test('the window tabs: new tab, navigation in the active tab, ⌘-click opens in
 
 	await app.eval(`document.querySelector('a[href="/calendar"]').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }))`);
 	await app.waitFor(() => document.querySelectorAll('.app-tabs [role=tab]').length === 3);
-	expect(await titles('.app-tabs')).toEqual(['Overview', 'Board', 'Calendar']);
+	expect(await titles('.app-tabs')).toEqual(['Overview', 'Board', '/calendar']); // not shown yet: its address
 	expect(await active('.app-tabs')).toBe('Board'); // opened in the background
 	expect(await app.eval('location.pathname')).toBe('/board');
 	await shot('2-three-tabs');
@@ -55,7 +55,7 @@ test('tabs inside a page: one board per tab, kept alive; a new board; fixed segm
 	await app.eval(`document.querySelector('.board-tabs [data-sd-tab-new]').click()`);
 	await app.waitFor(() => document.querySelectorAll('.board-tabs [role=tab]').length === 3);
 	expect(await active('.board-tabs')).toBe('Board 3');
-	expect(await app.eval(`document.querySelectorAll('[data-sd-tabpanel]').length`)).toBe(3); // all mounted
+	expect(await app.eval(`document.querySelectorAll('[data-sd-tabpanel]').length`)).toBe(2); // mount="once": the shown ones
 	expect(await app.eval(`document.querySelectorAll('[data-sd-tabpanel]:not([hidden])').length`)).toBe(1);
 	await shot('4-board-tabs');
 });
@@ -64,7 +64,7 @@ test('restored after a reload: the window tabs and the boards', async () => {
 	await Bun.sleep(600); // the debounced save
 	await app.eval(`(window.__reloading = true, setTimeout(() => location.reload(), 10), true)`);
 	await app.waitFor(() => !(window as any).__reloading && document.querySelectorAll('.app-tabs [role=tab]').length === 3, { timeout: 20_000 });
-	expect(await titles('.app-tabs')).toEqual(['Overview', 'Board', 'Calendar']);
+	expect(await titles('.app-tabs')).toEqual(['Overview', 'Board', '/calendar']);
 	await app.waitFor(() => document.querySelectorAll('.board-tabs [role=tab]').length === 3, { timeout: 10_000 });
 	expect(await titles('.board-tabs')).toEqual(['Current sprint', 'Product backlog', 'Board 3']);
 	await shot('5-restored');
@@ -85,7 +85,7 @@ test('drag to reorder: native drag and drop, a line where it lands, the window d
 	const order = await titles('.app-tabs');
 	const before = await app.platform<Win>('window', 'getInfo');
 	// The drag events a real drag makes (a real one: tests/tabs-mouse.test.ts).
-	const ok = await app.eval<{ line: string | null }>(`(async () => {
+	const ok = await app.eval<{ line: string | null; covered: boolean }>(`(async () => {
 		const tabs = [...document.querySelectorAll('.app-tabs [role=tab]')];
 		const bar = document.querySelector('.app-tabs');
 		const dt = new DataTransfer();
@@ -97,14 +97,16 @@ test('drag to reorder: native drag and drop, a line where it lands, the window d
 		const end = at(tabs.at(-1), -10);
 		fire(tabs.at(-1), 'dragenter', end);
 		fire(tabs.at(-1), 'dragover', end);
-		await frame(); await frame();
-		const line = document.querySelector('.app-tabs [data-sd-tab-drop]')?.style.left ?? null;
+		// The line follows the drag on animation frames: wait for it (they pause while the window is covered).
+		let line = null;
+		for (let i = 0; i < 20 && !line; i++) { await frame(); line = document.querySelector('.app-tabs [data-sd-tab-drop]')?.style.left ?? null; }
+		const covered = document.hidden;
 		fire(tabs.at(-1), 'drop', end);
 		fire(tabs[0], 'dragend', end);
 		await frame();
-		return { line };
+		return { line, covered };
 	})()`);
-	expect(ok.line).toMatch(/px$/);
+	if (!ok.covered) expect(ok.line).toMatch(/px$/);
 	expect(await titles('.app-tabs')).toEqual([...order.slice(1), order[0]!]);
 	expect((await app.platform<Win>('window', 'getInfo')).bounds).toEqual(before.bounds);
 });
@@ -163,6 +165,29 @@ test('an app route isolated in its own view: the page alone, its own group stays
 	await until(views, (v) => !v.some((x) => x.id === `app-${id}`));
 }, 30_000);
 
+test('a keepAlive route: a link opens it in its own tab, which keeps running while hidden', async () => {
+	await app.waitFor(() => location.pathname === (window as any).__tabs.active?.path); // settled on the active tab
+	const before = await titles('.app-tabs');
+	const path = await app.eval<string>('location.pathname');
+	await app.eval(`document.querySelector('a[href="/activity"]').click()`);
+	await until(() => titles('.app-tabs'), (t) => t.length === before.length + 1);
+	expect(await app.eval('location.pathname')).toBe(path); // the page stays: /activity is in its own view
+	const id = await app.eval<string>('window.__tabs.active.id');
+	await until(views, (v) => v.some((x) => x.id === `app-${id}` && !!x.url?.endsWith('/activity')));
+	const seconds = () => inView<string | null>(`app-${id}`, `document.querySelector('[data-activity-seconds]')?.textContent ?? null`).then((t) => (t ? parseInt(t) : -1)).catch(() => -1);
+	const first = await until(seconds, (n) => n >= 0);
+	await app.eval(`(window.__tabs.activate(window.__tabs.items[0].id), true)`);
+	await Bun.sleep(2200);
+	expect(await seconds()).toBeGreaterThanOrEqual(first + 2); // ran on, hidden
+	expect(await until(() => titles('.app-tabs'), (t) => t.includes('Activity'))).toContain('Activity'); // its page's <title>
+	await app.eval(`document.querySelector('a[href="/activity"]').click()`); // again: the same tab
+	await Bun.sleep(300);
+	expect((await titles('.app-tabs')).length).toBe(before.length + 1);
+	expect(await app.eval('window.__tabs.active.id')).toBe(id);
+	await app.eval(`(window.__tabs.close(${JSON.stringify(id)}), true)`);
+	await until(views, (v) => !v.some((x) => x.id === `app-${id}`));
+}, 30_000);
+
 test('a tab dragged out opens in its own window (with its title); one taken by another window\'s bar leaves', async () => {
 	const before = await titles('.app-tabs');
 	const moved = before[1]!;
@@ -173,7 +198,9 @@ test('a tab dragged out opens in its own window (with its title); one taken by a
 	const torn = wins.find((w) => w.label !== 'main')!;
 	expect(torn.label).toStartWith('app-');
 	const tornTitles = () => inWindow<string[] | null>(torn.windowId, `document.querySelector('.app-tabs [role=tab]') ? [...document.querySelectorAll('.app-tabs [role=tab]')].map((t) => t.textContent.replace('✕', '').trim()) : null`).catch(() => null);
-	expect(await until(tornTitles, (t) => !!t?.length)).toEqual([moved]);
+	// Its page's <title> once shown there (a tab never shown had its address).
+	const titled = moved.startsWith('/') ? ({ '/': 'Overview', '/board': 'Board', '/calendar': 'Calendar' } as Record<string, string>)[moved]! : moved;
+	expect(await until(tornTitles, (t) => t?.[0] === titled)).toEqual([titled]);
 	await shot('8-torn-off');
 
 	// Dropped on the torn window's bar: that window takes it (the drop hands it the tab), says so,
@@ -183,7 +210,7 @@ test('a tab dragged out opens in its own window (with its title); one taken by a
 	await inWindow(torn.windowId, `window.__tabs.receive(${JSON.stringify(handoff)}, 1)`);
 	await Bun.sleep(200);
 	await app.eval(`window.__tabs.release(window.__tabs.items[0].id, { x: 0, y: 0 }).then(() => true)`);
-	expect(await until(tornTitles, (t) => t?.length === 2)).toEqual([moved, other]);
+	expect(await until(tornTitles, (t) => t?.length === 2)).toEqual([titled, other]);
 	expect(await titles('.app-tabs')).not.toContain(other);
 	await app.platform('window', 'close', { windowId: torn.windowId });
 }, 30_000);

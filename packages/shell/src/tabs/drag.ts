@@ -70,7 +70,7 @@ export function tabDrag(node: HTMLElement, params: TabDragParams) {
 	const off = lazy(({ element, preview, offset }) =>
 		element.draggable({
 			element: node,
-			canDrag: () => !p.tab.pinned,
+			canDrag: () => !p.tab.pinned && (p.tabs.canReorder || p.tabs.canDetach(p.tab)),
 			// Beside the pointer, not under it: what's under the pointer (the drop line, the other
 			// window's bar) stays in sight.
 			onGenerateDragPreview: ({ nativeSetDragImage }) =>
@@ -131,7 +131,7 @@ export function tabDrop(node: HTMLElement, params: TabDropParams) {
 	const off = lazy(({ element, external }) => {
 		const offTabs = element.dropTargetForElements({
 			element: node,
-			canDrop: ({ source }) => source.data.type === TAB_TYPE && source.data.group === p.tabs.id,
+			canDrop: ({ source }) => source.data.type === TAB_TYPE && source.data.group === p.tabs.id && p.tabs.canReorder,
 			onDrag: ({ source, location }) => p.indicate(place(location.current.input.clientX, source.data.id as string).at),
 			onDragLeave: done,
 			onDrop: ({ source, location }) => {

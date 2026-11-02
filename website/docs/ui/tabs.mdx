@@ -1,72 +1,31 @@
 ---
 title: Tabs
-description: Tabs in the title bar or inside a page — Svelte components on your own list (bind:tabs, bind:active, callbacks), the desktop integration (window title, Tab menu, shortcuts, restore), dragging tabs between windows, and tabs isolated in their own web view.
+description: The window's tabs (SvelteKit routes in the title bar, kept alive, dragged between windows) with <WindowTabs>, and tabs inside a page with <Tabs> — each one configured by its props and drawn with snippets.
 ---
 
-`@svelte-desktop/shell/tabs` is a set of Svelte components on **your** tabs. `<Tabs>` takes your list and the active id with `bind:`, and everything inside it shows and changes them: `<TabBar>`, `<TabContent>` (route tabs), `<TabPanels>` (state tabs), and `useTabs()` for your own components. Closing, reordering, a new tab, a tab arriving from another window: it all lands on your array, and your array changing is what the bar shows. Drawing tabs is the easy part — the module brings what makes them feel native: the window title, a **Tab** menu with ⌘T ⌘W ⇧⌘T ⌃⇥, ⌘1–9, ⌘-click on a link, restoring the tabs at launch, dragging a tab out into its own window.
+Two components, each configured by its props and drawn with snippets:
 
-## Your tabs
+- **`<WindowTabs>`** — the window's tabs, in the title bar. Its tabs are your SvelteKit routes: you write links as usual, and the tabs follow.
+- **`<Tabs>`** — tabs inside a page, on your own items: boards, documents, a segmented control.
 
-A tab is any object with an `id`. The fields the bar knows are optional, and your own go right on it:
+## The window's tabs
 
-```svelte
-<script lang="ts">
-	import { Tabs, TabBar, TabPanels } from '@svelte-desktop/shell/tabs';
-
-	let boards = $state([
-		{ id: 'current', title: 'Current sprint', pinned: true, board: 'current' },
-		{ id: 'backlog', title: 'Product backlog', board: 'backlog' }
-	]);
-	let active = $state('current');
-</script>
-
-<Tabs
-	bind:tabs={boards}
-	bind:active
-	newTab={() => ({ title: 'New board', board: makeBoard() })}
-	onclose={(tab) => isEmpty(tab.board) || confirm(`Close ${tab.title}?`)}
->
-	<TabBar />
-	<TabPanels>
-		{#snippet children(tab)}<Board id={tab.board} />{/snippet}
-	</TabPanels>
-</Tabs>
-
-<p>{boards.length} boards — {boards.find((b) => b.id === active)?.title}</p>
-```
-
-`boards.push(…)`, a renamed `title`, a new `active`: the bar follows. Without `bind:`, `tabs={[…]}` is where it starts and the group keeps the list itself. Fixed tabs (`closable: false`, no `newTab`) make a segmented control; panels are kept alive (each tab keeps its components, scroll and inputs) — `keepAlive={false}` renders only the active one.
-
-<TypeTable
-  type={{
-    id: { type: "string", description: "Yours, unique in the list.", required: true },
-    title: { type: "string", description: "What the tab shows. Default: from `title(url)` for a route tab, else its url or path." },
-    path: { type: "string", description: "An app path: a route tab (see below)." },
-    url: { type: "string", description: "A page of another site: always isolated." },
-    isolated: { type: "boolean", description: "In its own web view, its own process.", default: "url tabs" },
-    pinned: { type: "boolean", description: "Kept first, no close button, out of “close others”." },
-    closable: { type: "boolean", description: "false: no close button, not closed by ⌘W.", default: "true" },
-    "…": { type: "anything", description: "Your own fields (JSON if the tabs are restored)." },
-  }}
-/>
-
-## In the title bar
-
-The window's own bar goes in the root layout. Its tabs are places in your app (`route`): each one has a `path`, and SvelteKit works as always — one page shown, the active tab's.
+One declaration, in the root layout. `page` is the layout's `children`; `layout` puts the bar in the title bar and the content where the page goes:
 
 ```svelte src/routes/+layout.svelte
 <script lang="ts">
-	import { Tabs, TabBar, TabContent } from '@svelte-desktop/shell/tabs';
+	import { WindowTabs } from '@svelte-desktop/shell/tabs';
 
 	let { children } = $props();
 </script>
 
-<Tabs route primary newTab={() => ({ path: '/' })} title={(url) => titles[url.pathname] ?? 'Untitled'}>
-	<header class="titlebar">
-		<TabBar label="Open pages" />
-	</header>
-	<TabContent>{@render children()}</TabContent>
-</Tabs>
+<WindowTabs page={children} newTab="/" keepAlive={['/chat', '/terminal/[id]']}>
+	{#snippet layout({ bar, content })}
+		<header class="titlebar">{@render bar()}</header>
+		<Sidebar />
+		<main>{@render content()}</main>
+	{/snippet}
+</WindowTabs>
 
 <style>
 	.titlebar {
@@ -77,99 +36,162 @@ The window's own bar goes in the root layout. Its tabs are places in your app (`
 </style>
 ```
 
-| You | The tabs |
-| --- | --- |
-| Click a tab | SvelteKit navigates to its `path` |
-| Follow a link, `goto()`, the sidebar | The active tab follows: its `path` (and title) become the new URL |
-| ⌘-click or middle-click a link | A new tab on it, in the background |
-| ⌘T / the + button | `newTab()`, at the end, and it navigates there |
-| Back / Forward | The browser's history, shared by the tabs |
+Each page names its tab with its `<title>`, like in a browser:
 
-Switching route tabs is a navigation: the page you leave is unmounted like on any SvelteKit navigation (keep what must survive in a store, or [snapshots](https://svelte.dev/docs/kit/snapshots)) — or isolate the tab. `primary` makes it the window's bar: the window title follows the active tab, the shortcuts and the Tab menu, ⌘-click on links, and the tabs are restored at launch. `bind:tabs` works here too, to read or drive the window's tabs.
-
-With `titleBarStyle: 'hiddenInset'` the bar sits next to the traffic lights. Tabs and buttons stay clickable, the empty parts of the strip move the window, and a double-click on them zooms it.
-
-| Shortcut | |
-| --- | --- |
-| ⌘T / the + button | `newTab()`, at the end |
-| ⌘W | Close the active tab (the main window keeps its last one unless `newTab` replaces it) |
-| ⇧⌘T | Reopen the last closed tab |
-| ⌃⇥ / ⌃⇧⇥ | Next / previous tab |
-| ⌘1 – ⌘8, ⌘9 | That tab, the last one |
-| ⌘-click or middle-click a link | Open it in a new tab, in the background |
-| Middle-click a tab | Close it |
-| Drag a tab | Reorder (a line shows where it lands) |
-| Drag a tab out of the window | Open it in its own window, right where it's let go — or, dropped on another window's tab bar, move it there |
-| Tab › Move Tab to New Window | The same, from the menu |
-
-The shortcuts are a **Tab** menu inserted before Window (⌘1–9 in its **Select Tab** submenu), so they show in the menu bar and win over the page — and over an isolated tab's web view. Only the focused window acts on them.
-
-## Between windows
-
-A route tab dragged out of the window opens in a new window of its own, where it's let go — with its title and your fields — and that window comes in animated (`windowAnimation`, see [Animation](/ui/windows#animation)). Dropped on another window's tab bar, it moves there. Each window has its own tabs: the main window's are restored at launch, a window a tab was dragged into closes when its last tab leaves.
-
-The drag is native drag and drop ([pragmatic-drag-and-drop](https://atlassian.design/components/pragmatic-drag-and-drop/)): the system's drag image follows the pointer, beside it, out of the window and over other windows; a tab dropped on another window's bar is a real drop there, and leaves only once that window took it. Let go elsewhere in its own window (or Escape), nothing happens. `detachable` turns it off, or decides per tab (`detachable={(tab) => !tab.unsaved}`); `ondetach` tells you a tab left.
-
-## Isolated tabs
-
-A tab can live in **its own web view** — its own process — instead of the page: a page of another site (`url`, always isolated), or an app route kept apart (`isolated: true`). It shares the bar, the shortcuts and the restore; its title and address follow the page it shows; it stays alive while another tab is shown. It's decided per tab, in your list:
-
-```ts
-tabs.push({ id: 'docs', url: 'https://svelte.dev/docs', title: 'Svelte docs' }); // another site
-tabs.push({ id: 'big', path: '/editor/42', isolated: true });                    // an app route, apart
+```svelte src/routes/invoices/[id]/+page.svelte
+<svelte:head><title>Invoice {data.invoice.number}</title></svelte:head>
 ```
 
-(Or `useTabs().open({ … })` from a component inside `<Tabs>`.) `<TabContent>` shows the page for the route tabs and each isolated tab's web view in the same place; in state groups `<TabPanels>` does the same. Isolate a third-party page, a heavy document whose crash or memory must stay apart, or something that must keep its state or keep running — each one costs a web content process (40–100 MB). A page of another site can't call native APIs and receives none of the app's events.
+From there, it's links:
 
-A web view is drawn over the page: your page's popovers and dialogs can't cover an isolated tab. An app route isolated in its own view runs your app again, layout included: there the group's `embedded` is true — `<TabBar>` renders nothing, nothing is saved, no second menu — so render the page alone:
+```svelte
+<a href="/reports">Reports</a>                 <!-- the active tab goes to /reports -->
+<a href="/reports" target="_blank">Reports</a> <!-- a new tab (⌘-click, a middle click: in the background) -->
+<a href="/chat">Chat</a>                       <!-- /chat is keepAlive: its own tab, which keeps running -->
+```
 
-```svelte src/routes/+layout.svelte
+| You | The tabs |
+| --- | --- |
+| A link, `goto()`, the sidebar | The active tab goes there — the page you leave is unmounted, as on any SvelteKit navigation |
+| `target="_blank"` / ⌘-click, middle click | A new tab on it, in front / in the background |
+| A link or `goto()` to a `keepAlive` route | Its tab if it's open, else a new one: it runs in its own web view and goes on while you're elsewhere (timers, sockets, what you typed) |
+| ⌘T / the + button | A new tab on `newTab` |
+| ⌘W / × | Close the tab (`beforeClose` can keep it); the main window keeps a tab on `newTab` |
+| Drag a tab | Reorder — out of the window: its own window, where it's let go; onto another window's bar: it moves there |
+| Back / Forward | The browser's history, shared by the tabs |
+
+You never create a tab by hand: a route that must keep running is declared once, in `keepAlive`, with SvelteKit's route ids (`/terminal/[id]`, `/docs/[...rest]`), and every link to it follows. Each kept-alive tab costs a web content process (40–100 MB): keep it for what must really go on — a chat, a terminal, a long job.
+
+The tabs are restored at the next launch; the window title follows the active tab; a native **Tab** menu has ⌘T ⌘W ⇧⌘T ⌃⇥ and ⌘1–9 (in its **Select Tab** submenu), and wins over the page — and over a kept-alive tab's view; only the focused window acts on it. With `titleBarStyle: 'hiddenInset'` the bar sits next to the traffic lights: tabs and buttons stay clickable, the empty parts of the strip move the window.
+
+### Snippets
+
+```svelte
+<WindowTabs page={children} newTab="/">
+	{#snippet tab({ tab, active, close })}
+		<RouteIcon path={tab.path} />
+		<span>{tab.title}</span>
+		<button onclick={close}>✕</button>  <!-- a control in a tab doesn't activate it -->
+	{/snippet}
+
+	{#snippet layout({ bar, content, api })}
+		<header class="titlebar">{@render bar({ class: 'my-tabs', label: 'Open pages' })}</header>
+		<AppShell title={api.active?.title}>
+			{#snippet headerActions()}
+				<button onclick={() => api.open('https://svelte.dev/docs')}>Docs</button>
+			{/snippet}
+			{@render content({ class: 'h-full' })}
+		</AppShell>
+	{/snippet}
+
+	{#snippet embedded({ page })}
+		<div class="p-6">{@render page()}</div>
+	{/snippet}
+</WindowTabs>
+```
+
+- `tab` draws each tab (default: its title and a close button).
+- `layout` gets `bar` (the tab bar: `class`, `label`, `start`, `end`), `content` (the page, and each kept-alive tab's view in the same place) and `api`; without it, the bar goes above the content.
+- `embedded`: a kept-alive tab's view runs your app again, layout included — there `<WindowTabs>` renders the page alone (or this snippet). Your own code can test `embedded` from `@svelte-desktop/shell/tabs`.
+
+`api` (also `bind:api`): `items`, `active`, `open(path | url, { background })`, `close(id?)`, `activate(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`. `api.open('https://…')` shows another site in a tab of its own (external links keep opening the browser); it can't call native APIs and receives none of the app's events. A tab is `{ id, path?, url?, title? }`.
+
+A view is drawn over the page: your page's popovers and dialogs can't cover a kept-alive tab or another site.
+
+<TypeTable
+  type={{
+    page: { type: "Snippet", description: "The page: your layout's children.", required: true },
+    newTab: { type: "string", description: "The page ⌘T and + open. Without it, no new tab." },
+    keepAlive: { type: "string[]", description: "Routes that keep running when their tab isn't shown, as SvelteKit route ids." },
+    restore: { type: "boolean", default: "true", description: "Restore the tabs at the next launch." },
+    detachable: { type: "boolean | (tab) => boolean", default: "true", description: "Drag a tab out of the window: its own window, another window's bar." },
+    windowAnimation: { type: "boolean | WindowAnimation", default: "true", description: "How the window a tab is dragged into comes in (macOS): see [Animation](/ui/windows#animation)." },
+    beforeClose: { type: "({ tab, index }) => boolean | void", description: "A tab is closing: return false to keep it." },
+    onValueChange: { type: "({ value, tab, index, reason }) => void", description: "The active tab changed: reason 'user', or 'missing' (the active one was closed)." },
+    value: { type: "string", description: "The active tab's id (bindable)." },
+    api: { type: "TabGroup", description: "The tabs, for your code (bindable)." },
+    tab: { type: "Snippet<[{ tab, active, closable, close, index }]>", description: "Each tab." },
+    layout: { type: "Snippet<[{ bar, content, api }]>", description: "Where the bar and the content go." },
+    embedded: { type: "Snippet<[{ page }]>", description: "The page in a kept-alive tab's own view." },
+  }}
+/>
+
+## Tabs in a page
+
+`<Tabs>` takes your items and renders a bar and a panel per tab. An item is a string, or `{ value, label }` plus `pinned`, `closable` and your own fields:
+
+```svelte
 <script lang="ts">
-	let { children: page } = $props(); // <Tabs> has its own `children` snippet
+	import { Tabs } from '@svelte-desktop/shell/tabs';
+
+	let boards = $state([
+		{ value: 'current', label: 'Current sprint', pinned: true },
+		{ value: 'backlog', label: 'Product backlog' }
+	]);
+	let active = $state('current');
 </script>
 
-<Tabs route primary newTab={() => ({ path: '/' })}>
-	{#snippet children(tabs)}
-		{#if tabs.embedded}
-			{@render page()}
-		{:else}
-			<header class="titlebar"><TabBar /></header>
-			<Sidebar />
-			<TabContent>{@render page()}</TabContent>
-		{/if}
-	{/snippet}
+<Tabs
+	bind:items={boards}
+	bind:value={active}
+	mount="once"
+	persist="board-tabs"
+	closable={(b) => !b.pinned}
+	reorderable
+	onAdd={() => ({ value: crypto.randomUUID(), label: 'New board' })}
+	beforeClose={({ item }) => confirm(`Close ${item.label}?`)}
+>
+	{#snippet children({ item })}<Board id={item.value} />{/snippet}
 </Tabs>
 ```
 
-## Inside your components
-
-Anything inside `<Tabs>` gets the group with `useTabs()`; the component that renders `<Tabs>` gets it as its `children` snippet's argument.
+Adding (the + button, with `onAdd`), closing and dragging write back to `bind:items`; your array changing is what the bar shows. A fixed segmented control is just items:
 
 ```svelte
-<script lang="ts">
-	import { useTabs } from '@svelte-desktop/shell/tabs';
-	const tabs = useTabs();
-</script>
-
-<h1>{tabs.active && tabs.titleOf(tabs.active)}</h1>
-<button onclick={() => tabs.open({ path: '/reports' })}>Reports</button>
+<Tabs items={['Day', 'Week', 'Month']} bind:value={range} class="segmented">
+	{#snippet children({ item })}<Agenda {range} />{/snippet}
+</Tabs>
 ```
 
-The group: `items`, `activeId`, `active`, `embedded`, `window` (this window's label); `open(tab, { activate, index })` (an existing id is activated instead), `new()`, `activate(id)`, `close(id?)`, `closeOthers(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`, `update(id, patch)`, `get(id)`, `detach(id, at?)`; `titleOf(tab)`, `isIsolated(tab)`. Groups nest: an inner `<Tabs>` is the one its content sees.
+`tab` draws each tab and `layout` places the bar and the panels — a bar in a card's header, say:
+
+```svelte
+<Tabs items={lists}>
+	{#snippet tab({ item, closable, close })}
+		<span>{item.label}</span>
+		{#if closable}<button onclick={close}>✕</button>{/if}
+	{/snippet}
+	{#snippet layout({ bar, content })}
+		<header><h2>This week</h2>{@render bar()}</header>
+		{@render content({ class: 'p-4' })}
+	{/snippet}
+	{#snippet children({ item })}…{/snippet}
+</Tabs>
+```
+
+<TypeTable
+  type={{
+    items: { type: "Item[]", description: "Your tabs (bindable: adding, closing, reordering write back).", required: true },
+    value: { type: "string", description: "The active tab's value (bindable). Default: the first tab's." },
+    mount: { type: "'lazy' | 'once' | 'eager'", default: "'lazy'", description: "When a panel is made: when shown (gone when left), kept after its first showing, or all at once. Inactive panels are hidden." },
+    onAdd: { type: "() => Item", description: "A new tab (the + button). Without it, no +." },
+    beforeClose: { type: "({ item, index }) => boolean | void", description: "A tab is closing: return false to keep it." },
+    closable: { type: "boolean | (item) => boolean", default: "false", description: "A close button (or per item; an item's own `closable` wins)." },
+    reorderable: { type: "boolean", default: "false", description: "Drag a tab to another place (a line shows where it lands)." },
+    persist: { type: "string", description: "Save the tabs and the active one under this name, restored at the next launch." },
+    onValueChange: { type: "({ value, item, index, reason }) => void", description: "The active tab changed: 'user' or 'missing'." },
+    label: { type: "string", description: "Accessible name of the bar." },
+    class: { type: "string", description: "The bar's class." },
+    api: { type: "TabGroup", description: "Your code's handle (bindable): activate, close, new…" },
+    tab: { type: "Snippet<[{ item, index, active, closable, close }]>", description: "Each tab." },
+    children: { type: "Snippet<[{ item, index, api }]>", description: "A tab's panel." },
+    layout: { type: "Snippet<[{ bar, content, api }]>", description: "Where the bar and the panels go." },
+  }}
+/>
 
 ## Styling
 
-`<TabBar>` only lays out (zero-specificity styles). Style it with `class` and the state attributes, or render each tab yourself with the `tab` snippet:
-
-```svelte
-<TabBar class="my-tabs">
-	{#snippet tab(t, { active, close })}
-		<Icon name={t.icon} />
-		<span>{t.title}</span>
-		<button onclick={close} onmousedown={(e) => e.stopPropagation()}>×</button>
-	{/snippet}
-</TabBar>
-```
+The bar only lays out (zero-specificity styles): style it with `class` and the state attributes.
 
 | Selector | |
 | --- | --- |
@@ -177,31 +199,7 @@ The group: `items`, `activeId`, `active`, `embedded`, `window` (this window's la
 | `[role=tab]`, `[data-active]`, `[data-pinned]`, `[data-dragging]` | A tab and its states |
 | `[data-sd-tab-drop]` | The line where a dragged tab lands (`--sd-tab-drop-color`, default `Highlight`) |
 | `[data-sd-tab-title]`, `[data-sd-tab-close]` | The default content |
-| `[data-sd-tab-new]` | The + button (when `newTab` is set) |
+| `[data-sd-tab-new]` | The + button |
 | `[role=tabpanel]` (`data-sd-tabpanel`) | A panel (`hidden` when inactive) |
 
-## API
-
-`<Tabs>`:
-
-<TypeTable
-  type={{
-    tabs: { type: "Tab[]", description: "Your tabs — bind:tabs to own them; without bind:, where it starts. A route group starts on the current page." },
-    active: { type: "string", description: "The active tab's id (bind:active). Default: the first tab." },
-    newTab: { type: "() => Tab (id optional)", description: "A new tab (⌘T, +). Without it, no new-tab affordance." },
-    onclose: { type: "(tab) => boolean | void", description: "A tab is closing (×, ⌘W, middle click): return false to keep it." },
-    onactivate: { type: "(tab) => void", description: "Another tab became the active one." },
-    onmove: { type: "(tab, index) => void", description: "A tab was moved (dragged in the bar)." },
-    ondetach: { type: "(tab) => void", description: "A tab left for another window." },
-    route: { type: "boolean", description: "Tabs are app routes: activating navigates, navigating moves the active tab." },
-    primary: { type: "boolean", description: "The window's tab bar: window title, Tab menu and shortcuts, ⌘-click on links, restored at launch." },
-    restore: { type: "boolean", description: "Save the tabs and restore them at the next launch.", default: "primary" },
-    id: { type: "string", description: "Names the group: its saved tabs, element ids, windows. Needed for `restore` outside the window's bar.", default: "'app' (primary)" },
-    title: { type: "(url: URL) => string", description: "A route tab's title from its URL." },
-    detachable: { type: "boolean | (tab) => boolean", description: "Drag a route tab out of the window, into its own or onto another window's bar.", default: "primary route groups" },
-    windowAnimation: { type: "boolean | WindowAnimation", description: "How a window a tab was dragged into comes in (macOS): see [Animation](/ui/windows#animation).", default: "true" },
-    children: { type: "Snippet<[group]>", description: "Its content; the snippet gets the group." },
-  }}
-/>
-
-Props are live: change `newTab`, `title`, `windowAnimation` or a callback and the next use takes it (`id` and `route` are read once). The [dashboard example](https://github.com/beynar/svelte-desktop/tree/bun-webview-shell/examples/dashboard) has the three looks — title-bar tabs, underline tabs with rename and +, and a segmented control.
+The drag is native drag and drop ([pragmatic-drag-and-drop](https://atlassian.design/components/pragmatic-drag-and-drop/)): the system's drag image follows the pointer, beside it, out of the window and over other windows. The [dashboard example](https://github.com/beynar/svelte-desktop/tree/bun-webview-shell/examples/dashboard) has the window's tabs (with a kept-alive `/activity`), boards with rename, and a segmented control.

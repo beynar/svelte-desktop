@@ -15,12 +15,14 @@
 <script lang="ts" generics="T extends TabLike = TabLike & Record<string, any>">
 	import type { Snippet } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
-	import { useTabs, type TabLike } from './tabs.svelte.ts';
+	import { useTabs, type TabLike, type TabRender } from './tabs.svelte.ts';
 	import { tabDrag, tabDrop } from './drag.ts';
 
 	interface Props extends HTMLAttributes<HTMLDivElement> {
 		/** Each tab's content (default: its title and a close button). */
-		tab?: Snippet<[T, { active: boolean; close: () => void }]>;
+		tab?: Snippet<[TabRender<any>]>;
+		/** What the `tab` snippet gets as `item` (default: the tab). */
+		itemOf?: (tab: T) => unknown;
 		/** Before / after the tabs (the + button follows the last tab). */
 		start?: Snippet;
 		end?: Snippet;
@@ -29,7 +31,9 @@
 		newTabLabel?: string;
 	}
 
-	let { tab, start, end, label = 'Tabs', newTabLabel = 'New tab', class: className = '', ...rest }: Props = $props();
+	let { tab, itemOf = (t) => t, start, end, label = 'Tabs', newTabLabel = 'New tab', class: className = '', ...rest }: Props = $props();
+	// A press on a control inside a tab (its close button, a rename field) doesn't activate it.
+	const onControl = (e: MouseEvent) => e.target instanceof Element && e.target.closest('button, input, textarea, select, a[href], [contenteditable]') !== null;
 	const tabs = useTabs<T>();
 
 	let dragging = $state<string | null>(null);
@@ -60,7 +64,7 @@
 	>
 		{@render start?.()}
 		<div data-sd-tabs>
-			{#each tabs.items as t (t.id)}
+			{#each tabs.items as t, i (t.id)}
 				{@const active = t.id === tabs.activeId}
 				<div
 					role="tab"
@@ -73,12 +77,12 @@
 					data-pinned={t.pinned || undefined}
 					data-dragging={dragging === t.id || undefined}
 					use:tabDrag={{ tabs, tab: t, dragging: (on) => (dragging = on ? t.id : null) }}
-					onmousedown={(e) => e.button === 0 && tabs.activate(t.id)}
+					onmousedown={(e) => e.button === 0 && !onControl(e) && tabs.activate(t.id)}
 					onauxclick={(e) => e.button === 1 && (e.preventDefault(), tabs.close(t.id))}
 					onkeydown={(e) => keydown(e, t)}
 				>
 					{#if tab}
-						{@render tab(t, { active, close: () => tabs.close(t.id) })}
+						{@render tab({ tab: t, item: itemOf(t), index: i, active, closable: tabs.isClosable(t) && !t.pinned, close: () => tabs.close(t.id) })}
 					{:else}
 						<span data-sd-tab-title>{tabs.titleOf(t)}</span>
 						{#if tabs.isClosable(t) && !t.pinned}
@@ -87,7 +91,6 @@
 								data-sd-tab-close
 								aria-label={`Close ${tabs.titleOf(t)}`}
 								tabindex="-1"
-								onmousedown={(e) => e.stopPropagation()}
 								onclick={() => tabs.close(t.id)}>×</button
 							>
 						{/if}

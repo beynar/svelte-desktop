@@ -1,7 +1,6 @@
-// Tabs: <Tabs> (a tab group on your tabs: bind:tabs, bind:active, callbacks) and what goes inside.
-//   import { Tabs, TabBar, TabContent, TabPanels, useTabs } from '@svelte-desktop/shell/tabs';
-export { TabGroup, useTabs, type TabLike, type TabInit, type TabsOptions } from "./tabs.svelte.ts";
+// Tabs: <WindowTabs> (the window's tabs: SvelteKit routes in the title bar) and <Tabs> (tabs in a
+// page, on your items). Each one is configured by its props and drawn with snippets.
+//   import { WindowTabs, Tabs, embedded } from '@svelte-desktop/shell/tabs';
+export { default as WindowTabs } from "./WindowTabs.svelte";
 export { default as Tabs } from "./Tabs.svelte";
-export { default as TabBar } from "./TabBar.svelte";
-export { default as TabContent } from "./TabContent.svelte";
-export { default as TabPanels } from "./TabPanels.svelte";
+export { embedded, routeMatcher, type TabGroup, type TabItem, type TabLike, type TabRender } from "./tabs.svelte.ts";

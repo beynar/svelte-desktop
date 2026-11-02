@@ -17,6 +17,8 @@
 	}
 </script>
 
+<svelte:head><title>Calendar</title></svelte:head>
+
 <div class="h-full p-6">
 	<EventCalendar
 		bind:items={calendar.items}

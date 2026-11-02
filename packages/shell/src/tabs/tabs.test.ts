@@ -1,6 +1,6 @@
 // TabGroup on a plain store (bind:tabs / bind:active), and its callbacks.
 import { expect, test } from "bun:test";
-import { TabGroup, type TabLike, type TabsOptions } from "./tabs.svelte.ts";
+import { TabGroup, routeMatcher, type TabLike, type TabsOptions } from "./tabs.svelte.ts";
 
 type Board = TabLike & { board: string };
 function group(options: TabsOptions<Board> = {}, items: Board[] = [{ id: "a", title: "A", board: "a" }, { id: "b", title: "B", board: "b" }]) {
@@ -63,4 +63,20 @@ test("defaults: titles, isolation, closable; detachable per tab", () => {
   expect([tabs.canDetach(r), tabs.canDetach(u), tabs.canDetach(l), tabs.canDetach(f)]).toEqual([true, false, false, false]);
   tabs.close("f");
   expect(tabs.items).toHaveLength(4); // not closable
+});
+
+test("keepAlive takes SvelteKit route ids; open(path) finds a kept-alive tab already open", () => {
+  const m = (id: string, p: string) => routeMatcher(id).test(p);
+  expect([m("/chat", "/chat"), m("/chat", "/chat/"), m("/chat", "/chats"), m("/chat", "/chat/x")]).toEqual([true, true, false, false]);
+  expect([m("/terminal/[id]", "/terminal/main"), m("/terminal/[id]", "/terminal"), m("/terminal/[id]", "/terminal/a/b")]).toEqual([true, false, false]);
+  expect([m("/docs/[...rest]", "/docs"), m("/docs/[...rest]", "/docs/a/b"), m("/(app)/[[lang]]/home", "/home"), m("/(app)/[[lang]]/home", "/fr/home")]).toEqual([true, true, true, true]);
+  expect([m("/", "/"), m("/", "/x"), m("/v1.2/[id=int]", "/v1.2/3"), m("/v1.2/[id=int]", "/v1x2/3")]).toEqual([true, false, true, false]);
+
+  const { store, tabs } = group({ keepAlive: ["/terminal/[id]"] }, []);
+  const a = tabs.open("/terminal/main");
+  expect(tabs.isIsolated(a)).toBe(true);
+  tabs.open("/settings");
+  expect(tabs.open("/terminal/main?x=1").id).toBe(a.id); // the one already open
+  expect(tabs.isIsolated(tabs.open("https://example.com"))).toBe(true);
+  expect(store.items.map((t) => t.path ?? t.url)).toEqual(["/terminal/main", "https://example.com", "/settings"]); // opened next to the active one
 });

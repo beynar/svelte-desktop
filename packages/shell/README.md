@@ -289,36 +289,32 @@ macOS (built and `vite dev`) and Linux (Docker).
 
 ## Tabs
 
-`@svelte-desktop/shell/tabs`: `<Tabs>` on your own tabs (`bind:tabs`, `bind:active`, `newTab`,
-`onclose`/`onactivate`/`onmove`/`ondetach`) and what goes inside it — `<TabBar>`, `<TabContent>`,
-`<TabPanels>`, `useTabs()`. A tab is any object with an `id` (plus `title`, `path`, `url`,
-`isolated`, `pinned`, `closable` if you like, and your own fields). The window's tabs go in the
-title bar — route tabs (each one a place in the app), the window title following the active one, a
-**Tab** menu (⌘T ⌘W ⇧⌘T ⌃⇥), ⌘1–9, ⌘-click on a link opening a background tab, restored at launch,
-dragged out into its own window or onto another window's bar (native drag and drop). A tab can be
-isolated in its own web view (another site's `url`, or `isolated: true`). Other groups live inside
-pages (panels kept alive). The dashboard example has all three looks: title bar, underline,
-segmented.
+`@svelte-desktop/shell/tabs`: two components, each configured by its props and drawn with
+snippets. `<WindowTabs>` is the window's tabs — your SvelteKit routes in the title bar: links and
+`goto()` move the active tab, `target="_blank"` / ⌘-click open one, a `keepAlive` route keeps
+running in its own web view, titles are the pages' `<title>`, a native Tab menu, ⌘1–9, restored at
+launch, dragged out into its own window or onto another window's bar. `<Tabs>` is tabs in a page,
+on your items (`bind:items`, `bind:value`, `mount`, `onAdd`, `beforeClose`, `onValueChange`).
 
 ```svelte
+<!-- src/routes/+layout.svelte -->
 <script lang="ts">
-  import { Tabs, TabBar, TabContent, TabPanels } from '@svelte-desktop/shell/tabs';
+  import { WindowTabs } from '@svelte-desktop/shell/tabs';
   let { children } = $props();
-  let boards = $state([{ id: 'a', title: 'Sprint', board: 'a' }]);
 </script>
 
-<!-- The window's bar (root layout) -->
-<Tabs route primary newTab={() => ({ path: '/' })}>
-  <header style="height: max(var(--desktop-titlebar-height, 0px), 2.75rem); padding-left: var(--desktop-controls-width); --app-region: drag">
-    <TabBar />
-  </header>
-  <TabContent>{@render children()}</TabContent>
-</Tabs>
+<WindowTabs page={children} newTab="/" keepAlive={['/chat', '/terminal/[id]']}>
+  {#snippet layout({ bar, content })}
+    <header style="height: max(var(--desktop-titlebar-height, 0px), 2.75rem); padding-left: var(--desktop-controls-width); --app-region: drag">
+      {@render bar()}
+    </header>
+    {@render content()}
+  {/snippet}
+</WindowTabs>
 
-<!-- Tabs in a page, on your list -->
-<Tabs bind:tabs={boards} newTab={() => ({ title: 'New', board: crypto.randomUUID() })}>
-  <TabBar />
-  <TabPanels>{#snippet children(tab)}<Board id={tab.board} />{/snippet}</TabPanels>
+<!-- in a page -->
+<Tabs bind:items={boards} bind:value mount="once" closable reorderable onAdd={newBoard}>
+  {#snippet children({ item })}<Board id={item.value} />{/snippet}
 </Tabs>
 ```
 

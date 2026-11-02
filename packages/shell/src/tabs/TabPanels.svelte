@@ -1,27 +1,28 @@
 <!--
-	The content of the <Tabs> around it, one panel per tab. `keepAlive` (default) keeps every panel
-	mounted and hides the inactive ones, so each tab keeps its state (scroll, inputs, components);
-	`keepAlive={false}` renders the active one only. An `isolated` tab shows its own web view
-	(its `path` or `url`) instead of `children`.
-
-	<TabPanels>
-		{#snippet children(t)}<Board id={t.data.boardId} />{/snippet}
-	</TabPanels>
+	The panels of a <Tabs> (internal: <Tabs> renders it as `content`). `mount`: 'lazy' renders the
+	active panel only, 'once' keeps a panel after its first showing, 'eager' renders them all;
+	inactive ones are hidden. An isolated tab shows its own web view instead.
 -->
 <script lang="ts" generics="T extends TabLike = TabLike & Record<string, any>">
 	import type { Snippet } from 'svelte';
-	import { useTabs, type TabLike } from './tabs.svelte.ts';
+	import { SvelteSet } from 'svelte/reactivity';
+	import { useTabs, type TabGroup, type TabLike } from './tabs.svelte.ts';
 	import { isolatedView } from './isolated.ts';
 
 	interface Props {
-		keepAlive?: boolean;
+		mount?: 'lazy' | 'once' | 'eager';
 		class?: string;
-		children: Snippet<[T]>;
+		children: Snippet<[{ item: any; index: number; api: TabGroup<T> }]>;
+		itemOf?: (tab: T) => unknown;
 	}
 
-	let { keepAlive = true, class: className = '', children }: Props = $props();
+	let { mount = 'lazy', class: className = '', children, itemOf = (t) => t }: Props = $props();
 	const tabs = useTabs<T>();
-	const shown = $derived(keepAlive ? tabs.items : tabs.active ? [tabs.active] : []);
+	const seen = new SvelteSet<string>();
+	$effect.pre(() => void (tabs.activeId && seen.add(tabs.activeId)));
+	const shown = $derived(
+		mount === 'eager' ? tabs.items : tabs.items.filter((t) => t.id === tabs.activeId || (mount === 'once' && seen.has(t.id))),
+	);
 </script>
 
 {#each shown as t (t.id)}
@@ -46,7 +47,7 @@
 			data-sd-tabpanel
 			class={className}
 		>
-			{@render children(t)}
+			{@render children({ item: itemOf(t), index: tabs.items.findIndex((x) => x.id === t.id), api: tabs })}
 		</div>
 	{/if}
 {/each}

@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { Tabs, TabBar, TabPanels } from '@svelte-desktop/shell/tabs';
+	import { Tabs } from '@svelte-desktop/shell/tabs';
 	import { board, upcoming } from '#lib/data.svelte';
 
 	const lists = [
-		{ id: 'next', title: 'Next up', closable: false },
-		{ id: 'doing', title: 'In progress', closable: false },
-		{ id: 'done', title: 'Done', closable: false }
+		{ value: 'next', label: 'Next up' },
+		{ value: 'doing', label: 'In progress' },
+		{ value: 'done', label: 'Done' }
 	];
 
 	const counts = $derived(Object.fromEntries(board.columns.map((c) => [c.id, c.cards.length])));
@@ -21,6 +21,8 @@
 	]);
 </script>
 
+<svelte:head><title>Overview</title></svelte:head>
+
 <div class="flex flex-col gap-6 p-6">
 	<div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
 		{#each stats as s (s.label)}
@@ -34,14 +36,16 @@
 
 	<!-- Tabs inside a card: fixed (no close, no +), a segmented look, only the active panel rendered. -->
 	<section class="border-neutral-muted bg-surface-raised rounded-lg border">
-		<Tabs id="overview-lists" tabs={lists}>
-			<header class="border-neutral-muted flex items-center justify-between gap-3 border-b px-4 py-3">
-				<h2 class="text-neutral font-medium">This week</h2>
-				<TabBar label="Lists" class="segmented bg-surface-recessed rounded-md p-0.5" />
-			</header>
-			<TabPanels keepAlive={false} class="p-4">
-				{#snippet children(t)}
-					{#if t.id === 'next'}
+		<Tabs items={lists} label="Lists" class="segmented bg-surface-recessed rounded-md p-0.5">
+			{#snippet layout({ bar, content })}
+				<header class="border-neutral-muted flex items-center justify-between gap-3 border-b px-4 py-3">
+					<h2 class="text-neutral font-medium">This week</h2>
+					{@render bar()}
+				</header>
+				{@render content({ class: 'p-4' })}
+			{/snippet}
+				{#snippet children({ item })}
+					{#if item.value === 'next'}
 						<ul class="flex flex-col gap-2">
 							{#each events.slice(0, 6) as e (e.id)}
 								<li class="flex items-center justify-between gap-3 text-sm">
@@ -54,7 +58,7 @@
 						</ul>
 					{:else}
 						<ul class="flex flex-col gap-2">
-							{#each board.columns.find((c) => c.id === t.id)?.cards ?? [] as task (task.id)}
+							{#each board.columns.find((c) => c.id === item.value)?.cards ?? [] as task (task.id)}
 								<li class="text-sm">
 									<p class="text-neutral">{task.title}</p>
 									{#if task.description}<p class="text-neutral-readable text-xs">{task.description}</p>{/if}
@@ -65,7 +69,6 @@
 						</ul>
 					{/if}
 				{/snippet}
-			</TabPanels>
 		</Tabs>
 	</section>
 </div>
