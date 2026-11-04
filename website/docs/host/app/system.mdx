@@ -1,0 +1,130 @@
+---
+title: host.system
+description: Read OS information, keyboard layout, accessibility preferences and biometric availability.
+---
+
+`host.system` provides native system snapshots and biometric availability. For application permission declarations and the reactive permission API, see [`host.permissions`](/host/os/permissions).
+
+How-to: [System](/ui/platform-services#system).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `info` | `SystemInfo \| null` | OS snapshot. This is a property, not `host.system.info()`. |
+| `accentColor` | `AccentColor \| null` | Color snapshot; `null` if the initial query fails. |
+| `accessibility` | `AccessibilityInfo \| null` | Accessibility snapshot; `null` if the initial query fails. |
+| `layout` | `string \| null` | `info.keyboardLayout`; updated on macOS keyboard-layout events. |
+| `arch` | `string \| null` | Architecture from `info`. |
+| `os` | `string \| null` | OS from `info`. |
+| `ready` | `boolean` | Whether initialization completed. |
+| `error` | `Error \| null` | Initialization failure, if any. |
+
+`SystemInfo` is `{ os: string; family: string; arch: string; keyboardLayout: string }`. OS names are `'macos'`, `'linux'` and `'windows'`; families are `'unix'` and `'windows'`. Architecture strings follow the native backend.
+
+`AccentColor` is `{ r: number; g: number; b: number; a: number }`, with sRGB channels from 0 to 1. `AccessibilityInfo` contains four booleans: `reduceMotion`, `highContrast`, `differentiateWithoutColor` and `reduceTransparency`.
+
+Accent color and accessibility preferences are snapshots. They have no change subscription on this namespace.
+
+## Methods
+
+### `biometrics()`
+
+Read whether biometric authentication can be evaluated, without showing a prompt. Resolves `{ available: boolean; type: 'touchID' | 'faceID' | 'opticID' | 'none'; enrolled: boolean }`.
+
+`available` is the current result of the native biometric policy check. `enrolled` is `false` when that check reports biometry not enrolled; it is not a substitute for checking `available`. `opticID` is recognized on macOS 14 or later.
+
+```ts
+const biometrics = await host.system.biometrics();
+if (biometrics.available) {
+  const { authenticated } = await host.secureStorage.authenticate(
+    'Unlock your notes', { biometricsOnly: true }
+  );
+}
+```
+
+The prompt belongs to [`host.secureStorage.authenticate()`](/host/os/secure-storage). macOS only.
+
+### `getKeyboardLayout()`
+
+Resolves `{ name: string }`, the current keyboard layout. On Linux, the query reads X11 keyboard state; outside X11 it returns an empty name. This query does not update `info` itself.
+
+### `fonts(options?)`
+
+The installed font families, sorted: the names a page's CSS `font-family` can use. WebKit doesn't have the web's Local Font Access API. Resolves `string[]`; with `{ styles: true }`, `FontFamily[]`: `{ family, styles: [{ name, postscriptName, weight, italic }] }`, `weight` on CSS's scale (100 to 900).
+
+```ts
+const families = await host.system.fonts();                         // ['Academy Engraved LET', 'Al Bayan', …]
+const detailed = await host.system.fonts({ styles: true });
+const bold = detailed.find((f) => f.family === 'Helvetica Neue')?.styles.filter((s) => s.weight >= 700);
+```
+
+macOS lists what `NSFontManager` offers, Linux what fontconfig does (`fc-list`), Windows what GDI enumerates; Windows has no PostScript names (`""`).
+
+### `getAccentColor()`
+
+Resolves `AccentColor`; does not update `accentColor`. Linux uses the GTK theme selection background; Windows uses the DWM colorization color. Rejects with `unavailable` if the native color cannot be obtained.
+
+### `getAccessibility()`
+
+Resolves `AccessibilityInfo`; does not update `accessibility`. Linux reads animation and contrast preferences and reports the other two fields as `false`. Windows reports `differentiateWithoutColor` as `false`.
+
+### `checkPermission(name)` and `requestPermission(name)`
+
+These are the legacy system permission queries. `checkPermission()` resolves `{ status: PermissionStatus }` without prompting. `requestPermission()` resolves `{ status: PermissionStatus; note?: string }`; on macOS it prompts where supported. Linux and Windows return a query result without a per-app prompt.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `name` | `PermissionName` | Required permission name; see the complete type and current API on [Permissions](/host/os/permissions). |
+
+`PermissionStatus` is `'granted' | 'denied' | 'notDetermined' | 'unknown'`. These legacy macOS methods accept `accessibility`, `screenRecording`, `inputMonitoring`, `notifications`, `fullDiskAccess`, `camera` and `microphone`. Other names reject with `invalid_args` even if they belong to the wider `PermissionName` type. Requesting `fullDiskAccess` rejects with `unsupported`; open Settings instead. Camera and microphone requests reject with `unavailable` when the bundle lacks the usage description. Notifications require the native notification service to be available.
+
+On Linux, camera status reflects `/dev/video0` access, screen recording is granted only under X11, and notifications depend on the notification service; other names resolve granted. A missing Linux notification service currently returns the string `'unavailable'` despite the narrower declared `PermissionStatus` type. Windows checks desktop-app consent for camera, microphone and location, and resolves granted for the other names.
+
+### `openSettings(pane)`
+
+Open the OS settings application. Declared return type: `{ opened: boolean }`.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `pane` | `SettingsPane` | Required; one of `'privacy-accessibility'`, `'privacy-screenCapture'`, `'privacy-inputMonitoring'`, `'privacy-fullDiskAccess'`, `'privacy-camera'`, `'privacy-microphone'`, `'notifications'`, `'loginItems'` (the apps that launch at login). |
+
+macOS opens the matching pane and rejects missing or unknown panes with `invalid_args`. Windows maps supported panes and falls back to the privacy page. Linux launches `gnome-control-center`, ignores the requested pane and currently resolves `null`, rather than the declared object; it rejects with `unavailable` when that program cannot launch.
+
+### `init()` and `dispose()`
+
+`init()` reloads `info`, `accentColor` and `accessibility`, marks the store ready and subscribes to keyboard-layout changes; resolves the namespace. Color or accessibility read failures become `null`; an OS info failure rejects. `dispose()` synchronously removes the internal subscription without resetting state or removing your listeners.
+
+## Events
+
+| Event | Payload | When | Platforms |
+| --- | --- | --- | --- |
+| `keyboardLayoutChanged` | `{}` | The selected keyboard input source changes. | macOS |
+
+Use `host.system.onKeyboardLayoutChange(fn)`, `host.system.on('keyboardLayoutChanged', fn)` or `host.on('keyboardLayoutChanged', fn)`; each returns an unsubscribe function. `host.system.once('keyboardLayoutChanged', fn)` listens once and also returns an unsubscribe function. The store re-reads the layout on this event.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `biometrics` | ✓ (`opticID`: 14+) | — | — |
+| `getKeyboardLayout` | ✓ | partial (X11) | ✓ |
+| `getAccentColor` | ✓ | ✓ | ✓ |
+| `fonts` | ✓ | ✓ (fontconfig) | ✓ |
+| `getAccessibility` | ✓ | partial | partial |
+| `checkPermission`, `requestPermission` | partial | partial | partial |
+| `openSettings` | ✓ | partial | partial |
+| `init`, `dispose` | ✓ | ✓ | ✓ |
+| `on`, `once`, `onKeyboardLayoutChange` | ✓ | — | — |
+
+Partial behavior is described under each method. Event listeners can be registered everywhere, but keyboard-layout events are emitted only on macOS.
+
+## Example
+
+```svelte
+<p>{host.system.os} · {host.system.arch} · {host.system.layout}</p>
+<div class:reduce-motion={host.system.accessibility?.reduceMotion}>
+  <p>Use the system's motion preference for this panel.</p>
+</div>
+<button onclick={() => host.system.init()}>Refresh system snapshots</button>
+```

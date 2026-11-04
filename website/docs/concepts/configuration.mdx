@@ -20,13 +20,13 @@ export default defineConfig({
 
 <TypeTable
   type={{
-    config: { type: "Partial<DesktopConfig>", description: "Override or extend desktop.config.ts inline." },
+    config: { type: "Partial<DesktopConfig>", description: "Override desktop.config.ts inline. Top-level keys replace the file's values; nested objects are not deep-merged." },
     exitOnClose: { type: "boolean", default: "true", description: "Stop vite dev when the app window is closed." },
-    noWindow: { type: "boolean", default: "$SVELTE_DESKTOP_NO_WINDOW", description: "Don't open the native window in dev (browser-only dev)." },
+    noWindow: { type: "boolean", default: "false", description: "Don't open the native window in dev (browser-only dev). Any non-empty `SVELTE_DESKTOP_NO_WINDOW` also skips the shell, even if this option is `false`." },
   }}
 />
 
-The plugin also installs the [`host` global](/concepts/host) in page and server code and writes `src/host.d.ts` once.
+The plugin also installs the [`host` global](/host) in page and server code and writes `src/host.d.ts` once.
 
 ## desktop.config.ts
 
@@ -45,29 +45,33 @@ export default defineConfig({
     screenRecording: 'Notes can attach a screenshot of your screen.',
   },
   notifications: { foreground: true },
-  push: { apns: true, server: 'https://push.example.com' },
+  push: { server: 'https://push.example.com' },
 });
 ```
 
-Only `appName` and `identifier` matter to start; everything else is optional. `appName` falls back to `productName` or `name` in `package.json`, and `version` defaults to the `package.json` version. `identifier` must be reverse-DNS (`com.example.app`): it names the bundle and the data directories.
+`defineConfig` requires `appName` and `identifier`; everything else is optional. The loader can fill in missing identity fields: `appName` falls back to `productName` or `name` in `package.json`, `identifier` to `dev.svelte-desktop.` followed by the lowercased app name with non-alphanumeric characters removed, and `version` to the `package.json` version or `0.0.0`. `identifier` must be reverse-DNS (`com.example.app`): it names the bundle and the data directories.
 
-The plugin loads the file (`desktop.config.ts`, `.js` or `.mjs`) for both `vite dev` (window, native plugin) and `vite build` (bundle, signing, release). Editing it during `vite dev` restarts the dev server.
+The plugin loads the first file it finds (`desktop.config.ts`, `.js`, then `.mjs`) for both `vite dev` (window, native plugins) and `vite build` (bundle, signing, release). Editing it during windowed `vite dev` restarts the dev server and the shell. Browser-only mode skips this watcher.
+
+`singleInstance` and `quitOnLastWindowClosed` apply to built apps. The dev shell currently receives neither setting: it allows multiple instances and quits when its last window closes. `exitOnClose` controls whether Vite also stops.
 
 | Area | Keys | Page |
 | --- | --- | --- |
 | Identity | `appName`, `identifier`, `version`, `icon`, `copyright` | [App icon](/shipping/app-icon) |
 | Main window | `window`, `quitOnLastWindowClosed`, `trayOnly`, `singleInstance` | [Windows](/ui/windows) |
-| OS integration | `schemes`, `fileTypes`, `permissions`, `plist` | [Permissions](/features/permissions) |
+| OS integration | `schemes`, `protocols`, `fileTypes`, `permissions`, `plist` | [Permissions](/features/permissions), [Host API](/host) |
 | Notifications | `notifications`, `push` | [Notifications and push](/features/notifications) |
-| Native code | `native`, `addons`, `sidecars` | [Native code](/features/native-code) |
-| Security | `bridge.allow` | [The host API](/concepts/host) |
+| Native code | `native`, `addons`, `sidecars` | [Native code](/native) |
+| Security | `bridge.allow` | [The host API](/host) |
 | Release | `build`, `sign`, `update` | [Distribution](/shipping/distribution) |
 
 Every key is listed in the [configuration reference](/reference/config).
 
+[Services](/native/services) and [background jobs](/native/jobs) are discovered in `src/services/` and `src/jobs/`. They have no config keys.
+
 ## Environment overrides
 
-Some settings can come from the environment, which keeps secrets and per-build switches out of the file:
+Some settings can come from the environment, which keeps secrets and per-build switches out of the file. The target variables override config values; the other variables are fallbacks when their config field is absent:
 
 | Variable | Overrides |
 | --- | --- |

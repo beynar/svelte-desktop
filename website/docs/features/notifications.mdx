@@ -3,6 +3,10 @@ title: Notifications and push
 description: Local notifications with actions, replies, scheduling and deep links; remote push through APNs, Web Push or your own server.
 ---
 
+:::note
+API reference: [`host.notifications`](/host/os/notifications), [`host.push`](/host/os/push).
+:::
+
 One API, `host.notifications`, on macOS, Linux, Windows and in a plain browser tab.
 
 ```ts
@@ -22,15 +26,22 @@ host.notifications.on('click', (e) => { /* e.id, e.data, e.url; e.preventDefault
 host.notifications.on('reply', (e) => send(e.data.chat, e.input));
 ```
 
-`show` resolves `{ id, scheduled }` and rejects when the OS refuses.
+`show` resolves `{ id, scheduled }` and rejects when the OS refuses. With `replace: false`, an existing id resolves `{ id, scheduled: false, skipped: true }`. Ask for permission with `await host.notifications.requestPermission()` before showing the first notification.
+
+| Platform | Requirements and limits |
+| --- | --- |
+| macOS | Shown by the built app only: in `vite dev`, `show` does nothing and resolves `skipped: true`, the permission is `'unavailable'`, and one line in the console says so. Actions support text replies. `urgency: 'critical'` maps to time-sensitive presentation, not Apple's critical-alert entitlement. |
+| Linux | Needs `libnotify` and a running notification daemon. Text-input actions become plain actions; inline replies are unavailable. |
+| Windows | Uses native toasts, with tray balloons as a fallback. Reply input and OS scheduling need the toast backend. |
+| Browser | Needs the Notification API and permission. Actions depend on service-worker and browser support. Scheduled notifications need the page to stay open; `repeat` rejects with `unsupported`. |
 
 ## Behavior
 
-- **Dedupe.** An `id` replaces a delivered or pending notification on every platform (`replace: false` keeps the existing one; `renotify: false` replaces silently). Pushes use the same ids, so a push and a local notification for the same message show once.
+- **Dedupe.** An `id` replaces a local delivered or pending notification (`replace: false` keeps the existing one). `renotify: false` suppresses the replacement sound on Linux and the popup on Windows; macOS ignores it. Self-hosted pushes use the local notification path and share its ids. APNs uses `id` as a collapse key, but visible APNs notifications use the OS request identifier; replacing one with a local notification of the same application id is not guaranteed.
 - **Deep links.** `url` (or an action's `url`) navigates with the SvelteKit router; the app's own scheme goes through `host.deepLink`; http(s) opens in the browser.
-- **Cold start.** A click that launched the app is kept until the page starts, then navigates; listeners added later still receive it. Server code gets every response too (`host.notifications.on('response', fn)` in a `+server.ts` or hook), replayed at start.
+- **Cold start.** A click that launched the app is kept until the page starts, then navigates; recent responses wait for their first listener. Server code also receives responses (`host.notifications.on('response', fn)` in a `+server.ts` or hook), with the recent native response ring replayed at start.
 - **Several windows.** Listeners and navigation run in one page: the window that showed it, else the focused one, which comes to the front.
-- **Foreground.** Banners show while the app is frontmost (config `notifications.foreground`, default `true`; per notification `foreground`).
+- **Foreground.** On macOS, banners show while the app is frontmost (config `notifications.foreground`, default `true`; per notification `foreground`). Linux and Windows do not implement foreground suppression.
 
 ## Scheduling
 
@@ -39,7 +50,7 @@ await host.notifications.show({ id: 'standup', title: 'Stand-up', at: tomorrow9a
 await host.notifications.show({ title: 'Tea is ready', delay: 4 * 60_000 });
 ```
 
-`at` (a `Date`, epoch ms or string) or `delay` (ms), with `repeat`: `minute`, `hour`, `day`, `week`, `month`, `year`. Schedules survive the app quitting on macOS and Windows; Linux keeps the queue on disk and catches up at the next start.
+`at` (a `Date`, epoch ms or string) or `delay` (ms), with `repeat`: `minute`, `hour`, `day`, `week`, `month`, `year`. `repeat` requires `at` or `delay`. Schedules survive the app quitting on macOS and Windows; Linux keeps the queue on disk and catches up at the next start. macOS repeats use calendar matches; if the next match would fall before `at`, `show()` rejects with `invalid_args` rather than delivering early. Windows queues up to 128 occurrences over the next 30 days and replenishes the queue while the app runs; it cannot repeat indefinitely while closed.
 
 ## Events and lists
 
@@ -47,10 +58,10 @@ await host.notifications.show({ title: 'Tea is ready', delay: 4 * 60_000 });
 | --- | --- |
 | `on('click' \| 'action' \| 'reply' \| 'dismiss' \| 'response', fn)` | `{ id, kind, actionId, input, url, data, target, preventDefault() }`; `response` receives every kind |
 | `on('shown', fn)` | Delivered while the app runs (a scheduled one firing, a push in the foreground) |
-| `delivered()`, `pending()` | What's in the notification center, and what's scheduled |
+| `delivered()`, `pending()` | Delivered notifications known to the backend, and scheduled ones; Linux tracks notifications from the running app rather than querying the daemon's history |
 | `dismiss(id)`, `dismissAll()` | Remove delivered and cancel pending |
 | `setBadge(count)` | App icon badge (Dock, Unity launchers on Linux, Windows overlay); `null` or `0` clears it |
-| `permission`, `requestPermission()` | Reactive `granted`, `denied`, `notDetermined` or `unavailable` |
+| `permission`, `requestPermission()` | Reactive `granted`, `denied`, `notDetermined` or `unavailable`; `requestPermission()` resolves `{ status }` |
 
 <Expandable title="All notification options">
 
@@ -59,6 +70,7 @@ await host.notifications.show({ title: 'Tea is ready', delay: 4 * 60_000 });
     id: { type: "string", description: "Dedupe key. Default: a new id." },
     title: { type: "string", required: true },
     "body, subtitle": { type: "string" },
+    lines: { type: "string[]", description: "Joined into body when body is omitted." },
     group: { type: "string", description: "Thread or group (macOS threads, Windows groups)." },
     image: { type: "string", description: "A path, a file:, data: or http(s) URL, or an app URL ('/img/x.png')." },
     icon: { type: "string", description: "Large icon / logo override (Windows, Linux)." },
@@ -69,7 +81,7 @@ await host.notifications.show({ title: 'Tea is ready', delay: 4 * 60_000 });
     requireInteraction: { type: "boolean", description: "Stay until the user acts (Linux, Windows)." },
     timestamp: { type: "Date | number" },
     actions: { type: "NotificationAction[]", description: "{ id, title, input?, destructive?, foreground?, url? }" },
-    foreground: { type: "boolean", description: "Show while the app is frontmost." },
+    foreground: { type: "boolean", description: "macOS: show while the app is frontmost." },
     "at, delay, repeat": { type: "Date | number | string, number, string", description: "Scheduling." },
     "url, data": { type: "string, unknown", description: "Navigate on click; JSON handed back in events." },
     replace: { type: "boolean", default: "true" },
@@ -87,7 +99,7 @@ await host.notifications.show({ title: 'Tea is ready', delay: 4 * 60_000 });
 
 | Platform | Provider | Config |
 | --- | --- | --- |
-| macOS | APNs | `push: { apns: true }` and a provisioning profile with Push Notifications (`sign.provisioningProfile`). |
+| macOS | APNs | `push: { apns: true }`, a signed app and a provisioning profile with Push Notifications (`sign.provisioningProfile`). |
 | macOS, Windows, Linux | Your own push server (Web Push) | `push: { server: 'https://push.example.com' }`. Takes precedence over APNs on macOS. |
 | Browser tab | Web Push | `host.push.register({ vapidPublicKey })` |
 
@@ -116,7 +128,7 @@ const results = await push.sendMany(targets, { id: 'msg-42', title: 'Alice', bod
 // results[i].expired: the target is gone (uninstalled, unsubscribed), delete it
 ```
 
-`push.send(target, notification)` sends one. `generateVapidKeys()` from the same module creates the Web Push keys. A notification also takes `subtitle`, `data`, `badge`, `sound`, `silent`, `group`, `image`, `ttl`, `priority` and `background` (data-only, delivered to `host.push.on('message')`).
+`push.send(target, notification)` sends one. `generateVapidKeys()` from the same module creates the Web Push keys. A notification also takes `subtitle`, `data`, `badge`, `sound`, `silent`, `group`, `image`, `ttl`, `priority` and `background` (data-only, delivered to `host.push.on('message')`). APNs images need a notification service extension; passing `image` alone only supplies the image for Web Push.
 
 ### Self-hosted push
 
@@ -132,4 +144,4 @@ servePush({ port: 47123, db: 'push.sqlite' }); // db defaults to ':memory:'
 
 Or deploy `packages/push-worker` from the repository on Cloudflare (`bunx wrangler deploy`): one Durable Object per device with hibernatable WebSockets.
 
-In a plain browser tab, notifications use the Notification API and a small service worker served at `/__desktop/push-sw.js`, in its own scope.
+In a plain browser tab, notifications use the Notification API and a small service worker served at `/__desktop/push-sw.js`, in its own scope. Web Push needs HTTPS or localhost and service-worker support. Self-hosted desktop push receives messages only while the app process runs; APNs can deliver visible notifications while the macOS app is closed.

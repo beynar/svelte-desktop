@@ -1,0 +1,29 @@
+---
+title: host.native
+description: Call your app's typed native plugin commands from pages and server code.
+---
+
+`host.native` exposes the commands your app registers in Rust, Go, Python, Swift, Objective-C or C plugins. It is the same API in pages and server code.
+
+How-to: [Native code](/native).
+
+## Calling a command
+
+```ts
+// For a plugin that registers the command "text.stats":
+const stats = await host.native.text.stats({ text: 'Hello from a page' });
+```
+
+`host.native.<service>.<op>(args?)` calls that plugin operation and returns its promise. Omitted arguments default to `{}`. Available command names, parameter types and return types come from the generated `NativeModules` interface in `src/native.d.ts`; there is no fixed built-in command list on `host.native`. Rust, Go, Python and typed Swift commands carry their declared types; untyped Objective-C and C commands use `unknown`.
+
+Plugin failures reject through the platform bus. A missing operation rejects with `unknown`, or with `unsupported` on macOS when its service exists but the operation doesn't. Plugin events are received with [`host.on(name, fn)`](/host/data/events).
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| App-defined commands | partial | partial | partial |
+
+Support depends on which plugins the app builds and registers on that OS. Rust, Go and the C ABI work across all three targets; Swift and Objective-C sources are Apple-only; Python commands are packaged for macOS for now. Check the app's command definitions and [`host.capabilities.describe()`](/host/app/capabilities).
+
+Node-API addons and sidecar executables use the server-only [`host.loadAddon()` and `host.sidecar()`](/host/data/server), rather than `host.native`.

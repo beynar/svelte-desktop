@@ -1,0 +1,161 @@
+---
+title: host.shortcuts
+description: Register operating-system shortcuts that work while the app is in the background.
+---
+
+`host.shortcuts` registers global hotkeys and reports presses. It combines a local registration list with the shortcut service. Use [menu accelerators](/host/input/menu) for application commands, or [input policy](/host/input/input-policy) for shortcuts intercepted within one native window.
+
+How-to: [Global shortcuts](/ui/platform-services#global-shortcuts) and [a panel on a global shortcut](/ui/menu-bar-and-popovers#a-panel-on-a-global-shortcut).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `registered` | `string[]` | Ids registered successfully through this store in this JavaScript context. Initially empty. |
+| `ready` | `boolean` | Whether the store has initialized. |
+| `error` | `Error \| null` | Initialization failure, if any. |
+
+The list is local bookkeeping, not a query of all registrations from other windows or server contexts. `unregister` removes its id from this list and `unregisterAll` clears it. Native registrations are application-wide.
+
+## Accelerator syntax
+
+An accelerator combines modifiers and one key with `+`, for example `'CmdOrCtrl+Shift+K'` or `'Ctrl+Alt+Space'`. `CmdOrCtrl` / `CommandOrControl` maps to Command on macOS and Control on Linux and Windows. `Ctrl` / `Control`, `Alt` / `Option` and `Shift` are supported modifiers. `Super` / `Meta` means Command on macOS and the Super/Windows key elsewhere. `Cmd` / `Command` maps to Command on macOS, Super on Linux and Control on Windows.
+
+Letters, digits and named keys such as `Space`, `Enter`, `Tab`, `Escape`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`, `Plus` and function keys are supported. The exact key vocabulary is backend-specific. For example, macOS global `Delete` means backward delete; use `ForwardDelete` for forward delete there. macOS supports `F1` through `F20`, Windows through `F24`, and Linux resolves function keys through GDK. An unknown modifier or key rejects with `invalid_args`.
+
+## Methods
+
+### `register(options)`
+
+Register one accelerator with the OS and append its effective id to `registered`.
+
+```ts
+const { id } = await host.shortcuts.register({ accelerator: 'Ctrl+Alt+Space', id: 'quick-note' });
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `accelerator` | `string` | Required | Global shortcut combination. Must contain a valid non-modifier key. |
+| `id` | `string` | Accelerator string | Application-wide registration id. Use a nonempty, unique id. |
+
+Resolves `{ id: string }`. Duplicate ids or combinations in this app reject with `invalid_args`. An OS refusal, including a collision with another app or system shortcut, rejects with `denied`. macOS can reject with `internal` if the native event handler cannot be installed. Its Carbon hotkeys need no Accessibility permission.
+
+Linux registration requires X11; on Wayland it rejects with `unsupported`. A key absent from the active X11 keyboard mapping rejects with `invalid_args`.
+
+### `unregister(options)`
+
+Remove one native registration and its id from the store.
+
+```ts
+await host.shortcuts.unregister({ id: 'quick-note' });
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Required | Registration id returned by `register`. |
+
+Resolves `void`. The `host` store wrapper discards the service's `{ unregistered: boolean }` result. An unknown id is harmless; a missing id rejects with `invalid_args`.
+
+### `unregisterAll()`
+
+Remove all native global shortcuts in the app and clear the local list.
+
+```ts
+await host.shortcuts.unregisterAll();
+```
+
+Resolves `void`; the store wrapper discards the service's count. This also removes registrations created by other contexts in the same app.
+
+### `isRegistered(id)`
+
+Query whether an id is registered natively.
+
+```ts
+const enabled = await host.shortcuts.isRegistered('quick-note');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Registration id, not an accelerator unless it was used as the id. |
+
+Resolves `boolean`. Does not update `registered`. A missing id rejects with `invalid_args`.
+
+### `acquire(options)`
+
+Register a shortcut and return a disposable `ShortcutRegistration`.
+
+```ts
+await using registration = await host.shortcuts.acquire({
+  accelerator: 'Ctrl+Alt+Space', id: 'quick-note',
+});
+console.log(registration.id);
+// Keep this scope alive while the shortcut is needed.
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `accelerator` | `string` | Required | Same accelerator and validation as `register`. |
+| `id` | `string` | Accelerator string | Unique registration id. |
+
+Resolves `ShortcutRegistration`, whose public `id: string` is the effective registration id. Its `[Symbol.asyncDispose](): Promise<void>` calls this store's `unregister`, updating `registered`. Repeated disposal shares the same operation.
+
+### `init()`
+
+Mark the store ready and return it synchronously. Initialization is automatic when the platform connects; this method does not discover existing registrations.
+
+```ts
+host.shortcuts.init();
+```
+
+## Events
+
+| Event | Payload | When | Platforms |
+| --- | --- | --- | --- |
+| `shortcutPressed` | `{ id: string }` | A registered global shortcut is pressed, including while the app is in the background. | macOS, Linux X11, Windows |
+| `shortcutReleased` | `{ id: string }` | The registered key is released. | macOS, Linux X11 |
+
+`onPressed(cb)` and `onReleased(cb)` take `(data: { id: string }) => void` and return an unsubscribe function synchronously. Windows has no hotkey key-up notification and never emits `shortcutReleased`.
+
+```ts
+const offPress = host.shortcuts.onPressed(({ id }) => console.log('pressed', id));
+const offRelease = host.shortcuts.onReleased(({ id }) => console.log('released', id));
+offPress();
+offRelease();
+```
+
+`on('shortcutPressed', cb)` and `once('shortcutPressed', cb)` are also available on the store; `once` removes itself after its first delivery. `host.on('shortcutPressed', cb)` and `host.on('shortcutReleased', cb)` provide the raw event helpers. All return unsubscribe functions. Removing a listener does not unregister a shortcut.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `register`, `acquire` | ✓ | partial | ✓ |
+| `unregister`, `unregisterAll`, `isRegistered` | ✓ | ✓ | ✓ |
+| `init`, `onPressed`, `on`, `once` | ✓ | ✓ | ✓ |
+| `onReleased` | ✓ | partial | — |
+
+Linux global registration and its events require X11. Listener helpers are local subscriptions; calling them on a backend without the event does not create support.
+
+## Example
+
+Register once in server startup so a page reload does not attempt a duplicate registration. The callback filters its id before showing the main window.
+
+```ts src/hooks.server.ts
+import { onDesktopReady } from '@svelte-desktop/shell/server';
+
+onDesktopReady(async () => {
+  host.shortcuts.onPressed(async ({ id }) => {
+    if (id !== 'show-notes') return;
+    try {
+      await host.window.show();
+    } catch (error) {
+      console.error('Could not show Notes', error);
+    }
+  });
+  try {
+    await host.shortcuts.register({ id: 'show-notes', accelerator: 'Ctrl+Alt+Space' });
+  } catch (error) {
+    console.error('Could not register global shortcut', error);
+  }
+});
+```

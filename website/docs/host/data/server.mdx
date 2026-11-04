@@ -1,0 +1,329 @@
+---
+title: Server code
+description: Server-only host members and the explicit desktop API for hooks, endpoints and remote functions.
+---
+
+App server code can use the usual `host` services plus the members below. Use them in hooks, server loads, endpoints and remote functions. App modules may evaluate before the shell is ready; register startup work with `host.ready` or `onDesktopReady`.
+
+In server code, `host.available` reads `isDesktop()`: it becomes `true` when the desktop API is installed.
+
+How-to: [Persistent services](/native/services), [background jobs](/native/jobs) and [native code](/native).
+
+## Server-only host members
+
+### `paths`
+
+Server only. A synchronous, lazy property with type `{ data: string; cache: string; home: string; logs: string }`. Reading it before the desktop API is installed throws.
+
+| Property | Description |
+| --- | --- |
+| `data` | Per-user app data directory, scoped to the configured app identifier. |
+| `cache` | Per-user app cache directory. |
+| `home` | User's home directory. |
+| `logs` | Per-user app log directory. File logging creates it when needed. |
+
+The runtime creates `data` and `cache` at startup. It does not create every returned directory unconditionally.
+
+| OS | `data` | `cache` | `logs` |
+| --- | --- | --- | --- |
+| macOS | `~/Library/Application Support/<identifier>` | `~/Library/Caches/<identifier>` | `~/Library/Logs/<identifier>` |
+| Linux | `$XDG_DATA_HOME/<identifier>` | `$XDG_CACHE_HOME/<identifier>` | `$XDG_STATE_HOME/<identifier>/logs` |
+| Windows | `%APPDATA%/<identifier>` | `%LOCALAPPDATA%/<identifier>/Cache` | `%LOCALAPPDATA%/<identifier>/Logs` |
+
+Linux defaults are `~/.local/share`, `~/.cache` and `~/.local/state`. Windows falls back to `~/AppData/Roaming` and `~/AppData/Local`.
+
+```ts
+import { Database } from 'bun:sqlite';
+import { join } from 'node:path';
+
+host.ready(() => {
+  const db = new Database(join(host.paths.data, 'app.db'));
+  host.onBeforeQuit(() => db.close());
+});
+```
+
+### `crashInfo()`
+
+Server only. Returns `CrashInfo` synchronously, describing the previous launch. It does not upload reports.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `uncleanExit` | `boolean` | The previous run left its running marker and is no longer alive. |
+| `previousLaunch` | `number \| null` | Previous launch time in Unix milliseconds; `null` on the first launch. |
+| `reports` | `CrashReport[]` | Matching OS reports written since that launch. Each has `path: string` and `time: number` (Unix milliseconds). |
+
+Packaged apps track launches. Dev returns `{ uncleanExit: false, previousLaunch: null, reports: [] }`. OS report discovery reads macOS `.ips`/`.crash` reports and Windows `.dmp` files. Linux has launch-marker detection but no automatic system crash-report discovery.
+
+### `sidecar(name, args?, options?)`
+
+Server only. Spawns an executable declared in the config's `sidecars`. Resolves the `Bun.spawn` subprocess; use `proc.exited`, `stdout` and `stderr` as usual.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | Required | Configured sidecar name; letters, numbers, dots, underscores and hyphens only. |
+| `args` | `string[]` | `[]` | Executable arguments. |
+| `options` | `Parameters<typeof Bun.spawn>[1]` | `{}` | Bun's subprocess options, passed through unchanged. |
+
+```ts
+const proc = await host.sidecar('ffmpeg', ['-i', input, output], {
+  stdout: 'pipe', stderr: 'pipe',
+});
+const exitCode = await proc.exited;
+```
+
+The runtime resolves the dev path or bundled executable (adding `.exe` on Windows when needed). Invalid names, missing bundles and spawn failures reject with ordinary errors. See [sidecar configuration](/native/sidecars); the option object is Bun's own API, not a separate shell-specific schema.
+
+### `loadAddon<T>(name)`
+
+Server only. Loads a bundled Node-API addon synchronously and returns its exports as `T`. `name` is a `string`, with the same allowed characters as a sidecar name. Invalid names, missing addons and dynamic loader failures throw. The type parameter describes exports; it does not validate them.
+
+```ts
+const math = host.loadAddon<{ fib(n: number): number }>('fastmath');
+const result = math.fib(30);
+```
+
+Addons come from `native/addons/` or the config's `addons` mapping. See [Node-API addons](/native/addons).
+
+### `shellEnv(options?)`
+
+Server only. Resolves the environment of the user's login shell, merged over the app's own, as a `Record<string, string>`. An app opened from the Finder, the Dock or Spotlight on macOS, or from a desktop launcher on Linux, inherits the session's environment, not the one the user's terminal builds. Its `PATH` lacks Homebrew, nvm, `~/.local/bin` and the rest, so `Bun.spawn(['claude'])` fails there while it works from a terminal. Pass this environment to the processes you start for the user's tools.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `refresh` | `boolean` | `false` | Ask the shell again. The first result is kept for the life of the process otherwise. |
+| `timeoutMs` | `number` | `5000` | Past it, the app's own environment. |
+
+```ts
+const env = await host.shellEnv();
+const codex = await host.which('codex');
+if (codex) Bun.spawn([codex, 'app-server'], { env, stdin: 'pipe', stdout: 'pipe' });
+```
+
+On macOS and Linux, it runs `$SHELL` as an interactive login shell (`-i -l -c`, as a terminal opens it) with `TERM=dumb` and no input, and reads `env -0` between markers, so whatever the rc files print is ignored. It takes about 100 ms. On Windows, GUI apps get the user's environment from the registry, so it resolves the app's own. If the shell fails or times out, it resolves the app's own environment.
+
+### `which(command, options?)`
+
+Server only. Resolves the absolute path of `command` on the `PATH` from `shellEnv()`, or `null`. Same options as `shellEnv`.
+
+### `command`
+
+Server only. The app's command in the user's terminal, set by the config's `command`. See [Terminal command](/features/terminal#the-apps-command).
+
+| Method | Resolves | Description |
+| --- | --- | --- |
+| `status()` | `CommandStatus` | `{ name, available, path, onPath }`: the command's name (`null` without one), whether this build can install it (a built app on macOS or Linux), where it's installed (`null` if not), and whether that folder is on the user's shell `PATH`. |
+| `install()` | `{ path, onPath }` | Links the command into a folder of the user's `PATH` they can write to (`~/.local/bin`, `~/bin`, `/opt/homebrew/bin`), or into `/usr/local/bin` after the system's administrator prompt (macOS). Where it's not available (no command, `vite dev`, Windows), it does nothing and resolves `path: null`. Rejects when the prompt is canceled. |
+| `uninstall()` | `void` | Removes the link where it points to this app. |
+
+### `onBeforeQuit(fn)`
+
+Server only. Registers `fn: () => void | Promise<void>` and returns `void`. Callbacks run in registration order and are awaited; thrown errors are logged and later callbacks still run. There is no unsubscribe function and no veto return value.
+
+In packaged macOS apps these hooks run in the final `willQuit` phase. For a decision that can cancel quitting, use [`host.app.onQuitRequested`](/host/app/app). For work needing live windows, use `host.app.onBeforeQuit`. The dev bridge invokes server cleanup when its connection closes. Forced process termination cannot guarantee cleanup.
+
+### `ready(fn)`
+
+Server only. Alias of `onDesktopReady`. Accepts `(desktop: DesktopApi) => void` and returns `void`. Runs immediately if the desktop API is installed; otherwise queues the callback for installation. It never runs outside the shell. Returned promises are not awaited: handle asynchronous startup failures within the callback.
+
+### `jobs.start()`, `jobs.wait()`
+
+Server only. Start finite child-process tasks and await their terminal records. Their arguments, return types, events and page-facing methods are documented at [`host.jobs`](/host/data/jobs).
+
+### `services.start(name, args?, options?)`
+
+Server only. Starts `src/services/<name>.ts` or `.js` as a persistent Bun child. Resolves `ServiceHandle` after the service initializes. Each call creates a separate child.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | Required | Source name without extension; letters, numbers, underscores and hyphens only. |
+| `args` | `unknown` | `null` | JSON-serializable startup data. |
+| `options` | `ServiceOptions` | `{}` | Bounds, timeout and restart policy below. |
+
+| `ServiceOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `capacity` | `number` | `64` | Positive safe integer; bounds unacknowledged messages and pending requests. |
+| `maxMessageBytes` | `number` | `1048576` | Positive safe integer; maximum JSON message/envelope size. |
+| `startupTimeoutMs` | `number` | `10000` | Finite positive startup timeout in milliseconds. |
+| `restart` | `{ maxRestarts: number; delayMs?: number }` | Omitted | Unexpected-exit restart policy. |
+| `restart.maxRestarts` | `number` | `0` | Nonnegative safe integer; restart limit over the handle's lifetime. |
+| `restart.delayMs` | `number` | `100` | Finite nonnegative delay before restarting. |
+
+Invalid arguments, absent sources, startup failure and timeout reject with ordinary errors. Pending messages reject on exit and are never replayed. App shutdown stops services and disables restarts.
+
+#### `ServiceHandle`
+
+| Member | Type / result | Description |
+| --- | --- | --- |
+| `name` | `readonly string` | Service name. |
+| `pid` | `readonly number \| undefined` | Current child pid, absent between processes. |
+| `state` | `'running' \| 'restarting' \| 'stopped'` (readonly) | Current lifecycle state. |
+| `send(data)` | `Promise<void>` | `data: unknown`; resolves when the child consumes the JSON message. |
+| `request<T = unknown>(data, options?)` | `Promise<T>` | `data: unknown`; options are `{ timeoutMs?: number }`, default `{}`. Timeout defaults to `30000` ms and must be finite and positive. Timing out does not cancel child work. |
+| `on('message', fn)` | `() => void` | `fn(data: unknown)`; unsolicited child messages. |
+| `on('exit', fn)` | `() => void` | `fn(exit: ServiceExit)`; `exit` has `code: number`, `signal: string \| number \| null`, `restarting: boolean`. |
+| `stop()` | `Promise<void>` | Disables restarts, requests abort/cleanup and force-kills after 500 ms. Repeated calls share completion. |
+
+Sends and requests reject for full queues, oversized or nonserializable data, exit, or a non-running service. See [Persistent services](/native/services) for the child-side `ServicePort` and lifetime model.
+
+### `diagnostics.collect(options?)`
+
+Server only. Resolves a `string` path to a local `.tar.gz` support archive in `host.paths.cache/support/`. Nothing is uploaded automatically.
+
+| `CollectOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `logs` | `boolean` | `true` | Include `app.log` and rotations when present. |
+| `crashes` | `boolean` | `true` | Include previous-run state and up to 20 recent OS reports. |
+| `metadata` | `boolean` | `true` | Include app, OS, architecture and Bun version information. |
+
+Omitted options default to `{}`. Missing or unreadable source files are recorded in the archive's manifest; metadata lookup and archive-write failures reject. Text masking is best effort; review archives before sharing. Linux has no automatic OS crash-report discovery. See [local support bundles](/native/services#local-support-bundles) and the other [`host.diagnostics` methods](/host/app/diagnostics).
+
+Server-owned operations on otherwise shared services have their own references: [protocol handlers](/host/web/protocol), [navigation policy](/host/web/web-content) and [web permission/authentication policy](/host/web/web-policy).
+
+## The explicit desktop object
+
+`@svelte-desktop/shell/server` exports `desktop`, `isDesktop`, `onDesktopReady`, `sidecar`, `loadAddon`, `jobs`, `services` and `diagnostics`. The last six are the explicit counterparts of the host APIs above (`onDesktopReady` is `host.ready`).
+
+### `isDesktop()` and `onDesktopReady(fn)`
+
+`isDesktop()` returns a synchronous `boolean` indicating whether the desktop API is installed. Accessing `desktop` members outside the shell throws. `onDesktopReady(fn)` has the same callback and behavior as `host.ready`.
+
+```ts src/hooks.server.ts
+import { onDesktopReady } from '@svelte-desktop/shell/server';
+
+onDesktopReady((desktop) => {
+  desktop.on('menu', (e) => desktop.publish('menu', e.id));
+});
+```
+
+### Properties
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `appName` | `readonly string` | Configured app name. |
+| `origin` | `readonly string` | App server origin. |
+| `paths` | `readonly DesktopApi['paths']` | Same directory record as `host.paths`. |
+
+### Main window
+
+These methods target the primary window (`windowId: 0`). All return `void` and dispatch without awaiting results. The wrapper swallows native failures; use [`host.windows`](/host/windows/window) when the caller needs the operation's result or error.
+
+| Method | Parameters | Description |
+| --- | --- | --- |
+| `desktop.window.setTitle(title)` | `title: string` | Change the title. |
+| `desktop.window.setSize(width, height)` | `width: number`, `height: number` | Resize the window. |
+| `desktop.window.show()` | None | Show the window. |
+| `desktop.window.hide()` | None | Hide the window. |
+| `desktop.window.focus()` | None | Focus the window. |
+| `desktop.window.close()` | None | Close the window. |
+| `desktop.window.eval(js)` | `js: string` | Execute page JavaScript without returning its value. Use messaging for a reply. |
+
+### Dialogs
+
+These shorter wrappers call the native [dialog service](/host/windows/dialog).
+
+| Method | Options type | Resolves |
+| --- | --- | --- |
+| `desktop.dialog.open(opts?)` | `OpenDialogOptions`, default `{}` | `string[] \| null`; `null` on cancellation. |
+| `desktop.dialog.save(opts?)` | `SaveDialogOptions`, default `{}` | `string \| null`; `null` on cancellation. |
+| `desktop.dialog.message(opts)` | `MessageOptions`, required | `number`; selected button index. |
+
+| `OpenDialogOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `title` | `string` | Native default | Dialog title. |
+| `multiple` | `boolean` | `false` | Select multiple entries. |
+| `directories` | `boolean` | `false` | Allow directories. |
+| `files` | `boolean` | `true` | Allow files. |
+| `extensions` | `string[]` | No filter | Converted to a native filter named `Files`. |
+| `defaultPath` | `string` | Native default | Initial path. |
+
+| `SaveDialogOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `title` | `string` | Omitted | Declared in the type, but this wrapper does not forward it. |
+| `defaultName` | `string` | Native default | Forwarded as `suggestedName`. |
+| `extensions` | `string[]` | No filter | Converted to a native filter named `Files`. |
+| `defaultPath` | `string` | Native default | Initial path. |
+
+| `MessageOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `message` | `string` | Required | Main message. |
+| `detail` | `string` | Omitted | Additional text. |
+| `style` | `'info' \| 'warning' \| 'critical'` | `'info'` | Forwarded as native `type`. |
+| `buttons` | `string[]` | Native default | Button labels; the native default is `['OK']`. |
+
+### `desktop.menu.set(spec)`
+
+Takes `MenuItemSpec[]` and returns `void`. Each top-level item supplies a menu `label` and `submenu`; nested items are actions or `{ type: 'separator' }`. Native failures are logged, not returned. See [Menus](/host/input/menu).
+
+| Action/menu field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `label` | `string` | Required | Display text. |
+| `id` | `string` | Omitted | Action id delivered to the `menu` listener. |
+| `role` | `MenuItemSpec` role union | Omitted | Native role, listed below. |
+| `accelerator` | `string` | Omitted | Keyboard shortcut. |
+| `enabled` | `boolean` | `true` | `false` becomes native `disabled: true`. |
+| `submenu` | `MenuItemSpec[]` | Omitted | Child items. |
+
+Roles are `undo`, `redo`, `cut`, `copy`, `paste`, `selectAll`, `minimize`, `zoom`, `close`, `hide`, `hideOthers`, `unhide`, `about`, `toggleFullScreen`, `front`, `quit` and `reload`. The wrapper maps `toggleFullScreen` to the platform spelling `toggleFullscreen`. Native role behavior varies by OS.
+
+### `desktop.on(type, fn)`
+
+Subscribes to a legacy `ShellEvent` type and returns `() => void`. The callback receives the complete event, including `type`. For platform event names such as `appearanceChanged`, use [`host.on`](/host/data/events).
+
+| Type | Other event fields |
+| --- | --- |
+| `ready`, `focus`, `blur`, `closed`, `webcontent-terminated` | `window: number` (native shell window id). |
+| `external-navigation` | `window: number`, `url: string`. |
+| `signal` | `signal: 'SIGINT' \| 'SIGTERM' \| 'SIGHUP'`. |
+| `menu` | `id: string`; native `menuAction` is also adapted to this event. |
+| `quit-requested`, `wake` | None. |
+
+The `ShellEvent` union also declares transport envelopes `dialog`, `platform` and `platformResult`. They are not forwarded to page `native:*` listeners; use the corresponding dialog/platform APIs rather than their transport fields.
+
+### Messages to pages
+
+`desktop.publish(type, data?)` sends a JSON message to every app page and returns `void`. `type` is a `string`; `data` is optional `unknown`. It uses the `desktop` broadcast channel; delivery failures are swallowed by this wrapper.
+
+Pages receive those messages through `onDesktopEvent(type, fn)` from `@svelte-desktop/shell/client`. This page helper returns `() => void`; `fn(data, type)` receives the payload and actual message type. Pass `'*'` to receive every desktop message. Forwarded shell events use `native:<type>` and carry the full `ShellEvent` as data.
+
+```ts
+import { onDesktopEvent } from '@svelte-desktop/shell/client';
+
+const off = onDesktopEvent('menu', (id) => {
+  if (id === 'new-note') console.log('Create a note');
+});
+// Dispose off when the page/component goes away.
+```
+
+For messages that also need server listeners or sender identity, use [`host.broadcast` and `host.onBroadcast`](/host/data/events).
+
+### Other desktop methods
+
+| Method | Parameters / result | Description |
+| --- | --- | --- |
+| `openExternal(url)` | `url: string`; `Promise<void>` | Validates with `URL` and permits only `http:`, `https:` or `mailto:`. Invalid URLs and refused schemes reject; native failures also reject. |
+| `quit()` | `void` | Requests shell shutdown. Use the app lifecycle reference for [quit coordination](/host/app/app). |
+| `onBeforeQuit(fn)` | `fn: () => void \| Promise<void>`; `void` | Same server cleanup registration as `host.onBeforeQuit`. |
+| `crashInfo()` | `CrashInfo` | Same synchronous previous-run snapshot as `host.crashInfo`. |
+
+## Platform support
+
+These server helpers use Bun or wrap registered native operations. Native event and menu-role availability follows the owning reference.
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `host.crashInfo`, `desktop.crashInfo` | ✓ | partial | ✓ |
+| `host.sidecar`, `host.loadAddon` | ✓ | ✓ | ✓ |
+| `host.shellEnv`, `host.which` | ✓ | ✓ | ✓ (the app's own environment) |
+| `host.command` | ✓ | ✓ | — |
+| `host.ready`, `onDesktopReady`, `isDesktop` | ✓ | ✓ | ✓ |
+| `host.onBeforeQuit`, `desktop.onBeforeQuit` | ✓ | ✓ | ✓ |
+| `host.jobs.start`, `host.jobs.wait` | ✓ | ✓ | ✓ |
+| `host.services.start` and `ServiceHandle` methods | ✓ | ✓ | ✓ |
+| `host.diagnostics.collect` | ✓ | partial | ✓ |
+| `desktop.window.setTitle`, `setSize`, `show`, `hide`, `focus`, `close`, `eval` | ✓ | ✓ | ✓ |
+| `desktop.dialog.open`, `save`, `message` | ✓ | ✓ | ✓ |
+| `desktop.menu.set` | ✓ | ✓ | ✓ |
+| `desktop.on`, `desktop.publish`, `onDesktopEvent` | ✓ | ✓ | ✓ |
+| `desktop.openExternal`, `desktop.quit` | ✓ | ✓ | ✓ |
+
+Linux's partial entries mean no automatic OS crash-report discovery. Addons and sidecars must be built for the target OS. Startup and cleanup callbacks execute in the server; `onDesktopEvent` executes in pages.

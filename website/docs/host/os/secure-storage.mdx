@@ -1,0 +1,102 @@
+---
+title: host.secureStorage
+description: Store credentials in the OS credential store and confirm sensitive actions with macOS authentication.
+---
+
+`host.secureStorage` stores strings by a `(service, account)` key. It uses Keychain on macOS, Secret Service through `libsecret` on Linux, and Windows Credential Manager. There is no plaintext fallback and no reactive secret store.
+
+How-to: [Secure storage](/ui/platform-services#secure-storage).
+
+## Methods
+
+### `setPassword(service, account, password)`
+
+Create or replace a credential.
+
+```ts
+await host.secureStorage.setPassword('com.example.notes', 'api-token', token);
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `service` | `string` | Nonempty namespace for this app or integration. |
+| `account` | `string` | Entry key within the service. |
+| `password` | `string` | Secret string to store. |
+
+Resolves `null`. Invalid arguments reject with `invalid_args`; Windows also rejects credentials exceeding its credential blob size limit. OS credential errors reject rather than falling back to a file.
+
+### `getPassword(service, account)`
+
+Read one credential.
+
+```ts
+const token = await host.secureStorage.getPassword('com.example.notes', 'api-token');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `service` | `string` | Nonempty service namespace. |
+| `account` | `string` | Entry key. |
+
+Resolves `string | null`: `null` means no entry exists. Invalid keys reject with `invalid_args`. On macOS a stored value that is not UTF-8 rejects with `internal`.
+
+### `deletePassword(service, account)`
+
+Delete one credential; an absent entry is harmless.
+
+```ts
+await host.secureStorage.deletePassword('com.example.notes', 'api-token');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `service` | `string` | Nonempty service namespace. |
+| `account` | `string` | Entry key. Required by the public TypeScript signature. |
+
+Resolves `null`. Invalid keys reject with `invalid_args`.
+
+Credential operations may trigger an OS access prompt. macOS maps cancellation, failed authentication and denied access to `denied`; other Keychain failures use `internal`. Linux needs `libsecret` and a reachable Secret Service and may reject with `unavailable`. Windows credential API failures use `internal`.
+
+### `authenticate(reason?, options?)`
+
+Ask macOS to authenticate the device owner before a sensitive action.
+
+```ts
+const result = await host.secureStorage.authenticate('unlock your notes', {
+  biometricsOnly: true,
+});
+console.log(result.authenticated ? 'Confirmed' : result.reason);
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `reason` | `string` | `'authenticate to continue'` | Explanation shown in the system prompt. An empty string also uses the default. |
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `biometricsOnly` | `boolean` | `false` | Require biometrics, such as Touch ID, without the account-password fallback. |
+
+Resolves `{ authenticated: boolean; reason?: string }`. Unavailable authentication, cancellation and failed authentication resolve `authenticated: false` with a reason; check the boolean before proceeding. Success resolves `authenticated: true`.
+
+This is a separate confirmation step; it does not attach a biometric access policy to credentials stored by `setPassword()`. [`host.system.biometrics()`](/host/app/system) reports biometric availability and type.
+
+macOS only.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `setPassword`, `getPassword`, `deletePassword` | ✓ | ✓ | ✓ |
+| `authenticate` | ✓ | — | — |
+
+## Example
+
+Authenticate before reading a saved credential on macOS:
+
+```ts
+async function unlockToken(): Promise<string | null> {
+  const { authenticated } = await host.secureStorage.authenticate('unlock the API token');
+  if (!authenticated) return null;
+  return host.secureStorage.getPassword('com.example.notes', 'api-token');
+}
+```

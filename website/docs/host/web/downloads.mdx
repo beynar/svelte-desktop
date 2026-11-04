@@ -1,0 +1,194 @@
+---
+title: host.downloads
+description: Choose download destinations, control transfers and inspect persistent history.
+---
+
+`host.downloads` manages the same native transfers as [`host.webview.download()`](/host/web/webview). Use it for destination decisions, pause and resume controls, and history across launches. It has no reactive state and is macOS only.
+
+How-to: [Downloads](/ui/web-view#downloads).
+
+## Types
+
+### `DownloadRecord`
+
+Records describe both live transfers and saved history.
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Download id, also used to resume a saved transfer. |
+| `url` | `string` | Original request URL. |
+| `windowId` | `number` (optional) | Source window. |
+| `popoverId`, `viewId` | `string` (optional) | Source popover or embedded view. These source fields form `WebviewSource`. |
+| `path` | `string` (optional) | Selected destination. |
+| `suggestedFilename` | `string` | Filename suggested by the response. |
+| `mimeType` | `string \| null` | Response MIME type when known. |
+| `state` | `DownloadState` | Current state; see below. |
+| `receivedBytes` | `number` | Received byte count. |
+| `totalBytes` | `number` | Expected length, or `-1` if unknown. |
+| `fraction` | `number` | Progress from 0 to 1, or `-1` if unknown; 1 when completed. |
+| `canResume` | `boolean` | Resume data and a known total length are available for a paused, canceled or interrupted transfer. |
+| `resumeData` | `string` (optional) | Opaque native checkpoint reference; not the WebKit resume bytes. |
+| `resumeBytes` | `number` (optional) | Byte position in the durable checkpoint; later resumes may rewind to it. |
+| `startedAt`, `updatedAt` | `number` | Milliseconds since the Unix epoch. |
+| `error` | `string` (optional) | Failure or interruption description. |
+
+`DownloadState` is `'requested' | 'downloading' | 'pausing' | 'finishing' | 'paused' | 'completed' | 'interrupted' | 'canceled'`. `pausing` covers cancellation and checkpoint capture. `finishing` means the completed file is being validated; resumed files must match the known total length before reaching `completed`.
+
+### `DownloadRequest` and `DownloadDecision`
+
+| `DownloadRequest` property | Type | Description |
+| --- | --- | --- |
+| `id`, `url` | `string` | Download id and original URL. |
+| `suggestedFilename` | `string` | Suggested destination filename. |
+| `mimeType` | `string \| null` | Response MIME type. |
+| `size` | `number` | Expected bytes, or `-1` if unknown. |
+| `windowId` | `number` (optional) | Source window. |
+| `popoverId`, `viewId` | `string` (optional) | Source popover or embedded view. |
+
+`DownloadDecision` is `{ path: string } | 'cancel' | 'default'`:
+
+| Decision | Effect |
+| --- | --- |
+| `{ path }` | Save to an absolute path (native code expands `~`). Replaces an existing file; a directory or a destination used by another active transfer is refused. |
+| `'cancel'` | Cancel before saving. |
+| `'default'` | Use the explicit path supplied to `webview.download`, otherwise a unique filename in the download directory (`~/Downloads` by default). |
+
+Configure the default directory through [`host.webview.setDownloadDirectory()`](/host/web/webview).
+
+## Methods
+
+### `onRequested(handler)`
+
+Installs one app-wide destination handler. The latest installation wins. Await installation before starting a download.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `handler` | `(request: DownloadRequest) => DownloadDecision \| Promise<DownloadDecision>` | Chooses a destination before WebKit receives its destination URL. |
+
+```ts
+const stopChoosing = await host.downloads.onRequested(() => 'default');
+// Later, when the owner is destroyed:
+await stopChoosing();
+```
+
+Resolves an async unsubscribe function, `() => Promise<void>`. A thrown or rejected handler, an invalid decision, or a request unanswered for 30 seconds cancels the request. Without a handler, downloads use `'default'`. Replacing or removing the active handler cancels its pending destination requests. An older unsubscribe does not remove a newer handler.
+
+### `get(id)`
+
+Resolves `DownloadRecord | null`; an unknown id returns `null`.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Download id. |
+
+### `list()`
+
+Resolves `DownloadRecord[]`, newest first, including completed, canceled, paused and interrupted history retained across launches.
+
+```ts
+const history = await host.downloads.list();
+```
+
+### `pause(id)`
+
+Cancels the network transfer and captures resume data when available. Resolves `DownloadRecord` after the cancellation callback and checkpoint work complete.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Active download to pause. |
+
+This is cancel-with-resume-data, not a suspended connection. The result is `paused` when safely resumable, otherwise `interrupted` with `canResume: false`. A request still awaiting its destination is canceled before saving. Unknown-length transfers cannot safely resume, even if WebKit supplies opaque data.
+
+Rejects with `invalid_args` for an unknown id, or `unavailable` if the download is not transferring or is already pausing.
+
+### `resume(id, target = {})`
+
+Restores a checkpoint and starts a new transfer. Resolves `DownloadRecord` when the native resumed transfer has started; observe later completion or failure through events.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Required | Saved download id with `canResume: true`. |
+| `target` | `WebviewTarget` | `{}` | View in the original web session. |
+
+Every field of [`WebviewTarget`](/host/web/webview):
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `viewId` | `string` | Omitted | Embedded view; takes precedence over other target fields. |
+| `popoverId` | `string` | Omitted | Popover, if no `viewId` is given. |
+| `windowId` | `number` | Calling page, then primary window | Window, if no view or popover is selected. `0` selects the primary window. |
+
+The target must be attached to a window. Resume in the original [session](/host/web/sessions); after relaunch, create or open that session's view and pass its target explicitly. A saved history entry does not restore its source view automatically.
+
+Rejects with `invalid_args` for an unknown download, invalid target or a target in a different session while the original store is retained. Rejects with `unavailable` for an active or non-resumable record, a destination used by another transfer, a missing checkpoint, a detached view or a native resume failure. A server may also refuse resume after the call starts; the record then becomes `interrupted`.
+
+### `cancel(id)`
+
+Cancels an active transfer and resolves `DownloadRecord` after native cancellation and checkpoint work. The state becomes `canceled`; resume data is retained when available, so cancellation may still be resumable.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Active download to cancel. |
+
+Rejects with `invalid_args` for an unknown id, or `unavailable` if the download is not transferring or is already pausing. Unlike the legacy `webview.cancelDownload`, this method resolves the record rather than `null`.
+
+## Resume data and history
+
+WebKit resume bytes and request credentials stay native. `resumeData` is an opaque reference: resume with the record's `id`, not by decoding or passing that string.
+
+A hidden `.sd-dl-….resume-prefix` checkpoint beside the destination preserves the captured bytes. Completion removes the checkpoint. The first durable checkpoint is retained across later pauses, so progress can rewind to `resumeBytes` and download subsequent bytes again.
+
+Records and captured resume data survive relaunches. Previously active transfers are loaded as `interrupted`; the app does not restart them automatically. Recovery requires previously captured resume data, a known total length and the checkpoint file. History alone does not make a transfer resumable.
+
+## Events
+
+### `onChanged(callback)`
+
+Subscribes to progress and state changes with `(download: DownloadRecord) => void`. Returns `() => void` to unsubscribe. To initialize a UI, read `list()` as well; the subscription does not replay history.
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `downloadChanged` | `DownloadRecord` | Progress or state changes; also delivered by `onChanged`. |
+| `downloadRequested` | `DownloadRequest` plus `handlerId: string` | A destination decision is needed. Use `onRequested` to answer it. |
+| `downloadStarted` | `DownloadRecord` | A destination is accepted and the transfer starts. |
+| `downloadProgress` | `DownloadRecord` | Received bytes increase. |
+| `downloadFinished` | `WebviewSource & { id: string; url: string; path?: string; bytes: number }` | The saved file passes completion checks. |
+| `downloadFailed` | `WebviewSource & { id: string; url: string; path?: string; error: string; canceled: boolean; canResume?: boolean }` | Failure, pause or cancellation. |
+
+`host.on('downloadChanged', callback)` and the other raw event subscriptions also return an unsubscribe function. Pausing and canceling emit `downloadFailed` with `canceled: true`; use the current `DownloadRecord` to distinguish their states.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `onRequested`, `get`, `list` | ✓ | — | — |
+| `pause`, `resume`, `cancel`, `onChanged` | ✓ | — | — |
+
+## Example
+
+```ts
+const stopChoosing = await host.downloads.onRequested(() => 'default');
+const stopChanges = host.downloads.onChanged((record) => {
+  console.log(record.id, record.state, record.fraction);
+});
+
+async function startExport() {
+  return await host.webview.download('/export.csv');
+}
+
+// Call from Pause and Resume controls, using the id returned by startExport.
+async function pauseExport(id: string) {
+  return await host.downloads.pause(id);
+}
+
+async function resumeExport(id: string) {
+  const record = await host.downloads.get(id);
+  if (record?.canResume) await host.downloads.resume(id);
+}
+
+// Call when the owner of these subscriptions is destroyed.
+async function disposeDownloads() {
+  stopChanges();
+  await stopChoosing();
+}
+```

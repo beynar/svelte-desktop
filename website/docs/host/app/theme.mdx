@@ -1,0 +1,82 @@
+---
+title: host.theme
+description: Read and change the application's native appearance.
+---
+
+`host.theme` follows native appearance changes and lets the app choose an appearance. For an individual window, use [`host.window.setTheme()`](/host/windows/window).
+
+How-to: [Dialogs, clipboard and services](/ui/platform-services#theme).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `current` | `ThemeInfo \| null` | Latest resolved appearance; initially `null`. |
+| `preference` | `AppearancePreference` | Last successfully applied preference; initially `'system'`. |
+| `dark` | `boolean` | `current.dark`, or `false` before initialization. |
+| `name` | `AppearanceName \| null` | Resolved appearance name. |
+| `ready` | `boolean` | Whether initialization completed; initially `false`. |
+| `error` | `Error \| null` | Initialization failure captured by store startup. |
+
+`ThemeInfo` is `{ appearance: AppearanceName; dark: boolean }`. `AppearanceName` is `'light' | 'dark' | 'vibrantLight' | 'vibrantDark'`. `AppearancePreference` also accepts `'system'`.
+
+## Methods
+
+### `get()`
+
+Read the native appearance without changing the store. Resolves `ThemeInfo`.
+
+```ts
+const appearance = await host.theme.get();
+```
+
+### `set(preference)`
+
+Apply a native appearance and update `preference` and `current` after success. Resolves `ThemeInfo`.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `preference` | `AppearancePreference` | Required; `'system'` removes the app override. |
+
+```ts
+await host.theme.set('system');
+```
+
+Rejects with `invalid_args` for an unknown appearance. On Linux and Windows, `vibrantLight` and `vibrantDark` resolve to their `light` and `dark` base appearances. On Linux, `'system'` restores the GTK theme and dark preference captured at startup.
+
+### `shouldUseDarkColors()`
+
+Read the native dark-color decision. Resolves `boolean`; does not update `current`.
+
+### `init()` and `dispose()`
+
+`init()` reads the current appearance, marks the store ready and subscribes to changes; resolves the namespace. Store startup normally does this. `dispose()` synchronously removes that internal subscription; it does not reset state or remove listeners you registered.
+
+## Events
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `appearanceChanged` | `ThemeInfo` | The effective native appearance changes. |
+
+`host.theme.onChange(fn)`, `host.theme.on('appearanceChanged', fn)` and `host.on('appearanceChanged', fn)` return unsubscribe functions. `host.theme.once('appearanceChanged', fn)` removes its listener after the first delivery and also returns an unsubscribe function. The store updates `current` from this event.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `get`, `shouldUseDarkColors` | ✓ | ✓ | ✓ |
+| `set` | ✓ | partial | partial |
+| `init`, `dispose`, `on`, `once`, `onChange` | ✓ | ✓ | ✓ |
+
+Linux and Windows accept vibrant appearance names but use the base light or dark appearance.
+
+## Example
+
+```svelte
+<div class:dark={host.theme.dark}>
+  <p>Appearance: {host.theme.name ?? 'loading'}</p>
+  <button onclick={() => host.theme.set('light')}>Light</button>
+  <button onclick={() => host.theme.set('dark')}>Dark</button>
+  <button onclick={() => host.theme.set('system')}>Follow system</button>
+</div>
+```

@@ -1,0 +1,197 @@
+---
+title: Go
+description: Typed Go commands, goroutines, progress events and native plugin builds.
+---
+
+A Go plugin runs inside the shell process, with a goroutine for each command call. Pick it for Go packages and concurrent I/O callable from both pages and SvelteKit server code. Use a [sidecar](/native/sidecars) when you need a separate process or an independently restartable Go runtime, or a [service](/native/services) for a supervised Bun child.
+
+## Setup
+
+```sh
+bunx svelte-desktop add go
+```
+
+This creates `native/go/go.mod` and `native/go/main.go`, with a `hello.go` command registered in `init()` and an empty `func main() {}`. The module requires `svelte-desktop.dev/go/desktop v0.0.0` and replaces it with the SDK directory in the installed shell package, or the shell checkout when running from source. The CLI refuses to overwrite an existing `native/go` directory.
+
+Loose `.go` files anywhere under `native/` are another option. They are combined into one generated module in `.desktop/native-projects/go/`, with symlinks to the original sources, a `go.mod` requiring the SDK, and `zz_main.go` with an empty `main()` unless a source already contains a line matching `func main()`. All loose files must belong to `package main`, even if they originally live in different folders. `_test.go` files are excluded from loose-file discovery. The generated directory is recreated for each build; do not store your own files there.
+
+For dependencies and multiple Go packages, use one directory with your own `go.mod`, `package main`, and `func main() {}`. Discovery stops at the module root. The configured native directory can itself be a module. `native: 'path'` changes that directory; `native: false` disables plugins. Platform-specific sources can live in `native/macos/`, `native/linux/` and `native/windows/`; see [platform selection](/native/plugins/platforms).
+
+Only one Go plugin is allowed: either one module or all the loose files. A module plus loose Go files, or two modules, fails discovery because the shell supports one Go runtime per process. Combine packages in one module instead.
+
+The SDK declares `go 1.22`. Install a Go toolchain supporting `-buildmode=c-shared` for your selected OS/architecture, plus a C compiler/linker usable by cgo for that target. macOS needs the Apple command-line toolchain. Go builds set `CGO_ENABLED=1`; a Go installation alone is not sufficient. The builder does not install or configure a cross C compiler.
+
+## Example: document checksums
+
+After `add go`, use this module and source. The SDK path assumes the module is in `native/go/`; keep the CLI's replacement path if your installation differs. Add your own Go dependencies to this module normally. This example uses the standard library and the desktop SDK.
+
+```go native/go/go.mod
+module app-native
+
+go 1.22
+
+require svelte-desktop.dev/go/desktop v0.0.0
+
+replace svelte-desktop.dev/go/desktop => ../../node_modules/@svelte-desktop/shell/native/sdk/go
+```
+
+```go native/go/main.go
+package main
+
+import (
+    "crypto/sha256"
+    "fmt"
+
+    "svelte-desktop.dev/go/desktop"
+)
+
+type HashArgs struct {
+    RequestID string `json:"requestId"`
+    Text      string `json:"text"`
+}
+
+type Checksum struct {
+    Hex   string `json:"hex"`
+    Bytes int    `json:"bytes"`
+}
+
+type Progress struct {
+    RequestID string `json:"requestId"`
+    Bytes     int    `json:"bytes"`
+}
+
+func init() {
+    desktop.Command("checksum.go", func(a HashArgs) (Checksum, error) {
+        if a.RequestID == "" {
+            return Checksum{}, desktop.InvalidArgs("requestId is empty")
+        }
+        hash := sha256.New()
+        data := []byte(a.Text)
+        for offset := 0; offset < len(data); {
+            end := offset + 64*1024
+            if end > len(data) {
+                end = len(data)
+            }
+            if _, err := hash.Write(data[offset:end]); err != nil {
+                return Checksum{}, err
+            }
+            offset = end
+            desktop.Emit("checksum.progress", Progress{a.RequestID, offset})
+        }
+        desktop.Log("Go checksum complete")
+        return Checksum{Hex: fmt.Sprintf("%x", hash.Sum(nil)), Bytes: len(data)}, nil
+    })
+    desktop.Command("checksum.ready", func(struct{}) (bool, error) {
+        return true, nil
+    })
+}
+
+func main() {}
+```
+
+After a native dev build generates `src/native.d.ts`, call it from a page or server code:
+
+```ts
+import { native } from '@svelte-desktop/shell/native';
+import { onPlatform } from '@svelte-desktop/shell/platform';
+
+const requestId = crypto.randomUUID();
+const off = onPlatform<{ requestId: string; bytes: number }>(
+  'checksum.progress',
+  (progress) => {
+    if (progress.requestId === requestId) console.log(progress.bytes);
+  }
+);
+try {
+  const ready: boolean = await native.checksum.ready();
+  const result = await native.checksum.go({ requestId, text: 'A saved document' });
+  console.log(ready, result.hex, result.bytes);
+} finally {
+  off();
+}
+```
+
+`host.native` and `host.on` provide the same calls and subscriptions without imports. Dispose subscriptions when a Svelte component is destroyed. For large files, pass a validated path and stream the input in Go instead of copying the whole file through JSON. If combining the Rust and Go examples, register `checksum.ready` in only one plugin: command names are shared across languages.
+
+## SDK API
+
+Import `svelte-desktop.dev/go/desktop`.
+
+| Public item | Contract |
+| --- | --- |
+| `Command[A any, R any](name string, f func(A) (R, error))` | Registers `service.op`; call during `init()`. Decodes JSON into `A`, marshals `R`, and describes both using reflection. Use `struct{}` for no arguments. |
+| `Error` | Struct with exported `Code string` and `Message string`. Return a pointer, such as `&desktop.Error{Code: "internal", Message: "failed"}`. |
+| `(*Error).Error() string` | Implements `error`, formatting `Code + ": " + Message`. |
+| `InvalidArgs(format string, a ...any)` | Returns `*Error` with code `invalid_args`. Uses `fmt.Sprintf`. |
+| `Unsupported(format string, a ...any)` | Same, with code `unsupported`. |
+| `Unavailable(format string, a ...any)` | Same, with code `unavailable`. |
+| `Denied(format string, a ...any)` | Same, with code `denied`. There is no `Internal` constructor; use an ordinary error or `&desktop.Error`. |
+| `Emit(event string, data any)` | Broadcasts JSON from any goroutine. Returns no value; a marshal error or an uninitialized host sends nothing. |
+| `Log(message string)` | Writes a line through the shell. Returns no value; before host initialization it does nothing. macOS uses `NSLog`; Linux and Windows write to stderr with the native plugin prefix. |
+
+The library exports `sd_plugin_init` and `sd_plugin_describe` for the shell and type extractor, and `sdGoDispatch` for its internal cgo trampoline. Application code does not call them. An incompatible or null host makes initialization return `-1`.
+
+Register commands in `init()`, not `main()`: this is a `c-shared` library, not a launched Go executable. A name without a dot panics at registration. The shell logs and skips names already registered by built-ins or another plugin, rather than replacing them. `init()` also runs when type extraction loads the library in a subprocess; keep initialization limited to registration and do external work in handlers.
+
+### Arguments, results and errors
+
+Go uses `encoding/json`, not a derive or `Codable` interface. Use exported struct fields and `json` tags for argument/result objects. Arguments arrive as a JSON object; omitted JavaScript arguments become `{}`. `struct{}` produces a no-argument TypeScript method. Results can be any JSON-marshalable value, though not all custom encodings can be described by the type generator.
+
+Unmarshal failures reject with `invalid_args`. Missing fields retain Go zero values and unknown fields are normally ignored; validate required values in the handler. A returned `*desktop.Error`, including one wrapped in an error chain recognized by `errors.As`, preserves its code and message. Other errors reject with `internal`. Result marshal failures also reject with `internal` and a `result:` message prefix.
+
+The standard plugin codes are `invalid_args`, `unsupported`, `unavailable`, `denied` and `internal`. JavaScript receives a rejected promise with a `NativeApiError` carrying `code` and `message`; see [errors](/host#errors). Page commands also pass through the configured `bridge.allow` permission check.
+
+The SDK recovers panics on the command goroutine and rejects with `internal`, including the command name in the message. It does not recover panics in goroutines you spawn separately or during package initialization, nor fatal runtime errors, memory faults or process exit. A plugin shares the shell's fate; use a sidecar for crash isolation.
+
+## Goroutines, long work and events
+
+The shell loads the plugin on its UI thread before entering the run loop. The SDK copies the call arguments and launches a new goroutine for the handler. It does not create a new OS thread per call, nor run the handler in the Bun server Worker. Goroutines are scheduled by the Go runtime; concurrent calls to one command can overlap. Protect shared state with Go synchronization.
+
+There is no separate async command API: a command returns `(R, error)` when its work finishes, and its JavaScript caller awaits a promise. Blocking I/O, sleeps and channel waits belong in the handler goroutine. Long work can emit progress before returning its final result. The SDK supplies no cancellation context, automatic call timeout or concurrency bound. If you spawn additional goroutines, coordinate their completion, failures and lifetime yourself.
+
+The Go SDK has no UI-thread callback, window accessor or method for calling other host operations. Replies and emitted events are marshaled by the shell onto the UI thread. Emit data to the page or server, then let its event listener call a `host` operation if UI work is needed. Pages and server code send requests back through another native command. See [threads](/native/threads).
+
+`Emit` broadcasts to every app-origin page and the server event bus. Subscribe with `onPlatform<T>(name, fn)` from `@svelte-desktop/shell/platform` or `host.on<T>(name, fn)`; both return unsubscribe functions. Use request IDs to distinguish concurrent calls. Object payloads arrive directly; scalar, array and null payloads arrive as `{ value: payload }`. Event names and payloads are not generated in `native.d.ts`; callers supply listener types. There is no delivery acknowledgment or backpressure. See [events](/host/data/events).
+
+## Generated TypeScript
+
+The build loads each plugin library in a separate Bun subprocess and calls `sd_plugin_describe`. A separate process avoids loading the Go runtime repeatedly into the build process. The SDK reflects the types supplied to `Command`; it does not parse `.go` source or invoke handlers.
+
+| Go type or field | Generated TypeScript |
+| --- | --- |
+| `bool`, `string` | `boolean`, `string` |
+| Signed/unsigned integers and floats | `number` |
+| `*T` | The generated type of `T`, with `\| null` |
+| Slices and arrays | Element arrays; byte-element collections are described as `string` |
+| Maps | `Record<string, ValueType>` |
+| `time.Time` | `string` |
+| Structs | Objects with exported fields; `json` names are honored and `json:"-"` is omitted |
+| `omitempty` or `omitzero` tags | Optional properties |
+| Anonymous untagged struct fields | Flattened fields |
+| Unsupported kinds, or nesting deeper than eight levels | `unknown` |
+
+The reflection mapper has limits. It does not inspect custom `MarshalJSON` methods (apart from special-casing `time.Time`) or the `json:",string"` option. Byte slices encode as base64 strings, but fixed byte arrays encode as JSON arrays even though the mapper describes them as strings. Nil slices/maps can encode as `null`, which their generated types do not include. Embedded pointer fields and complex field-name conflicts are not fully modeled. Choose simple JSON shapes and inspect generated declarations for unusual encodings. Keep integer values in JavaScript's exact range or expose strings.
+
+`src/native.d.ts` augments `NativeModules` in `@svelte-desktop/shell/native`, grouping commands by service and returning a `Promise` for each method. The file is written only when its contents change; keep it in version control and do not edit it manually.
+
+Dev startup/rebuilds and macOS packaging extract types. Linux and Windows packaging currently do not regenerate them. Libraries that cannot be loaded in the extraction subprocess, including incompatible architectures or a crash, are skipped. Described command names are not proof that runtime registration succeeded.
+
+## Dev and build
+
+`vite dev` builds the host architecture with `go build -buildmode=c-shared -trimpath`, writing the loadable library to `.desktop/dev/native/`. Dev omits release stripping flags, but it does not use `-gcflags` to disable Go optimization. Generated loose-file projects are recreated on each build; Go's normal build and module caches still apply. There is no separate svelte-desktop Go artifact cache.
+
+Changes to existing files under the native directory rebuild and restart the shell child and its window. This resets Go state; it is not hot reload of a Go runtime. The watcher ignores `target/`, `Cargo.lock` and `go.sum`; native restarts are handled for `change`, not source additions/removals. Restart dev after changing the file layout. Build failures are logged in Vite; dev can still launch without the failed language plugins.
+
+`vite build` adds `-ldflags=-s -w` to strip the Go library. For `native/go/` or loose Go sources, the builder selects these targets; the installed Go/cgo toolchain must support each requested combination:
+
+| Platform | Build environment | Packaged library, relative to the app bundle/directory |
+| --- | --- | --- |
+| macOS | `GOOS=darwin`, `GOARCH=arm64` / `amd64` | `Contents/Frameworks/plugins/libapp-go.dylib` |
+| Linux | `GOOS=linux`, `GOARCH=arm64` / `amd64` | `lib/plugins/libapp-go.so` |
+| Windows | `GOOS=windows`, `GOARCH=arm64` / `amd64` | `plugins/app-go.dll` |
+
+Go modules in other directories are named from their path under the native root. Intermediate slices are `<plugin-name>-<arch>.<extension>` in the chosen native output directory. Default packages live in `.desktop/dist/`: `<appName>.app` on macOS, `<appName>/` on Linux, and `<appName>-windows-<arch>/` on Windows. `build.outDir` changes the root.
+
+On macOS, `build.universal` builds both architectures and combines plugin slices with `lipo`. The build sets cgo compile/link minimum-version flags from `build.minimumSystemVersion`, default `12.0`. macOS packaging signs the plugin libraries with the app identity or ad hoc. Linux has no plugin signing step. Windows Authenticode currently omits the Rust/Go DLLs under `plugins/`, even if app signing is enabled.
+
+Rust/Go libraries build only on the requested OS. When packaging another OS, the builder skips them; Linux and Windows packaging warn about the omission. Setting `GOOS` and `GOARCH` inside this builder is not support for cross-OS plugin builds, and the shell's Docker toolchains do not build these plugins. Same-OS architecture changes still need a matching cgo C toolchain; the builder does not set `CC` or provide one. Keep one Go plugin per app on every platform. See [platforms](/native/plugins/platforms).

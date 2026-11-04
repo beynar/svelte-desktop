@@ -1,0 +1,130 @@
+---
+title: host.jobs
+description: Start background work in separate processes and observe progress, results and cancellation.
+---
+
+`host.jobs` runs finite tasks from `src/jobs/` in separate Bun processes. Server code starts work; pages watch a reactive mirror. For a child that keeps state and accepts commands, use [services](/native/services).
+
+How-to: [Background jobs](/native/jobs).
+
+## Reactive state
+
+In pages, `list()`, `active()`, `running()` and `get(id)` read reactive state. In server code they return snapshots.
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `ready` | `boolean` | Page only. The initial snapshot request was sent successfully; it does not guarantee the reply has arrived. |
+| `error` | `Error \| null` | Page only. Initialization failure. |
+
+### Job records
+
+Page methods return `JobView`; server methods return `JobInfo`. Both have these fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Unique job identifier. |
+| `name` | `string` | Job source name, without its extension. |
+| `state` | `JobState` | `'queued'`, `'running'`, `'done'`, `'failed'` or `'canceled'`. |
+| `progress` | `number` | Fraction from 0 to 1; successful completion sets it to 1. |
+| `message` | `string \| null` | Latest progress message. |
+| `args` | `unknown` | Arguments supplied to `start`. |
+| `result` | `unknown` (optional) | Successful return value; a nullish return becomes `null`. |
+| `error` | `string` (optional) | Failure or cancellation message. |
+| `createdAt` | `number` | Creation time, Unix milliseconds. |
+| `startedAt`, `endedAt` | `number` (optional) | Start and end times, Unix milliseconds. |
+| `log` | `string[]` | Recent log lines. |
+
+`JobInfo` also declares `pid?: number` and `restored?: boolean`. Restored history has `restored: true`; these extra fields may travel to pages, but are not declared on `JobView`. Server `get()` retains up to 200 log lines; list snapshots and page snapshots carry the last 20. Persisted history keeps the last 50 lines and at most 200 ended jobs. Packaged apps restore history from `host.paths.data/jobs.json`; the dev runtime does not bind a history file.
+
+## Methods
+
+### `start(name, args?, options?)`
+
+Server only. Returns `JobInfo` synchronously. Queues and attempts to launch the job before returning, so its returned state can already be `running` or `failed`.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | Required | `src/jobs/<name>.ts` or `.js`; letters, numbers, underscores and hyphens only. Bundled at build time in a packaged app. |
+| `args` | `unknown` | `null` | JSON-serializable job arguments. |
+| `options` | `StartOptions` | `{}` | Process options below. |
+
+| `StartOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `concurrency` | `number` | Unlimited | Maximum simultaneous jobs of this name when considering this queued job. Use a consistent positive limit for calls of the same name. |
+| `env` | `Record<string, string>` | `{}` | Additional environment values, merged over the parent's environment. |
+
+```ts
+const job = host.jobs.start('thumbnails', { files }, { concurrency: 2 });
+```
+
+Invalid names and missing job sources produce a failed job with an `error` message. Process-spawn failures can throw. These are not native operations with `NativeApiError` codes.
+
+### `wait(id)`
+
+Server only. Takes a `string` id and resolves `JobInfo` once it is `done`, `failed` or `canceled`. An already ended job resolves immediately. Unknown ids reject with an `Error`. A failed job resolves with `state: 'failed'`; it does not reject merely because the job failed.
+
+### `list()`, `active()`, `running()`
+
+Return `JobView[]` in pages and `JobInfo[]` in server code, synchronously. `list()` includes current jobs and retained history, in registry insertion order. `active()` filters queued and running jobs; `running()` filters running jobs only.
+
+### `get(id)`
+
+Takes a `string` id. Returns `JobView | undefined` in pages, or `JobInfo | null` in server code. Server results are copies, including a copied `log` array.
+
+### `cancel(id)`
+
+Takes a `string` id. In a page, returns `Promise<null>` for sending the cancellation request; observe state to learn the outcome. In server code, returns `boolean` synchronously: `false` for an unknown or ended job, `true` when cancellation was requested.
+
+A queued job becomes canceled immediately. A running job receives an abort signal and is killed after two seconds if still running. Cancellation is cooperative during that interval: a job that returns normally can still finish as `done`. App shutdown kills running job processes directly.
+
+### `on(state, fn)`
+
+Subscribes to transitions. `state` is `JobState | '*'`; `fn(job, state)` receives `JobView` in a page and `JobInfo` in server code. Returns an unsubscribe function. Existing history is not replayed.
+
+### `onEvent(fn)`
+
+Subscribes to custom `ctx.emit(data)` messages. The callback receives `{ id: string; data: unknown }`. Returns an unsubscribe function.
+
+### `init()`
+
+Page only. Binds snapshot and transition listeners, requests the current list, sets `ready`, and resolves the store itself. Called automatically by the runtime.
+
+## Job context
+
+The job's default export has type `JobFunction<A, R>`: `(args: A, ctx: JobContext) => R | Promise<R>`. The build also supplies the global `HostJob<A, R>` type.
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `id` | `readonly string` | Current job id. |
+| `signal` | `readonly AbortSignal` | Aborted by cancellation. App shutdown may kill the process without delivering an abort. |
+| `progress(fraction, message?)` | `(number, string?) => void` | Clamps progress to 0–1; omitted message becomes `null`. Ordinary page updates are coalesced over 50 ms. |
+| `log(...parts)` | `(...unknown[]) => void` | Adds a line; non-string parts use `Bun.inspect`. Stdout and stderr are also captured. |
+| `emit(data)` | `(unknown) => void` | Sends a custom event to `onEvent` listeners. |
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `start`, `wait` (server) | ✓ | ✓ | ✓ |
+| `list`, `active`, `running`, `get`, `cancel`, `on`, `onEvent` | ✓ | ✓ | ✓ |
+| `init` (page) | ✓ | ✓ | ✓ |
+
+Jobs use Bun processes and IPC. The page mirror uses the native [broadcast channel](/host/data/events).
+
+## Example
+
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
+
+  onMount(() => host.jobs.on('failed', (job) => console.error(job.error)));
+</script>
+
+{#each host.jobs.active() as job (job.id)}
+  <p>{job.name}: {job.message ?? job.state}</p>
+  <progress max="1" value={job.progress}></progress>
+  <button onclick={() => host.jobs.cancel(job.id)}>Cancel</button>
+{/each}
+```
+
+Start these jobs from an endpoint, remote function or server hook; see [Server code](/host/data/server).

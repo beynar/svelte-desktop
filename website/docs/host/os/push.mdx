@@ -1,0 +1,157 @@
+---
+title: host.push
+description: Register a remote-push target and receive messages through APNs or Web Push.
+---
+
+`host.push` registers the address your server sends remote notifications to. It selects APNs on macOS, a configured self-hosted Web Push service on desktop, or browser Web Push. Presentation and click handling belong to [`host.notifications`](/host/os/notifications).
+
+How-to: [Remote push](/features/notifications#remote-push).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `target` | `PushTarget \| null` | Current registered target. Updated by initialization, registration, unregistration and token events. |
+| `ready` | `boolean` | Initialization completed; initially `false`. |
+| `error` | `Error \| null` | Initialization failure captured by automatic store initialization. |
+
+`PushTarget` is one of these two shapes:
+
+| Provider | Fields | Description |
+| --- | --- | --- |
+| `'apns'` | `provider: 'apns'`, `token: string`, `topic: string`, `environment: 'development' \| 'production'` | Apple token, app bundle topic and APNs environment. |
+| `'webpush'` | `provider: 'webpush'`, `endpoint: string`, `keys: { p256dh: string; auth: string }`, `expirationTime?: number \| null` | Exported as `WebPushTarget`; encrypted Web Push subscription. Expiration is epoch milliseconds when supplied. |
+
+Send the entire target to your server, including any rotated replacement. A token alone is not enough to describe a Web Push target.
+
+## Configuration
+
+```ts desktop.config.ts
+push: { server: 'https://push.example.com' },
+```
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `push.server` | `string` | Omitted | Self-hosted Web Push server URL. Works on macOS, Linux and Windows; takes precedence over APNs. |
+| `push.apns` | `boolean \| { environment?: 'development' \| 'production' }` | Disabled | Enable the macOS APNs entitlement. `true` chooses production for signed release builds and development otherwise. |
+| `push.apns.environment` | `'development' \| 'production'` | Build-selected environment | Explicit APNs environment. |
+
+APNs also needs a provisioning profile enabling Push Notifications, supplied through `sign.provisioningProfile`. Use a packaged macOS app; `vite dev` does not supply the required bundle and signing setup. See [distribution](/shipping/distribution).
+
+The self-hosted client runs in the app's server process and reconnects on startup when previously registered. It maintains a connection while the process runs, including with no windows when `quitOnLastWindowClosed: false`. It does not deliver into a process that has quit; queued messages can arrive after reconnection.
+
+## Methods
+
+### `register(options?)`
+
+Register for remote delivery and update reactive `target`.
+
+```ts
+const target = await host.push.register();
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `vapidPublicKey` | `string` | Omitted | Base64url VAPID public key for browser Web Push. Required when creating a browser subscription, not when reusing one. Ignored by desktop providers. |
+
+Resolves `PushTarget`. APNs and browser registration request notification permission. APNs can still return a token when alert permission is denied, allowing silent pushes. Self-hosted desktop registration establishes its subscription without a notification permission prompt; request notification permission separately if presenting alerts.
+
+macOS APNs rejects with `unavailable` if the app lacks a bundle or APNs entitlement, or registration fails. Without `push.server`, Linux and Windows reject with `unsupported`. Self-hosted page calls reject with `unavailable` if the app server fails to answer within 30 seconds or reports a registration error.
+
+In a browser, a missing Push API, service worker or secure context rejects with `unavailable`; notification refusal rejects with `denied`; a missing VAPID key for a new subscription rejects with `invalid_args`. Browser subscription errors can also reject with the browser's own error.
+
+### `unregister()`
+
+Stop remote delivery through this registration and clear reactive `target` after success.
+
+```ts
+await host.push.unregister();
+```
+
+Resolves `null`. The self-hosted client removes its saved subscription after its server confirms deletion or reports it absent. An unsuccessful unregistration rejects; it does not clear `target` as if it had succeeded. Native Linux and Windows calls require `push.server`.
+
+### `token()`
+
+Read the current target without registering. Resolves `PushTarget | null`.
+
+```ts
+const target = await host.push.token();
+```
+
+This service query does not itself update reactive `target`. Without `push.server`, Linux and Windows reject with `unsupported`; initialization catches that and keeps `target` as `null`. In a browser, returns the current service-worker subscription or `null`.
+
+### `init()`
+
+Subscribe to target rotations, load the current target and set `ready`. Resolves the namespace. Runs automatically when the platform binds. A failed initial `token()` query becomes `target: null`.
+
+### `on(event, callback)`
+
+Subscribe to a token or message event. Returns an unsubscribe function synchronously.
+
+```ts
+const off = host.push.on('token', (target) => {
+  console.log(target.provider);
+});
+// Later: off();
+```
+
+## Events
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `token` | `PushTarget` | A new or rotated target is reported. Send it to your server again. Not retained for late listeners. |
+| `message` | `PushMessage` | A remote push reaches the running context. Messages without a listener wait in a bounded queue for the first listener. |
+
+`PushMessage<D>` fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` (optional) | Message identifier. |
+| `raw` | `Record<string, unknown>` | Original provider data: APNs custom keys, or the self-hosted/Web Push message data. |
+| `data` | `D` (optional) | App JSON data decoded from the notification payload. |
+| `url` | `string` (optional) | Click destination from the payload. |
+| `notification` | `{ title: string; body: string }` (optional) | Visible notification content, when supplied. |
+| `foreground` | `boolean` | Foreground state reported with the message. |
+
+Use `host.notifications.on('click', callback)` for taps, including taps that launch the app. `message` is not a substitute for notification click handling. A `register()` return value should be saved immediately; do not rely only on a later `token` event.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `register`, `unregister`, `token` | ✓ | partial | partial |
+| `init`, `on` | ✓ | ✓ | ✓ |
+
+Linux and Windows require `push.server`; their native push operations are unsupported. macOS supports APNs or `push.server`. Browser pages use Web Push with a service worker on HTTPS or localhost.
+
+## Example
+
+Register and save the target to an application endpoint, then handle rotations:
+
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
+
+  async function saveTarget(target: NonNullable<typeof host.push.target>) {
+    const response = await fetch('/api/push-target', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(target),
+    });
+    if (!response.ok) throw new Error('Could not save push target');
+  }
+
+  onMount(() => host.push.on('token', (target) => {
+    void saveTarget(target).catch(console.error);
+  }));
+
+  async function enablePush() {
+    await saveTarget(await host.push.register());
+  }
+</script>
+
+<button onclick={enablePush}>Enable remote notifications</button>
+<p>{host.push.target ? 'Registered' : 'Not registered'}</p>
+```
+
+This desktop example needs the configuration above. A browser registration additionally passes `{ vapidPublicKey }`. The [sending guide](/features/notifications#sending-from-bun) covers `createPush()` and VAPID key generation.

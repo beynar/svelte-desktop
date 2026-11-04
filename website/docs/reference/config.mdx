@@ -9,51 +9,108 @@ import { defineConfig } from '@svelte-desktop/shell/config';
 export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' });
 ```
 
+`defineConfig` takes `DesktopConfig`: `appName` and `identifier` are required by that type. The loader also accepts a partial config and applies the fallbacks below. Optional fields have no configured value unless a default is shown. Nested defaults, such as permission reasons and foreground notification banners, still apply when their parent object is omitted.
+
 ## Top level
 
 <TypeTable
   type={{
-    appName: { type: "string", required: true, description: "Display name. Falls back to productName or name in package.json." },
-    identifier: { type: "string", required: true, description: "Reverse-DNS bundle id (com.example.app). Names the bundle and the data directories." },
-    version: { type: "string", default: "package.json version" },
+    appName: { type: "string", required: true, default: "package.json productName, else name", description: "Display name. The loader errors if no name is available." },
+    identifier: { type: "string", required: true, default: "dev.svelte-desktop.<normalized appName>", description: "Reverse-DNS bundle id (`com.example.app`). The loader lowercases appName and removes non-alphanumeric characters for the fallback. Names the bundle and the data directories." },
+    version: { type: "string", default: "package.json version, else 0.0.0" },
     icon: { type: "string | { source: string; background?: string }", default: "icon.png, icon.svg, then static/icon.png", description: "One square image for every target. See App icon." },
     copyright: { type: "string" },
-    window: { type: "WindowOptions | false", description: "The main window; false: no main window at start (menu-bar apps). See Windows." },
-    quitOnLastWindowClosed: { type: "boolean", default: "true", description: "false: closing the last window hides it and the app keeps running (jobs, push connection, page state). A Dock click, a notification click or a second launch shows it." },
-    trayOnly: { type: "boolean", description: "LSUIElement: no Dock icon, no app menu." },
-    singleInstance: { type: "boolean", default: "true", description: "A second launch hands its documents and links to the running app (openFiles / openUrls, secondInstance). Linux and Windows; macOS does it natively." },
+    window: { type: "WindowOptions | false", default: "{}", description: "The main window; `false` creates a hidden shell window for menu-bar apps. See Windows." },
+    quitOnLastWindowClosed: { type: "boolean", default: "true", description: "Built app: `false` hides the last window and keeps the app running (jobs, push connection, page state). A Dock click, a notification click or a second launch shows it. The dev shell always uses `true`." },
+    trayOnly: { type: "boolean", default: "false", description: "macOS `LSUIElement`: no Dock icon, no app menu." },
+    singleInstance: { type: "boolean", default: "true (built app)", description: "A second launch hands its documents and links to the running app (`openFiles` / `openUrls`, `secondInstance`). Linux and Windows; macOS does it natively. Not forwarded to the dev shell, which defaults to `false`." },
+    command: { type: "string", description: "A command for the user's terminal, like VS Code's `code`: `notes file.md` opens the file in the app. `host.command.install()` puts it on their PATH (macOS, Linux). See [Terminal command](/features/terminal#the-apps-command)." },
+    network: { type: "{ systemCertificates?: boolean; systemProxy?: boolean }", default: "both true", description: "Server code's network like the system's: its certificates and its proxy settings. See [Company networks](/features/network)." },
+    language: { type: "string", default: '"en"', description: "The language of the texts in this config (appName, permission reasons)." },
+    locales: { type: "Record<string, { name?: string; permissions?: Record<string, string> }>", description: "The app's other languages: its name, permission prompts and the shell's standard menus in the user's language (macOS). See [Languages](/shipping/languages)." },
     schemes: { type: "string[]", description: "Deep-link URL schemes, delivered as openUrls events." },
+    protocols: { type: "string[]", description: "macOS resource schemes handled by `host.protocol` in the Bun Worker. Registered before web views are created; invalid and WebKit-reserved schemes are rejected. Distinct from deep-link `schemes`." },
     fileTypes: { type: "FileTypeConfig[]", description: "Document types the app opens, delivered as openFiles events." },
-    permissions: { type: "Partial<Record<PermissionName, string>>", description: "OS permissions with the reason shown to the user. See Permissions." },
+    permissions: { type: "PermissionsConfig", description: "OS permissions with the reason shown to the user; see the permissions table below." },
+    usageDescriptions: { type: "Record<string, string>", description: "Deprecated alias for permission usage strings. Explicit `permissions` strings take precedence." },
     notifications: { type: "NotificationsConfig", description: "Foreground banners." },
     push: { type: "PushConfig", description: "APNs or your own push server." },
-    native: { type: "string | false", default: '"native" if the folder exists', description: "Native plugin sources (Swift, Objective-C, C)." },
-    addons: { type: "Record<string, string>", description: "Prebuilt Node-API addons (.node) to ship; native/addons/*.c are compiled automatically." },
-    sidecars: { type: "Record<string, string | Partial<Record<'macos' | 'linux' | 'windows', string>>>", description: "Executables shipped with the app, started with host.sidecar(name)." },
-    "bridge.allow": { type: "string[]", default: "every op", description: "Ops pages may call ('service.op' or 'service.*'), enforced natively. Server code is never restricted." },
+    native: { type: "string | false", default: '"native" if the folder exists', description: "Native sources directory, relative to the project. Swift, Objective-C, C, C++, Rust crates and Go modules; see Native code. `false` disables discovery." },
+    addons: { type: "Record<string, string>", description: "Prebuilt Node-API addons (`.node`) to ship; sources in `native/addons/` compile automatically. See Native code for platform support." },
+    sidecars: { type: "Record<string, string | Partial<Record<'macos' | 'linux' | 'windows', string>>>", description: "Executables shipped with the app, started from server code with `host.sidecar(name)` (or `sidecar(name)` imported from `@svelte-desktop/shell/server`). Paths are relative to the project; an omitted platform ships no executable for that entry." },
+    bridge: { type: "{ allow?: string[] }", description: "Page-to-native bridge policy; see below." },
     plist: { type: "Record<string, unknown>", description: "Extra Info.plist keys." },
-    update: { type: "UpdateConfig", description: "Signed self-update feed. See Self-update." },
+    update: { type: "UpdateConfig & { privateKey?: string; baseUrl?: string }", description: "Signed self-update feed. See Self-update." },
     build: { type: "BuildConfig", description: "Target, architectures and packaging." },
     sign: { type: "SignConfig", description: "Code signing for every target. See Distribution." },
   }}
 />
 
-`usageDescriptions` (same shape as `permissions`) and `permissions.pages` (now `bridge.allow`) are still accepted but deprecated.
+There are no `jobs` or `services` config keys. These are discovered from `src/jobs/` and `src/services/`; see [jobs](/native/jobs) and [services](/native/services). See [Native code](/native) for plugins, addons and sidecars.
+
+### icon
+
+The object form accepts `source: string` (required, relative to the project) and `background?: string` (hex color). `background` defaults to the artwork's corner color for opaque-cornered images, otherwise white. It controls the background of the macOS 26 icon. See [App icon](/shipping/app-icon).
+
+## permissions
+
+`PermissionsConfig` is `Partial<Record<PermissionName, string | false>>` with a string index signature accepting `string | string[] | false | undefined`, plus the deprecated `pages` field.
+
+<TypeTable
+  type={{
+    "[permission]": { type: "string | false", description: "A usage reason. `PermissionName` is listed below. `camera`, `microphone`, `location` and `speech` get app-specific default reasons; `false` suppresses that default." },
+    "[usageKey]": { type: "string | string[] | false | undefined", description: "Raw `NS…UsageDescription` string values pass through to Info.plist. The index signature also accommodates the legacy `pages` array." },
+    pages: { type: "string[]", description: "Deprecated: use `bridge.allow`. Used only when `bridge.allow` is absent." },
+  }}
+/>
+
+`PermissionName` is `camera`, `microphone`, `location`, `contacts`, `calendars`, `reminders`, `photos`, `bluetooth`, `speech`, `appleEvents`, `notifications`, `screenRecording`, `accessibility`, `inputMonitoring`, `fullDiskAccess`, `desktopFolder`, `documentsFolder` or `downloadsFolder`. See [Permissions](/features/permissions).
+
+## bridge
+
+<TypeTable
+  type={{
+    allow: { type: "string[]", default: "every op (or legacy permissions.pages)", description: "Ops pages may call (`service.op`, `service.*` or `*`), enforced natively. An empty array allows none. Server code is never restricted." },
+  }}
+/>
 
 ## window
 
 <TypeTable
   type={{
-    "width, height": { type: "number" },
-    "minWidth, minHeight": { type: "number" },
+    width: { type: "number", default: "1024" },
+    height: { type: "number", default: "720" },
+    minWidth: { type: "number", description: "No configured minimum." },
+    minHeight: { type: "number", description: "No configured minimum." },
     title: { type: "string", default: "appName" },
     autosaveName: { type: "string", description: "Persist and restore the frame under this name." },
-    titleBarStyle: { type: '"default" | "transparent" | "hidden" | "hiddenInset"', default: '"default"' },
+    titleBarStyle: { type: '"default" | "transparent" | "hidden" | "hiddenInset"', default: '"default"', description: "macOS title bar style; hidden styles use a frameless window on Linux and Windows." },
+    vibrancy: { type: "VibrancyMaterial", description: "macOS material behind transparent parts of the page; none by default. Values listed below." },
+    vibrancyState: { type: '"followsWindow" | "active" | "inactive"', default: '"followsWindow"', description: "macOS vibrancy state." },
+    trafficLightPosition: { type: "{ x: number; y: number }", description: "macOS close button position in points from the top left for `hidden` / `hiddenInset`; system position by default." },
+    aspectRatio: { type: "number", description: "macOS width / height kept while resizing; unconstrained by default." },
+    backgroundThrottling: { type: "boolean", default: "true", description: "macOS: `false` keeps the page running at full speed when hidden or covered." },
     visible: { type: "boolean", default: "true" },
     hiddenUntilReady: { type: "boolean", default: "true", description: "Invisible until DOMContentLoaded (no white flash)." },
-    animate: { type: "boolean | WindowAnimation", description: "Come in animated when it shows (macOS): duration, easing, offset, scale, opacity. See Windows › Animation." },
-    readyTimeoutMs: { type: "number", default: "3000" },
-    debug: { type: "boolean", description: "Web Inspector in the built app." },
+    animate: { type: "boolean | WindowAnimation", default: "false", description: "Come in animated when it shows (macOS). `true` uses the animation defaults below. Elsewhere it shows at once." },
+    readyTimeoutMs: { type: "number", default: "3000 (8000 in dev)", description: "Reveal the window after this timeout if the page is not ready." },
+    debug: { type: "boolean", default: "false (true in dev)", description: "Enable the Web Inspector." },
+  }}
+/>
+
+`VibrancyMaterial` is `sidebar`, `titlebar`, `header`, `content`, `window`, `underWindow`, `underPage`, `menu`, `popover`, `sheet`, `hud`, `tooltip`, `fullscreenUI` or `selection`.
+
+### window.animate
+
+Every field of `WindowAnimation` is optional. These defaults apply when animation is enabled.
+
+<TypeTable
+  type={{
+    duration: { type: "number", default: "180", description: "Milliseconds; `0` disables animation." },
+    easing: { type: "'easeOut' | 'easeIn' | 'easeInOut' | 'linear' | [number, number, number, number]", default: '"easeOut"', description: "A preset or cubic-bezier control points." },
+    offset: { type: "{ x?: number; y?: number }", default: "{ x: 0, y: -10 }", description: "Starting offset in points, with y down. When an offset object is supplied, omitted coordinates are `0`." },
+    scale: { type: "number", default: "1", description: "Starting size around the window's center." },
+    opacity: { type: "number", default: "0", description: "Starting opacity." },
   }}
 />
 
@@ -82,10 +139,12 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
 
 <TypeTable
   type={{
-    apns: { type: "boolean | { environment?: 'development' | 'production' }", description: "macOS. Adds the aps-environment entitlement; needs a provisioning profile with Push Notifications. true: production for signed release builds, development otherwise." },
+    apns: { type: "boolean | { environment?: 'development' | 'production' }", description: "macOS. Adds the `com.apple.developer.aps-environment` entitlement when `sign.provisioningProfile` grants Push Notifications. `true` uses the profile's environment; an object can override it. Without a suitable profile, the build warns and omits the entitlement." },
     server: { type: "string", description: "Your own Web Push compatible push server for macOS, Windows and Linux. Takes precedence over APNs on macOS." },
   }}
 />
+
+`push.apns.environment` has type `'development' | 'production'` and defaults to the environment granted by the provisioning profile. When `push.apns` is absent or `false`, the build adds no APNs entitlement.
 
 ## update
 
@@ -94,7 +153,7 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
     manifestUrl: { type: "string", required: true, description: "update.json URL; may contain {channel}." },
     publicKey: { type: "string | string[]", required: true, description: "ed25519 public key(s), base64." },
     channel: { type: "string", default: '"stable"' },
-    privateKey: { type: "string", default: "$SVELTE_DESKTOP_UPDATE_KEY", description: "Key file vite build signs release/update.json with." },
+    privateKey: { type: "string", default: "$SVELTE_DESKTOP_UPDATE_KEY", description: "Key file `vite build` signs `release/update.json` with. Without a key, the build writes `release/update.unsigned.json`." },
     baseUrl: { type: "string", description: "Public base URL where release/ is uploaded." },
   }}
 />
@@ -104,13 +163,13 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
 <TypeTable
   type={{
     target: { type: '"macos" | "linux" | "windows"', default: "the host, or $SVELTE_DESKTOP_TARGET" },
-    targetArch: { type: '"x64" | "arm64"', default: "x64", description: "Linux and Windows." },
-    universal: { type: "boolean", description: "macOS: also build the x64 slice and lipo a universal app." },
-    aot: { type: "boolean", description: "Bun --aot: machine code at build time, a few MB smaller (needs a Bun that has it: canary today)." },
-    trim: { type: "boolean", description: "Bun --trim: drop the Bun APIs the app never calls (~45 MB). Default: on when the Bun compiling has it (canary today)." },
+    targetArch: { type: '"x64" | "arm64"', default: "host architecture on Linux; x64 otherwise; $SVELTE_DESKTOP_TARGET_ARCH overrides", description: "Linux and Windows targets. Windows defaults to `x64`." },
+    universal: { type: "boolean", default: "false", description: "macOS: build both arm64 and x64 slices and lipo a universal app." },
+    aot: { type: "boolean", default: "false", description: "Bun `--aot`: machine code at build time. Enabled only when the compiler supports it and the build can use host AOT; ignored for Windows and cross-architecture builds." },
+    trim: { type: "boolean", default: "on when the compiling Bun supports --trim", description: "Drop unused Bun APIs, with `--trim-locales=en`. Falls back to an untrimmed build if the target runtime cannot be trimmed." },
     bun: { type: "string", default: "$SVELTE_DESKTOP_BUN or the running Bun", description: "Bun binary used to compile." },
     dmg: { type: "boolean", default: "true", description: "macOS DMG." },
-    zip: { type: "boolean", default: "true", description: "macOS zip." },
+    zip: { type: "boolean", default: "true", description: "macOS and Windows zip." },
     outDir: { type: "string", default: '".desktop/dist"' },
     minimumSystemVersion: { type: "string", default: '"12.0"', description: "Minimum macOS." },
   }}
@@ -125,6 +184,16 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
     hardenedRuntime: { type: "boolean", default: "true unless ad-hoc" },
     entitlements: { type: "Record<string, boolean | string | string[]>", description: "Merged into the defaults Bun needs (JIT)." },
     provisioningProfile: { type: "string", description: "macOS .provisionprofile embedded in the bundle." },
-    windows: { type: "{ certificateFile?, password?, timestampUrl? }", default: "$WINDOWS_CERT_PFX, $WINDOWS_CERT_PASSWORD", description: "Authenticode (osslsigncode). timestampUrl defaults to http://timestamp.digicert.com." },
+    windows: { type: "{ certificateFile?: string; password?: string; timestampUrl?: string }", description: "Authenticode (`osslsigncode`); enabled when a certificate file is configured, including through the environment." },
+  }}
+/>
+
+### sign.windows
+
+<TypeTable
+  type={{
+    certificateFile: { type: "string", default: "$WINDOWS_CERT_PFX", description: "PKCS#12 certificate path, relative to the project." },
+    password: { type: "string", default: '$WINDOWS_CERT_PASSWORD, else ""' },
+    timestampUrl: { type: "string", default: '"http://timestamp.digicert.com"' },
   }}
 />

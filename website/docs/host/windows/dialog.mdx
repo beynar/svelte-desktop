@@ -1,0 +1,161 @@
+---
+title: host.dialog
+description: Show native file pickers, message boxes, and app routes as modal dialogs.
+---
+
+`host.dialog` opens native dialogs and resolves when the user answers. On macOS, file pickers and alerts attach to the calling window when it is visible, or run without a parent otherwise. Route dialogs load a page of your app and return the value that page supplies.
+
+How-to: [Dialogs, clipboard and services](/ui/platform-services#dialogs).
+
+## Methods
+
+### `showOpenDialog(options?)`
+
+Choose files or directories. Resolves `{ canceled: boolean; paths: string[]; bookmarks?: string[] }`. Cancellation returns an empty `paths` array.
+
+```ts
+const { canceled, paths } = await host.dialog.showOpenDialog({
+  multiple: true,
+  filters: [{ name: 'Notes', extensions: ['md', 'txt'] }],
+});
+```
+
+All fields in `OpenDialogOptions` are optional:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `files` | `boolean` | `true` | Allow choosing files. |
+| `directories` | `boolean` | `false` | Allow choosing directories. macOS supports mixing files and directories. Linux selects folders only when `directories: true, files: false`; Windows selects folders whenever `directories: true`. |
+| `multiple` | `boolean` | `false` | Allow multiple selections. |
+| `prompt` | `string` | System default | Label of the confirmation button. |
+| `filters` | `DialogFilter[]` | No filter | Allowed file extensions. |
+| `securityScoped` | `boolean` | `false` | macOS: include base64 file bookmarks aligned with `paths`. Ignored on Linux and Windows. |
+
+`DialogFilter` is `{ name: string; extensions: string[] }`. Use extensions such as `'md'`, without a leading dot; `'*'` allows all files. macOS combines the extensions into its allowed content types; it does not display separate named filter choices.
+
+With `securityScoped: true`, macOS returns one bookmark per selected path, or an empty `bookmarks` array on cancellation. Bookmark creation failure rejects `unavailable`, rather than returning incomplete grants. Persist bookmarks for later access with [`host.files.openBookmark()`](/host/os/files). Keep its access handle open through the operation using the file and await `release()` afterwards. Bookmarks do not bypass App Sandbox entitlements.
+
+Linux rejects `unavailable` if another file picker is already open.
+
+### `showSaveDialog(options?)`
+
+Choose a destination. Resolves `{ canceled: boolean; path: string | null }`; cancellation returns `path: null`. This picks a path; write the file separately.
+
+All fields in `SaveDialogOptions` are optional:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `defaultPath` | `string` | System default | Initial directory, or full path providing a directory and filename. macOS and Linux expand `~/`. |
+| `suggestedName` | `string` | System default | Suggested filename; overrides the name from `defaultPath`. |
+| `filters` | `DialogFilter[]` | No filter | Extension filters, as above. |
+
+```ts
+const { canceled, path } = await host.dialog.showSaveDialog({
+  suggestedName: 'notes.md',
+  filters: [{ name: 'Markdown', extensions: ['md'] }],
+});
+```
+
+Linux rejects `unavailable` if another file picker is already open.
+
+### `showMessageBox(options)`
+
+Show an alert and resolve `{ response: number; canceled: boolean }`. `response` is the zero-based button index; `canceled` means it equals `cancelId`. A string argument is shorthand for `{ message: string }`.
+
+All fields in `MessageBoxOptions` are optional:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `type` | `'info' \| 'warning' \| 'critical'` | `'info'` | Native alert style. |
+| `title` | `string` | Platform default | Dialog title on Linux/Windows; fallback message when `message` is omitted on macOS. |
+| `message` | `string` | `title`, else empty | Main message. |
+| `detail` | `string` | Empty | Additional explanation. |
+| `buttons` | `string[]` | `['OK']` | Button labels in response-index order. |
+| `cancelId` | `number` | Last index for multiple buttons; otherwise `-1` | Cancel button index. macOS assigns Escape to this button when valid. |
+
+```ts
+const { response, canceled } = await host.dialog.showMessageBox({
+  type: 'warning', message: 'Discard unsaved changes?',
+  buttons: ['Discard', 'Keep editing'], cancelId: 1,
+});
+```
+
+Windows uses `TaskDialogIndirect` when available. Its `MessageBox` fallback uses standard button labels and supports at most three choices.
+
+### `sheet<T = unknown>(route, options?)`
+
+macOS only. Open an app route as a dialog on the current window. Resolves the value from that page's `host.dialog.close(result)` as `T`, or `undefined` on cancellation. A `null` result also becomes `undefined`.
+
+`route` is a `string` app route. Pass input data in its query string.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `width` | `number` | `440` | Initial page width in points. |
+| `height` | `number` | `280` | Initial page height in points. |
+| `style` | `'sheet' \| 'attached' \| 'window'` | `'sheet'` | Native sheet, a card sliding from the title bar, or a separate titled dialog. |
+| `top` | `number` | Under the title bar | For `'attached'`, offset from the parent's content top. |
+| `title` | `string` | Page title | Title for `'window'` style. |
+
+The page loads out of sight and presents after loading, with a 1.5-second presentation fallback. The parent cannot be clicked meanwhile. Escape or Command-period cancels; the close button also cancels `'window'` style. The native `'sheet'` appearance follows macOS (centered over a dimmed parent on macOS 26).
+
+Rejects `invalid_args` for a missing route/app origin or an invalid route URL.
+
+```ts
+const board = await host.dialog.sheet<{ name: string }>('/sheets/new-board', {
+  width: 420, height: 230, style: 'attached',
+});
+```
+
+### `close(result?)`
+
+Page-only: call from the route dialog's page. macOS only.
+
+Close that dialog and resolve its opener's `sheet()` call. `result` has type `unknown`, defaults to `null`, and must cross the JSON bridge. Resolves `null`. Calling it outside a route dialog page rejects `invalid_args`.
+
+```ts
+await host.dialog.close({ name: 'Project notes' });
+```
+
+For a regular modal child created with [`host.windows.create()`](/host/windows/window#parents-and-modal-children), use `host.windows.close(windowId)` instead; it has no route-dialog result contract. For a popover, use [`host.closePopover()`](/host/windows/popover#closepopover).
+
+## Short server form
+
+Server code can use `desktop.dialog.open(options)`, `desktop.dialog.save(options)`, and `desktop.dialog.message(options)`. These resolve paths or `null`, one path or `null`, and a button index respectively. Their option names differ from `host.dialog` (for example, `extensions` and `defaultName`). See [Server code](/host/data/server) for the exact server API.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `showOpenDialog` | ✓ | partial | partial |
+| `showSaveDialog` | ✓ | ✓ | ✓ |
+| `showMessageBox` | ✓ | ✓ | partial |
+| `sheet`, `close` | ✓ | — | — |
+
+Partial: Linux and Windows cannot select mixed files and directories or return security-scoped bookmarks. Windows' fallback message box has standard labels and at most three choices. These methods have no event subscriptions; their promises carry the response.
+
+## Example
+
+A route dialog can collect structured input and return it to its opener:
+
+```svelte src/routes/sheets/new-board/+page.svelte
+<script lang="ts">
+  let name = $state('');
+  let error = $state('');
+
+  async function submit(event: SubmitEvent) {
+    event.preventDefault();
+    try {
+      await host.dialog.close({ name: name.trim() });
+    } catch (cause) {
+      error = String(cause);
+    }
+  }
+</script>
+
+<form onsubmit={submit}>
+  <label>Board name <input bind:value={name} required /></label>
+  <button disabled={!name.trim()}>Create</button>
+  <button type="button" onclick={() => host.dialog.close()}>Cancel</button>
+  <p>{error}</p>
+</form>
+```

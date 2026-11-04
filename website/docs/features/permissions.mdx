@@ -3,6 +3,10 @@ title: Permissions
 description: Declare the OS permissions the app uses with the reason shown to the user, then check, request and guide them at run time.
 ---
 
+:::note
+API reference: [`host.permissions`](/host/os/permissions).
+:::
+
 Declare what the app uses, with the reason the user will read:
 
 ```ts desktop.config.ts
@@ -14,6 +18,31 @@ permissions: {
 ```
 
 The build turns it into Info.plist usage strings and hardened-runtime entitlements on macOS.
+
+What a page can ask for has a reason by default, so the web APIs work without a line of config: `camera` (“Notes uses the camera when you take a photo or a video.”, with your app’s name), `microphone`, `location` and `speech`. Set your own, or turn one off with `false`:
+
+```ts desktop.config.ts
+permissions: {
+  microphone: 'Record voice notes in your forms.',
+  location: false, // no location: navigator.geolocation is denied
+},
+```
+
+## Web APIs
+
+On macOS, the shell connects these page APIs to OS consent:
+
+Page code written for the browser asks the system the same way, the first time it's used:
+
+| API | Permission | |
+| --- | --- | --- |
+| `getUserMedia({ audio, video })` | `microphone`, `camera` | The system prompt |
+| `navigator.geolocation` | `location` | The system prompt |
+| `SpeechRecognition` | `speech`, `microphone` | The system prompts; both reasons are required, and the shell denies the request if either is missing |
+| `getDisplayMedia()` | `screenRecording` | If access is missing, the shell requests it and denies this attempt; grant it in System Settings, then retry |
+| `Notification.requestPermission()`, `new Notification()` | `notifications` | The system prompt; `new Notification` shows a native notification, with `click` and `close` events |
+
+The app's own origin keeps this behavior. Other origins, including third-party frames and embedded views, are denied unless server-owned policy allows them. The per-origin policy below is macOS only; it does not control WebKitGTK or WebView2.
 
 ```svelte
 <p>Camera: {host.permissions.camera}</p>   <!-- 'granted' | 'denied' | 'notDetermined' | 'unknown', reactive -->
@@ -28,14 +57,14 @@ The build turns it into Info.plist usage strings and hardened-runtime entitlemen
 Raw `NS…UsageDescription` keys in `permissions` pass through to Info.plist as they are.
 
 :::warning
-Some permissions must be declared before they're requested: `camera`, `microphone`, `location`, `contacts`, `calendars`, `reminders`, `photos`, `bluetooth`, `speech`, `appleEvents` and the three folder permissions. The OS kills an app that asks without a reason, so requesting an undeclared one rejects with `undeclared` and the message says what to add.
+Some permissions must be declared before they're requested: `contacts`, `calendars`, `reminders`, `photos`, `bluetooth`, `appleEvents` and the three folder permissions — and `camera`, `microphone`, `location`, `speech` if you turned their default off. The OS kills an app that asks without a reason, so requesting an undeclared one rejects with `undeclared` and the message says what to add.
 :::
 
 ## Requesting
 
-`request(name)` shows the system prompt when there is one and resolves with the resulting status.
+`request(name)` shows the system prompt when there is one and resolves with the resulting status. On macOS, `status` supports `camera`, `microphone`, `notifications` and the four Settings-only permissions below. Other declared names reject with `invalid_args` (see [the reference](/host/os/permissions)); declaring a usage string does not add a runtime check for that permission. Page APIs such as geolocation use their own WebKit consent flow.
 
-Screen Recording, Accessibility, Input Monitoring and Full Disk Access have no prompt on macOS: only System Settings can grant them. For those, `request()` runs a **guided flow** (also `host.permissions.guide(name)`): the right Settings pane opens and a small panel floats next to it with the app's icon to drag into the list, the reason from the config and a live status. It closes by itself once granted, with a Relaunch button where macOS applies the grant at the next launch. Pass `{ guide: false }` to skip it.
+Screen Recording, Accessibility, Input Monitoring and Full Disk Access need the user to grant access in System Settings. For those, `request()` runs a **guided flow** (also `host.permissions.guide(name)`): the right Settings pane opens and a small panel floats next to it with the app's icon to drag into lists that accept it, the reason from the config and a live status. It closes by itself once granted, with a Relaunch button where macOS applies the grant at the next launch. Pass `{ guide: false }` to skip it: Accessibility, Screen Recording and Input Monitoring may show the OS's Settings prompt and return the current status; Full Disk Access rejects with `unsupported` because it has no programmatic request. Its status is `granted` when the native probe succeeds, otherwise `unknown`.
 
 ## API
 
@@ -47,7 +76,7 @@ Screen Recording, Accessibility, Input Monitoring and Full Disk Access have no p
 | `guide(name)` | The guided flow; resolves `{ status, canceled }` |
 | `cancelGuide()` | Close an open guide panel |
 | `openSettings(name)` | Open the permission's settings page |
-| `declared()` | The `permissions` map from the config |
+| `declared()` | Resolved reasons: defaults, config overrides and legacy usage descriptions; excludes `false` and the bridge allowlist |
 | `settingsOnly(name)` | Whether only System Settings can grant it |
 | `all()` | Every known status, reactive |
 | `on('change', (name, status) => ...)` | Status changes |
@@ -56,4 +85,62 @@ Statuses refresh when the app comes back to the front, since the user may have t
 
 ## Other platforms
 
-On Windows, `request` opens the privacy settings page. Linux has no per-app permission gates.
+| Platform | Runtime behavior |
+| --- | --- |
+| macOS | The seven checks listed above; prompts for camera, microphone and notifications; guided Settings flow for the other four |
+| Windows | `status` and `request` read camera, microphone and location consent from the registry without prompting; other names return `granted`. Use `host.notifications.permission` for notification availability. `openSettings()` opens Windows privacy settings. |
+| Linux | No per-app consent prompts. Camera checks `/dev/video0`; screen recording requires X11; notifications check the notification backend (which can report `unavailable`). Other names return `granted`. |
+
+The native guide panel is macOS only. On Linux and Windows, `guide()` opens settings where mapped and returns the current status.
+
+## In `vite dev`
+
+The dev window runs from `bun`, not from your app's bundle: macOS asks on behalf of the app that started it (your terminal), with that app's own wording, and remembers the answer for it. The reasons from your config still apply. What needs a bundle doesn't ask at all there — notifications, location, speech recognition: try them in the built app (`.desktop/dist`), where the prompts name your app and show your reasons.
+
+## Per-origin web policy (macOS)
+
+Install policy in **server code**, for example in a server initialization module
+using `host.ready`. Pages cannot install handlers or change decisions, even if
+`permissions.pages` / `bridge.allow` permits `webview.*`. That allowlist controls
+native bridge calls; it does not grant websites camera or location access.
+
+```ts
+host.ready(async () => {
+  await host.webview.setPermissionHandler(async ({ origin, frame, permission, viewId, windowId }) => {
+    if (origin === 'https://calls.example.com' && frame?.main && permission === 'microphone') return 'allow';
+    return 'deny';
+  }, { timeoutMs: 15000 });
+});
+```
+
+Permissions are `camera`, `microphone`, `location`, `speech`, `screenRecording`.
+`frame` contains `origin`, `url`, and `main`; speech's older WebKit SPI supplies
+no frame, so it is `null`. A camera-and-microphone request checks both permissions.
+Origin and frame checks run natively before the callback; opaque origins and
+mismatched frames are denied. Each request belongs to its originating view and
+challenge. Another page cannot answer it. Requests do not block the UI thread;
+exceptions, invalid answers, navigation away and timeouts deny. The timeout is
+15 seconds by default (configurable from 50 to 30000 ms).
+
+`allow` permits the request to proceed through the existing usage-description and
+OS consent checks. It cannot bypass TCC or missing required usage descriptions.
+`prompt` asks WebKit to prompt when the callback supports its three-way decision;
+older boolean SPI callbacks proceed to their normal OS permission flow. Screen
+capture still needs OS consent and the system picker. No handler means app-origin
+behavior is preserved and all other origins are denied. Pass `null` to remove it.
+
+Decisions persist **only when the app explicitly saves them**. Saved decisions take
+precedence over the handler, are scoped to the exact normalized origin and
+permission, and belong to the app across launches (and across its website profiles):
+
+```ts
+await host.webview.setPermissionDecision({ origin: 'https://calls.example.com', permission: 'microphone', decision: 'allow' });
+const decisions = await host.webview.listPermissionDecisions();
+await host.webview.revokePermissionDecision({ origin: 'https://calls.example.com', permission: 'microphone' });
+```
+
+Revocation changes future requests; it does not stop an already active capture.
+Camera/microphone use the public WKUIDelegate callback. Location, speech and display
+capture rely on existing private WebKit SPI: the engine invokes supported delegate
+selectors; their availability can vary with macOS/WebKit. This is not WebUSB, HID
+or serial support. These policy APIs return `unsupported` on Linux and Windows.

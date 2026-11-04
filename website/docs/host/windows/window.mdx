@@ -1,0 +1,498 @@
+---
+title: host.window and host.windows
+description: Read the current window reactively, control native window behavior, and manage multiple windows.
+---
+
+`host.window` is the current window's reactive store with window operations attached. `host.windows` is the service for creating, finding, and targeting windows by ID. The store wraps some service methods to update reactive state; their signatures and return values can differ.
+
+How-to: [Windows](/ui/windows).
+
+## `host.window`
+
+### Reactive state
+
+| Property | Type | Initial value | Description |
+| --- | --- | --- | --- |
+| `live` | `{ bounds: WindowBounds; state: WindowStateName } \| null` | `null` | Last outer-frame and state snapshot. |
+| `bounds` | `WindowBounds \| null` | `null` | Outer frame, derived from `live`. |
+| `size` | `{ width: number; height: number } \| null` | `null` | Outer-frame size derived from `live`, not content size. |
+| `position` | `{ x: number; y: number } \| null` | `null` | Outer-frame position derived from `live`. |
+| `state` | `WindowStateName` | `'normal'` | `'normal'`, `'maximized'`, or `'fullscreen'`. |
+| `title` | `string` | `''` | Last observed/set title. |
+| `focused` | `boolean` | `false` | Whether this window has keyboard focus. |
+| `maximized` | `boolean` | `false` | Whether the window is maximized (zoomed on macOS). |
+| `fullscreen` | `boolean` | `false` | Native fullscreen state. |
+| `simpleFullscreen` | `boolean` | `false` | macOS non-Spaces fullscreen, separate from native fullscreen. |
+| `scaleFactor` | `number` | `1` | Backing display scale. |
+| `cursor` | `{ x: number; y: number } \| null` | `null` | Window-relative cursor, pulled by `refresh()`, not continuously streamed. |
+| `controlsArea` | `WindowControlsArea \| null` | `null` | Native controls rectangle, in window-frame coordinates. See [controls area](#controls-area). |
+| `alwaysOnTop`, `alwaysOnBottom`, `visibleOnAllWorkspaces` | `boolean \| null` | `null` | Stacking and workspaces. |
+| `resizable`, `closable`, `minimizable`, `maximizable` | `boolean \| null` | `null` | What the user can do to the window. |
+| `movable`, `movableByWindowBackground`, `focusable` | `boolean \| null` | `null` | Moving and focus. |
+| `decorations`, `frameless`, `shadow` | `boolean \| null` | `null` | Native frame and shadow. |
+| `titleBarStyle` | `TitleBarStyle \| null` | `null` | The title bar's style. |
+| `trafficLightPosition` | `{ x: number; y: number } \| null` | `null` | Where `setTrafficLightPosition` put them; `null` at the system's place. |
+| `vibrancy` | `{ material: VibrancyMaterial; state: VibrancyState } \| null` | `null` | The window's vibrancy. |
+| `glass` | `GlassOptions \| null` | `null` | The window's Liquid Glass. |
+| `opacity` | `number \| null` | `null` | Window opacity. |
+| `theme` | `WindowTheme \| null` | `null` | The window's own theme; `host.theme` is the app's. |
+| `contentSize` | `{ width: number; height: number } \| null` | `null` | The page's area. `size` is the outer frame. |
+| `minSize`, `maxSize` | `{ width: number; height: number } \| null` | `null` | Content limits; `0` means unconstrained. |
+| `aspectRatio` | `number \| null` | `null` | Width over height; `null` when free. |
+| `closeVeto` | `boolean \| null` | `null` | Whether close requests are intercepted. |
+| `representedFilename` | `string \| null` | `null` | The document shown in the title bar. |
+| `documentEdited`, `contentProtected`, `ignoresMouse`, `cursorHidden` | `boolean \| null` | `null` | Document and input state. |
+| `ready` | `boolean` | `false` | Store initialization completed. |
+| `error` | `Error \| null` | `null` | Initialization failure, if any. |
+
+The settings fields (from `alwaysOnTop` to `cursorHidden`) are read without `await`, and reactive:
+
+```svelte
+<button aria-pressed={host.window.alwaysOnTop} onclick={() => host.window.setAlwaysOnTop(!host.window.alwaysOnTop)}>Pin</button>
+```
+
+Each one is `null` until it's known, and stays `null` on a platform without its getter (see [platform support](#platform-support)). It's read the first time you use it, so a page pays for nothing it doesn't read. After `await host.window.setAlwaysOnTop(true)` it's up to date, and a setter called from another window or from server code reaches it a moment later. It's also read again when the app or the window comes back to the front. To get the value at this very moment, use the getter: `await host.window.isAlwaysOnTop()`.
+
+Bounds, focus, scale, and fullscreen completion feed the store through native events. A page tracks its own window; server code uses the native default target. Some operations schedule a refresh after 150 ms to allow native geometry to settle. `refresh()` keeps previous scalar values when their queries fail; failed bounds, cursor, and controls queries become `null`.
+
+### Store methods
+
+`init()` refreshes the store, attaches its event subscriptions, sets `ready`, and resolves the namespace. The host calls it during startup. `refresh()` re-reads the native fields and resolves the namespace. `dispose()` synchronously removes the store's own subscriptions; it does not close the native window.
+
+All service operations in [the second part](#hostwindows) are also available through `host.window`. These wrappers target the current window, accept no trailing `windowId`, and resolve `void` rather than the service's result:
+
+| Method | Parameters | Behavior |
+| --- | --- | --- |
+| `setTitle` | `title: string` | Set title and update `title`. |
+| `setSize` | `width: number, height: number` | Set content size, then schedule a refresh of outer bounds. |
+| `setPosition` | `x: number, y: number` | Set frame position and refresh. |
+| `setBounds` | `x: number, y: number, width: number, height: number` | Set outer frame and refresh. |
+| `center` | None | Center and refresh. |
+| `positionTo` | `preset: WindowPositionPreset` | Apply a position preset and refresh. |
+| `setFullscreen` | `fullscreen: boolean` | Request native fullscreen, update the field, then refresh. |
+| `toggleFullscreen` | None | Toggle native fullscreen and update the field. |
+| `setSimpleFullscreen` | `enabled: boolean` | Set macOS simple fullscreen and update the field. |
+| `maximize`, `unmaximize`, `toggleMaximize` | None | Update `maximized` from the native reply and refresh. |
+| `minimize` | None | Minimize the current window. |
+| `restore` | None | Restore normal state and refresh. |
+| `focus` | None | Request focus; `focused` changes only through native events. |
+| `close` | None | Close and clear `live`. |
+
+`host.window.focus()` and `host.windows.focus()` resolve the same value: `{ activated: boolean }` on macOS, `null` on Linux and Windows.
+
+### `setCloseVeto(enabled)`
+
+Arm or disarm interception of OS close requests. `enabled` is `boolean`. The store method resolves the `boolean` armed state; `host.windows.setCloseVeto(enabled, windowId?)` instead resolves `{ armed: boolean }`.
+
+### `onCloseRequested(handler)`
+
+Arm the veto and subscribe to `willClose`. `handler` has type `() => void`. Resolves an async disarm function of type `() => Promise<void>`; await it to disarm and unsubscribe. Arming failures reject and remove the subscription.
+
+```ts
+const disarm = await host.window.onCloseRequested(() => {
+  // Ask the user, then call host.window.close() if they confirm.
+});
+// When this guard is no longer needed:
+await disarm();
+```
+
+The veto is one native flag per window. Use one guard at a time; disarming one registration also drops the flag used by another. `close()` is a programmatic close and bypasses the veto. This helper subscribes to the event stream without filtering `windowId`; when several windows install guards, use `host.windows.onWillClose()` and explicit IDs to filter requests yourself.
+
+### Store event methods
+
+`on(event, callback)` returns an unsubscribe function. `once(event, callback)` returns one too and unsubscribes after the first delivery. Both are synchronous and accept the store's typed event names:
+
+| Event | Callback payload type |
+| --- | --- |
+| `boundsChanged` | `WindowBounds` |
+| `willClose` | `Record<string, never>` |
+| `focusChanged` | `{ focused: boolean }` |
+| `scaleFactorChanged` | `{ scaleFactor: number }` |
+
+The native payloads also carry window IDs, but these store callback types omit them. Use the service's typed helpers below when you need IDs or completed transitions. `host.window.on()` is the store's method, so it does not accept the transition names supported by `host.windows.on()`.
+
+## `host.windows`
+
+The service has no reactive state. Targeted methods accept a trailing `windowId?: number`, omitted from signatures in the tables below. With no ID, a page targets its own window; server calls resolve the active/key window, then the primary window. `0` addresses the current primary window. IDs are runtime addresses; closing the primary can change the remaining windows' public IDs. Use labels to find windows again.
+
+Unless stated otherwise, setters and commands resolve `null`. Numeric coordinates use a top-left screen origin, with y increasing downward, in macOS points, Linux logical coordinates, or Windows DIPs. Unknown target windows reject `invalid_args`.
+
+### `create(options?)`
+
+Create a window and resolve `{ windowId: number; label: string }`. This starts page loading; it does not wait for the page to load. All fields in `WindowCreateOptions` are optional:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `parentId` | `number` | No parent | macOS parent window ID. |
+| `modal` | `boolean` | `false` | macOS native sheet child; requires a valid parent and focusable window. |
+| `type` | `'normal' \| 'panel'` | `'normal'` | macOS native window class. |
+| `focusable` | `boolean` | `true` | macOS: permit keyboard focus. |
+| `session` | `string` | Default session | macOS [web session](/host/web/sessions). |
+| `recovery` | `WebviewRecovery` | `'reload'` on macOS | `'reload'` or `'manual'` content-process recovery. See [`host.webview`](/host/web/webview). |
+| `label` | `string` | Generated (`'main'` for the first window, otherwise `window-…`) | App-wide unique label; duplicates reject `invalid_args`. |
+| `path` | `string` | `'/'` | App route, loaded with the app's authenticated session. |
+| `url` | `string` | App origin + `path` | Full URL instead of an app route; other origins have no native bridge. |
+| `html` | `string` | None | HTML document instead of a route; `url` takes precedence. |
+| `title` | `string` | Native default; app name on Linux/Windows | Initial title. |
+| `x`, `y` | `number` | Centered | Initial frame position; supply both coordinates. |
+| `width` | `number` | `1024` | Initial content width. |
+| `height` | `number` | `720` | Initial content height. |
+| `minWidth`, `minHeight` | `number` | No explicit minimum | Minimum content size. |
+| `decorations` | `boolean` | `true` | `false` creates a borderless window. |
+| `visible` | `boolean` | `true` | Show on creation; `false` waits for an explicit `show()`. |
+| `alwaysOnTop` | `boolean` | `false` | Float above normal windows. |
+| `resizable` | `boolean` | `true` | Allow resizing. |
+| `movable` | `boolean` | `true` on macOS | macOS movement policy. |
+| `minimizable` | `boolean` | `true` | Allow minimizing; ignored on Linux. |
+| `focus` | `boolean` | `true` on macOS | macOS: request focus when showing. |
+| `animate` | `boolean \| WindowAnimation` | No animation | macOS presentation animation; `true` selects the defaults below. |
+| `transparent` | `boolean` | `false` | Transparent background; page content must paint any desired background. |
+| `opacity` | `number` | `1` | Initial window alpha, intended range `0`–`1`. |
+| `titlebarTransparent` | `boolean` | `false` | macOS: blend the title bar into content. |
+| `vibrancy` | `VibrancyMaterial` | None | macOS material behind the page. |
+| `vibrancyState` | `VibrancyState` | `'followsWindow'` | macOS material activity. |
+| `trafficLightPosition` | `{ x: number; y: number }` | System position | macOS close button's top-left in points from the window frame's top-left. |
+| `aspectRatio` | `number` | Unconstrained | macOS content width/height ratio while resizing. |
+| `backgroundThrottling` | `boolean` | `true` | macOS: `false` keeps the page running at full speed out of sight. |
+| `tabbingIdentifier` | `string` | System default | macOS native tab group identifier. |
+
+Linux and Windows ignore `parentId`, `modal`, `type`, `focusable`, `session`, `recovery`, `movable`, `focus`, `animate`, `titlebarTransparent`, `vibrancy`, `vibrancyState`, `trafficLightPosition`, `aspectRatio`, `backgroundThrottling`, and `tabbingIdentifier`. Do not rely on these options there. `titleBarStyle` belongs to main-window configuration and the runtime setter; it is not a field in the exported `WindowCreateOptions` type.
+
+On macOS, invalid relationship/class/focusability options or an unknown session/recovery policy reject `invalid_args`. Native creation failure rejects `internal`.
+
+#### `WindowAnimation`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `duration` | `number` | `180` | Milliseconds; `0` skips animation. |
+| `easing` | `'easeOut' \| 'easeIn' \| 'easeInOut' \| 'linear' \| [x1: number, y1: number, x2: number, y2: number]` | `'easeOut'` | Timing curve. |
+| `offset` | `{ x?: number; y?: number }` | `{ x: 0, y: -10 }` | Starting offset in points, y down. Within a supplied object, omitted axes become `0`. |
+| `scale` | `number` | `1` | Starting size around the center; page layout resizes during animation. |
+| `opacity` | `number` | `0` | Starting alpha. |
+
+### Finding windows
+
+| Method | Resolves | Description |
+| --- | --- | --- |
+| `getInfo(windowId?)` | `WindowInfo` | Info for the target window. |
+| `list()` | `WindowInfo[]` | Every open window. |
+| `get(label: string)` | `WindowInfo \| null` | Find by label; `null` when absent. |
+
+`WindowInfo` has these fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `windowId` | `number` | Current public ID. |
+| `label` | `string` | Window label. |
+| `focused` | `boolean` | Native focus state. |
+| `visible` | `boolean` | Native visibility observation; semantics differ by backend. |
+| `bounds` | `WindowBounds` | Outer frame. |
+| `parentId` | `number \| null` (optional) | macOS parent, or `null`. |
+| `modal` | `boolean` (optional) | macOS modal-child policy. |
+| `type` | `'normal' \| 'panel'` (optional) | macOS native class. |
+| `focusable` | `boolean` (optional) | macOS focus policy. |
+| `sheetAttached` | `boolean` (optional) | Whether AppKit has actually presented the modal as a sheet. |
+
+### Geometry
+
+`WindowBounds` is `{ x: number; y: number; width: number; height: number }`. Frame measurements include decorations; content measurements exclude them.
+
+| Method, before optional `windowId` | Resolves | Description |
+| --- | --- | --- |
+| `getBounds()` | `{ bounds: WindowBounds; state: WindowStateName }` | Outer frame and state. |
+| `setBounds(x: number, y: number, width: number, height: number)` | `null` | Set the outer frame. |
+| `getSize()`, `getContentSize()`, `innerSize()` | `{ width: number; height: number }` | Content size. |
+| `setSize(width: number, height: number)` | `null` | Set content size. |
+| `outerSize()` | `{ width: number; height: number }` | Frame size. |
+| `getPosition()`, `outerPosition()` | `{ x: number; y: number }` | Frame origin. |
+| `innerPosition()` | `{ x: number; y: number }` | Content origin in screen coordinates. |
+| `setPosition(x: number, y: number)` | `null` | Move the frame. |
+| `center()` | `null` | Center on the screen/work area. |
+| `positionTo(preset: WindowPositionPreset)` | `null` | Position relative to screen, tray, or cursor. |
+| `setMinSize(width: number, height: number)` | `null` | Set minimum content size; `0, 0` clears the explicit constraint. |
+| `setMaxSize(width: number, height: number)` | `null` | Set maximum content size; a `0` axis clears its constraint. |
+| `getMinSize()`, `getMaxSize()` | `{ width: number; height: number }` | Content limits; `0` means unconstrained. |
+| `setAspectRatio(ratio: number \| null)` | `null` | macOS content width/height ratio; `null` clears it. |
+| `getAspectRatio()` | `number \| null` | That ratio; `null` when free. macOS. |
+| `getScaleFactor()` | `number` | Display backing scale. |
+| `getCursorPoint()` | `{ x: number; y: number }` | Cursor relative to the window content. |
+| `setCursorPosition(x: number, y: number)` | `null` | Warp the OS cursor in screen coordinates. |
+| `setCursorHidden(hidden: boolean)` | `null` | Hide or show the OS cursor. |
+| `isCursorHidden()` | `boolean` | Whether the app hid it. |
+
+`WindowPositionPreset` is `'center' | 'trayCenter' | 'trayLeft' | 'trayRight' | 'trayTop' | 'trayBottom' | 'cursorTopLeft' | 'cursorBottomLeft'`. Unknown presets reject `invalid_args`. Tray presets reject `unavailable` without a tray item on macOS/Windows; Linux cannot retrieve tray geometry and rejects `unavailable` for all tray presets.
+
+For persistence, see [`host.windowState`](/host/windows/window-state).
+
+### Visibility, focus, and window state
+
+| Method, before optional `windowId` | Resolves | Description |
+| --- | --- | --- |
+| `show()`, `hide()` | `null` | Show or hide without destroying. |
+| `minimize()`, `unminimize()` | `null` | Minimize or deminiaturize. |
+| `isMinimized()` | `{ minimized: boolean }` | Minimized state. |
+| `maximize()`, `unmaximize()`, `toggleMaximize()` | `{ maximized: boolean }` | Change maximize/zoom state. |
+| `isMaximized()` | `boolean` | Current maximize/zoom state. |
+| `restore()` | `null` | Restore from minimized/maximized/native-fullscreen state. |
+| `setFullscreen(fullscreen: boolean)`, `toggleFullscreen()` | `{ fullscreen: boolean }` | Request native fullscreen. |
+| `isFullscreen()` | `boolean` | Native fullscreen observation. |
+| `setSimpleFullscreen(enabled: boolean)` | `null` | macOS borderless screen-sized window without a dedicated Space. |
+| `isSimpleFullscreen()` | `{ simpleFullscreen: boolean }` | macOS simple fullscreen state. |
+| `focus()` | `{ activated: boolean } \| null` | Request focus and app activation. macOS returns the observed activation result; Linux and Windows return `null`. |
+| `blur()` | `null` | Give up focus. |
+| `isFocused()` | `boolean` | Keyboard focus. |
+| `isActive()` | `boolean` | Active/key window (and app active on macOS). |
+| `isHovered()` | `{ hovered: boolean }` | Pointer within the frame. |
+| `isOccluded()` | `boolean` | macOS: no visible pixels; Linux/Windows only detect hidden/minimized/offscreen-like states, not full overlap by other windows. |
+| `requestAttention()` | `null` | Dock bounce, urgency hint, or taskbar flash. |
+| `setCloseVeto(enabled: boolean)` | `{ armed: boolean }` | Intercept OS close requests. |
+| `hasCloseVeto()` | `boolean` | Whether close requests are intercepted. |
+| `close()` | `null` | Programmatic close, bypassing the veto. |
+
+On macOS, native fullscreen resolves before its animated transition finishes. Listen for `fullscreenChanged` to observe completion. Panels and modal children reject `unsupported` when asked to own a fullscreen Space. Simple fullscreen is a separate state; turn it off with `setSimpleFullscreen(false)`.
+
+On macOS, `focus()` rejects `unavailable` for a nonfocusable window. A refused app activation instead resolves `{ activated: false }`; another foreground app may retain focus. Successful activation requests are not guarantees of focus.
+
+### Title bar, appearance, and behavior
+
+The boolean setters below require the named boolean argument. They have no JavaScript default. All accept an optional trailing `windowId`.
+
+| Method | Resolves | Description |
+| --- | --- | --- |
+| `getTitle()` | `string` | Read native title. |
+| `setTitle(title: string)` | `null` | Set title. |
+| `setTitleBarStyle(style: TitleBarStyle)` | `null` | `'default'`, `'transparent'`, `'hidden'`, or `'hiddenInset'`; invalid names reject `invalid_args`. |
+| `getTitleBarStyle()` | `{ style: TitleBarStyle; frameless: boolean }` | The style, and whether the window has no system title bar at all (decorations off). |
+| `setDecorations(enabled: boolean)` | `null` | Toggle native decorations. |
+| `hasDecorations()` | `boolean` | Whether native decorations are on. |
+| `setResizable(enabled: boolean)` | `null` | Toggle resizing. |
+| `isResizable()` | `{ resizable: boolean }` | Read resizing policy. |
+| `setClosable(enabled: boolean)` | `null` | Toggle native close control. |
+| `isClosable()` | `{ closable: boolean }` | Read close policy. |
+| `setMinimizable(enabled: boolean)` | `null` | Toggle minimize control. |
+| `isMinimizable()` | `{ minimizable: boolean }` | Read minimize policy. |
+| `setMaximizable(enabled: boolean)` | `null` | Toggle maximize/zoom control. |
+| `isMaximizable()` | `{ maximizable: boolean }` | Read maximize policy. |
+| `setHasShadow(enabled: boolean)` | `null` | Toggle macOS window shadow. |
+| `hasShadow()` | `boolean` | Read macOS shadow policy. |
+| `invalidateShadow()` | `null` | Recalculate macOS window shadow. |
+| `setOpacity(opacity: number)` | `null` | Window alpha clamped to `0`–`1`. |
+| `getOpacity()` | `{ opacity: number }` | Read alpha. |
+| `setTheme(theme: WindowTheme)` | `null` | `'light'`, `'dark'`, or `'system'`; macOS appearance override or Windows title bar mode. |
+| `getTheme()` | `WindowTheme` | The window's own theme; `'system'` follows the app's. macOS and Windows. |
+| `setAlwaysOnTop(enabled: boolean)` | `null` | Float above normal windows. |
+| `setAlwaysOnBottom(enabled: boolean)` | `null` | Place below normal windows. |
+| `isAlwaysOnBottom()` | `boolean` | Whether it's set. |
+| `getLevel()` | `number` | macOS AppKit level. |
+| `isAlwaysOnTop()` | `boolean` | macOS: level above normal. |
+| `setVisibleOnAllWorkspaces(enabled: boolean)` | `null` | Join all macOS Spaces or Linux workspaces. |
+| `isVisibleOnAllWorkspaces()` | `boolean` | Whether it's set. |
+| `setMovable(enabled: boolean)` | `null` | Toggle macOS native movement. |
+| `isMovable()` | `boolean` | Read macOS movement policy. |
+| `setMovableByWindowBackground(enabled: boolean)` | `null` | Allow dragging by the macOS window background. |
+| `isMovableByWindowBackground()` | `boolean` | Whether it's set. macOS. |
+| `setIgnoresMouseEvents(enabled: boolean)` | `null` | Pointer click-through. |
+| `ignoresMouseEvents()` | `{ ignored: boolean }` | Read click-through policy. |
+| `setContentProtected(enabled: boolean)` | `null` | Exclude from screen capture, subject to platform restrictions. |
+| `isContentProtected()` | `{ contentProtected: boolean }` | Read capture-protection setting. |
+| `setFocusable(enabled: boolean)` | `null` | Toggle focusability on macOS and Linux. |
+| `isFocusable()` | `boolean` | Read macOS focusability policy. |
+| `setDocumentEdited(edited: boolean)`, `setEdited(edited: boolean)` | `null` | macOS document-edited indicator; Windows stores the flag. |
+| `isDocumentEdited()` | `{ edited: boolean }` | Read document-edited state. |
+| `setRepresentedFilename(path: string \| null)` | `null` | macOS title bar document URL; `null` clears it. |
+| `getRepresentedFilename()` | `string \| null` | The path set. macOS. |
+| `showCharacterPalette()` | `null` | Open the macOS character palette. |
+
+On macOS, `'transparent'` extends content under the title bar but keeps the title. `'hidden'` hides the title; `'hiddenInset'` also insets traffic lights. Linux and Windows treat hidden title bars as frameless and require page-drawn controls. See [title bar styles and drag regions](/ui/windows#title-bar-styles).
+
+The two z-order setters each choose a level; they are not independent flags. On macOS, disabling either returns the level to normal. Capture protection cannot always be reversed on macOS: disabling rejects `unsupported` if AppKit keeps the window protected. Windows uses capture exclusion, with a black-window fallback on older systems, and rejects `unavailable` if the native call fails.
+
+### `setVibrancy(material, options?, windowId?)`
+
+For a material behind one element rather than the whole window, declare it in CSS: `--desktop-material: sidebar` (see [Vibrancy and Liquid Glass](/ui/windows#in-css)).
+
+macOS only. Set native material behind transparent page areas, or pass `null` to remove it. Resolves `null`.
+
+`material` is `VibrancyMaterial | null`. Materials are `'sidebar'`, `'titlebar'`, `'header'`, `'content'`, `'window'`, `'underWindow'`, `'underPage'`, `'menu'`, `'popover'`, `'sheet'`, `'hud'`, `'tooltip'`, `'fullscreenUI'`, and `'selection'`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `state` | `VibrancyState` | `'followsWindow'` | `'followsWindow'`, `'active'`, or `'inactive'`; control whether the material dims with the window. |
+
+Unknown materials reject `invalid_args`.
+
+```ts
+await host.window.setVibrancy('sidebar', { state: 'active' });
+```
+
+`getVibrancy()` resolves `{ material, state }`, or `null` without vibrancy.
+
+The material takes the window's appearance (light or dark), not the page's. When the page's theme can differ from the system's, match it with [`setTheme`](#title-bar-appearance-and-behavior).
+
+### `setGlass(glass, windowId?)`
+
+macOS 26. Put Liquid Glass behind transparent page areas, or pass `null` to remove it. The window becomes non-opaque while it's on, and its opacity and background color come back when it's removed. It replaces vibrancy: one effect at a time. Resolves `{ glass: true }`, or `{ glass: false }` before macOS 26, where the `underWindow` vibrancy material is used instead; `null` when removing.
+
+`glass` is `GlassOptions | null`:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `style` | `'regular' \| 'clear'` | `'regular'` | `regular` is frosted and readable over anything; `clear` is more transparent. |
+| `tint` | `string` | None | `#rgb`, `#rrggbb` or `#rrggbbaa`; the alpha is the tint's strength. |
+| `cornerRadius` | `number` | `0` | Rounds the glass's corners, in points. |
+
+An unknown style or a malformed tint rejects `invalid_args`.
+
+```ts
+await host.window.setGlass({ style: 'clear', tint: '#5f62ef40' });
+```
+
+`getGlass()` resolves the window's `GlassOptions`, or `null` without glass. Before macOS 26, read `getVibrancy()` instead.
+
+### `setTrafficLightPosition(position, windowId?)`
+
+macOS only. `position` is `{ x: number; y: number } | null`: the close button's top-left in points from the frame's top-left. Use with a hidden/hidden-inset title bar; `null` restores system placement. Resolves `null`. The shell's title bar CSS measurements follow the controls.
+
+`getTrafficLightPosition()` resolves the position set, or `null` at the system's place.
+
+### Controls area
+
+`getControlsArea(windowId?)` resolves `WindowControlsArea | null`. macOS measures native buttons; borderless windows return `null`. Linux registers the query but always returns `null` for server-side decorations. Windows does not register it and rejects `unsupported`.
+
+`WindowControlsArea` contains `x`, `y`, `width`, and `height` (all `number`) in **window-frame coordinates**, plus:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `contentTop` | `number` | Drawable content's inset from frame top. Subtract from `y` to convert the cluster's vertical offset to content coordinates. |
+| `side` | `'left' \| 'right'` | Controls edge; currently `'left'` on macOS. |
+| `buttons` | `{ close?: ControlsRect & { visible: boolean }; minimize?: ControlsRect & { visible: boolean }; zoom?: ControlsRect & { visible: boolean } }` | Per-button frame rectangles and visibility. |
+
+`ControlsRect` is `{ x: number; y: number; width: number; height: number }`. The reactive `host.window.controlsArea` exposes the same coordinates without conversion.
+
+### Parents and modal children
+
+macOS only. Normal children follow parent movement; `modal: true` presents a native sheet and blocks the parent until hidden or closed. Panels can become key when focusable but do not become the app's main document window. Closing a parent closes its descendants.
+
+| Method, before optional `windowId` | Resolves | Description |
+| --- | --- | --- |
+| `setParent(parentId: number \| null)` | `null` | Reparent; `null` detaches a nonmodal child. |
+| `getParent()` | `WindowInfo \| null` | Current parent. |
+| `getChildren()` | `WindowInfo[]` | Direct children. |
+
+Missing parents, cycles, a second attached sheet, or detaching a modal reject `invalid_args`. Hide an attached modal before reparenting it. Modal children must stay focusable: `setFocusable(false)` rejects `invalid_args` for them. For a route dialog that returns a result, use [`host.dialog.sheet()`](/host/windows/dialog).
+
+```ts
+const parent = await host.windows.getInfo();
+const child = await host.windows.create({
+  parentId: parent.windowId, modal: true,
+  label: 'confirmation', path: '/confirm', width: 420, height: 260,
+});
+await host.windows.close(child.windowId);
+```
+
+### Events
+
+Subscriptions are app-wide; filter payloads by `windowId` for a particular window. Typed helpers and `host.on(event, fn)` return synchronous unsubscribe functions. `host.windows.onCloseRequested()` is an alias for `onWillClose()`; it subscribes without arming a veto, unlike the store helper.
+
+| Event | Service helper | Payload | When |
+| --- | --- | --- | --- |
+| `created` | `onCreated(fn)` | `{ windowId?: number; label?: string }` | A service-created window exists. |
+| `closed` | `onClosed(fn)` | `{ windowId?: number }` | Window closed; its native root binding is gone. |
+| `willClose` | `onWillClose(fn)`, `onCloseRequested(fn)` | `{ windowId?: number }` | An armed veto suppressed an OS close request. |
+| `boundsChanged` | `onBoundsChanged(fn)` | `WindowBounds & { windowId?: number }` | Frame moved/resized. |
+| `focusChanged` | `onFocusChanged(fn)` | `{ focused: boolean; windowId?: number }` | Focus changed. |
+| `scaleFactorChanged` | `onScaleFactorChanged(fn)` | `{ scaleFactor: number; windowId?: number }` | Display backing scale changed. |
+
+macOS also emits completed transitions defined by `WindowTransitionEvents`. `host.windows.on(event, callback)` accepts these nine names; named helpers are equivalent:
+
+| Event | Helper | Payload | When |
+| --- | --- | --- | --- |
+| `shown` | `onShown(fn)` | `WindowTransition` | Visibility changed to shown. |
+| `hidden` | `onHidden(fn)` | `WindowTransition` | Visibility changed to hidden, including application hide. |
+| `minimized` | `onMinimized(fn)` | `WindowTransition` | Window miniaturized. |
+| `restored` | `onRestored(fn)` | `WindowTransition` | Window deminiaturized; not general `restore()` completion. |
+| `fullscreenChanged` | `onFullscreenChanged(fn)` | `WindowFullscreenTransition` | Native Spaces transition completed. |
+| `moved` | `onMoved(fn)` | `WindowTransition & WindowBounds` | Frame moved. |
+| `resized` | `onResized(fn)` | `WindowTransition & WindowBounds` | Frame resized. |
+| `focus` | `onFocus(fn)` | `WindowTransition` | Became key. |
+| `blur` | `onBlur(fn)` | `WindowTransition` | Resigned key. |
+
+`WindowTransition` is `{ windowId: number }`. `WindowFullscreenTransition` adds `fullscreen: boolean` and `transition: 'entered' | 'exited'`. Covering a window alone does not count as hiding it. Linux and Windows do not emit these nine platform transition events.
+
+## Platform support
+
+Support applies to both the service and corresponding store wrappers. Subscriptions can be installed anywhere; event rows describe where their events are emitted.
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Store `init`, `refresh`, `dispose`, `on`, `once`, `onCloseRequested` | ✓ | ✓ | ✓ |
+| `create` | ✓ | partial | partial |
+| `getInfo`, `list`, `get` | ✓ | ✓ | ✓ |
+| `getBounds`, `setBounds`, `getSize`, `getContentSize`, `setSize` | ✓ | ✓ | ✓ |
+| `innerSize`, `outerSize`, `innerPosition`, `outerPosition` | ✓ | ✓ | ✓ |
+| `getPosition`, `setPosition`, `center` | ✓ | ✓ | ✓ |
+| `positionTo` | ✓ | partial | ✓ |
+| `setMinSize`, `setMaxSize`, `getMinSize`, `getMaxSize`, `getScaleFactor`, `getCursorPoint` | ✓ | ✓ | ✓ |
+| `setAspectRatio`, `getAspectRatio` | ✓ | — | — |
+| `setCursorPosition` | ✓ | ✓ | ✓ |
+| `setCursorHidden`, `isCursorHidden` | ✓ | — | ✓ |
+| `getControlsArea` | ✓ | partial | — |
+| `getTitle`, `setTitle`, `show`, `hide`, `close`, `setCloseVeto`, `hasCloseVeto` | ✓ | ✓ | ✓ |
+| `minimize`, `unminimize`, `isMinimized`, `restore` | ✓ | ✓ | ✓ |
+| `maximize`, `unmaximize`, `toggleMaximize`, `isMaximized` | ✓ | ✓ | ✓ |
+| `setFullscreen`, `toggleFullscreen`, `isFullscreen` | ✓ | ✓ | ✓ |
+| `setSimpleFullscreen`, `isSimpleFullscreen` | ✓ | — | — |
+| `focus` | ✓ | partial | partial |
+| `blur`, `isFocused`, `isActive`, `isHovered`, `requestAttention` | ✓ | ✓ | ✓ |
+| `isOccluded` | ✓ | partial | partial |
+| `setAlwaysOnTop`, `isAlwaysOnTop`, `setAlwaysOnBottom`, `isAlwaysOnBottom` | ✓ | ✓ | ✓ |
+| `getLevel` | ✓ | — | — |
+| `setResizable`, `isResizable`, `setClosable`, `isClosable` | ✓ | ✓ | ✓ |
+| `setMinimizable`, `isMinimizable`, `setMaximizable`, `isMaximizable` | ✓ | — | ✓ |
+| `setTitleBarStyle`, `getTitleBarStyle`, `setDecorations`, `hasDecorations`, `setOpacity`, `getOpacity` | ✓ | ✓ | ✓ |
+| `setHasShadow`, `hasShadow`, `invalidateShadow` | ✓ | — | — |
+| `setVibrancy`, `getVibrancy`, `setTrafficLightPosition`, `getTrafficLightPosition` | ✓ | — | — |
+| `setGlass` | ✓ (macOS 26; vibrancy before) | — | — |
+| `getGlass` | ✓ (macOS 26) | — | — |
+| `setTheme`, `getTheme` | ✓ | — | ✓ |
+| `setMovable`, `isMovable`, `setMovableByWindowBackground`, `isMovableByWindowBackground` | ✓ | — | — |
+| `setIgnoresMouseEvents`, `ignoresMouseEvents` | ✓ | ✓ | ✓ |
+| `setContentProtected`, `isContentProtected` | ✓ | — | ✓ |
+| `setVisibleOnAllWorkspaces`, `isVisibleOnAllWorkspaces`, `setFocusable`, `isFocusable` | ✓ | ✓ | — |
+| `isFocusable`, `setParent`, `getParent`, `getChildren` | ✓ | — | — |
+| `setDocumentEdited`, `setEdited`, `isDocumentEdited` | ✓ | — | partial |
+| `setRepresentedFilename`, `getRepresentedFilename`, `showCharacterPalette` | ✓ | — | — |
+| `onCreated`, `onClosed`, `onWillClose`, service `onCloseRequested` | ✓ | ✓ | ✓ |
+| `onBoundsChanged`, `onFocusChanged`, `onScaleFactorChanged` | ✓ | ✓ | ✓ |
+| Service `on`, `onShown`, `onHidden`, `onMinimized`, `onRestored` | ✓ | — | — |
+| `onFullscreenChanged`, `onMoved`, `onResized`, `onFocus`, `onBlur` | ✓ | — | — |
+
+Partial: creation options are limited as listed above; Linux tray positioning is unavailable; Linux controls measurements return `null`; Linux/Windows focus replies omit `activated` and occlusion does not detect overlap; Windows document-edited state is stored without a native document indicator.
+
+## Example
+
+Find or open a preferences window, then focus it using the service's explicit target:
+
+```ts
+async function openPreferences() {
+  const existing = await host.windows.get('preferences');
+  const window = existing ?? await host.windows.create({
+    label: 'preferences', path: '/preferences',
+    title: 'Preferences', width: 640, height: 480,
+    minWidth: 480, minHeight: 320,
+  });
+  await host.windows.show(window.windowId);
+  await host.windows.focus(window.windowId);
+}
+```
+
+In a component, use the store for current-window state:
+
+```svelte
+<header>
+  <span>{host.window.title}</span>
+  <button onclick={() => host.window.toggleMaximize()}>
+    {host.window.maximized ? 'Restore size' : 'Maximize'}
+  </button>
+</header>
+```

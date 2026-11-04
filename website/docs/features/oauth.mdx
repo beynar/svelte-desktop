@@ -1,0 +1,93 @@
+---
+title: OAuth sign-in
+description: Sign in with GitHub, Google or any OAuth provider in the system browser, and come back to the app with a code — PKCE and state handled.
+---
+
+:::note
+API reference: [`host.oauth`](/host/web/oauth).
+:::
+
+A desktop app signs users in the way [RFC 8252](https://datatracker.ietf.org/doc/html/rfc8252) recommends: the provider's page opens in the **system browser**, where the user is often already signed in and can trust the address bar, then comes back to the app.
+
+```ts
+const { code, codeVerifier, redirectUri } = await host.oauth.authorize({
+  url: 'https://github.com/login/oauth/authorize',
+  params: { client_id: 'Iv1.abc123', scope: 'read:user' },
+});
+```
+
+`authorize()`:
+
+1. generates a `state` and a PKCE verifier and challenge (S256);
+2. opens the provider's page in the default browser, with your `params` plus `redirect_uri`, `state`, `response_type=code` and the challenge. Those last four are always the helper's: they override any you pass in `params`;
+3. waits for the browser to come back, shows "You're signed in" there, and brings the app to the front;
+4. checks `state` (and `iss`, see below), and resolves to the code, the verifier and the `redirect_uri` it used.
+
+## Trade the code for tokens
+
+```ts
+const tokens = await host.oauth.exchange({
+  url: 'https://github.com/login/oauth/access_token',
+  clientId: 'Iv1.abc123',
+  code, codeVerifier, redirectUri,
+});
+// tokens.access_token, tokens.refresh_token…
+```
+
+Call `authorize()` in the page: its loopback flow uses `location` and relative HTTP requests, and custom schemes listen for native events there. Do the token exchange from **server code** (a remote function) when you can. Many token endpoints refuse a request from a page (CORS), and a `clientSecret`, if your provider wants one, must never reach the page. `exchange()` works the same in server code. Keep the tokens in [secure storage](/host/os/secure-storage), not in `localStorage`.
+
+## Where the browser comes back
+
+**Loopback (the default).** The browser comes back to `http://127.0.0.1:<port>/__desktop/oauth/callback`, on the app's own server. The port changes at each launch; the path doesn't.
+- **What to register at your provider:** `http://127.0.0.1/__desktop/oauth/callback`. Loopback redirects may use any port (RFC 8252 §7.3), and most providers follow that; check yours.
+- **In `vite dev`**, register `http://localhost:<vite port>/__desktop/oauth/callback` too.
+- **How a return is matched:** the app's server matches it to its sign-in by `state`. A return with a `state` nobody started completes nothing, and each sign-in completes once.
+
+**Your URL scheme.** For a provider that wants a custom scheme:
+
+```ts desktop.config.ts
+schemes: ['com.example.myapp'],
+```
+
+```ts
+await host.oauth.authorize({ url, params, redirect: { scheme: 'com.example.myapp', path: 'oauth' } });
+// redirect_uri: com.example.myapp:/oauth — register exactly that
+```
+
+Only a deep link to that exact redirect URI, with the sign-in's `state`, completes it. Schemes are registered by the built app only, so this way doesn't work in `vite dev`.
+
+## Several providers
+
+When an app offers several providers (GitHub, Google, your own), a malicious or compromised one could try to pass off another's code as its own: a "mix-up". Defend against it by giving each sign-in the provider's **issuer** identifier. Providers that implement RFC 9207 send it back as `iss`:
+
+```ts
+await host.oauth.authorize({ url, params, issuer: 'https://accounts.google.com' });
+```
+
+A callback with another `iss`, or without one, is refused. For a provider that doesn't send `iss`, pass `requireIssuer: false`. Then exchange the code only at the token endpoint of the provider you started with.
+
+## Options and errors
+
+| Option | |
+| --- | --- |
+| `url` | The provider's authorization endpoint. |
+| `params` | Its parameters: `client_id`, `scope`, `prompt`… |
+| `redirect` | `'loopback'` (default) or `{ scheme, path? }`. |
+| `issuer`, `requireIssuer` | The `iss` the callback must carry (see above). |
+| `pkce` | Default `true`. Turn it off only for a provider that rejects it. |
+| `timeoutMs` | How long the whole sign-in may take, browser included. Default 5 minutes. |
+| `signal` | An `AbortSignal`, to cancel from a "Cancel" button. A cancelled or timed-out sign-in is forgotten by the app's server: the browser coming back later completes nothing. |
+
+A sign-in that doesn't complete rejects with an `OAuthError`, whose `code` is one of:
+- the provider's error, such as `access_denied` when the user refuses;
+- `state_mismatch`;
+- `invalid_request` (the redirect scheme isn't valid);
+- `no_code` (the callback carries neither an error nor a code);
+- `issuer_mismatch`;
+- `timeout`;
+- `aborted`;
+- `server_error`.
+
+`exchange()` refuses an answer without an `access_token` (`invalid_response`) and never follows a redirect, so the code, the verifier and a secret go to that endpoint only. Provider errors keep the provider's code; other unsuccessful HTTP responses use `http_<status>`.
+
+The resolved object also has `params`: everything the provider sent back.

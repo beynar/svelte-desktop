@@ -1,0 +1,63 @@
+---
+title: WebSockets
+description: WebSockets on the app's own server, from src/websocket.ts — only the app's pages connect — and pushes from any server code.
+---
+
+`src/websocket.ts` declares the app server's sockets. The server upgrades the paths it names:
+
+```ts src/websocket.ts
+import { defineWebSocket } from '@svelte-desktop/shell/websocket';
+
+export default defineWebSocket<{ user: string }>({
+  path: '/ws',                                   // or ['/ws', '/rooms/*']
+  upgrade: (request) => ({ user: 'ada' }),       // what the socket carries; false refuses it
+  open(ws) {
+    ws.subscribe('chat');
+    ws.send(`welcome ${ws.data.data.user}`);
+  },
+  message(ws, message) {
+    ws.publish('chat', String(message));          // to the other sockets on the topic
+  },
+  close(ws, code, reason) {},
+});
+```
+
+```ts
+// In a page:
+const ws = new WebSocket(`${location.origin.replace('http', 'ws')}/ws`);
+```
+
+`ws` is Bun's `ServerWebSocket`: `send`, `subscribe`, `publish`, `close`… `ws.data` has the socket's `path`, its `query` and the `data` that `upgrade` returned. When the sockets carry data (`defineWebSocket<T>`), `upgrade` is required: it's what makes that data.
+
+The file is built with your SvelteKit server code, as one more entry of it. It resolves SvelteKit's `$app`, `$env` and `$lib` imports like a route and **shares their state**: a module imported by both the sockets and a route is one instance, in the built app as in `vite dev`. In the built app the handlers run in the Bun Worker that serves SvelteKit; in dev they run in the Vite server process.
+
+If `open` throws, the socket closes with code 1011: it isn't set up.
+
+## Push from other server code
+
+A remote function, a server callback for a job or a server timer reaches the sockets subscribed to a topic:
+
+```ts
+import { sockets } from '@svelte-desktop/shell/websocket';
+
+sockets.publish('chat', { type: 'new-message', id });  // objects are sent as JSON
+sockets.subscribers('chat');                            // how many are listening
+```
+
+`publish()` returns `false` when this process has no socket server; `subscribers()` then returns `0`. A [job](/native/jobs), [service](/native/services) or [sidecar](/native/sidecars) runs in its own context. Send its result to the SvelteKit server, then publish there.
+
+## Security
+
+In the built app, a socket opens only with the app's session cookie, like any other request to its server. An `Origin` header, when present, must match the app's own origin. App pages carry the cookie; other processes and browser tabs do not receive it.
+
+In `vite dev`, the `Origin` header must name the same host and port as the request's `Host`. The hostname must be `localhost`, a subdomain of `.localhost`, `127.0.0.1`, `::1`, or allowed by Vite's `server.allowedHosts`. There is no app session-cookie gate in dev.
+
+## In dev
+
+`vite dev` loads `src/websocket.ts` the way it loads your SvelteKit server code, so they share state. An edit, the paths included, applies to the next socket opened. Open sockets keep the handlers they started with. The sockets are served on a side port that only the Vite server can reach, and in the page the URL is the same.
+
+## Other servers
+
+A page can also open WebSockets to other servers: `wss://` services, or a local server of your own, such as a [sidecar](/native/sidecars) listening on `127.0.0.1`. Such a server sees the app's origin in the `Origin` header (`http://127.0.0.1:<port>`); check it, and listen on `127.0.0.1` only. Server code can also be a WebSocket client: `new WebSocket('wss://…')` is Bun's.
+
+For messages between the app's windows and popovers, [`host.broadcast`](/host) needs no socket.

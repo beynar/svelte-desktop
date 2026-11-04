@@ -1,0 +1,181 @@
+---
+title: Rust
+description: Typed Rust commands, worker threads, progress events and native plugin builds.
+---
+
+A Rust plugin runs inside the shell process, with a new native thread for each command call. Pick it for Rust crates and CPU or I/O work callable from both pages and SvelteKit server code. Use a [sidecar](/native/sidecars) for process isolation, or a [Swift plugin](/native/plugins/swift) for direct AppKit work on the UI thread.
+
+## Setup
+
+```sh
+bunx svelte-desktop add rust
+```
+
+This creates `native/rust/Cargo.toml`, `native/rust/src/lib.rs` and a `.gitignore` for `target/`. The starter registers `hello.rust`. It refuses to overwrite an existing `native/rust` directory. The SDK dependency points into the installed shell package, or the shell checkout when running from source.
+
+You can also put a single `.rs` file under `native/`. Each loose file becomes its own crate and plugin. The build writes `.desktop/native-projects/<plugin-name>/Cargo.toml`, using the original file as the library source. This generated manifest uses edition `2024`, `crate-type = ["cdylib"]`, the local `svelte-desktop` SDK, `serde` with `derive`, and `ts-rs = "12"`. It does not copy the source or add a `main()`.
+
+For more dependencies or multiple Rust source files, use a directory with your own `Cargo.toml` and a `cdylib` library. Discovery stops at that manifest; its internal `.rs` files are not separate plugins. The configured native directory can itself be a crate. Multiple Rust plugins are allowed. See [platform source selection](/native/plugins/platforms) for `native/macos/`, `native/linux/` and `native/windows/`. `native: 'path'` changes the source directory; `native: false` disables plugins.
+
+Install `cargo`, a Rust compiler supporting edition `2024` for the generated projects, the requested Rust target, and its system linker/SDK. On macOS this means the Apple command-line toolchain; Linux uses GNU targets; Windows uses MSVC targets and the Windows linker/SDK. The builder does not install toolchains. A missing Rust target produces a `rustup target add <triple>` hint.
+
+## Example: a crate with dependencies
+
+This command hashes a text document and reports progress between chunks. After `add rust`, replace the manifest and library with these files. The SDK path below assumes the crate is in `native/rust/`; retain the path written by the CLI if your installation differs.
+
+```toml native/rust/Cargo.toml
+[package]
+name = "document-checksum"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+svelte-desktop = { path = "../../node_modules/@svelte-desktop/shell/native/sdk/rust" }
+serde = { version = "1", features = ["derive"] }
+ts-rs = "12"
+sha2 = "0.10"
+```
+
+```rust native/rust/src/lib.rs
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use svelte_desktop::{emit, log, plugin, Error, Plugin, TS};
+
+#[derive(Deserialize, TS)]
+struct HashArgs {
+    #[serde(rename = "requestId")]
+    request_id: String,
+    text: String,
+}
+
+#[derive(Serialize, TS)]
+struct Checksum {
+    hex: String,
+    bytes: u64,
+}
+
+#[derive(Serialize)]
+struct Progress<'a> {
+    #[serde(rename = "requestId")]
+    request_id: &'a str,
+    bytes: u64,
+}
+
+fn setup(p: &mut Plugin) {
+    p.command("checksum.rust", |a: HashArgs| -> Result<Checksum, Error> {
+        if a.request_id.is_empty() {
+            return Err(Error::invalid_args("requestId is empty"));
+        }
+        let mut hasher = Sha256::new();
+        let mut bytes = 0_u64;
+        for chunk in a.text.as_bytes().chunks(64 * 1024) {
+            hasher.update(chunk);
+            bytes += chunk.len() as u64;
+            emit("checksum.progress", &Progress {
+                request_id: &a.request_id,
+                bytes,
+            });
+        }
+        log("Rust checksum complete");
+        Ok(Checksum { hex: format!("{:x}", hasher.finalize()), bytes })
+    });
+    p.command("checksum.ready", |(): ()| -> Result<bool, Error> { Ok(true) });
+}
+
+plugin!(setup);
+```
+
+After a native dev build generates `src/native.d.ts`, pages and server code use the same calls:
+
+```ts
+import { native } from '@svelte-desktop/shell/native';
+import { onPlatform } from '@svelte-desktop/shell/platform';
+
+const requestId = crypto.randomUUID();
+const off = onPlatform<{ requestId: string; bytes: number }>(
+  'checksum.progress',
+  (progress) => {
+    if (progress.requestId === requestId) console.log(progress.bytes);
+  }
+);
+try {
+  const ready: boolean = await native.checksum.ready();
+  const result = await native.checksum.rust({ requestId, text: 'A saved document' });
+  console.log(ready, result.hex, result.bytes);
+} finally {
+  off();
+}
+```
+
+`host.native` is the same command API without an import. `host.on` is the corresponding event subscription. In a Svelte component, subscribe during its lifetime and dispose the subscription on cleanup. For large files, prefer passing a validated file path and reading incrementally in Rust rather than sending the entire contents through JSON.
+
+## SDK API
+
+The SDK is the `svelte-desktop` crate, imported as `svelte_desktop`.
+
+| Public item | Contract |
+| --- | --- |
+| `Plugin`, `Plugin::default()` | Command registry passed to the setup function. `Plugin` implements `Default`. |
+| `Plugin::command<A, R, F>(name, f)` | Registers `service.op` and returns `&mut Self` for chaining. `A: DeserializeOwned + TS + 'static`; `R: Serialize + TS + 'static`; `F: Fn(A) -> Result<R, Error> + Send + Sync + 'static`. |
+| `plugin!(setup)` | Exports `sd_plugin_init` and `sd_plugin_describe` for `fn setup(p: &mut Plugin)`. |
+| `TS` | Re-export of the `ts-rs` trait and derive macro used to describe arguments and results. |
+| `Value` | Re-export of `serde_json::Value`. Commands still need the `TS` bounds; it is not an untyped command registration overload. |
+| `Error { code, message }` | Rejected result. Public fields are `code: &'static str` and `message: String`; implements `Debug`, `Clone` and `Display` (`code: message`). |
+| `Error::new(code, message)` | Constructs an error with a static code and a message convertible to `String`. Prefer the standard codes below. |
+| `Error::invalid_args`, `Error::unsupported`, `Error::unavailable`, `Error::denied`, `Error::internal` | Message constructors with the corresponding wire code. |
+| `From<E> for Error` | Converts any `E: std::error::Error` to `internal`; enables `?` on ordinary Rust errors. |
+| `emit(event, &data)` | Serializes any `Serialize` payload and broadcasts it. Callable from any thread; returns `()`. Before host initialization or on serialization failure it sends nothing. |
+| `log(message)` | Writes a line through the shell; returns `()`. Before host initialization it does nothing. macOS uses `NSLog`; Linux and Windows write to stderr with the native plugin prefix. |
+
+`SdHost` and opaque `SdCall` are public ABI types used by the macro. Their fields are private. The doc-hidden `__init(host, setup)` and `__describe(setup)` are macro implementation entry points, not UI accessors. Initialization rejects a null host or an incompatible ABI with `-1`.
+
+Register commands during setup. A name without a dot panics during registration. A name already registered by the shell or another plugin is skipped and logged; it is not replaced. Setup runs both when the shell initializes the plugin and when the type extractor describes it in another process. Keep setup limited to registration; do work in handlers.
+
+### Arguments, results and errors
+
+Rust uses Serde rather than Swift's `Codable`: derive `Deserialize` for arguments, `Serialize` for results, and `TS` for both. Arguments arrive as a JSON object. Use a struct for arguments and `()` for no arguments; omitted JavaScript arguments become `{}`, which the SDK also accepts for `()`. Results can be any serializable value with a `TS` representation.
+
+Bad JSON or failed argument decoding rejects with `invalid_args`. A returned `Err` carries its code and message; result serialization failures reject with `internal`. The standard codes are `invalid_args`, `unsupported`, `unavailable`, `denied` and `internal`. JavaScript receives a rejected promise with a `NativeApiError` carrying `code` and `message`; see [errors](/host#errors). Page calls also pass through the shell's configured `bridge.allow` permission check.
+
+An unwinding panic in argument decoding, the handler or result serialization is caught and rejects with `internal` and a message containing `service.op panicked`. This does not isolate native code from the process: `panic = "abort"`, process exit, memory faults, setup panics and panics in independently spawned threads are outside that recovery boundary. Use a sidecar if a crash must not terminate the shell.
+
+## Threads, async and events
+
+The shell loads and initializes the plugin on its UI thread before entering the run loop. Calls enter through the native dispatcher, then the SDK starts `std::thread::spawn` for each call. This is neither the Bun server Worker nor a thread pool. Calls may run concurrently, including calls to the same command. Shared state needs synchronization; captured handler state must satisfy `Send + Sync`.
+
+There is no async command overload, executor, cancellation token or automatic command timeout in this SDK. A handler returns `Result`, not a future. Blocking I/O or long computation can run on its call thread, with progress sent through `emit`. If you use an async Rust library, own its runtime and wait for its result inside that thread. Control the number of calls and progress events in application code; the SDK does not bound their concurrency.
+
+There is no public Rust SDK method to run an arbitrary closure on the UI thread, access a window, or call another host operation. The shell marshals replies and emitted events onto the UI thread. To update a page, emit an event and handle it in page code. To request a built-in UI operation, let a page or server event listener call the appropriate `host` method. Send requests back to Rust with another command. See [threads](/native/threads) and [events](/host/data/events).
+
+Events go to every app-origin page and the server's event bus, rather than just the caller. `onPlatform<T>(name, fn)` from `@svelte-desktop/shell/platform`, or `host.on<T>(name, fn)`, returns an unsubscribe function. Include a request ID for concurrent work. Object payloads arrive directly; scalar, array and null payloads arrive as `{ value: payload }`. Event payload types are not generated in `native.d.ts`; the listener's type parameter is supplied by the application. `emit` offers no delivery acknowledgment or backpressure.
+
+## Generated TypeScript
+
+The build loads each library in a separate Bun subprocess and calls `sd_plugin_describe`. This runs setup to collect command metadata without calling the handlers. `ts-rs` supplies inline argument and result types; the SDK configures large integers as TypeScript `number`. Keep values within JavaScript's exact integer range, or represent larger integers as strings explicitly.
+
+`src/native.d.ts` augments `NativeModules` in `@svelte-desktop/shell/native`. Commands with the same service share an entry, and every method returns a `Promise`. It is written only when its contents change. Keep it in version control and do not edit it by hand.
+
+Native dev startup/rebuilds and macOS packaging run type extraction. Linux and Windows packaging currently build and copy the libraries without regenerating this file. A library that cannot be loaded by the extraction subprocess, including an incompatible architecture or a crash, is skipped. Generated declarations describe the discovered commands; they are not evidence that registration succeeded or that arbitrary custom Serde serialization matches the declared TypeScript.
+
+## Dev and build
+
+`vite dev` builds the host architecture with `cargo build --target <triple>` in the debug profile and copies the library into `.desktop/dev/native/`. Cargo artifacts stay in `.desktop/cargo/<triple>/debug/`; release artifacts use the `release/` profile directory. The build invokes Cargo each time and relies on Cargo's incremental and dependency caches.
+
+An existing source or manifest file changing under the native directory restarts the shell child process and window after rebuilding, resetting plugin state. This is not hot replacement of the loaded library. The watcher ignores `target/`, `Cargo.lock` and `go.sum`; its native restart branch handles `change` events, not source additions or removals. Restart dev after changing the file layout. Build errors are reported in Vite's log; dev can still launch without the failed language plugins.
+
+`vite build` uses `cargo build --release`. For the `native/rust/` layout:
+
+| Platform | Rust target | Packaged library, relative to the app bundle/directory |
+| --- | --- | --- |
+| macOS | `aarch64-apple-darwin` / `x86_64-apple-darwin` | `Contents/Frameworks/plugins/libapp-rust.dylib` |
+| Linux | `aarch64-unknown-linux-gnu` / `x86_64-unknown-linux-gnu` | `lib/plugins/libapp-rust.so` |
+| Windows | `aarch64-pc-windows-msvc` / `x86_64-pc-windows-msvc` | `plugins/app-rust.dll` |
+
+Other crates and loose files are named from their path under the native directory: `native/stats.rs` becomes `libapp-rust-stats.dylib` on macOS. Default packages are written under `.desktop/dist/`; macOS uses `<appName>.app`, Linux `<appName>/`, and Windows `<appName>-windows-<arch>/`. `build.outDir` changes the output root.
+
+On macOS, `build.universal` builds both architectures and joins the plugin slices with `lipo`. `build.minimumSystemVersion` sets `MACOSX_DEPLOYMENT_TARGET` (default `12.0`). Packaged plugin libraries are codesigned with the app's identity, or ad hoc when no identity is configured. Linux packaging has no plugin signing step. Windows Authenticode currently does not include the Rust/Go files in `plugins/`, even when app signing is configured.
+
+Rust/Go plugin builds require the target OS as the build host. When the requested OS differs, the builder skips them; Linux and Windows packagers report a warning. It does not cross-compile these plugins using the shell's Docker toolchains. Architecture selection on the same OS still requires the appropriate Rust target, linker and dependencies; selecting an architecture does not provision them. See [platforms](/native/plugins/platforms).

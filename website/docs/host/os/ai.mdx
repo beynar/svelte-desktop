@@ -1,0 +1,100 @@
+---
+title: host.ai
+description: The system's on-device language model, from pages and server code — Apple's on macOS 26.
+---
+
+`host.ai` calls the language model that comes with the system, on the user's machine: free, offline, nothing sent anywhere. On macOS 26 with Apple Intelligence on, that's Apple's Foundation Models. It works the same from a page and from server code.
+
+How-to: [AI](/features/ai).
+
+## Methods
+
+### `availability()`
+
+Whether the model can run now. Resolves `AIAvailability`: `{ available: boolean, reason? }`. It never rejects.
+
+| `reason` | Meaning |
+| --- | --- |
+| `appleIntelligenceNotEnabled` | Apple Intelligence is off: System Settings › Apple Intelligence & Siri. |
+| `deviceNotEligible` | The Mac can't run the model. |
+| `modelNotReady` | The model is still downloading. |
+| `unsupported` | No on-device model on this system: before macOS 26, Linux, Windows. |
+
+Check it before offering a feature that needs the model, and again later for `modelNotReady`.
+
+### `respond(prompt, options?)`
+
+Resolves the model's answer as a `string`.
+
+```ts
+const summary = await host.ai.respond(`Summarize in one sentence: ${text}`, { temperature: 0.3 });
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `instructions` | `string` | None | How the model should behave (a system prompt). |
+| `temperature` | `number` | The model's | 0 (focused) to 2 (inventive). |
+| `maxTokens` | `number` | None | At most this many tokens in the answer. |
+
+### `generate<T>(prompt, options)`
+
+Resolves an object that follows `options.schema`, a JSON Schema. The model is constrained to it, so the result parses every time. Takes the same options as `respond`, plus `schema`.
+
+```ts
+const task = await host.ai.generate<{ title: string; priority: 'low' | 'medium' | 'high' }>(
+  `Extract the task: ${message}`,
+  { schema: { type: 'object', properties: { title: { type: 'string' }, priority: { enum: ['low', 'medium', 'high'] } }, required: ['title', 'priority'] } },
+);
+```
+
+The schema can use objects (`properties`, `required`, `description`), arrays (`items`, `minItems`, `maxItems`), `string`, string `enum`, `integer`, `number` and `boolean`. It can also combine them with `anyOf` / `oneOf`, or mark one optional with `["string", "null"]`. Properties are written in the schema's order. A schema outside that subset rejects with `invalid_args`. From zod: `z.toJSONSchema(schema)`. `T` describes the result without checking it.
+
+### `stream(prompt, options?)`
+
+An `AsyncIterable<string>` of the answer's new pieces as the model writes them. It takes the same options as `respond`, plus `signal` (an `AbortSignal`). Leaving the loop early, or aborting, stops the model.
+
+```ts
+let text = '';
+for await (const piece of host.ai.stream('Write a haiku about autumn')) text += piece;
+```
+
+### `streamObject<T>(prompt, options)`
+
+An `AsyncIterable<Partial<T>>`: each fuller version of the object as the model writes it, the last one complete. It takes the same options as `generate`, plus `signal`.
+
+### `session(options?)`
+
+A conversation: each call sees the turns before it. Resolves an `AISession`, which has `id`, `respond`, `generate`, `stream`, `streamObject` and `close()`. Its `instructions` are set once, here. Close it when done.
+
+```ts
+const chat = await host.ai.session({ instructions: 'You are a terse assistant.' });
+await chat.respond('My name is Ada.');
+await chat.respond('What is my name?'); // "Ada."
+await chat.close();
+```
+
+A session answers one call at a time: a second one while the first is running rejects with `unavailable`.
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| `unavailable` | The model can't run (see `availability()`), rate limiting, or a session already answering. |
+| `invalid_args` | An empty prompt, a schema outside the supported subset, a prompt too long for the model's context, or a language it doesn't support. |
+| `denied` | The model's safety guardrails refused the prompt or the answer. |
+| `unsupported` | No on-device model on this system. |
+
+## What the model is good at
+
+The model is small, about 3 billion parameters. It does well at summarizing, extracting fields, classifying, tagging, rewriting and short answers. It is weak at code, math, and facts it would have to know. Give it the text to work on in the prompt. It doesn't support tools or images through `host.ai` yet.
+
+## Threads and events
+
+The model runs in system processes, outside the app. The shell's handlers wait for it on the main actor without blocking the UI thread. Streamed pieces travel as `ai.stream` events, which every page of the app receives and filters by stream id. The service name `ai` is the shell's: an app plugin can't register `ai.*` commands.
+
+## Platform support
+
+| | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `availability` | ✓ | ✓ (`unsupported`) | ✓ (`unsupported`) |
+| `respond`, `generate`, `stream`, `streamObject`, `session` | macOS 26 with Apple Intelligence | — | — |

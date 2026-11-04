@@ -1,0 +1,30 @@
+---
+title: Company networks
+description: Server code uses the system's certificates and proxy, as the pages do — so the app works behind a company proxy.
+---
+
+The app's pages go through WebKit, which uses the system's certificates and proxy settings. Server code goes through Bun's `fetch`, which by default uses neither. That covers remote functions, endpoints, the OAuth token exchange and update checks. Behind a company proxy that inspects TLS, every server request would fail with a certificate error, and a proxy set in the system settings would be ignored. Such proxies (Zscaler, Netskope…) install their own root certificate on the machine.
+
+So, at startup and before any request, the app gives server code the system's network:
+- **Certificates:** Bun trusts the system's certificates, including the ones installed on the machine, as well as its own (`NODE_USE_SYSTEM_CA=1`).
+- **Proxy:** when `HTTP_PROXY` / `HTTPS_PROXY` aren't set already, the proxy from the system settings becomes `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`. The app's own server (`localhost`) is always in `NO_PROXY`.
+
+| | Read from |
+| --- | --- |
+| macOS | `scutil --proxy` (System Settings › Network › Proxies) |
+| Windows | The user's Internet Settings |
+| Linux | GNOME's proxy settings (`gsettings`) |
+
+The jobs and services the app starts inherit these settings, as do the processes they spawn.
+
+A proxy auto-configuration script (PAC, WPAD) can't be followed by Bun. The app logs it and connects directly; set `HTTPS_PROXY` yourself in that case.
+
+## Turning it off
+
+```ts desktop.config.ts
+network: { systemCertificates: false, systemProxy: false },
+```
+
+`systemCertificates: false` keeps only Bun's certificates, and `systemProxy: false` ignores the system's proxy. Variables set in the environment still apply.
+
+In `vite dev`, the same settings apply to the Vite process, which runs the app's server code there.

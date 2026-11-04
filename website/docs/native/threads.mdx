@@ -1,0 +1,322 @@
+---
+title: Threads and processes
+description: Where the UI, SvelteKit server, plugins and child processes run, and how they exchange messages and shut down.
+---
+
+An app uses separate execution contexts for its native window, SvelteKit server and web pages. Choose where work runs by what it can block and who owns its lifetime. A promise alone does not move computation to another thread.
+
+## The running app
+
+This is the macOS packaged-app map. WebKit owns its auxiliary processes; the shell does not set a fixed count or a one-process-per-window rule.
+
+```text
+App executable: one Bun process
++------------------------------------------------------------------+
+| Main / UI thread                  Bun Worker thread               |
+| AppKit run loop                   Bun.serve + SvelteKit            |
+| NSWindow, WKWebView objects        loads, actions, endpoints, hooks |
+| native dispatcher                 host server API                  |
+| Swift / ObjC / C/C++ handlers      Node-API addon calls             |
+|             <--- thread-safe FFI calls / event callback --->       |
+|                                                                  |
+| Plugins: Rust thread per call / Go goroutine per call              |
+|          resolve, reject, emit -> UI dispatcher                   |
++------------------------------------------------------------------+
+       ^ native page bridge                  ^ HTTP / WebSocket
+       |                                     |
+       +------------------+------------------+
+                          |
+WebKit-managed processes: WebContent (DOM, page JS, rendering)
+                          Networking (web network traffic)
+
+Server-owned children, outside the app process:
+  job process       <--- Bun IPC: start, progress, result, cancel ---> server
+  service process   <--- Bun IPC: commands, replies, events, stop ---> server
+  sidecar process   <--- tool-specific streams / IPC / sockets ----> server
+
+Shell-owned child (Python commands):
+  python process    <--- stdin/stdout JSON lines ---> python bridge (a plugin on the UI side)
+```
+
+The `WKWebView` objects belong to the UI thread. The page DOM and JavaScript belong to WebKit's content execution context, not the Bun Worker. WebKit's networking machinery is separate from `Bun.serve`: the server receives HTTP requests in the app process. The shell uses WebKit's APIs rather than starting or supervising WebContent or Networking executables itself.
+
+| Context | What blocks there | How to move work off it |
+| --- | --- | --- |
+| UI thread | A slow native handler delays window input, AppKit callbacks, native op replies and event delivery. A slow C op can freeze the window. | Keep UI work short. Dispatch computation to a native background thread/queue and reply later, or use a Rust/Go command, job or service. Return to the UI thread for AppKit work. |
+| Bun server Worker | A CPU loop or synchronous addon call prevents other server JavaScript, requests and native-event callbacks from running. Page JavaScript can continue, but server-dependent actions wait. | Use asynchronous I/O, an addon with its own async implementation, a native plugin command off the UI thread, or a child job/service. |
+| WebContent | A page JavaScript loop blocks that page's event handling and rendering work. It does not become server work merely because it calls an async function. | Send expensive work to an endpoint or remote function that delegates it, or call an off-thread plugin command. |
+| WebKit Networking | Slow or stalled network operations delay affected resource loads and requests. | Use asynchronous requests and handle failure/cancellation in the calling code. The shell offers no API to run application computation in this process. |
+| Rust SDK command thread | The body occupies its own thread. Calls may overlap and access shared plugin state concurrently. | Bound work in the application and synchronize shared state. Use a child process if a crash must be isolated. |
+| Go SDK command goroutine | The body occupies a goroutine scheduled by Go. Calls may overlap. | Synchronize shared state and bound work; use a process for crash isolation. |
+| Python process | A `def` handler occupies one of 8 pool threads; an `async def` handler that doesn't await blocks the other async handlers. Pure-Python CPU work holds the GIL. Calls may overlap. | Await in async handlers, run CPU work in libraries that release the GIL, synchronize shared state. A crash ends only this process. |
+| Job child | CPU work blocks that job's event loop, including receipt of cooperative cancellation. | Break work into chunks that yield when cancellation must be observed. Other app contexts remain separate. |
+| Service child | A long command delays later commands; its IPC handlers run serially. | Keep handlers responsive, delegate finite heavy tasks, and use request timeouts. A timeout does not cancel the command. |
+| Sidecar child | The tool blocks its own execution and any callers waiting for it. | Use asynchronous stream reads and `proc.exited`; follow the tool's concurrency and cancellation protocol. |
+
+Every native library still shares the app process. A fatal native fault in a plugin or addon can terminate it. The Rust SDK catches unwinding command panics and the Go SDK recovers command panics, but neither creates a process boundary.
+
+## Plugin dispatch and addons
+
+Page calls enter the native dispatcher through WebKit's script-message bridge, without passing through the server. Server calls enter through `shell_platform_call`, which queues dispatch on the main thread. Both reach the same registered operations. Replies carry a request id in a `platformResult` event; the caller's platform bus matches it to the pending promise. Native events reach the Worker's thread-safe `JSCallback` sink without polling and reach pages through WebKit JavaScript delivery.
+
+- **Swift:** the trampoline schedules a `Task` on `@MainActor`. An `await` that suspends lets the main actor run other work; a CPU loop inside the handler still blocks it. Put expensive computation on a background executor and return to the main actor for AppKit access.
+- **Objective-C:** `SDCommand` invokes its block on the UI thread. Start background work explicitly, then call `SDReply` once. Its reply can arrive from another thread.
+- **C/C++:** the raw `sd_op_fn` begins on the UI thread. Copy `args_json` before retaining it for background use, keep the `sd_call` until its single reply, and call `resolve` or `reject` exactly once. Both accept replies from any thread. The window/webview accessors are main-thread-only.
+- **Rust:** the SDK copies the argument JSON and starts `std::thread::spawn` for each command. The command body runs there; this is not the Bun Worker.
+- **Go:** the SDK copies the argument JSON and starts a goroutine for each command. It is not pinned to the UI thread.
+- **Python:** the bridge queues the call for a writer thread, which writes it to the Python process's stdin; the UI thread never waits on Python. A reader thread receives the replies and events and hands them to `resolve`, `reject` and `emit`. See [Python](/native/plugins/python#the-python-process).
+
+On macOS, plugin `resolve` and `reject` marshal replies back to the UI thread. Plugin `emit` also marshals delivery there. A blocked UI thread can therefore delay the result of computation that has already finished elsewhere.
+
+`host.loadAddon<T>(name)` calls `process.dlopen` in server code. Synchronous exported functions execute on the calling Worker thread. Declaring a function `async` in a TypeScript wrapper, or writing `await addon.compute()`, does not make its synchronous native body nonblocking. An addon may implement its own asynchronous work; follow that addon's contract. Pages reach addons through your endpoint or remote function, not through `host.native`.
+
+## Bun Workers
+
+The packaged app already uses a Bun `Worker` for its server. Its entry is explicitly supplied to `bun build --compile` alongside the main entry. That is how it survives packaging.
+
+The desktop adapter does not discover and package additional application Worker files. A `new Worker(new URL('./worker.ts', import.meta.url).href)` that works against source files is not evidence that the file will exist inside the compiled app. There is no desktop Worker registration option in the current config. Use the managed job or service workflow when you need an entry automatically embedded in the executable.
+
+An additional Worker has its own JavaScript globals. It does not inherit the server's installed `host` or platform transport. If you supply and package one yourself, exchange messages with its owning server context through `postMessage`, and keep native calls in that owner. Worker threads share the process failure boundary.
+
+## Messages between contexts
+
+Use JSON-serializable payloads for the native bridge, jobs, services and broadcasts. These transports do not share a page's JavaScript objects with the server or a native plugin.
+
+### Native calls and events
+
+This Swift plugin registers a command and emits a native event:
+
+```swift native/Greeter.swift
+import Foundation
+
+struct HelloArgs: Codable { let name: String }
+
+func desktopSetup() {
+  Desktop.command("greeter.hello") { (args: HelloArgs) in
+    Desktop.emit("greeter.called", ["name": args.name])
+    return "Hello \(args.name)"
+  }
+}
+```
+
+After generation of `src/native.d.ts`, the caller is the same in a page or server code:
+
+```ts
+const off = host.on<{ name: string }>('greeter.called', ({ name }) => {
+  console.log('Native greeting for', name);
+});
+const greeting = await host.native.greeter.hello({ name: 'Ada' });
+off();
+```
+
+The promise resolves only to the calling context. The event is broadcast to app-origin pages, including popovers and embedded app views, and the server's platform bus. A view showing another origin does not receive these events. On macOS, a non-object plugin event payload is wrapped as `{ value: payload }`; use an object when you want named fields.
+
+The other SDK entry points use the same route:
+
+```rust
+// In a Rust command body:
+svelte_desktop::emit("work.progress", &serde_json::json!({ "fraction": 0.5 }));
+```
+
+```go
+// In a Go command body; desktop is the Go SDK import:
+desktop.Emit("work.progress", map[string]float64{"fraction": 0.5})
+```
+
+```objc
+// In an Objective-C plugin:
+SDEmit(@"work.progress", @{@"fraction": @0.5});
+```
+
+```c
+/* With the sd_host pointer saved by sd_plugin_init: */
+host->emit("work.progress", "{\"fraction\":0.5}");
+```
+
+The page bridge checks the calling main frame and app origin. `bridge.allow` restricts page operations, including plugin commands; server calls are not restricted by that list. Rejected operations reject the caller's promise with a `NativeApiError`. See [`host.native`](/host/data/native) and [events](/host/data/events).
+
+### Page, server and other windows
+
+`host.broadcast` invokes the native `events.emit` operation. Native delivery sends a `message` event to the server and app pages, including the sender. It does not directly reach job/service processes or sidecars.
+
+```ts
+// In a page or server context; keep off and call it when the owner is disposed.
+const off = host.onBroadcast<{ count: number }>('counter', (data, from) => {
+  console.log('Count', data.count, 'from', from);
+});
+await host.broadcast('counter', { count: 1 });
+```
+
+Server calls and the primary window both use `0` as their broadcast sender identity. Do not treat it as a unique server identifier. `host.events.emit` is a local JavaScript bus and does not cross contexts.
+
+Server code can also use `desktop.publish` with the page-side `onDesktopEvent` helper:
+
+```ts
+// Server code, after desktop readiness:
+import { desktop } from '@svelte-desktop/shell/server';
+
+desktop.publish('index:updated', { files: 12 });
+```
+
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { onDesktopEvent } from '@svelte-desktop/shell/client';
+
+  onMount(() => onDesktopEvent('index:updated', (data) => {
+    console.log(data);
+  }));
+</script>
+```
+
+This uses the native `desktop` broadcast channel. `desktop.publish` returns `void` and swallows delivery errors; it is a notification, not an acknowledged request/reply API.
+
+### Job progress and results
+
+A job communicates with its server owner through Bun IPC. It has a job context, not the page/server `host` runtime:
+
+```ts src/jobs/count.ts
+import type { JobFunction } from '@svelte-desktop/shell/server';
+
+const count: JobFunction<{ limit: number }, number> = async ({ limit }, ctx) => {
+  for (let n = 1; n <= limit; n++) {
+    if (ctx.signal.aborted) throw new Error('canceled');
+    ctx.progress(n / limit, `Counted ${n}`);
+    ctx.emit({ n });
+    await Bun.sleep(10);
+  }
+  return limit;
+};
+export default count;
+```
+
+```ts
+// Server code:
+const job = host.jobs.start('count', { limit: 10 });
+const ended = await host.jobs.wait(job.id);
+console.log(ended.state, ended.result, ended.error);
+```
+
+```svelte
+<!-- Page code: snapshots arrive over the native jobs broadcast channel. -->
+{#each host.jobs.active() as job (job.id)}
+  <progress max="1" value={job.progress}></progress>
+  <span>{job.message}</span>
+{/each}
+```
+
+The parent receives progress, logs, custom events and the final result/error. It broadcasts job snapshots, throttling ordinary updates to 50 ms. Pages can use `host.jobs.onEvent` for `ctx.emit` messages. `wait` resolves for `done`, `failed` or `canceled`; inspect the state rather than assuming a result. Pages start jobs through your server API. See [Jobs](/native/jobs).
+
+### Service commands and events
+
+A service uses a duplex Bun IPC channel. Its default export installs handlers and may return a cleanup function:
+
+```ts src/services/counter.ts
+import type { ServiceFunction } from '@svelte-desktop/shell/server';
+
+const counter: ServiceFunction<{ initial: number }> = ({ initial }, port) => {
+  let count = initial;
+  port.onRequest((command) => {
+    if (command !== 'increment') throw new Error('Unknown command');
+    return { count: ++count };
+  });
+  port.on('message', async (data) => {
+    await port.postMessage({ count, echo: data });
+  });
+};
+export default counter;
+```
+
+```ts
+// Server code after readiness; retain counter to reuse it across requests.
+import { desktop, services } from '@svelte-desktop/shell/server';
+
+const counter = await services.start('counter', { initial: 0 });
+counter.on('message', (data) => desktop.publish('counter:message', data));
+const next = await counter.request<{ count: number }>('increment');
+await counter.send({ inspect: true });
+console.log(next.count);
+```
+
+The request resolves to the `onRequest` return value. `send` resolves when the child's message handler consumes the message; `port.postMessage` delivers an unsolicited event to the parent. Here the server forwards it to pages with `desktop.publish`; pages can subscribe through `onDesktopEvent('counter:message', ...)` as above. Page commands go through your server API to the retained handle. Service payload types are caller declarations, not runtime validation.
+
+The channel bounds queued messages and message size; await sends and handle rejection. Service processes do not have the page `host` global or SvelteKit aliases. See [Services](/native/services).
+
+### Sidecars
+
+`host.sidecar` resolves a configured executable and calls `Bun.spawn`. There is no automatic native event or service protocol around it:
+
+```ts
+// Server code; ffmpeg must be declared in desktop.config.ts sidecars.
+const proc = await host.sidecar('ffmpeg', ['-version'], { stdout: 'pipe' });
+// The helper's general subprocess type does not narrow stdout from these options.
+const output = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+const code = await proc.exited;
+if (code !== 0) throw new Error(`ffmpeg exited with ${code}`);
+await host.broadcast('tool:output', { output });
+```
+
+Server code owns the subprocess, reads its output, checks its exit status, and forwards messages to pages. Sidecars do not inherit the native bridge. See [Sidecars](/native/sidecars).
+
+## Startup order
+
+For a packaged app, the generated main entry checks job/service mode first. A child started with `SVELTE_DESKTOP_JOB` or `SVELTE_DESKTOP_SERVICE` imports its embedded runner instead of creating a window and server.
+
+For a normal launch:
+
+1. `runShell` creates the Bun Worker first. The server modules can load while the main thread opens the native library and creates the primary window.
+2. The main thread installs page permissions and loads each configured plugin library. On macOS, `shell_load_plugin` calls its `sd_plugin_init` on the UI thread before entering the run loop. Registration/setup must be short; heavy initialization delays startup. Rust/Go command bodies are off-thread, but their plugin initialization is not.
+3. The main thread posts `init`, containing the window id and a one-time session secret, to the Worker. It then calls `shell_run`, which enters the native run loop. Its Bun JavaScript event loop does not run again while that call blocks.
+4. The Worker handles `init`, opens the native library, installs a thread-safe `JSCallback` event sink and its platform transport, and starts the gated loopback HTTP server.
+5. It sets the app origin, creates and installs the desktop runtime, and invokes queued `onDesktopReady` / `host.ready` callbacks. Server modules can evaluate before this point: put startup native calls and listeners that require the desktop runtime in a readiness callback.
+6. The Worker asks native code to navigate the primary window to the authenticated startup URL. WebKit loads the page and client assets from the server.
+
+Plugin setup is also used for command discovery during type generation in a build subprocess. Keep registration separate from work that needs a real window or an active app runtime.
+
+### Development
+
+In `vite dev`, the Vite process runs SvelteKit. A separate dev-shell process contains the UI thread and a Bun Worker that hosts a token-protected loopback WebSocket bridge, not the SvelteKit server. Server native calls travel from Vite over that bridge to the same dispatcher; native events travel back.
+
+Changes to watched files under `native/` rebuild plugins, regenerate their types and restart the native shell/window. This is not an in-process library reload. The watcher ignores generated `target/`, `Cargo.lock` and `go.sum` changes. Jobs and services run their source files with Bun in development; packaged apps embed their entries and launch their own executable as a child.
+
+## Shutdown and ownership
+
+On macOS, API quit, menu quit, system termination and handled signals enter AppKit's termination owner. Quitting does not first stop the run loop and then ask pages whether to save. The native lifecycle has three awaited phases while the app is still running:
+
+1. **`quitRequested`:** `host.app.onQuitRequested` guards in pages and server code vote. Any cancellation keeps the app alive. Guards must return `'quit'` to consent; errors or other results cancel.
+2. **`beforeQuit`:** `host.app.onBeforeQuit` handlers can save while windows and the server still exist. This phase cannot veto.
+3. **`willQuit`:** `host.app.onWillQuit` handlers perform final cleanup. This phase cannot veto either. Each phase has a native 10-second deadline; timeout emits `quitTimedOut` and advances.
+
+The packaged macOS Worker's own `willQuit` participant runs `desktop.onBeforeQuit` / `host.onBeforeQuit` callbacks sequentially, then kills running jobs, marks them canceled and writes ended-job history. This job shutdown is an immediate kill request, not the normal two-second cooperative `jobs.cancel` path. It then stops and reaps services: restarts are disabled, the child receives `stop`, its signal aborts and its cleanup runs; a child that remains alive gets `SIGKILL` after 500 ms. Cleanup errors in the legacy quit callbacks are logged and later callbacks still run.
+
+AppKit's affirmative termination reply can exit the process directly. This is why macOS child cleanup belongs in `willQuit`, before that reply. On backends where `shell_run` returns, the main thread posts `shutdown`; the Worker runs cleanup once, force-stops the HTTP server and its sockets, then posts `shutdown-complete`. The main thread waits up to `shutdownTimeoutMs` (3 seconds by default) before exiting. Do not rely on in-flight HTTP requests being drained during this final shutdown.
+
+The `sidecar` helper does not register a quit hook or kill its children. Own that cleanup explicitly for a long-running tool, for example with `host.onBeforeQuit`. Additional application Workers and plugin-created threads have no managed job/service shutdown hook; coordinate their shutdown yourself. Plugin libraries stay loaded for the app's lifetime. WebKit owns its auxiliary-process lifetime; the shell does not provide a kill order for WebContent and Networking.
+
+Closing the last window normally requests quit. With `quitOnLastWindowClosed: false`, it hides instead and the app keeps running; jobs and services continue until an actual quit.
+
+In development, closing the bridge triggers the Vite-side desktop runtime's cleanup. It is not the packaged macOS Worker's awaited `willQuit` participant.
+
+## Platform boundaries
+
+| Boundary | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Main native UI loop | AppKit | GTK | Win32 |
+| System web view | `WKWebView`; WebKit manages content/network processes | WebKitGTK | WebView2 |
+| Packaged SvelteKit server | Bun Worker | Bun Worker | Bun Worker |
+| Rust / Go command body | Native thread / goroutine | Native thread / goroutine | Native thread / goroutine |
+| C/C++ plugin entry | UI thread | UI thread | UI thread |
+| Swift / Objective-C plugins | Supported | Not built | Not built |
+| Addons / jobs / services / sidecars | Server Worker / child processes | Server Worker / child processes | Server Worker / child processes |
+| Awaited, vetoable three-phase quit | Implemented | No equivalent awaited lifecycle | No equivalent awaited lifecycle |
+
+WebKit process names and AppKit termination details above describe macOS. Native code and binaries must match the target platform; see [Platforms](/native/plugins/platforms). Subscription helpers exist across platforms, but an observational `willQuit` event on a backend without the awaited lifecycle does not promise time for asynchronous cleanup.
+
+## Do and don't
+
+- **Do** keep UI handlers short and move computation to the context that owns it. **Don't** assume `async`, `await` or an addon means background execution.
+- **Do** synchronize shared Rust/Go state and reply exactly once to raw native calls. **Don't** keep borrowed argument pointers after a C callback returns.
+- **Do** use server endpoints or remote functions to expose child-process commands to pages. **Don't** expect a service, job or additional Worker to inherit the server's globals.
+- **Do** await service sends, read sidecar streams, inspect job terminal state and handle failures. **Don't** assume a request timeout canceled the work.
+- **Do** dispose page subscriptions on unmount and register save/cleanup hooks before quitting begins. **Don't** wait for the UI run loop to stop before trying to show a save prompt.
+- **Do** own sidecar and custom-thread lifetimes. **Don't** assume process isolation includes automatic shutdown supervision.

@@ -1,0 +1,117 @@
+---
+title: host.update
+description: Check the signed update feed and install an available release.
+---
+
+`host.update` is the reactive update store backed by the `updater` service. Checking is opt-in: initialization does not contact the network. The same signed updater serves page and server calls.
+
+How-to: [Self-update](/shipping/self-update) for feed configuration, signing, publishing and rollback setup.
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `checking` | `boolean` | Whether a `check()` call is in progress; initially `false`. |
+| `available` | `AvailableUpdate \| null` | Last successful check's update, or `null`. |
+| `checkedAt` | `number \| null` | Unix milliseconds of the last successful check. |
+| `checkError` | `Error \| null` | Last check failure; cleared when a new check starts. |
+| `upToDate` | `boolean` | A successful check has completed, `available` is `null` and `checkError` is `null`. |
+| `ready` | `boolean` | Whether the store has initialized. |
+| `error` | `Error \| null` | Store initialization failure; update failures use `checkError`. |
+
+Failed checks retain the previous `available` and `checkedAt` values. Starting a check does not clear a previous update. `upToDate` does not imply `checking` is false.
+
+## Methods
+
+### `check(currentVersion?, options?)`
+
+Fetch and verify the configured signed feed. Resolves `AvailableUpdate | null`; `null` means no newer applicable release was selected. The store sets `checking` while waiting, records successful results and timestamps, and records and rethrows failures.
+
+```ts
+const update = await host.update.check();
+if (update) console.log(update.currentVersion, update.version);
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `currentVersion` | `string` | Omitted | Compatibility argument; ignored. The shell uses the installed app version. |
+| `options` | `UpdateEndpoints` | Omitted | Compatibility argument; ignored. Configure the signed feed in `desktop.config.ts`. |
+
+`UpdateEndpoints` remains accepted for source compatibility. Every field below is optional and ignored by this updater; none overrides shell configuration:
+
+| Field | Type | Default |
+| --- | --- | --- |
+| `endpoints` | `string[]` | Omitted |
+| `pubkey` | `string` | Omitted |
+| `headers` | `{ name: string; value: string }[]` | Omitted |
+| `timeoutMs` | `number` | Omitted |
+| `installerArgs` | `string[]` | Omitted |
+| `installMode` | `'passive' \| 'quiet' \| 'basicUi'` | Omitted |
+
+The standalone service's `updater.check()` has the same signature and result, but does not update reactive state. There is no `host.update.updater` member.
+
+Rejects with `unavailable` when the shell updater is absent or no update configuration exists. Feed errors include `manifest_fetch_failed`, `manifest_invalid`, `signature_invalid`, `name_mismatch` and `channel_mismatch`. Page calls reject with `NativeApiError` carrying the updater's code; in-process server calls propagate updater errors directly. Check results are not native capability-registry operations.
+
+### `AvailableUpdate.downloadAndInstall()`
+
+This method is on the result of `check()` and on `host.update.available`, not directly on `host.update`. Declared return type: `Promise<void>`.
+
+| Readonly field | Type | Description |
+| --- | --- | --- |
+| `currentVersion` | `string` | Installed app version. |
+| `version` | `string` | Offered release version. |
+| `notes` | `string \| null` | Release notes. |
+| `date` | `string \| null` | Release date from the signed manifest. |
+| `downloadUrl` | `string` | Selected artifact URL. |
+| `format` | `string` | Artifact archive format. |
+| `mandatory` | `boolean` | Installed version is below the manifest's `minimumVersion`. The app decides how its UI handles this flag. |
+
+```ts
+const update = await host.update.check();
+if (update) await update.downloadAndInstall();
+```
+
+The shell downloads the selected update, verifies it, stages an install, starts the swap helper and requests quit with relaunch enabled. The helper waits for process exit before swapping files; method completion does not mean the new app has finished launching. The service uses its most recently checked update, so install promptly after the check rather than retaining old result objects across later checks.
+
+Download and install failures include `download_failed`, `size_mismatch`, `hash_mismatch`, `extract_failed`, `layout_invalid`, `not_writable` and `helper_failed`. If no release is available when installation is requested, it rejects with `invalid_args`. Handle install errors separately: they do not populate the store's `checkError`.
+
+### `init()`
+
+Synchronously mark the store ready and return the namespace. This performs no check. There is no `dispose()` method or update event subscription; observe the reactive state.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `check` (store and `updater` service) | ✓ | ✓ | ✓ |
+| `AvailableUpdate.downloadAndInstall` | ✓ | ✓ | ✓ |
+| `init` | ✓ | ✓ | ✓ |
+
+Updating requires a configured feed, an artifact for the running platform/architecture and a writable install location. A translocated macOS app is refused. See [Self-update](/shipping/self-update#install-and-rollback) for installation and rollback behavior.
+
+## Example
+
+```svelte
+<script lang="ts">
+  let installError = $state<string | null>(null);
+
+  async function install() {
+    installError = null;
+    try { await host.update.available?.downloadAndInstall(); }
+    catch (error) { installError = String(error); }
+  }
+</script>
+
+<button onclick={() => host.update.check().catch(() => {})} disabled={host.update.checking}>
+  {host.update.checking ? 'Checking…' : 'Check for updates'}
+</button>
+{#if host.update.checkError}
+  <p>{host.update.checkError.message}</p>
+{:else if host.update.available}
+  <p>Version {host.update.available.version} is available.</p>
+  <button onclick={install}>Install and relaunch</button>
+{:else if host.update.upToDate}
+  <p>Up to date.</p>
+{/if}
+{#if installError}<p>{installError}</p>{/if}
+```

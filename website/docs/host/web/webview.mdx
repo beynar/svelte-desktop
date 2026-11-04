@@ -1,0 +1,463 @@
+---
+title: host.webview
+description: Control page navigation, zoom, find, inspection, media, downloads, printing and native web-view events.
+---
+
+`host.webview` controls the native web view in a window, popover or embedded view. It is a service with methods and events, without reactive state.
+
+How-to: [Web view](/ui/web-view).
+
+
+## Reactive fields
+
+`host.webview` has the calling page's settings without `await`: `zoom`, `userAgent`, `fileDrop`, `contextMenu`, `inspectable`, `backgroundThrottling`, `recovery`, `audioMuted` and `contentRules`. Like [`host.window`'s fields](/host/windows/window), each is `null` until it's known or on a platform without it, is read the first time you use it, is up to date once a setter resolves, and follows setters called from other contexts.
+
+## Targets
+
+Methods with a `target` argument accept `WebviewTarget`, defaulting to `{}`. Options extending `WebviewTarget` accept the same fields directly.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `viewId` | `string` | Omitted | [Embedded-view](/host/windows/view) identifier. macOS only for these methods. |
+| `popoverId` | `string` | Omitted | [Popover](/host/windows/popover) identifier. |
+| `windowId` | `number` | Omitted | Public [window](/host/windows/window) id; `0` is the main window. |
+
+On macOS, selection order is `viewId`, `popoverId`, `windowId`, the calling page, then the main window. Linux and Windows resolve `popoverId`, `windowId`, the calling page, then the main window; they do not resolve `viewId` in these methods. Select a window or popover explicitly there. Unknown selected targets reject with `invalid_args`.
+
+`WebviewSource` has the same optional fields. Events identify their source with `windowId`, `popoverId`, or `viewId` plus the owning `windowId`.
+
+## Methods
+
+### `setZoom(zoom, target?)`
+
+Set page zoom; `1` means 100%.
+
+```ts
+const { zoom } = await host.webview.setZoom(1.25);
+```
+
+`zoom: number` must be positive, otherwise the call rejects with `invalid_args`. It is clamped to 0.25–5. `target` is `WebviewTarget`. Resolves `{ zoom: number }` with the applied value.
+
+### `getZoom(target?)`
+
+Read the page zoom. `target` is `WebviewTarget`. Resolves `{ zoom: number }`.
+
+### `find(options)`
+
+Find text in the selected document.
+
+```ts
+const { matchFound } = await host.webview.find({ text: 'todo', caseSensitive: false });
+```
+
+`FindOptions` extends `WebviewTarget`:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `text` | `string` | Required | Nonempty search text. |
+| `backwards` | `boolean` | `false` | Search toward the start. |
+| `caseSensitive` | `boolean` | `false` | Match letter case. |
+| `wraps` | `boolean` | `true` | Continue from the other end of the document. |
+
+Resolves `{ matchFound: boolean }`. Empty text rejects with `invalid_args`. macOS only.
+
+### `clearFind(target?)`
+
+Clear the page selection used by find. `target` is `WebviewTarget`. Resolves `null`. macOS only.
+
+### `reload(options?)`
+
+Reload the selected page. Resolves `null` after requesting the reload, rather than waiting for the document to load.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| Target fields | `WebviewTarget` | `{}` | View to reload. |
+| `ignoreCache` | `boolean` | `false` | Request a reload bypassing the cache. |
+
+### `stop(target?)`
+
+Stop the current load. `target` is `WebviewTarget`. Resolves `null`.
+
+### `goBack(target?)`
+
+Request back navigation. `target` is `WebviewTarget`. Resolves `{ navigated: boolean }`; `false` means no back entry was available.
+
+### `goForward(target?)`
+
+Request forward navigation. `target` is `WebviewTarget`. Resolves `{ navigated: boolean }`; `false` means no forward entry was available.
+
+### `getInfo(target?)`
+
+Read a snapshot of the web view. `target` is `WebviewTarget`. Resolves `WebviewInfo`:
+
+| Property | Type | Description |
+| --- | --- | --- |
+| Target fields | `WebviewSource` | Source identifiers described above. |
+| `url` | `string \| null` | Current page URL. |
+| `title` | `string` | Document title. |
+| `loading` | `boolean` | Whether a navigation is loading. Windows currently reports `false`. |
+| `canGoBack` | `boolean` | A back entry is available. |
+| `canGoForward` | `boolean` | A forward entry is available. |
+| `zoom` | `number` | Current page zoom. |
+| `userAgent` | `string \| null` | macOS/Windows custom override, or `null`; Linux reports the configured user agent. |
+| `debug` | `boolean` | Debug state reported by the backend. |
+| `fileDrop` | `boolean` | Native file-path drop enabled. Linux reports `false`; Windows currently omits this declared field. |
+| `contextMenu` | `ContextMenuMode` | Current context-menu mode. Linux reports `default`. |
+| `inspectable` | `boolean`, optional | Inspector access; macOS includes it from 13.3 onward. |
+
+### `setUserAgent(userAgent, target?)`
+
+Set the custom user agent. `userAgent: string` may be `''` to restore the engine default. `target` is `WebviewTarget`. Resolves `null`. Windows requires a WebView2 runtime with the user-agent settings interface; otherwise it rejects with `unsupported`.
+
+### `getUserAgent(target?)`
+
+Read the page's user agent. `target` is `WebviewTarget`. Declared return type is `Promise<string>`. The macOS and Linux native implementations can return `null` if no string is available.
+
+### `setInspectable(enabled, target?)`
+
+Enable or disable Safari Web Inspector access on macOS, WebKit developer extras on Linux, or WebView2 devtools access on Windows.
+
+```ts
+await host.webview.setInspectable(true);
+```
+
+`enabled: boolean` is required; `target` is `WebviewTarget`. Resolves `{ inspectable: boolean }`. macOS requires 13.3 or newer, otherwise it rejects with `unsupported`. View creation also accepts `debug`; see [windows](/host/windows/window) and [embedded views](/host/windows/view).
+
+### `setRecovery(recovery, target?)`
+
+Set behavior after the web content process terminates.
+
+`recovery` is `WebviewRecovery`, `'reload' | 'manual'`; new views default to `reload`. `target` is `WebviewTarget`. Resolves `null`. Invalid values reject with `invalid_args`. macOS only.
+
+`reload` starts a new document at the last URL and loses in-memory JavaScript state. `manual` leaves it stopped until an explicit `reload`. Handle termination from a surviving page or server: the terminated document cannot handle its own crash.
+
+Read the current policy from `getInfo().recovery` (macOS).
+
+### `clearData(options?)`
+
+Clear website data in the **default** session's WebKit data store. This method has no target or session selector and does not clear [named profiles](/host/web/sessions).
+
+```ts
+const { cleared } = await host.webview.clearData({ types: ['cache'], app: true });
+```
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `types` | `WebsiteDataType[]` | `['all']` | `cookies`, `localStorage`, `sessionStorage`, `indexedDB`, `cache`, `serviceWorkers` or `all`. |
+| `app` | `boolean` | `false` | Include app storage as well as other sites' storage. |
+
+Resolves `{ cleared: string[] }` with WebKit site display names. Unknown types reject with `invalid_args`. App cookies are always retained to preserve authentication with the app server. Native filtering protects the app host, `localhost` and `127.0.0.1` as app records. macOS only.
+
+### `setBackgroundThrottling(enabled, target?)`
+
+Control throttling while the page is hidden or covered. `enabled: boolean` restores throttling when `true`; `false` keeps timers and the page running at an energy cost. The default is enabled. `target` is `WebviewTarget`. Resolves `null`. macOS only.
+
+macOS 14+ uses the public inactive scheduling policy as well as available WebKit controls; older systems use available WebKit SPI.
+
+Read the current state from `getInfo().backgroundThrottling` (macOS).
+
+### `setAudioMuted(muted, target?)`
+
+Mute the page's output without stopping playback or muting capture devices. `muted: boolean` is required; `target` is `WebviewTarget`. Resolves `null`. macOS only; rejects with `unsupported` when the required WebKit muting SPI is unavailable.
+
+### `pauseMedia(target?)`
+
+Pause every audio and video playback in the selected page. `target` is `WebviewTarget`. Resolves `null`. macOS only.
+
+### `getMediaState(target?)`
+
+Read playback and capture state. `target` is `WebviewTarget`. Resolves `MediaState`:
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `audible` | `boolean` | Audio is playing and the page is not muted. |
+| `muted` | `boolean` | Page output is muted. |
+| `playback` | `'none' \| 'playing' \| 'paused' \| 'suspended'` | Playback state. |
+| `camera` | `'none' \| 'active' \| 'muted'` | Camera capture state. |
+| `microphone` | `'none' \| 'active' \| 'muted'` | Microphone capture state. |
+
+macOS only. Audio flags use WebKit SPI; an unavailable observation reports `false`.
+
+### `setContextMenu(options)`
+
+Choose the native context menu mode. `ContextMenuOptions` extends `WebviewTarget`:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `mode` | `ContextMenuMode` | Required | `default`, `none` or `custom`. |
+| `items` | `MenuItemSpec[]` | Omitted | Required for `custom` on macOS; [menu item fields](/host/input/menu). |
+| `editMenu` | `boolean` | Initially `true`; unchanged when omitted | Keep editing and spelling items in `none`/`custom` mode. macOS only. |
+| `all` | `boolean` | `false` | Apply to every current web view. On macOS, also set the mode/items default for future views. |
+
+Resolves `{ mode: ContextMenuMode }`. `default` uses the engine menu. On macOS, `none` is the production default and retains editing items unless disabled; debug views default to `default`. `custom` adds your items, which emit `menuAction` through [menus](/host/input/menu). Invalid modes or custom item definitions reject with `invalid_args`.
+
+macOS supports all options. Windows supports only `default` and `none`; `custom` rejects with `unsupported`, `items`/`editMenu` are not applied, and `all` affects current views only. Linux is unsupported.
+
+### `getContextMenu(target?)`
+
+Read context-menu settings. `target` is `WebviewTarget`. Resolves `{ mode: ContextMenuMode; editMenu: boolean; debug: boolean; items: MenuItemSpec[] }`. Windows returns `editMenu: true` and empty `items`. macOS and Windows only.
+
+### `setFileDrop(options)`
+
+Enable native drag/drop events with real file paths. This leaves ordinary DOM drag events available; call `preventDefault()` on the DOM `drop` event as usual.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| Target fields | `WebviewTarget` | `{}` | Selected web view. |
+| `enabled` | `boolean` | Required | Native file-path reporting; initially enabled. |
+| `all` | `boolean` | `false` | Apply to all current and future web views. |
+
+Resolves `{ enabled: boolean }`. A missing `enabled` rejects with `invalid_args`. macOS only.
+
+### `setDownloadDirectory(path)`
+
+Set the app-wide default download directory. `path: string | null` accepts `null` to restore `~/Downloads`; a string expands `~` and creates missing directories.
+
+Resolves `{ path: string }`. Directory creation failure rejects with `denied`. Downloads without an explicit path receive unique names, including concurrent downloads. macOS only.
+
+### `getDownloadDirectory()`
+
+Read the default download directory. Resolves `{ path: string }`. macOS only.
+
+### `download(url, options?)`
+
+Start a download using the selected page's session and cookies. Relative URLs resolve against that page.
+
+```ts
+const { id, url } = await host.webview.download('/export.csv');
+```
+
+`url: string` is required. Options extend `WebviewTarget`:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `path` | `string` | Default directory with a unique name | Explicit absolute destination, expanding `~`; replaces an existing file. |
+
+Resolves `{ id: string; url: string }` when WebKit creates the download, before completion. Schemes other than HTTP, HTTPS, `blob:` and `data:`, or nonabsolute explicit paths, reject with `invalid_args`. Observe completion with the download events below.
+
+The destination handler on [`host.downloads`](/host/web/downloads) can override the destination or cancel the request. Automatic attachment and link downloads share the same records. macOS only.
+
+### `cancelDownload(id)`
+
+Cancel an active transfer. `id: string` is required. Resolves `null` as an acknowledgement; native cancellation and `downloadFailed` follow asynchronously. An unknown id rejects with `invalid_args`; a transfer that is no longer active rejects with `unavailable`. Use [`host.downloads.cancel`](/host/web/downloads) to await its final record. macOS only.
+
+### `listDownloads()`
+
+Read download history, newest first, including completed, canceled, paused and interrupted transfers. Resolves [`DownloadRecord[]`](/host/web/downloads), the same records as `host.downloads.list()`. macOS only.
+
+### `print(options?)`
+
+Print the selected page, with a native panel by default. `PrintOptions` extends `WebviewTarget`:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `printer` | `string` | System print settings | Installed printer name. |
+| `copies` | `number` | System print settings | Integer from 1 to 9999. PDF copies do not duplicate document pages. |
+| `pageRanges` | `{ from: number; to: number }[]` | All pages | One-based inclusive integer ranges; ascending and nonoverlapping. Both endpoints are required. |
+| `paperSize` | `{ width: number; height: number }` | System print settings | Required dimensions when supplied, in points (72/inch), each from 1 to 14400. |
+| `orientation` | `'portrait' \| 'landscape'` | System print settings | Applied after paper dimensions. |
+| `margins` | `{ top: number; right: number; bottom: number; left: number }` | System print settings | All four required when supplied; nonnegative points, at most 14400 each, leaving printable area. |
+| `silent` | `boolean` | `false` | macOS: print without a panel. |
+| `pdfPath` | `string` | Omitted | macOS: save a paginated PDF; implies `silent`. |
+
+The options object defaults to `{}`. On macOS, interactive printing resolves `{ started: true }` when the sheet opens; `printFinished` reports its result. Silent printing resolves `{ success: true }` after spooling. PDF saving resolves `{ success: true; path: string }` after writing. The declared return type is `{ started?: true; success?: boolean; path?: string }`.
+
+On macOS, the view must be attached to a window without another open sheet. Physical printing accepts one contiguous page range. Invalid options reject with `invalid_args`; failed/canceled jobs, unattached views or an existing sheet reject with `unavailable`. PDF ranges beyond the generated page count fail with `unavailable` after pagination.
+
+Windows supports a reduced operation: without `pdfPath`, it opens print UI and resolves `{ started: true }`; `silent: true` selects the system dialog rather than suppressing it. With `pdfPath`, it writes PDF and resolves `{ success: true; path: string }`. Printer, copies, ranges, paper size, orientation and margins are not forwarded. The required WebView2 interfaces may reject with `unsupported`; print failures reject with `unavailable`. Linux is unsupported.
+
+### `printToPDF(path, options?)`
+
+Save a paginated PDF without opening a print panel.
+
+```ts
+await host.webview.printToPDF('/Users/me/notes.pdf', {
+  paperSize: { width: 595, height: 842 },
+  orientation: 'portrait',
+  margins: { top: 36, right: 36, bottom: 36, left: 36 },
+});
+```
+
+`path: string` is required. The second argument is `Omit<PrintOptions, 'pdfPath' | 'silent'>`, defaulting to `{}`; its fields are described above. Resolves `{ path: string }`.
+
+macOS expands `~` and supports the print options and validation above. Windows uses the WebView2 PDF interface with default settings and does not forward the layout options; a missing path rejects with `invalid_args`, an old runtime with `unsupported`, and a write failure with `unavailable`. Linux is unsupported.
+
+### `getPrinters()`
+
+List installed printer names. Resolves `string[]`, possibly empty. macOS only.
+
+### `respondToDialog(options?)`
+
+Answer an open JavaScript `alert`, `confirm` or `prompt`, for automation.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| Target fields | `WebviewTarget` | `{}` | View with the open dialog. |
+| `accept` | `boolean` | `true` | Accept, or dismiss/cancel when `false`. |
+| `text` | `string` | Current prompt value | Replace prompt input before answering. |
+
+Resolves `{ type: 'alert' | 'confirm' | 'prompt' }`. No open dialog rejects with `unavailable`. The options object defaults to `{}`. macOS only.
+
+### `getDialog(target?)`
+
+Read the open JavaScript dialog. `target` is `WebviewTarget`. Resolves `{ type: 'alert' | 'confirm' | 'prompt'; message: string } | null`. macOS only.
+
+### `executeJavaScript(code, target?)`
+
+Evaluate `code: string` in the main frame and return its result. The generic result type defaults to `unknown`.
+
+```ts
+const title = await host.webview.executeJavaScript<string>('document.title');
+```
+
+The second argument extends `WebviewTarget`:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `world` | `string` | `'page'` | macOS: page world or a named [content world](/host/web/web-content#content-worlds). Linux and Windows execute in the page world. |
+
+Resolves `T` from JSON-serializable output, awaiting promises. Missing code rejects with `invalid_args`; evaluation failures reject with `internal`. On macOS, an empty world rejects with `invalid_args`. If page CSP blocks the async evaluator's `eval`, macOS and Linux fall back to direct evaluation without promise awaiting.
+
+### `capturePage(options?)`
+
+Capture the visible page as a base64 PNG or JPEG. `CaptureOptions` extends `WebviewTarget`:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `rect` | `{ x: number; y: number; width: number; height: number }` | Whole visible page | All four required when supplied; CSS pixels from the page's top-left. |
+| `width` | `number` | Native snapshot width | Output width in points on macOS; pixels on Linux, preserving aspect ratio. Windows ignores it. |
+| `format` | `'png' \| 'jpeg'` | `'png'` | Encoding. |
+| `quality` | `number` | `0.85` | JPEG quality from 0 to 1. |
+
+The options object defaults to `{}`. Resolves `{ data: string; format: 'png' | 'jpeg'; width: number; height: number }`; returned dimensions are pixels. Snapshot/encoding failures reject with `internal`. Linux rejects an empty capture region with `invalid_args`; Windows rejects a region outside the page with `invalid_args`.
+
+### `getOpenedFiles()`
+
+Drain the queued paths of documents opened with the app before listeners were ready. Resolves `{ paths: string[] }`. This shares the queue with the app's opened-file operation; later calls see only newly queued entries. Use `onOpenFiles` for live arrivals.
+
+## Events
+
+Each helper takes a callback and returns `() => void` to unsubscribe. The same events are available through `host.on(eventName, callback)`. `WebviewSource` supplies the target fields described above.
+
+| Helper | Event | Payload | When / support |
+| --- | --- | --- | --- |
+| `onLifecycle` | `webviewLifecycle` | `WebviewLifecycleEvent`, below | Full native navigation or content-process termination. macOS. |
+| `onFileDragEnter` | `fileDragEnter` | `FileDropEvent`: `WebviewSource & { paths: string[]; x: number; y: number }` | Files enter the view; coordinates in CSS pixels. macOS. |
+| `onFileDragLeave` | `fileDragLeave` | `WebviewSource` | File drag leaves. macOS. |
+| `onFileDrop` | `fileDrop` | `FileDropEvent` | Files dropped with real paths. macOS. |
+| `onContextMenu` | `contextMenu` | `ContextMenuEvent`, below | Context-menu request, regardless of mode. macOS. |
+| `onJsDialog` | `jsDialog` | `JsDialogEvent`, below | Native JavaScript dialog opens. macOS. |
+| `onDownloadStarted` | `downloadStarted` | `DownloadStartedEvent`, below | Destination chosen and transfer starts. macOS. |
+| `onDownloadProgress` | `downloadProgress` | `DownloadProgressEvent`, below | Transfer progress. macOS. |
+| `onDownloadFinished` | `downloadFinished` | `DownloadFinishedEvent`, below | Download finishes. macOS. |
+| `onDownloadFailed` | `downloadFailed` | `DownloadFailedEvent`, below | Download fails or is canceled. macOS. |
+| `onPrintFinished` | `printFinished` | `WebviewSource & { success: boolean; path?: string }` | Print/PDF job finishes; PDF includes its path. macOS. |
+| `onCloseRequested` | `closeRequested` | `WebviewSource` | A popover page calls `window.close()`. macOS and Linux. |
+| `onOpenFiles` | `openFiles` | `{ paths: string[] }` | Documents opened with the app. All three platforms. |
+
+`WebviewLifecycleEvent` combines target fields, `url: string`, `navigationId: string | null` and one of:
+
+| `type` | Additional fields |
+| --- | --- |
+| `navigationStarted` | None. |
+| `loaded` | None. |
+| `failed` | `domain: string`, `code: number`, `message: string`, `provisional: boolean`. |
+| `terminated` | `recovery: WebviewRecovery`, `reason: 'unknown'`. |
+
+These events cover full WebKit navigations, not SvelteKit client route transitions. HTTP error responses are loaded pages, not navigation errors. Public WebKit does not expose the termination reason.
+
+```ts
+type ContextMenuEvent = WebviewSource & {
+  x: number; y: number; // CSS pixels
+  linkURL?: string; srcURL?: string; selectionText?: string;
+  editable: boolean; mode: ContextMenuMode;
+};
+type JsDialogEvent = WebviewSource & {
+  type: 'alert' | 'confirm' | 'prompt';
+  message: string; defaultValue?: string;
+};
+type DownloadBase = WebviewSource & { id: string; url: string; path?: string };
+type DownloadStartedEvent = DownloadBase & {
+  path: string; suggestedFilename: string; totalBytes: number; mimeType: string | null;
+};
+type DownloadProgressEvent = DownloadBase & {
+  receivedBytes: number; totalBytes: number; fraction: number;
+};
+type DownloadFinishedEvent = DownloadBase & { path: string; bytes: number };
+type DownloadFailedEvent = DownloadBase & { error: string; canceled: boolean };
+```
+
+Download byte totals and fractions are `-1` when unknown; a known fraction is from 0 to 1. For persistent transfer state and destination handlers, see [`host.downloads`](/host/web/downloads).
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `setZoom`, `getZoom` | ✓ | ✓ | ✓ |
+| `find`, `clearFind` | ✓ | — | — |
+| `reload`, `stop`, `goBack`, `goForward` | ✓ | ✓ | ✓ |
+| `getInfo` | ✓ | ✓ | partial¹ |
+| `setUserAgent`, `getUserAgent` | ✓ | ✓ | ✓² |
+| `setInspectable` | 13.3+ | ✓ | ✓ |
+| `setRecovery` | ✓ | — | — |
+| `clearData` | ✓ | — | — |
+| `setBackgroundThrottling`, `setAudioMuted`, `pauseMedia`, `getMediaState` | ✓³ | — | — |
+| `setContextMenu`, `getContextMenu` | ✓ | — | partial⁴ |
+| `setFileDrop` | ✓ | — | — |
+| `setDownloadDirectory`, `getDownloadDirectory`, `download`, `cancelDownload`, `listDownloads` | ✓ | — | — |
+| `print`, `printToPDF` | ✓ | — | partial⁵ |
+| `getPrinters` | ✓ | — | — |
+| `respondToDialog`, `getDialog` | ✓ | — | — |
+| `executeJavaScript` | ✓ | partial⁶ | partial⁶ |
+| `capturePage` | ✓ | ✓ | partial⁷ |
+| `getOpenedFiles` | ✓ | ✓ | ✓ |
+| `onLifecycle`, `onFileDragEnter`, `onFileDragLeave`, `onFileDrop`, `onContextMenu`, `onJsDialog` | ✓ | — | — |
+| `onDownloadStarted`, `onDownloadProgress`, `onDownloadFinished`, `onDownloadFailed`, `onPrintFinished` | ✓ | — | — |
+| `onCloseRequested` | ✓ | ✓ | — |
+| `onOpenFiles` | ✓ | ✓ | ✓ |
+
+1. Windows omits `fileDrop` and reports `loading: false`.
+2. Setting a user agent on Windows needs the corresponding WebView2 settings interface.
+3. Muting needs available WebKit SPI; unavailable audio observations report `false`.
+4. Windows supports `default`/`none`, not custom items or editable-menu policy; global changes cover current views only.
+5. Windows uses default print/PDF settings; `silent` still opens UI without a PDF path. Requires the corresponding WebView2 interfaces.
+6. Linux and Windows ignore `world` and run in the page world.
+7. Windows ignores output `width`.
+
+Linux and Windows target support is limited as described under [Targets](#targets). Event support is listed in the events table; subscribing does not make an unsupported event available.
+
+## Example
+
+This macOS component finds text and handles native file drops, removing its listener on teardown.
+
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
+
+  let query = $state('');
+  let matched = $state(false);
+  let paths = $state<string[]>([]);
+
+  onMount(() => host.webview.onFileDrop((event) => { paths = event.paths; }));
+
+  async function find() {
+    if (!query) { await host.webview.clearFind(); matched = false; return; }
+    matched = (await host.webview.find({ text: query })).matchFound;
+  }
+</script>
+
+<input bind:value={query} aria-label="Find text" />
+<button onclick={find}>Find</button>
+<button onclick={() => host.webview.setZoom(1)}>Reset zoom</button>
+<p>{matched ? 'Match found' : 'No match'}</p>
+<div ondragover={(event) => event.preventDefault()} ondrop={(event) => event.preventDefault()}>
+  Drop files here
+  {#each paths as path}<p>{path}</p>{/each}
+</div>
+```
+
+## Also on `host.webview`
+
+- [Content rules, user scripts, content worlds and navigation policy](/host/web/web-content).
+- [Per-origin permissions, authentication and certificates](/host/web/web-policy).
+- [Native input policy](/host/input/input-policy).

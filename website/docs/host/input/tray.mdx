@@ -1,0 +1,189 @@
+---
+title: host.tray
+description: A native status or system tray item with an icon, menu and popover binding.
+---
+
+`host.tray` manages the application's single status item: the macOS menu bar item or Linux and Windows system tray icon. It combines local reactive state with native operations. A tray menu uses [`MenuItemSpec`](/host/input/menu#menuitemspec); a bound [`popover`](/host/windows/popover) toggles natively on clicks.
+
+How-to: [Menu bar and popovers](/ui/menu-bar-and-popovers).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `title` | `string \| null` | `title` supplied to the most recent successful `set`, or `null` if omitted. |
+| `tooltip` | `string \| null` | `tooltip` supplied to the most recent successful `set`, or `null` if omitted. |
+| `imagePath` | `string \| null` | `imagePath` supplied to the most recent successful `set`, or `null` if omitted. Does not reflect `icon` or `imageName`. |
+| `active` | `boolean` | Whether this store has successfully set an item; initially `false`. Cleared by `remove`. |
+| `lastRect` | `TrayClickRect \| null` | Payload of the most recent `trayClick`; initially `null`. Not cleared by `remove`. |
+| `ready` | `boolean` | Whether the store's event listener has initialized. |
+| `error` | `Error \| null` | Initialization failure, if any. |
+
+These fields echo this store's calls and received events, rather than querying the OS. Native `set` preserves omitted options, but the three string fields above reset to `null` when omitted from a later call. Use `isSet()` and `getBounds()` to query current native state.
+
+## Types
+
+### `TrayOptions`
+
+`set` and `acquire` accept the same options. Fields are optional; an omitted field leaves the native setting unchanged on an existing item.
+
+| Option | Type | Default on creation | Description |
+| --- | --- | --- | --- |
+| `title` | `string` | Platform-dependent | Text beside the icon on macOS and a status label on Linux. macOS falls back to the app name when there is no image, badge or title. Windows uses it as a tooltip fallback; it has no adjacent title text. |
+| `tooltip` | `string` | Platform-dependent | Hover text on macOS and Windows; Linux sets the indicator's title. Windows falls back to the app name. |
+| `imagePath` | `string` | Unset | File icon path. |
+| `imageName` | `NativeIconName` | Unset | Named native icon, such as `'add'` or `'refresh'`, from `NATIVE_ICON_NAMES`. |
+| `icon` | `MenuItemIcon` | Unset | `{ native: NativeIconName }` or `{ path: string }`. Same type as [menu icons](/host/input/menu#menuitemspec). |
+| `badgeColor` | `string \| null` | No badge | Dot composited onto the icon on macOS and Windows. A supported CSS color string sets it; `null` clears it. Linux validates color strings but does not draw the dot and rejects `null`. |
+| `menu` | `{ items: MenuItemSpec[] }` | No user menu | Native dropdown menu. On macOS an attached menu takes clicks instead of firing `trayClick` or toggling a popover. |
+| `popover` | `string \| null` | Unbound | Id from `host.popover.create`; click toggles it natively. `null` unbinds. |
+
+Choose one icon source. macOS and Windows prioritize `imageName`, then `imagePath`, then `icon`; Linux applies supplied sources in the order `imageName`, `icon`, `imagePath`. macOS renders icons as templates before applying a colored badge. Linux maps the native icon vocabulary to desktop theme names; Windows uses its native icon mapping or an image file.
+
+On Linux a tray item needs `libayatana-appindicator3` or `libappindicator3` at run time. Without a user menu, the backend supplies a one-entry menu whose activation emits `trayClick`; supported hosts also route secondary activation to it. Linux does not expose icon geometry.
+
+### `TrayClickRect`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `x?` | `number` | Left screen coordinate, top-left origin. |
+| `y?` | `number` | Top screen coordinate. |
+| `width?` | `number` | Icon bounds width. |
+| `height?` | `number` | Icon bounds height. |
+
+macOS and Windows report logical screen coordinates when geometry is available. Every field is optional; Linux click payloads are `{}`.
+
+## Methods
+
+### `set(options)`
+
+Create or update the single native item and mirror the supplied strings into the store.
+
+```ts
+const active = await host.tray.set({
+  title: 'Notes', tooltip: 'Quick note', icon: { native: 'add' },
+  menu: { items: [{ id: 'new-note', label: 'New Note' }, { role: 'quit' }] },
+});
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `options` | `TrayOptions` | Fields listed above. |
+
+Resolves `boolean`, the native `set` flag. This is the store wrapper's result, rather than the service's `{ set: boolean }`. Invalid colors, icons or menu items reject with `invalid_args`. Missing native tray facilities or unavailable image files can reject with `unavailable`.
+
+### `remove()`
+
+Remove the tray item, unbind its popover and clear the store's `active`, `title`, `tooltip` and `imagePath` fields.
+
+```ts
+await host.tray.remove();
+```
+
+Resolves `void`. Calling it without an installed item is harmless.
+
+### `isSet()`
+
+Query whether a native tray item exists.
+
+```ts
+const installed = await host.tray.isSet();
+```
+
+Resolves `boolean`. Does not update `active`.
+
+### `getBounds()`
+
+Query the icon's screen rectangle.
+
+```ts
+const bounds = await host.tray.getBounds();
+```
+
+Resolves `TrayClickRect | null`. macOS and Windows return `null` if bounds are unavailable or the item is unset. Linux always returns `null`.
+
+### `performClick()`
+
+Trigger the native tray click path, including any bound popover toggle and `trayClick` event.
+
+```ts
+await host.tray.performClick();
+```
+
+Resolves `{ clicked: boolean }`. Rejects with `unavailable` if the item is unset. macOS and Linux reject with `unsupported` when a user menu is attached; Windows permits the call and invokes the click path without opening that menu.
+
+### `acquire(options)`
+
+Set the tray item and return a disposable `TrayHandle`.
+
+```ts
+await using item = await host.tray.acquire({ icon: { native: 'add' }, tooltip: 'Quick note' });
+// Keep this scope alive for as long as the tray item is needed.
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `options` | `TrayOptions` | Same fields and errors as `set`. |
+
+Resolves `TrayHandle`. Its `[Symbol.asyncDispose](): Promise<void>` removes the item through this store. Repeated disposal shares the same operation. There is only one tray item: handles do not create independent items or reserve ownership against a later `set`.
+
+### `init()` and `dispose()`
+
+`init()` subscribes once to `trayClick`, sets `ready` and returns the store synchronously. It runs automatically when the platform connects. `dispose()` removes only that store listener and returns `void` synchronously. It leaves the tray item and separately registered listeners in place. Call `init()` to resume `lastRect` updates.
+
+```ts
+host.tray.dispose();
+host.tray.init();
+```
+
+## Events
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `trayClick` | `TrayClickRect` | Native click action fires. Linux reports `{}`; macOS does not emit this while a menu is attached. |
+
+`onClick(cb)` accepts `(data: TrayClickRect) => void` and returns an unsubscribe function synchronously. `on('trayClick', cb)`, `once('trayClick', cb)` and `host.on('trayClick', cb)` are alternatives. `once` removes its listener after the first delivery; all return unsubscribe functions.
+
+```ts
+const off = host.tray.onClick((rect) => console.log(rect.x, rect.y));
+off();
+```
+
+Tray menu actions arrive through [`host.menu.onAction`](/host/input/menu#events). On macOS its menu lifecycle id is `'tray'`.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `set`, `acquire` | ✓ | partial | partial |
+| `remove`, `isSet` | ✓ | ✓ | ✓ |
+| `getBounds` | ✓ | partial | ✓ |
+| `performClick` | ✓ | ✓ | ✓ |
+| `init`, `dispose`, `onClick`, `on`, `once` | ✓ | ✓ | ✓ |
+
+Linux requires an AppIndicator library, has no geometry or badge rendering, and uses the host's status-menu behavior. Windows has no adjacent title text. Menu item support follows the [menu reference](/host/input/menu#platform-support).
+
+## Example
+
+This installs a tray menu whose custom action shows the app window.
+
+```ts
+const off = host.menu.onAction(async ({ id }) => {
+  if (id === 'tray-open') await host.window.show();
+});
+
+await host.tray.set({
+  icon: { native: 'add' },
+  tooltip: 'Notes',
+  menu: { items: [
+    { id: 'tray-open', label: 'Open Notes' },
+    { type: 'separator' },
+    { role: 'quit' },
+  ] },
+});
+console.log(await host.tray.isSet());
+
+// When the feature is removed:
+await host.tray.remove();
+off();
+```

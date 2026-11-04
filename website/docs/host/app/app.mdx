@@ -1,0 +1,376 @@
+---
+title: host.app
+description: Read app identity, control application and Dock behavior, and participate in the quit lifecycle.
+---
+
+`host.app` combines reactive app state with identity, lifecycle and Dock operations. Its macOS quit coordinator lets every page and the server protect unsaved work before any window is destroyed.
+
+How-to: [App and Dock](/ui/platform-services#app-and-dock).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `info` | `AppInfo \| null` | App information loaded during initialization. |
+| `name` | `string \| null` | `info.name`. |
+| `version` | `string \| null` | `info.version`. |
+| `packaged` | `boolean \| null` | Whether the app is packaged, from `info`. |
+| `platform` | `string \| null` | Platform from `info`: `'darwin'`, `'linux'` or `'windows'`. |
+| `active` | `boolean` | Starts `true`; macOS activation events keep it current. No initial focus query is made. |
+| `reopenCount` | `number` | Reopen events received; initially `0`. |
+| `lastReopenedAt` | `number \| null` | Local Unix milliseconds of the last reopen event. |
+| `quitting` | `boolean` | Set to `true` on `willQuit`; a quit request alone does not set it. |
+| `restarting` | `boolean` | Set to `true` on `willRestart`. |
+| `loginItem` | `LoginItem \| null` | Launch at login. See [`getLoginItem()`](#getloginitem). |
+| `activationPolicy` | `ActivationPolicy \| null` | Dock presence. |
+| `dockBadge` | `string \| null` | The badge text. |
+| `dockIcon` | `IconSource \| null` | What `setDockIcon()` set. |
+| `dockProgress` | `DockProgress \| null` | The Dock's progress bar. |
+| `secondInstanceCount` | `number` | Second-instance launch attempts received; initially `0`. |
+| `lastSecondInstance` | `{ argv: string[]; cwd: string } \| null` | Most recent second-instance arguments and working directory. |
+| `ready` | `boolean` | Whether initialization completed. |
+| `error` | `Error \| null` | Initialization failure, if any. |
+
+`AppInfo` has `name: string`, `version: string`, `identifier: string`, `appPath: string | null`, `packaged: boolean`, `platform: string` and `arch: string`. `appPath` is `null` for an unpackaged app. Setters do not reload `info`; call `init()` to reload that snapshot after changing identity. `quitting` and `restarting` are event latches, not a promise that the process has exited.
+
+## Methods
+
+### `whenReady()`, `getInfo()`, `getName()` and `getVersion()`
+
+| Method | Resolves | Description |
+| --- | --- | --- |
+| `whenReady()` | `true` | The native app is ready. |
+| `getInfo()` | `AppInfo` | Fresh identity and packaging information; does not replace `info`. |
+| `getName()` | `string` | Current native app name. |
+| `getVersion()` | `string` | Current app version. |
+
+### `getPath(name)`
+
+Resolve an OS or app-specific path. Resolves `string`; does not create the directory.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `name` | `AppPathName` | `'home'`, `'appPath'`, `'exe'`, `'temp'`, `'appData'`, `'userData'`, `'logs'`, `'caches'`, `'documents'`, `'downloads'`, `'desktop'`, `'music'`, `'pictures'` or `'videos'`. |
+
+`userData`, `logs` and `caches` are scoped by app identifier. `appData` is the OS application-data root; `appPath` is the bundle or executable directory. Rejects with `invalid_args` for an unknown path name. Server code also has startup-created [`host.paths`](/host/data/server) directories.
+
+### `setName(name)` and `setIdentity(identifier, name?)`
+
+Override the runtime app name or identifier. Both resolve `null`.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` in `setName` | `string` | Required | Nonempty app name. |
+| `identifier` in `setIdentity` | `string` | Required | Nonempty app identifier. |
+| `name` in `setIdentity` | `string` | Omitted | Also override the name when supplied. |
+
+Rejects with `invalid_args` for an empty required name or identifier. This changes runtime values, not the packaged app's manifest.
+
+### `quit()`
+
+Request normal application termination. Resolves `null` when the request is accepted, before the macOS quit decision finishes. A guard can still cancel it. See [Cancellable quit](#cancellable-quit-macos).
+
+```ts
+await host.app.quit();
+```
+
+### `relaunch()`
+
+Schedule a fresh copy after this process exits, emit `willRestart` and request quit. Resolves `null`; rejects with `internal` when the relaunch process cannot start. On macOS the quit coordinator still runs, so a guard can delay or cancel termination.
+
+### `exit(code = 0)`
+
+Exit the process immediately, bypassing quit guards and cleanup. `code` is a `number`, default `0`. The declared result is `Promise<never>`; it does not resolve.
+
+### `hide()`, `show()`, `hideOthers()` and `showAll()`
+
+All resolve `null`. `hide()` hides this app; `show()` unhides and activates it. On Linux and Windows these operate on the app's native windows. `hideOthers()` hides other applications; `showAll()` unhides all applications.
+
+`hideOthers()` and `showAll()` are macOS only.
+
+### `addRecentDocument(path)`
+
+Add a file to the OS recent-document list. `path` is a required nonempty `string`; resolves `null`. Rejects with `invalid_args` when the path is empty.
+
+macOS and Windows only.
+
+### `setDockBadge(text)`
+
+Set the Dock badge on macOS, or the taskbar overlay on Windows. `text` is `string | null`; `null` clears it. The host store resolves `void` and then mirrors the argument into `dockBadge`. Windows uses a generic overlay icon with the text as its description, rather than drawing arbitrary badge text.
+
+```ts
+await host.app.setDockBadge('3');
+await host.app.setDockBadge(null);
+```
+
+macOS and Windows only. The store records the accepted argument, not an independently queried native badge state.
+
+### `getDockBadge()`
+
+Resolves the badge text, or `null`. macOS and Windows. The reactive `dockBadge` gives the same without `await`.
+
+### `setDockIcon(icon)`
+
+Replace the macOS Dock icon. `icon` is `IconSource | null`; resolves `null`. `null` restores the default icon. `IconSource` accepts a native icon name, an image path, `{ native: NativeIconName }` or `{ path: string }`; see [native menu icons](/host/input/menu). Rejects with `invalid_args` when the icon cannot be resolved or loaded.
+
+macOS only.
+
+### `getDockIcon()`
+
+Resolves what `setDockIcon()` set, or `null` with the bundle's icon. macOS only.
+
+### `bounceDock(type)`
+
+Request attention through the Dock on macOS or taskbar flashing on Windows. Resolves `boolean`; Windows returns `false` if there is no primary window.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `type` | `DockBounceType` | `'critical'` or `'informational'`. Critical requests continue until activation; informational requests are brief. |
+
+macOS and Windows only.
+
+### `setDockProgress(progress)`
+
+Set Dock or taskbar progress. Resolves `null`.
+
+| `DockProgress` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `status` | `DockProgressStatus` | Required | `'none'`, `'normal'`, `'indeterminate'`, `'paused'` or `'error'`. Use `'none'` to clear. |
+| `completed` | `number` | `0` | Completed amount. |
+| `total` | `number` | `1` | Total amount; the displayed fraction is clamped between 0 and 1. |
+
+```ts
+await host.app.setDockProgress({ status: 'normal', completed: 25, total: 100 });
+```
+
+Windows rejects with `unavailable` when no taskbar button is available. macOS and Windows only.
+
+`getDockProgress()` resolves the same object, `{ status: 'none' }` without progress.
+
+### `getLoginItem()`
+
+Launch at login: whether it's on, and whether this launch came from it. Resolves `LoginItem`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `available` | `boolean` | Whether this build can set it. `false` in `vite dev` and on macOS 12, where the other fields are `false` too. |
+| `enabled` | `boolean` | The app launches at login. Reflects the system's settings: it's `false` once the user turned it off there. |
+| `requiresApproval` | `boolean` | The user turned it off in the system's settings, and only they can turn it on again: show a link to [`host.system.openSettings('loginItems')`](/host/app/system#opensettingspane). macOS and Windows. |
+| `launchedAtLogin` | `boolean` | This launch came from the login item. On Linux and Windows, an entry written by an earlier version of the app isn't recognized until `setLoginItem(true)` writes it again. |
+
+It never rejects because the app isn't packaged, so a settings page runs the same in dev:
+
+`host.app.loginItem` gives the same object without `await`, reactive. It's `null` for a moment after the first read, and it's read again when the app comes back to the front, in case the user changed it in the system's settings:
+
+```svelte
+<label>
+  <input
+    type="checkbox"
+    disabled={!host.app.loginItem?.available}
+    checked={host.app.loginItem?.enabled}
+    onchange={(e) => host.app.setLoginItem(e.currentTarget.checked)}
+  />
+  Launch at login
+</label>
+{#if host.app.loginItem?.requiresApproval}
+  <button onclick={() => host.system.openSettings('loginItems')}>Allow in Settings</button>
+{/if}
+```
+
+To start out of the way at login, create the main window hidden (`window: { visible: false }`) and show it for the other launches:
+
+```ts
+const { launchedAtLogin } = await host.app.getLoginItem();
+if (!launchedAtLogin) await host.window.show();
+```
+
+### `setLoginItem(enabled)`
+
+Turn launch at login on or off. `enabled` is a required `boolean`; resolves `LoginItem`, the state after the call. Where it's not available (`vite dev`, macOS 12), it does nothing and resolves `available: false`. Uses `SMAppService` on macOS, an XDG autostart entry on Linux and the per-user Run registry key on Windows. macOS shows a notification the first time. macOS and Windows can reject with `denied`; Linux file-write failures reject with `internal`.
+
+When the user turned it off in the system's settings, `setLoginItem(true)` doesn't turn it back on on macOS and Windows: it resolves `requiresApproval: true`.
+
+### `setActivationPolicy(policy)`
+
+Set `ActivationPolicy`, one of `'regular'`, `'accessory'` or `'prohibited'`. Resolves `boolean`, the native policy setter's result. `'accessory'` hides the Dock icon; `'prohibited'` prevents activation. An unknown policy rejects with `invalid_args`.
+
+### `getActivationPolicy()`
+
+Resolves the current `ActivationPolicy`. Always `'regular'` on Linux and Windows.
+
+macOS only.
+
+### `requestSingleInstanceLock()`
+
+Acquire the app's single-instance lock. Resolves `{ acquired: boolean }`. A later instance forwards its arguments and working directory to the holder as `secondInstance`; it should quit when `acquired` is `false`. Calling again in the holder returns `true`. Lock-creation failures on macOS and Linux reject with `internal`; Windows reports `acquired: false` if it cannot acquire the mutex.
+
+### `getBundleType()` and `defaultWindowIcon()`
+
+`getBundleType()` resolves `{ type: BundleType }`, where `BundleType` is `'app' | 'binary'`. `defaultWindowIcon()` resolves `{ pngBase64: string } | null` with the default icon as base64 PNG, or `null` if there is no available packaged icon.
+
+`defaultWindowIcon()` is supported on macOS and Linux only.
+
+### `aboutPanel(options = {})`
+
+Show the platform About UI. Resolves `null`.
+
+| `AboutPanelOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | Native app name | Display name. |
+| `version` | `string` | Native app version | Display version. |
+| `copyright` | `string` | Native default / omitted | Copyright text. |
+| `credits` | `string` | Native default / omitted | Credits text; Linux uses the About dialog comments. |
+
+### `metrics()`
+
+Memory and CPU of the app's processes. Resolves `AppMetrics`: `{ processes, memory: { footprint } }`, where `memory.footprint` is the total in bytes. Each entry of `processes` is a `ProcessMetrics`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `pid` | `number` | Process id. |
+| `type` | `'main' \| 'webview' \| 'python' \| 'helper' \| 'child'` | `main`: the shell (UI thread and the server's Worker). `webview`: a WebKit content process (a window's page, a kept-alive tab, a popover). `python`: the [Python](/native/plugins/python) process. `helper`: the app's own executable again (a service, a job). `child`: another process it started (a sidecar…). |
+| `name` | `string` | Process name. |
+| `windowId` | `number` | For a `webview`: the window whose page it draws. |
+| `memory` | `{ footprint: number; resident: number }` | Bytes. `footprint` is the memory macOS counts for the process (Activity Monitor's Memory). |
+| `cpu` | `{ time: number; percent: number \| null }` | CPU seconds so far, and the share of one core since the previous call (`null` the first time a process is seen). |
+
+```ts
+await host.app.metrics();                      // a first sample for the CPU shares
+setInterval(async () => {
+  const { processes, memory } = await host.app.metrics();
+  console.log((memory.footprint / 2 ** 20).toFixed(0), 'MB', processes.map((p) => `${p.type} ${p.cpu.percent?.toFixed(1)}%`));
+}, 2000);
+```
+
+WebKit's networking and GPU processes are shared with the system and not counted. macOS only.
+
+### `init()` and `dispose()`
+
+`init()` reloads app info, awaits native readiness, marks the store ready and installs internal event subscriptions; resolves the namespace. Store startup normally calls it. `dispose()` synchronously removes those internal listeners without resetting state or removing your listeners and quit guards.
+
+## Cancellable quit (macOS)
+
+Register a guard in a page or server module. Return `'cancel'` to keep the app and all its windows alive, or `'quit'` to allow the attempt:
+
+```ts
+const off = host.app.onQuitRequested(async (request) => {
+  if (!editor.hasChanges) return 'quit';
+  const { response } = await host.dialog.showMessageBox({
+    message: 'Discard unsaved changes?', buttons: ['Discard', 'Cancel'],
+  });
+  return response === 0 ? 'quit' : 'cancel';
+});
+// Remove the subscription when its owner goes away, for example with onDestroy(off).
+```
+
+Cmd+Q, Quit in the app or Dock menu, `host.app.quit()`, the last window closing when `quitOnLastWindowClosed` is enabled, and macOS logout/shutdown all enter the same native coordinator. Repeated requests during an attempt join the active attempt rather than starting another vote.
+
+### `onQuitRequested(callback)`
+
+Register `(request: QuitRequest) => QuitDecision | Promise<QuitDecision>`. Every registered page and server guard participates. Any `'cancel'`, invalid decision or thrown guard error cancels the attempt. With no guards it proceeds. Each phase snapshots its participants, so a late registration does not add a participant to a phase already running.
+
+### `onBeforeQuit(callback)`
+
+Register `(request: QuitRequest) => void | Promise<void>`. Runs after every guard allows quit, while windows and the server still exist. It is awaited, but cannot veto.
+
+### `onWillQuit(callback)`
+
+Register `(request: QuitRequest) => void | Promise<void>`. Runs the final awaited cleanup phase after `beforeQuit` completes. It cannot veto. Errors in either cleanup phase are logged and do not cancel quit.
+
+All three methods synchronously return an unsubscribe function. Explicit unsubscription removes any pending vote. A page that navigates or closes loses its subscriptions; if it disappears while its vote is pending, the attempt is cancelled instead of consenting to data loss. During cleanup, a disappearing participant no longer holds up the phase.
+
+`QuitRequest` has these fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `requestId` | `number` | Identity shared by all phases of this attempt. |
+| `reason` | `QuitReason` | Why termination was requested; see below. |
+| `deadline` | `number` | Unix milliseconds of this phase's native deadline. |
+
+`QuitDecision` is `'quit' | 'cancel'`. `QuitReason` is:
+
+| Reason | Source |
+| --- | --- |
+| `'api'` | API quit request, including the native shell quit entry point. |
+| `'menu'` | App or Dock menu termination request. |
+| `'lastWindowClosed'` | Last-window policy requests quit. |
+| `'logout'` | macOS logout. |
+| `'shutdown'` | macOS shutdown or restart. |
+| `'system'` | Another external application-termination request. |
+| `'signal'` | Termination signal handled by the native shell. |
+
+The phases run in order: `quitRequested` → `beforeQuit` → `willQuit` → affirmative AppKit termination reply. Each phase has its own **10-second native timeout**. When the deadline expires, unanswered participants are allowed to continue and `quitTimedOut` reports the phase. A stuck page or server cannot block quitting indefinitely. Force quit and `host.app.exit(code)` bypass these hooks.
+
+AppKit will not consult its termination delegate with an attached sheet. Modal windows created with [`host.windows.create()`](/host/windows/window) are temporarily withdrawn for the decision, with their pages and state intact. On cancellation they are restored before `quitCancelled` is delivered. A handler that explicitly hides or closes one keeps that change.
+
+The separate server-only [`host.onBeforeQuit(fn)`](/host/data/server) remains a cleanup hook. On macOS it runs in the final `willQuit` phase, before AppKit's affirmative reply, including menu and system quits. Use `host.app.onQuitRequested()` for decisions and `host.app.onBeforeQuit()` for work requiring live windows.
+
+Linux and Windows do not register the cancellable protocol. Subscription registration errors are logged by these helpers rather than returned as rejected promises. Existing parameterless `onWillQuit()` listeners retain observational behavior there; their asynchronous work is not an awaited native phase.
+
+## Events
+
+| Event | Payload | Typed helper | Platforms |
+| --- | --- | --- | --- |
+| `reopened` | `{}` (typed callback) | `onReopen(fn)` | macOS |
+| `openUrls` | `{ urls: string[] }` | `onOpenUrls(fn)` | All; also see [deep links](/host/app/deep-link). |
+| `willRestart` | `{}` | `onWillRestart(fn)` | All |
+| `secondInstance` | `{ argv: string[]; cwd: string }` | `onSecondInstance(fn)` | All |
+| `appActivated` | `{}` | `onActivated(fn)` | macOS |
+| `appDeactivated` | `{}` | `onDeactivated(fn)` | macOS |
+| `quitRequested` | `QuitRequest` | `onQuitRequested(fn)` | macOS |
+| `beforeQuit` | `QuitRequest` | `onBeforeQuit(fn)` | macOS |
+| `willQuit` | `QuitRequest` on macOS; `{}` elsewhere | `onWillQuit(fn)` | All; awaited only on macOS. |
+| `quitCancelled` | `{ requestId: number; reason: QuitReason }` | Use `host.on()` | macOS |
+| `quitTimedOut` | `{ requestId: number; phase: 'quitRequested' \| 'beforeQuit' \| 'willQuit'; reason: QuitReason }` | Use `host.on()` | macOS |
+
+Helpers on `host.app` return unsubscribe functions. `host.app.on(event, fn)` and `once(event, fn)` accept `reopened`, `willQuit`, `willRestart`, `secondInstance`, `appActivated` and `appDeactivated`; `once()` removes the listener after delivery. `host.on(event, fn)` observes any native event and also returns an unsubscribe function. Raw event listeners do not register quit votes or awaited cleanup; use the lifecycle helpers for those guarantees.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `whenReady`, `getInfo`, `getName`, `getVersion`, `getPath` | ✓ | ✓ | ✓ |
+| `setName`, `setIdentity`, `quit`, `relaunch`, `exit` | ✓ | ✓ | ✓ |
+| `hide`, `show` | ✓ | ✓ | ✓ |
+| `hideOthers`, `showAll`, `setActivationPolicy` | ✓ | — | — |
+| `addRecentDocument`, `bounceDock`, `setDockProgress`, `getDockProgress` | ✓ | — | ✓ |
+| `setDockBadge` | ✓ | — | partial (generic overlay) |
+| `getDockBadge` | ✓ | — | ✓ |
+| `setDockIcon`, `getDockIcon` | ✓ | — | — |
+| `getLoginItem`, `setLoginItem` | ✓ (13+) | ✓ | ✓ |
+| `requestSingleInstanceLock`, `getBundleType`, `aboutPanel`, `getActivationPolicy` | ✓ | ✓ | ✓ |
+| `defaultWindowIcon` | ✓ | ✓ | — |
+| `metrics` | ✓ | — | — |
+| `init`, `dispose` | ✓ | ✓ | ✓ |
+| `on`, `once` | ✓ | partial | partial |
+| `onReopen`, `onActivated`, `onDeactivated` | ✓ | — | — |
+| `onOpenUrls`, `onWillRestart`, `onSecondInstance` | ✓ | ✓ | ✓ |
+| `onQuitRequested`, `onBeforeQuit` | ✓ | — | — |
+| `onWillQuit` | ✓ | partial (observation) | partial (observation) |
+
+Listeners can be registered on every platform; partial event support follows the event table. macOS and Windows share the progress API but draw it in the Dock and taskbar respectively.
+
+## Example
+
+```svelte
+<script lang="ts">
+  let draft = $state('');
+  let saved = $state('');
+
+  $effect(() => {
+    if (host.app.platform !== 'darwin') return;
+    return host.app.onQuitRequested(async () => {
+      if (draft === saved) return 'quit';
+      const { response } = await host.dialog.showMessageBox({
+        message: 'Discard unsaved changes?', buttons: ['Discard', 'Keep editing'],
+      });
+      return response === 0 ? 'quit' : 'cancel';
+    });
+  });
+</script>
+
+<h1>{host.app.name}</h1>
+<textarea bind:value={draft}></textarea>
+<button onclick={() => { saved = draft; }}>Mark draft saved</button>
+<button onclick={() => host.app.quit()}>Quit</button>
+```

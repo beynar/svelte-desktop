@@ -1,0 +1,58 @@
+---
+title: Custom resource protocols
+description: Stream custom-scheme resources from a Bun Worker Response through WebKit on macOS.
+---
+
+:::note
+API reference: [`host.protocol`](/host/web/protocol).
+:::
+
+Declare lowercase resource schemes before creating any web views:
+
+```ts
+// desktop.config.ts
+import { defineConfig } from '@svelte-desktop/shell/config';
+export default defineConfig({
+  appName: 'Archive',
+  identifier: 'com.example.archive',
+  protocols: ['asset']
+});
+```
+
+Register a server handler during server startup, for example in `src/hooks.server.ts`:
+
+```ts
+host.protocol.handle('asset', async (request) => {
+  const url = new URL(request.url);
+  if (url.hostname !== 'archive') return new Response('Not found', { status: 404 });
+  if (url.pathname === '/cover.svg') {
+    return new Response(Bun.file('/path/to/cover.svg'), {
+      headers: { 'content-type': 'image/svg+xml' }
+    });
+  }
+  return Response.json({ title: 'Archive', path: url.pathname });
+});
+```
+
+The page can load `asset://archive/cover.svg` in an image, frame, or other WebKit resource element. Handlers receive a standard `Request` with URL, method, headers, buffered body when available, and an abort signal, and must return a standard `Response`. `Response` bodies, including `ReadableStream` and `Bun.file` bodies, stream through native `WKURLSchemeTask` in acknowledged chunks of at most 64 KiB. The entire response is never buffered by the transport. Streaming request uploads are unsupported.
+
+```ts
+host.protocol.handle('archive', () => {
+  let index = 0;
+  const encoder = new TextEncoder();
+  return new Response(new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (index === 3) return controller.close();
+      controller.enqueue(encoder.encode(`Chunk ${++index}\n`));
+    },
+  }), { headers: { 'content-type': 'text/plain' } });
+});
+```
+
+Declare `archive` in `protocols` as well if using the second example. When WebKit stops a task (such as a frame navigating away), the shell aborts `request.signal`, cancels the response reader, and drops subsequent chunks. Handler failures fail the resource load. An absent handler returns 404; a handler that does not produce response headers within 30 seconds is cancelled. A stream may continue after headers without that timeout. Handle cancellation in your own asynchronous work to release resources promptly.
+
+`host.protocol.unhandle('asset')` removes a handler for future requests; it does not remove native scheme registration or interrupt active responses. `host.protocol.isProtocolHandled('asset')` checks the server registry. Duplicate registration throws until the previous handler is removed. Registries are process-global across sessions and web views and must be recreated on launch. New schemes require a config change and restart. Native handlers are installed on every WebKit configuration before view creation.
+
+This API is **macOS only**. It cannot take over `http`, `https`, `file`, or other WebKit-reserved schemes. It does not grant Chromium secure-context, CORS, fetch, or Service Worker privileges: WebKit's normal scheme restrictions apply, and custom-scheme `fetch()` is not guaranteed. Use authenticated SvelteKit HTTP routes for ordinary app resources and web-origin behavior. Do not return private files for arbitrary request paths; validate the URL and caller needs in your handler. A resource request does not acquire the host bridge.
+
+Custom resource protocols are separate from [`schemes` for OS deep links](/features/oauth). Deep links launch or activate the app; a `WKURLSchemeHandler` answers resources inside its web views. Declaring `protocols` does not register a macOS application URL handler. In a packaged app the handler runs in the Bun Worker; during `vite dev`, the Vite server owns server handlers.

@@ -1,0 +1,150 @@
+---
+title: host.oauth
+description: Authorize in the system browser and exchange OAuth codes for tokens.
+---
+
+`host.oauth` provides an authorization-code flow with state validation and PKCE, plus a token-exchange helper. It has no reactive state or public events. These helpers report OAuth failures with `OAuthError`.
+
+How-to and provider setup: [OAuth sign-in](/features/oauth).
+
+## Methods
+
+### `authorize(options)`
+
+Opens the authorization endpoint in the system browser and resolves `AuthorizeResult` after receiving and validating its callback. The default loopback flow requires page code: it uses the page's origin and relative callback requests.
+
+```ts
+const result = await host.oauth.authorize({
+  url: 'https://accounts.example.com/authorize',
+  params: { client_id: 'desktop-app', scope: 'openid profile' },
+  issuer: 'https://accounts.example.com'
+});
+```
+
+| `AuthorizeOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `url` | `string` | Required | Provider authorization endpoint. |
+| `params` | `Record<string, string>` | `{}` | Provider parameters such as `client_id`, `scope` and `prompt`. |
+| `redirect` | `'loopback' \| { scheme: string; path?: string }` | `'loopback'` | Callback route; see below. |
+| `issuer` | `string` | Omitted | Expected callback `iss` value. |
+| `requireIssuer` | `boolean` | `true` when `issuer` is set | Reject a missing `iss`. Has no effect without `issuer`. |
+| `pkce` | `boolean` | `true` | Generate an S256 PKCE challenge and verifier. |
+| `timeoutMs` | `number` | `300000` | Deadline for the whole sign-in, including browser interaction. |
+| `signal` | `AbortSignal` | Omitted | Cancel the sign-in. An already aborted signal rejects immediately. |
+
+The helper generates a fresh `state`, sets `response_type=code`, and supplies `redirect_uri` and the PKCE fields. These values override `params`. With `pkce: false`, it removes `code_challenge` and `code_challenge_method` rather than accepting caller-provided values.
+
+When `issuer` is set, a callback with a different `iss` always fails. A missing `iss` fails unless `requireIssuer: false`. Without `issuer`, neither issuer check runs.
+
+The default loopback redirect uses the current app page's origin and `/__desktop/oauth/callback`. In a packaged app that is `http://127.0.0.1:<port>/__desktop/oauth/callback`; development uses the Vite origin. The app server matches each callback by state. Canceling or timing out forgets the pending loopback sign-in.
+
+A scheme redirect uses these fields:
+
+| `redirect` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `scheme` | `string` | Required | App URL scheme declared in `schemes`; normalized to lowercase. |
+| `path` | `string` | `'oauth/callback'` | Callback path, with leading slashes normalized. |
+
+For example, `{ scheme: 'com.example.app', path: 'oauth' }` produces `com.example.app:/oauth`. Only a matching redirect URI with the current state completes the flow; unrelated deep links are ignored. Scheme redirects require the built app's OS registration and do not work in `vite dev`. See the [setup guide](/features/oauth#where-the-browser-comes-back) and [`host.deepLink`](/host/app/deep-link).
+
+`AuthorizeResult` contains:
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `code` | `string` | Authorization code to exchange. |
+| `state` | `string` | Generated state that matched the callback. |
+| `codeVerifier` | `string` (optional) | PKCE verifier; absent with `pkce: false`. |
+| `redirectUri` | `string` | Exact redirect URI used; send the same value to the token endpoint. |
+| `params` | `Record<string, string>` | All callback query parameters. |
+
+The helper attempts to show and focus the app after the browser returns. Outside the native bridge, browser development uses `window.open()`.
+
+### `exchange(options)`
+
+Exchanges a code for tokens and resolves `Record<string, unknown>`, preserving the provider's response fields. Call from server code when possible; token endpoints often reject browser requests through CORS. A `clientSecret` belongs only in server code.
+
+| `ExchangeOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `url` | `string` | Required | Provider token endpoint. |
+| `clientId` | `string` | Required | OAuth client id. |
+| `code` | `string` | Required | Authorization code from `authorize`. |
+| `codeVerifier` | `string` | Omitted | Verifier from `authorize`, if PKCE was enabled. |
+| `redirectUri` | `string` | Required | Exact redirect URI from `authorize`. |
+| `clientSecret` | `string` | Omitted | Provider secret, supplied only from server code. |
+| `params` | `Record<string, string>` | `{}` | Additional form fields. |
+| `signal` | `AbortSignal` | Omitted | Abort the token request. Fetch failure, including an abort, is reported as `server_error`. |
+
+Sends an `application/x-www-form-urlencoded` POST with `grant_type=authorization_code`. The helper sets `grant_type`, `code`, `redirect_uri` and `client_id` after extra fields; supplied nonempty `codeVerifier` and `clientSecret` set `code_verifier` and `client_secret`. Redirects are refused, so the code, verifier and secret are sent only to the requested endpoint.
+
+Accepts JSON or form-encoded responses, including form data returned as `text/plain`. Success requires a nonempty string `access_token`; other token fields remain provider-defined. Store credentials using [`host.secureStorage`](/host/os/secure-storage).
+
+### `new OAuthError(code, message?)`
+
+Constructs the error class exposed as `host.oauth.OAuthError`. This constructor is synchronous.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `code` | `string` | Required | Helper or provider error code. |
+| `message` | `string` | `code` | Human-readable explanation. |
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `code` | `string` (readonly) | Machine-readable code. |
+| `name` | `string` | `'OAuthError'`. |
+| `message` | `string` | Error explanation inherited from `Error`. |
+
+## Errors
+
+| Code | Method | Meaning |
+| --- | --- | --- |
+| Provider error, such as `access_denied` | `authorize`, `exchange` | Provider returned `error`; its `error_description` becomes the message when present. |
+| `aborted` | `authorize` | Caller canceled through `signal`. |
+| `timeout` | `authorize` | Sign-in exceeded its deadline or the server's wait expired. |
+| `invalid_request` | `authorize` | Redirect scheme is not syntactically valid. |
+| `state_mismatch` | `authorize` | Callback state does not match. Callbacks with an unrelated state normally do not complete a pending flow. |
+| `issuer_mismatch` | `authorize` | Callback `iss` differs from `issuer`, or is missing when required. |
+| `no_code` | `authorize` | Callback contains neither a provider error nor a nonempty code. |
+| `server_error` | `authorize`, `exchange` | Authorization setup/browser opening failed, the app server failed, or the token endpoint request failed. |
+| `http_<status>` | `exchange` | Non-success HTTP status without a parsed provider error, for example `http_401`. |
+| `invalid_response` | `exchange` | Successful HTTP response lacks a valid nonempty string `access_token`. |
+
+A parsed provider error takes precedence over an HTTP-status error. `OAuthError.code` is a `string`, not a closed union, because providers supply their own codes.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `authorize` | ✓ | ✓ | ✓ |
+| `exchange`, `OAuthError` | ✓ | ✓ | ✓ |
+
+`authorize` needs the app's page and callback server for loopback redirects, or the native bridge and a registered scheme for scheme redirects. `exchange` and `OAuthError` are JavaScript helpers usable in page and server code.
+
+## Example
+
+```ts
+// Page code, for a provider that permits public-client token requests through CORS.
+const controller = new AbortController();
+try {
+  const result = await host.oauth.authorize({
+    url: 'https://accounts.example.com/authorize',
+    params: { client_id: 'desktop-app', scope: 'openid profile' },
+    issuer: 'https://accounts.example.com',
+    signal: controller.signal
+  });
+  const tokens = await host.oauth.exchange({
+    url: 'https://accounts.example.com/token',
+    clientId: 'desktop-app',
+    code: result.code,
+    codeVerifier: result.codeVerifier,
+    redirectUri: result.redirectUri
+  });
+  // Pass tokens to your application's credential storage.
+} catch (error) {
+  if (error instanceof host.oauth.OAuthError) {
+    console.error(error.code, error.message);
+  } else {
+    throw error;
+  }
+}
+// A Cancel control can call controller.abort() during authorization.
+```

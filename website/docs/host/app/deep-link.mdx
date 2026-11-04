@@ -1,0 +1,89 @@
+---
+title: host.deepLink
+description: Receive custom-scheme URLs and register the application as their handler.
+---
+
+`host.deepLink` receives URLs opened by the OS and keeps a bounded reactive history. For document paths, use [`host.webview.onOpenFiles()`](/host/web/webview); for sign-in callbacks, see [`host.oauth`](/host/web/oauth).
+
+How-to: [Deep links and documents](/ui/platform-services#deep-links-and-documents).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `urls` | `string[]` | Most recent 100 received URLs, newest last; initially `[]`. |
+| `last` | `string \| null` | Most recently received URL, or `null`. |
+| `defaults` | `Record<string, boolean>` | Whether this app opens each scheme it asked about with `isDefault()` or `register()`. Read again when the app comes back to the front. |
+| `ready` | `boolean` | Whether the store has subscribed to incoming URLs. |
+| `error` | `Error \| null` | Initialization failure, if any. |
+
+## Methods
+
+### `register(scheme)`
+
+Make the packaged app a URL-scheme handler. Resolves `{ scheme: string; registered: boolean }` with the normalized lowercase scheme. In `vite dev`, it does nothing and resolves `registered: false`.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `scheme` | `string` | Required URL scheme, such as `'svelte-notes'`, without `://`. Starts with a letter; then letters, digits, `+`, `-` or `.`. |
+
+```ts
+await host.deepLink.register('svelte-notes');
+```
+
+On macOS, the bundle must already declare the scheme in `CFBundleURLTypes`; configure `schemes` in `desktop.config.ts`. The OS may ask the user to confirm the handler change. On Windows, registration writes a per-user URL association for the packaged executable.
+
+On Linux, registration writes the app's entry to `~/.local/share/applications`, with the app's current path and the scheme in `MimeType`, and sets it as the default in `~/.config/mimeapps.list`. The app then appears in the desktop's application list.
+
+Rejects with `invalid_args` for an invalid scheme; `unavailable` when the macOS bundle does not declare the scheme or LaunchServices fails; and `denied` if Windows or Linux cannot write the association.
+
+### `isDefault(scheme)`
+
+Resolves `boolean`: whether this app opens the scheme's URLs. The user or another app can take a scheme over, so read it rather than remember it:
+
+```ts
+const mine = await host.deepLink.isDefault('svelte-notes');
+```
+
+It resolves `false` in `vite dev`. An invalid scheme rejects with `invalid_args`.
+
+### `init()` and `dispose()`
+
+`init()` synchronously subscribes to `openUrls`, marks the store ready and returns the namespace. It does not query historical URLs. `dispose()` synchronously removes that internal subscription without clearing history or removing your listeners.
+
+## Events
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `openUrls` | `{ urls: string[] }` | The OS delivers one or more URLs to the app. |
+
+`host.deepLink.onOpen(fn)`, `host.deepLink.on('openUrls', fn)` and `host.on('openUrls', fn)` return unsubscribe functions. `host.deepLink.once('openUrls', fn)` listens once and also returns an unsubscribe function. [`host.app.onOpenUrls()`](/host/app/app) observes the same event.
+
+Incoming URLs work on all three platforms. On Linux and Windows, packaged launch arguments and later launches forwarded through the single-instance mechanism supply the URLs. Register listeners early in the app's lifetime.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `register` | ✓ | ✓ | ✓ |
+| `isDefault` | ✓ | ✓ | ✓ |
+| `init`, `dispose`, `on`, `once`, `onOpen` | ✓ | ✓ | ✓ |
+
+## Example
+
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
+
+  onMount(() => host.deepLink.onOpen(({ urls }) => {
+    for (const value of urls) {
+      const url = new URL(value);
+      if (url.protocol === 'svelte-notes:' && url.hostname === 'note') {
+        console.log('Open note', url.pathname.slice(1));
+      }
+    }
+  }));
+</script>
+
+<p>Last link: {host.deepLink.last ?? 'none'}</p>
+```

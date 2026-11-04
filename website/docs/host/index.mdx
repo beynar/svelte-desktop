@@ -1,0 +1,87 @@
+---
+title: The host API
+description: One global, the same in page and server code, for everything the app gets beyond the web. This section documents every member.
+sidebar:
+  label: Overview
+  icon: code
+---
+
+Everything native is on one global, `host`. There is nothing to import, it is the same object in page and server code (like `Bun`), and its members are reactive in components. It is typed through the one-line `src/host.d.ts` the Vite plugin writes.
+
+```svelte
+<p>{host.app.name} · {host.theme.dark ? 'dark' : 'light'}</p>
+<button onclick={() => host.clipboard.writeText(text)}>Copy</button>
+<button onclick={() => host.notifications.show({ title: 'Done' })}>Notify</button>
+```
+
+```ts src/lib/server/db.ts
+import { Database } from 'bun:sqlite';
+import { join } from 'node:path';
+
+// Server code: load functions, remote functions, endpoints, hooks.
+export const db = new Database(join(host.paths.data, 'app.db'));
+```
+
+The guides show how to build things with it ([windows](/ui/windows), [menus](/ui/menus), [OAuth](/features/oauth)...). This section is the reference: one page per member, with every property, method, event and the platforms it works on.
+
+## How it works
+
+**Stores and services.** Most members are a reactive store with the service of the same name behind it. `host.window.fullscreen` is a reactive boolean you can read in markup or in `$derived`; `host.window.setFullscreen(true)` is the operation that changes it. A few members are services only (`host.dialog`, `host.shell`, `host.webview`...): they have methods, no reactive state.
+
+**Native operations are async.** They return a promise, and when one fails it rejects with a `NativeApiError` whose `code` says why (see [Errors](#errors)). A few helpers are synchronous: subscriptions such as `host.on()` return their unsubscribe function directly, and server helpers such as `host.jobs.start()` return at once. Each page says which.
+
+**Page and server code.** The same calls work in a component and in a load function, a remote function, an endpoint or a hook. A few members exist only in server code (`host.paths`, `host.sidecar()`, `host.jobs.start()`...): see [Server code](/host/data/server).
+
+**Outside the app.** In a plain browser tab, or a server running outside the app, `host.available` is `false` and calls reject.
+
+**What the platform supports.** Each page has a support table. At run time, `host.capabilities.describe()` lists every operation of the running build and whether this platform supports it.
+
+## Members
+
+| Area | Members |
+| --- | --- |
+| [App and system](/host/app/app) | [`app`](/host/app/app), [`system`](/host/app/system), [`theme`](/host/app/theme), [`power`](/host/app/power), [`screen`](/host/app/screen), [`deepLink`](/host/app/deep-link), [`capabilities`](/host/app/capabilities), [`diagnostics`](/host/app/diagnostics), [`update`](/host/app/update) |
+| [Windows and dialogs](/host/windows/window) | [`window`, `windows`](/host/windows/window), [`windowState`](/host/windows/window-state), [`view`](/host/windows/view), [`popover`, `currentPopover()`, `closePopover()`](/host/windows/popover), [`dialog`](/host/windows/dialog) |
+| [Web content](/host/web/webview) | [`webview`](/host/web/webview) (with its [content rules and scripts](/host/web/web-content), [web permissions and certificates](/host/web/web-policy) and [input policy](/host/input/input-policy)), [`sessions`](/host/web/sessions), [`protocol`](/host/web/protocol), [`downloads`](/host/web/downloads), [`oauth`](/host/web/oauth) |
+| [Menus and input](/host/input/menu) | [`menu`](/host/input/menu), [`tray`](/host/input/tray), [`shortcuts`](/host/input/shortcuts), [`clipboard`](/host/input/clipboard) |
+| [Files and the OS](/host/os/shell) | [`shell`](/host/os/shell), [`files`](/host/os/files), [`secureStorage`](/host/os/secure-storage), [`permissions`](/host/os/permissions), [`notifications`](/host/os/notifications), [`push`](/host/os/push), [`capture`](/host/os/capture) |
+| [Data, events and server](/host/data/store) | [`store`](/host/data/store), [`on()`, `events`, `broadcast()`, `onBroadcast()`](/host/data/events), [`jobs`](/host/data/jobs), [`native`](/host/data/native), [server-only members](/host/data/server) |
+
+## Errors
+
+| Code | Meaning |
+| --- | --- |
+| `invalid_args` | Bad arguments (unknown menu role, duplicate window label, ...) |
+| `unsupported` | The operation can't be implemented on this OS through this backend |
+| `unavailable` | Missing at run time (no bundle id, no libnotify, ...) |
+| `denied` | Permission refused, or the operation isn't in `bridge.allow` |
+| `undeclared` | A permission requested without its `permissions` entry in the config |
+| `unknown` | No such operation |
+| `internal` | The operation failed |
+
+```ts
+try {
+  await host.window.setSimpleFullscreen(true);
+} catch (e) {
+  if (e.code === 'unsupported') { /* not on this platform */ }
+}
+```
+
+## Restricting pages
+
+By default pages may call every operation. `bridge.allow` limits them, enforced natively; server code is never restricted:
+
+```ts desktop.config.ts
+bridge: { allow: ['window.*', 'clipboard.readText', 'notifications.*'] },
+```
+
+A refused call rejects with `denied`.
+
+## Imports instead of the global
+
+The same API is available as modules, for those who prefer imports: `@svelte-desktop/shell/platform` (services, `broadcast`), `@svelte-desktop/shell/native` (`native`), `@svelte-desktop/shell/stores` (reactive stores), `@svelte-desktop/shell/server` and `@svelte-desktop/shell/client`.
+
+```ts
+import { theme, window } from '@svelte-desktop/shell/stores';
+import { popover, broadcast } from '@svelte-desktop/shell/platform';
+```

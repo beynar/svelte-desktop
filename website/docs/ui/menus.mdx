@@ -3,6 +3,10 @@ title: Menus
 description: The app menu, extra menu bar entries, context menus and the Dock menu.
 ---
 
+:::note
+API reference: [`host.menu`](/host/input/menu), [input policy](/host/input/input-policy).
+:::
+
 ## The default menu
 
 Without any code, the app gets a standard macOS menu bar, so the usual shortcuts work in the web view:
@@ -46,8 +50,10 @@ onDesktopReady((desktop) => {
         { label: 'Undo', role: 'undo', accelerator: 'Cmd+Z' },
         { label: 'Redo', role: 'redo', accelerator: 'Cmd+Shift+Z' },
         { type: 'separator' },
+        { label: 'Cut', role: 'cut', accelerator: 'Cmd+X' },
         { label: 'Copy', role: 'copy', accelerator: 'Cmd+C' },
         { label: 'Paste', role: 'paste', accelerator: 'Cmd+V' },
+        { label: 'Select All', role: 'selectAll', accelerator: 'Cmd+A' },
       ],
     },
   ]);
@@ -61,7 +67,7 @@ import { onDesktopEvent } from '@svelte-desktop/shell/client';
 onDesktopEvent('menu', (id) => { if (id === 'new-note') input?.focus(); });
 ```
 
-An item is `{ label, id?, role?, accelerator?, enabled?, submenu? }` or `{ type: 'separator' }`. Roles: `undo`, `redo`, `cut`, `copy`, `paste`, `selectAll`, `minimize`, `zoom`, `close`, `hide`, `hideOthers`, `unhide`, `about`, `toggleFullScreen`, `front`, `quit`, `reload`.
+This is the older server API; prefer `host.menu.setAppMenu` below for new code and awaitable errors. An item is `{ label, id?, role?, accelerator?, enabled?, submenu? }` or `{ type: 'separator' }`. Roles: `undo`, `redo`, `cut`, `copy`, `paste`, `selectAll`, `minimize`, `zoom`, `close`, `hide`, `hideOthers`, `unhide`, `about`, `toggleFullScreen`, `front`, `quit`, `reload`.
 
 :::warning
 Replacing the menu drops the default Edit menu: without Cut, Copy, Paste and Select All items, those shortcuts stop working in text fields. Keep an Edit menu.
@@ -71,7 +77,7 @@ Replacing the menu drops the default Edit menu: without Cut, Copy, Paste and Sel
 A top-level menu labelled `Window` becomes the macOS Windows menu, so it keeps the system's tiling items (Fill, Center, Move & Resize) that window tools such as Swish drive.
 :::
 
-## From any page: host.menu
+## From any page: `host.menu`
 
 `host.menu.setAppMenu` builds the menu bar from named menus, from page or server code. Item clicks fire `menuAction`.
 
@@ -89,9 +95,11 @@ host.menu.onAction(({ id }) => { if (id === 'new') createNote(); });
 | --- | --- |
 | `id` | Reported in `menuAction`. Items without a role or id report their label. |
 | `label` | Text. Roles have a default label. |
-| `type` | `action` (default), `separator` or `submenu` |
+| `type` | `action` (default), `separator`, `submenu`, `checkbox` or `radio` |
+| `group` | Required for radio items; exclusive within this parent menu (macOS) |
+| `visible`, `tooltip` | Visibility (default true) and native tooltip (macOS) |
 | `submenu` | Nested items |
-| `checked`, `disabled` | State |
+| `checked`, `enabled`, `disabled` | State; `enabled` takes precedence over `disabled` |
 | `role` | A standard item (see below) |
 | `icon` | `{ native: 'add' }` (an AppKit image name) or `{ path: './icon.png' }` |
 
@@ -105,15 +113,49 @@ Items take an `accelerator` (`'CmdOrCtrl+Shift+K'`; named keys `plus`, `space`, 
 
 ```ts
 await host.menu.update({ id: 'pin', checked: false, text: 'Unpin', enabled: true });
-const item = await host.menu.get('pin');   // current state, or null
+const item = await host.menu.get('pin');    // current state, or null
 const all = await host.menu.items();       // snapshot of the whole menu
 ```
 
-`host.menu.lastAction` holds the last activated id, reactively.
+`host.menu.lastAction` holds the last activated id, reactively. Menu ids are app-wide; use distinct ids for items you need to update or handle independently. See the [menu reference](/host/input/menu) for platform support and the full role list.
+
+### Radio groups and lifecycle (macOS)
+
+```ts
+await host.menu.insert({ name: 'Mode', items: [
+  { id: 'mode-write', label: 'Write', type: 'radio', group: 'mode', checked: true },
+  { id: 'mode-read', label: 'Read', type: 'radio', group: 'mode', tooltip: 'Read without editing' },
+] });
+await host.menu.update({ id: 'mode-read', checked: true, visible: true, enabled: true });
+// mode-write is now unchecked. Clicking a radio item also selects it natively.
+```
+
+The last checked radio in an initial group wins. Checking an item through `menu.update`
+unchecks its siblings in the same group; setting it false permits an empty selection.
+Groups in different submenus are independent. Checkbox items toggle natively on activation.
+These rules also apply to context, tray and Dock menus. `menu.update` also accepts `tooltip`.
+
+```ts
+const offOpen = host.menu.onWillShow('document-actions', () => console.log('opened'));
+const offClose = host.menu.onDidClose('document-actions', () => console.log('closed'));
+await host.menu.popup({ id: 'document-actions', items: [{ id: 'rename', label: 'Rename' }] });
+offOpen(); offClose();
+```
+
+Lifecycle ids default to the app menu's name (`MenuSpec.id` overrides it), a submenu
+item's id or label, `context` for `popup`, `dock` for `setDockMenu`, and `tray` for
+the status item's menu. `popup({ id, items })` and `setDockMenu(items, id)` allow an
+explicit id. Use unique ids for independently live menus. `menu.closePopup(id)`
+dismisses a tracking popup without input simulation.
+
+The native `NSMenuDelegate` observes update, open and close. Callbacks arrive
+asynchronously and do not delay opening while JavaScript runs; prepare state before
+opening, or use `menu.update` to refresh an open menu. Lifecycle events and `closePopup` are macOS-only. On other backends, these
+lifecycle subscriptions receive no events and `closePopup` rejects with `unsupported`.
 
 ### Extra menu bar entries
 
-`host.menu.insert` adds one top-level entry without replacing the menu (before Window by default); `host.menu.remove(name)` drops it. The `MenuBar` component does the same with a component lifecycle: it renders nothing, and unmounting removes the entry.
+`host.menu.insert` adds one top-level entry without replacing the menu (before Window by default on macOS, appended on Linux and Windows); `host.menu.remove(name)` drops it. The `MenuBar` component does the same with a component lifecycle: it renders nothing, and unmounting removes the entry.
 
 ```svelte
 <script>
@@ -128,7 +170,7 @@ const all = await host.menu.items();       // snapshot of the whole menu
 ]} />
 ```
 
-Without `items`, `onClick` makes a plain clickable bar entry. `index` sets the position.
+Without `items`, `onClick` makes a plain clickable bar entry. `index` sets the position. The entry is app-wide: mount its owner once, rather than in every window or kept-alive view. A plain clickable top-level entry is macOS-only; Linux and Windows turn it into a submenu containing one action.
 
 ## Context menus
 
@@ -141,11 +183,15 @@ document.addEventListener('contextmenu', (e) => {
 });
 ```
 
-The web view's built-in menu is controlled separately with `host.webview.setContextMenu`. The production default is `none`: no menu, except Cut, Copy, Paste and spelling suggestions on editable text. `default` keeps WebKit's menu; `custom` shows your items. See [Web view](/ui/web-view#context-menu).
+The web view's built-in menu is controlled separately with `host.webview.setContextMenu`. On macOS the production default is `none`: no menu, except editing items and spelling suggestions on editable text or a selection. `default` keeps WebKit's menu; `custom` shows your items. See [Web view](/ui/web-view#context-menu).
 
 ## Dock menu
+
+The Dock menu is macOS-only:
 
 ```ts
 await host.menu.setDockMenu([{ id: 'new-window', label: 'New Window' }]);
 await host.menu.addRecentDocument('/Users/me/notes.md'); // the system's recent documents list
 ```
+
+`addRecentDocument` also registers a recent document with the desktop on Linux and Windows.

@@ -7,28 +7,50 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 
 ## Everywhere
 
-- **Smaller builds need Bun canary** until `--trim` and `--aot` ship in a stable Bun: with it, `trim` is on by default and the notes example is 51 MB (with `aot`) instead of 86 MB. Cross builds (Linux or Windows from a Mac) aren't trimmed: build on the target OS, for instance in CI.
-- **Each preloaded popover costs a WebKit content process** (about 30 to 40 MB). Use `preload: false` for rarely opened ones.
-- **Ops vary by platform.** Many window and app ops are macOS-only and answer `unsupported` elsewhere. `host.capabilities.describe()` tells the truth for the running build.
+- **Compiler features depend on the Bun binary.** The packager detects `--trim` and `--aot` with `bun build --help`. Trimming is enabled when available and retried without it if the target runtime refuses it. AOT is opt-in and only used for host builds; the Windows packager always skips it.
+- **Preloaded popovers hold loaded web views.** They keep native and web resources alive while hidden. Use `preload: false` for rarely opened ones.
+- **Ops vary by platform.** Many window and app ops are macOS-only and answer `unsupported` elsewhere. `host.capabilities.describe()` lists the operations registered in the running build; a registered operation can still reject because the OS, permission or runtime is unavailable.
+- **Self-update has platform and recovery gaps.** Delta application is macOS-only. The generated Linux archive has the wrong layout for the installer and must not be installed. Windows startup confirmation/rollback does not handle Windows-style compiled paths. A new executable that cannot start its Worker cannot run rollback code. See [Self-update](/shipping/self-update#platform-support).
+
+| Feature | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| [Custom resource protocols](/features/protocols) | Supported | Unsupported | Unsupported |
+| Website sessions, cookie management and per-session proxies | Supported | Unsupported | Unsupported |
+| Server-owned web permission and authentication handlers | Supported | Unsupported | Unsupported |
+| Registered web scripts, content rules and navigation policy | Supported | Unsupported | Unsupported |
+| Native download management and file bookmarks | Supported | Unsupported | Unsupported |
+| Native input policy | Supported | Unsupported | Unsupported |
+| Web-view printing and PDF export | Supported | Unsupported | Supported with a recent WebView2 runtime |
+
+These are shell API limits. The page still has the web APIs its installed web engine provides.
 
 ## macOS
 
-- **Notarization** is implemented and passes a local pre-flight of Apple's requirements, but hasn't been submitted from this repository: that needs a Developer ID certificate and a notary profile.
-- **Screen capture** needs the Screen Recording permission, and macOS 14 for stills.
+- **Notarization needs credentials.** The pipeline implements pre-flight, `notarytool` submission and stapling; it runs only with a signing identity and a notary profile. A pre-flight pass does not establish Apple acceptance.
+- **Permission names exceed runtime support.** Usage strings can be declared for every documented name, but `host.permissions.status()` checks only `camera`, `microphone`, `notifications`, `screenRecording`, `accessibility`, `inputMonitoring` and `fullDiskAccess`. Other declared names reject with `invalid_args`; WebKit page consent is separate. Full Disk Access reports `unknown` when its probe cannot establish a grant. See [Permissions](/features/permissions).
+- **Screen capture** needs macOS 12.3 for source discovery, Screen Recording permission and macOS 14 for stills.
+- **Notifications need a bundled app.** Under `vite dev`, notification calls return `unavailable`; location and speech consent also need testing in a built bundle.
+- **Some WebKit delegates use private SPI.** Location, speech and display-capture consent can vary with the installed macOS/WebKit version.
 - **Compiling the macOS 26 icon** (`Assets.car`) needs Xcode 26's `actool`; without it only the `.icns` ships.
 
 ## Windows
 
-- **Not yet run on a real Windows machine.** Every service has a Windows implementation, the build is cross-compiled cleanly for x64 and arm64, and the native layer and installer are smoke-tested under Wine. The first real run must confirm WebView2 start-up, Bun FFI callbacks on Windows and the bridge timing. Bun and WebView2 don't run under Wine.
-- Hidden title bars are implemented but window dragging needs that real run; background jobs are bundled but not run.
+- **Real Windows validation remains required.** The native layer and installer have Wine smoke tests, but those do not load a WebView2 page. Confirm WebView2 startup, Bun FFI callbacks, bridge timing, capture and toast activation on a real Windows desktop. Several services are macOS-only, as listed above.
+- Hidden title bars are implemented; dragging in a WebView2 page and background job execution still need real Windows validation.
+- The WebView2 runtime must be installed. The shell offers an Evergreen download link when it is missing; it does not bundle the runtime.
+- Rust and Go plugins are skipped by cross-builds from macOS or Linux; use a Windows host to build them.
+- Windows repeating notifications queue at most 128 occurrences over the next 30 days, topped up while the app runs. They do not repeat indefinitely while closed.
 
 ## Linux
 
-- Verified in Docker (Ubuntu 24.04 under Xvfb, linux/arm64).
+- The repository has Docker integration tests for Ubuntu 24.04 under Xvfb, including app startup and background jobs; this does not establish support for every desktop or compositor.
 - Tray hosts don't report icon positions, so tray-anchored popovers open at the pointer.
 - Global shortcuts and screen capture need X11; on Wayland they answer `unsupported`.
-- Compiling native code (plugins, addons) needs a Linux host or Docker.
+- C/C++ plugin and addon source builds require a Linux host of the target architecture. Cross-building from macOS can build `libshell.so` in Docker, but skips those app source builds. Rust and Go plugins also require a Linux host.
+- Native inline notification replies are unavailable; reply buttons become plain actions. Scheduling catches up when the app restarts rather than delivering while it is closed.
 
 ## Tooling
 
-- `svelte-desktop doctor` checks a macOS toolchain only (Xcode tools, codesign, notarytool).
+- `svelte-desktop doctor` has macOS, Linux and Windows tool checks, but still runs the shared macOS keychain/signing checks on every platform. It is not a complete cross-platform readiness check.
+- SVG icon sources require macOS (`sips`); use a PNG source when building the same app in Linux or Windows CI.
+- Swift and Objective-C plugins are macOS-only. Only one Go plugin runtime is allowed per app process; consolidate Go code into one module. See [Native code](/native).

@@ -1,0 +1,154 @@
+---
+title: host.capture
+description: List screen-capture sources and capture display or window stills as PNG images.
+---
+
+`host.capture` enumerates capturable displays and windows and captures a single frame. macOS also lists applications, but application-wide still capture is not implemented. To capture only an embedded page, see [`host.webview`](/host/web/webview).
+
+How-to: [Screen capture](/ui/platform-services#screen-capture).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `supported` | `boolean` | Source-listing support read during initialization; initially `false`. Not a guarantee that still capture is available. |
+| `sources` | `CaptureSource[]` | Snapshot loaded by `init()` or `refresh()`; initially empty. |
+| `ready` | `boolean` | Initialization completed; initially `false`. |
+| `error` | `Error \| null` | Initialization failure captured by automatic store initialization, including missing macOS consent. |
+
+Sources are snapshots, not live subscriptions. Refresh before displaying a picker when windows or displays may have changed.
+
+## Types
+
+`CaptureSourceType` is `'display' | 'window' | 'application'`.
+
+`CaptureSource` fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `number` | Native identifier. Pass with `type` to avoid ambiguity between display and window ids. |
+| `type` | `CaptureSourceType` | Source kind. |
+| `label` | `string \| null` | Display, window or application label. |
+| `isMain` | `boolean \| null` | Whether a display is primary; `null` for other kinds. |
+| `resolution` | `{ width: number; height: number }` | Reported source dimensions; macOS applications report zero. Use the capture result for actual output pixel dimensions. |
+| `bundleIdentifier` | `string \| null` (optional) | macOS owning application identifier. |
+
+`CapturedImage` fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `width`, `height` | `number` | Captured image dimensions in pixels. |
+| `pngBase64` | `string` | Base64-encoded PNG bytes, without a data-URL prefix. |
+
+## Methods
+
+### `isSupported()`
+
+Query whether the backend supports capture-source enumeration.
+
+```ts
+const { supported } = await host.capture.isSupported();
+```
+
+Resolves `{ supported: boolean }`. macOS returns `true` from 12.3 onward, including versions that cannot capture stills. Linux returns `true` only on X11; Windows returns `true`. This query does not request permission or update the reactive `supported` field.
+
+### `getSources(options?)`
+
+List available sources without changing the reactive `sources` array.
+
+```ts
+const displays = await host.capture.getSources({ types: ['display'] });
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `types` | `CaptureSourceType[]` | All supported kinds | Filter source kinds. An empty array also requests all kinds. |
+
+Resolves `CaptureSource[]`. macOS lists displays, visible ordinary windows and applications. Linux and Windows list displays and windows; asking only for applications returns an empty list.
+
+On macOS, requires 12.3+ and Screen Recording consent. Missing consent or a failed ScreenCaptureKit content query rejects with `denied`; older macOS rejects with `unsupported`. On Linux, Wayland rejects with `unsupported`; this API has no desktop-portal capture implementation.
+
+### `captureSource(id, type?)`
+
+Capture one display or window as a PNG still.
+
+```ts
+const image = await host.capture.captureSource(source.id, source.type);
+const src = `data:image/png;base64,${image.pngBase64}`;
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Required | Current source identifier returned by `getSources()`. |
+| `type` | `CaptureSourceType` | Infer from id | Pass `'display'` or `'window'` explicitly. Application stills are not supported. |
+
+Resolves `CapturedImage`. A source can disappear after enumeration; an unknown display or window rejects with `invalid_args`. Omitting `id` also rejects with `invalid_args` on supported still-capture backends.
+
+On macOS, needs 14+ and Screen Recording consent. Older macOS rejects with `unavailable`, missing consent with `denied`, and an image-capture failure with `unavailable`. Passing an application source rejects with `invalid_args`. Captures exclude the cursor.
+
+On Linux, Wayland rejects with `unsupported`; X11 image failures reject with `internal`. Windows capture failures reject with `internal`. Linux and Windows capture implementations handle displays and windows, not application process ids.
+
+### `init()`
+
+Read support, populate `sources` when supported and set `ready`. Resolves the namespace. Runs automatically when the platform binds. On macOS, source loading may fail until Screen Recording consent is granted; after granting, call `init()` again to finish initialization.
+
+### `refresh()`
+
+Reload `sources` when the cached `supported` value is `true`. Resolves the namespace. It does not re-query support or clear an initialization error.
+
+```ts
+await host.capture.refresh();
+```
+
+## Permissions
+
+On macOS, request Screen Recording through [`host.permissions`](/host/os/permissions). Its default guided flow opens System Settings; the user may need to relaunch before a grant applies. Enumeration and still capture enforce consent independently of the `supported` flag.
+
+Linux support is X11 only. Windows uses native display/window capture without a permission prompt from this API. None of these methods starts a media stream; page display sharing and its per-origin checks are covered by [web permissions](/host/web/web-policy).
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `isSupported` | ✓ | ✓ | ✓ |
+| `getSources` | ✓ (12.3+) | partial | partial |
+| `captureSource` | partial (14+) | partial | partial |
+| `init`, `refresh` | partial | partial | ✓ |
+
+Linux listing and capture require X11. Linux and Windows enumerate displays and windows, not applications. Every still backend captures displays and windows only; macOS's application listings cannot be passed to still capture. `init()` and `refresh()` inherit the underlying enumeration requirements.
+
+## Example
+
+Capture the primary display after the user has granted any required OS consent:
+
+```svelte
+<script lang="ts">
+  let imageUrl = $state('');
+  let message = $state('');
+
+  async function screenshot() {
+    try {
+      const { supported } = await host.capture.isSupported();
+      if (!supported) {
+        message = 'Screen capture is unavailable here';
+        return;
+      }
+      const displays = await host.capture.getSources({ types: ['display'] });
+      const display = displays.find((source) => source.isMain) ?? displays[0];
+      if (!display) {
+        message = 'No display found';
+        return;
+      }
+      const image = await host.capture.captureSource(display.id, 'display');
+      imageUrl = `data:image/png;base64,${image.pngBase64}`;
+      message = `${image.width} × ${image.height}`;
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+  }
+</script>
+
+<button onclick={screenshot}>Capture display</button>
+<p>{message}</p>
+{#if imageUrl}<img src={imageUrl} alt="Captured display" />{/if}
+```

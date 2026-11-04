@@ -1,0 +1,117 @@
+---
+title: AI
+description: The system's on-device model, other local models, cloud models with one API, and the coding agents the user has installed.
+---
+
+:::note
+API reference: [`host.ai`](/host/os/ai), [`host.shellEnv`, `host.which`](/host/data/server#shellenvoptions).
+:::
+
+There are four ways to bring AI into an app, and the framework's part differs for each:
+
+| | What it is | The framework's part |
+| --- | --- | --- |
+| The system's model | Apple's on-device model, on macOS 26 | `host.ai`, and a Vercel AI SDK model |
+| A local model server | Ollama, LM Studio, llama.cpp, installed by the user | Nothing to add: they speak the OpenAI API |
+| A model shipped with the app | MLX, llama.cpp, transformers, in the app | [Python commands](/native/plugins/python) or a [sidecar](/native/sidecars) |
+| The user's coding agents | Claude Code, Codex, Gemini CLI… already signed in | `host.shellEnv` / `host.which` to find them; the rest is your app's |
+
+## The system's model
+
+On macOS 26 with Apple Intelligence on, `host.ai` runs Apple's on-device model. It is free and works offline, and nothing leaves the Mac:
+
+```svelte
+<script lang="ts">
+  let summary = $state('');
+  const ready = host.ai.availability();
+
+  async function summarize(text: string) {
+    summary = '';
+    for await (const piece of host.ai.stream(`Summarize in two sentences:\n\n${text}`)) summary += piece;
+  }
+</script>
+
+{#await ready then { available, reason }}
+  {#if available}<button onclick={() => summarize(note)}>Summarize</button>{:else}<p>Unavailable: {reason}</p>{/if}
+{/await}
+```
+
+`generate` returns an object that follows a JSON Schema, which suits extracting fields from free text. `session` keeps a conversation's turns. The model is small: give it the text to work on and keep tasks focused. It summarizes, extracts, classifies, tags and rewrites well. See [`host.ai`](/host/os/ai) for every option, the schema subset and the errors.
+
+### The same code with a cloud model
+
+`appleIntelligence()` is a Vercel AI SDK model (`ai` 7). Code written for the SDK runs on the device when it can, and in the cloud when it can't:
+
+```ts src/lib/model.ts
+import { openai } from '@ai-sdk/openai';
+import { appleIntelligence } from '@svelte-desktop/shell/ai-sdk';
+
+export async function model() {
+  return (await host.ai.availability()).available ? appleIntelligence() : openai('gpt-5-mini');
+}
+```
+
+```ts
+import { generateText, Output } from 'ai';
+import { z } from 'zod';
+
+const { output } = await generateText({
+  model: await model(),
+  prompt: `Extract the task: ${message}`,
+  output: Output.object({ schema: z.object({ title: z.string(), priority: z.enum(['low', 'medium', 'high']) }) }),
+});
+```
+
+It supports system, user and assistant text messages, `temperature`, `maxOutputTokens`, JSON output with a schema, and streaming (`streamText`). It doesn't support tools, files and images, `topP`, `topK`, `seed`, stop sequences or penalties: each one used adds a warning to the result. Earlier turns are sent as a transcript before the last message.
+
+## A local model server
+
+Ollama, LM Studio and llama.cpp's `llama-server` run on the user's machine and speak the OpenAI API on `localhost`. Call them from server code with any OpenAI client:
+
+```ts src/lib/server/local.ts
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+
+export const ollama = createOpenAICompatible({ name: 'ollama', baseURL: 'http://localhost:11434/v1' });
+// generateText({ model: ollama('llama3.2'), prompt })
+```
+
+The user installs and runs the server, and downloads the models. Check that it answers before offering the feature.
+
+## A model shipped with the app
+
+To ship the model yourself, so the user installs nothing:
+- **[Python commands](/native/plugins/python)** with `mlx-lm` (Apple silicon), `llama-cpp-python` or `transformers`. Load the model once, in the Python process, and stream tokens with `emit`.
+- **A [sidecar](/native/sidecars):** `llama-server` with a GGUF file, which then serves the OpenAI API on a port of your choosing.
+
+Models weigh from hundreds of megabytes to several gigabytes. Download them on first use into `host.paths.data` rather than putting them in the app bundle.
+
+## The user's coding agents
+
+Coding agents the user has installed and signed into can be driven from server code. These are Claude Code, Codex, Gemini CLI and the like. Their own SDKs and protocols do the work:
+- **[ACP](https://agentclientprotocol.com) (Agent Client Protocol):** one protocol for several agents, with a TypeScript SDK (`@agentclientprotocol/sdk`). Gemini CLI speaks it natively; Claude Code and Codex speak it through adapters.
+- **Claude Code:** the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`).
+- **Codex:** `codex app-server`, JSON-RPC over stdio.
+
+The framework's part is to find them. An app opened from the Finder doesn't get the `PATH` the user's terminal builds, so `claude` or `codex` aren't found there. `host.which` looks them up on the user's shell `PATH`, and `host.shellEnv()` gives the environment to start them with:
+
+```ts src/services/agent.ts
+import { spawn } from 'node:child_process';
+// A service runs in a process of its own, without the `host` global: the same helpers, imported.
+import { shellEnv, which } from '@svelte-desktop/shell/server';
+
+const agent: HostService<{ cwd: string }> = async ({ cwd }, port) => {
+  const env = await shellEnv();
+  const codex = await which('codex');
+  if (!codex) throw new Error('Codex is not installed');
+  const child = spawn(codex, ['app-server'], { cwd, env, stdio: ['pipe', 'pipe', 'inherit'] });
+  child.stdout.on('data', (chunk) => void port.postMessage(String(chunk))); // JSON-RPC lines: parse them
+  port.onRequest((line) => void child.stdin.write(`${line}\n`));
+  return () => void child.kill();
+};
+export default agent;
+```
+
+Run each agent in a [service](/native/services): it lives as long as the conversation, and the app stops it when it quits. Forward its events to the page over a [WebSocket](/features/websockets). Three choices stay with your app, not the framework:
+- **What the agent may do:** agents run commands and edit files on the user's machine, so ask the user before risky actions.
+- **Which folder it works in.**
+- **Whether your use of the user's subscription is allowed:** each provider has its own terms for third-party apps.

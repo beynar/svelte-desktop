@@ -1,0 +1,70 @@
+---
+title: host.capabilities
+description: Inspect the native operations registered by the running backend.
+---
+
+`host.capabilities` provides the running backend's operation report. Use it to decide whether to offer a platform feature, then handle errors from the actual call: registration alone cannot guarantee that an operation will succeed with particular arguments or resources.
+
+How-to: [The host global](/host).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `report` | `CapabilitiesReport \| null` | Snapshot loaded during initialization. |
+| `ready` | `boolean` | Whether initialization completed. |
+| `error` | `Error \| null` | Initialization failure, if any. |
+
+`CapabilitiesReport` has `platform: string`, `arch: string` and `services: Record<string, Record<string, string>>`. `services[service][op]` is the status of a registered native operation. Current backends emit `'implemented'` or `'unavailable'`; unregistered operations are absent, rather than listed as `'unsupported'`.
+
+The report describes native wire operations. Names can differ from host members: [`host.window`](/host/windows/window) uses the `window` service. JavaScript helpers, store getters and the [signed updater](/host/app/update) are not a list of native registry entries.
+
+## Methods
+
+### `describe()`
+
+Read a fresh report. Resolves `CapabilitiesReport`; does not replace the store's `report`.
+
+```ts
+const report = await host.capabilities.describe();
+const canCapture = report.services.capture?.captureSource === 'implemented';
+```
+
+On macOS, the report marks notification and deep-link registration operations unavailable when there is no bundle identifier. Linux marks operations unavailable when their optional library or service is missing. Windows marks deep-link operations unavailable outside a packaged app. All three mark `setLoginItem` unavailable outside a packaged app, where it does nothing. Other runtime constraints may still make an `'implemented'` operation fail.
+
+### `opStatus(service, op)`
+
+Synchronously read a status from the stored report. Returns `string | null`; `null` means either initialization has not supplied a report or the operation is absent.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `service` | `string` | Native service name, such as `'power'`. |
+| `op` | `string` | Operation name, such as `'getThermalState'`. |
+
+```ts
+const thermalStatus = host.capabilities.opStatus('power', 'getThermalState');
+```
+
+### `init()`
+
+Load `report` through `describe()`, mark the store ready and resolve the namespace. Call again to replace its snapshot. This namespace has no `dispose()` method or change events.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `describe`, `init`, `opStatus` | ✓ | ✓ | ✓ |
+
+## Example
+
+```svelte
+<script lang="ts">
+  const canReadThermal = $derived(
+    host.capabilities.opStatus('power', 'getThermalState') === 'implemented'
+  );
+</script>
+
+{#if host.capabilities.ready && canReadThermal}
+  <p>Thermal state: {host.power.thermal ?? 'unknown'}</p>
+{/if}
+```

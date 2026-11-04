@@ -1,0 +1,169 @@
+---
+title: host.shell
+description: Open URLs and files, reveal or trash items, share content, drag files out and preview them.
+---
+
+`host.shell` hands content to the operating system. Use it to open a link in the user's browser, reveal a download, or offer native file actions.
+
+How-to: [Dialogs, clipboard and services](/ui/platform-services#shell).
+
+## Methods
+
+### `openExternal(url)`
+
+Open a URL in its registered application.
+
+```ts
+await host.shell.openExternal('https://svelte.dev');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `url` | `string` | Absolute URL. All platforms accept `http`, `https`, `mailto`, `tel` and `sms`; macOS also accepts `facetime` and `maps`. |
+
+Resolves `null`. An unaccepted scheme rejects with `invalid_args`; an OS launch failure rejects with `internal`. Use `openPath()` for files. For sign-in callbacks, see [`host.oauth`](/host/web/oauth).
+
+### `openPath(path)`
+
+Open an existing file or directory in its default application.
+
+```ts
+await host.shell.openPath('/Users/me/report.pdf');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `path` | `string` | Filesystem path. |
+
+Resolves `null`. A missing file rejects with `invalid_args`; a launch failure rejects with `internal`.
+
+### `showItemInFolder(path)`
+
+Reveal an existing item in Finder or the platform file manager.
+
+```ts
+await host.shell.showItemInFolder('/Users/me/report.pdf');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `path` | `string` | Filesystem path to select. |
+
+Resolves `null`. A missing item rejects with `invalid_args`. On Linux, if `org.freedesktop.FileManager1` is unavailable, opens the parent folder instead of selecting the item.
+
+### `trashItem(path)`
+
+Move a file or directory to the OS trash.
+
+```ts
+await host.shell.trashItem('/Users/me/old-draft.txt');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `path` | `string` | Item to move to the trash. |
+
+Resolves `null`. Missing paths reject with `invalid_args`. Trash failures use `invalid_args` on macOS and Linux, and `internal` on Windows.
+
+### `beep()`
+
+Play the system alert sound. Resolves `null`.
+
+```ts
+await host.shell.beep();
+```
+
+### `share(items, windowId?)`
+
+Open the system share picker for text, a URL and files.
+
+```ts
+const { service } = await host.shell.share({ text: 'Q3 report', files: [reportPath] });
+```
+
+`items` is `ShareItems`:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `text` | `string` | Omitted | Text to share. |
+| `url` | `string` | Omitted | Absolute URL to share. |
+| `files` | `string[]` | No files | Absolute paths to existing files. |
+| `anchor` | `{ x: number; y: number; width: number; height: number }` | Pointer position | Picker anchor in page CSS pixels, such as `getBoundingClientRect()`. |
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `windowId` | `number` | Optional target [window](/host/windows/window); otherwise the calling or default window. |
+
+Resolves `{ service: string | null }`: the chosen service's title, or `null` when dismissed. This reports the choice, not completion of the service's work. Rejects with `invalid_args` for a missing window, a relative URL, missing files, or no content.
+
+macOS only.
+
+### `startDrag(options, windowId?)`
+
+Start a native copy drag from the page to Finder or another app.
+
+```ts
+const { dropped } = await host.shell.startDrag({ files: [reportPath] });
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `files` | `string[]` | Required | Nonempty list of existing file paths. |
+| `icon` | `string` | File icons | Path to a drag image. If it cannot be loaded, file icons are used. |
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `windowId` | `number` | Optional target [window](/host/windows/window); otherwise the calling or default window. |
+
+Call while the left mouse button is down: in `ondragstart` after `preventDefault()`, or in `onmousedown`. Resolves `{ dropped: boolean }` when the drag ends. Abandoning it resolves `false`. Rejects with `not_dragging` when the button is no longer down, or `invalid_args` for a missing window, missing files or an empty list.
+
+macOS only. The call can come from server code, but still requires a target page and the active mouse gesture.
+
+### `previewFile(paths)`
+
+Open the system Quick Look preview panel.
+
+```ts
+await host.shell.previewFile(['/Users/me/report.pdf', '/Users/me/chart.png']);
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `paths` | `string \| string[]` | One existing path, or a nonempty list. The panel's arrows move between items. |
+
+Resolves `null` after showing the panel. Rejects with `invalid_args` for missing files or an empty list, and `unavailable` if no app delegate can control the panel.
+
+macOS only.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `openExternal` | ✓ | ✓ | ✓ |
+| `openPath`, `showItemInFolder`, `trashItem`, `beep` | ✓ | ✓ | ✓ |
+| `share`, `startDrag`, `previewFile` | ✓ | — | — |
+
+`facetime` and `maps` URLs are accepted only on macOS. Other schemes listed above work where the OS has a handler.
+
+## Example
+
+```svelte
+<script lang="ts">
+  let { reportPath }: { reportPath: string } = $props();
+  let result = $state('');
+
+  async function share(event: MouseEvent) {
+    const button = event.currentTarget as HTMLButtonElement;
+    const { service } = await host.shell.share({
+      files: [reportPath],
+      anchor: button.getBoundingClientRect(),
+    });
+    result = service ?? 'Dismissed';
+  }
+</script>
+
+<button onclick={() => host.shell.openPath(reportPath)}>Open</button>
+<button onclick={() => host.shell.showItemInFolder(reportPath)}>Reveal</button>
+<button onclick={share}>Share (macOS)</button>
+<p>{result}</p>
+```

@@ -1,0 +1,164 @@
+---
+title: Plugins
+description: One API for app-defined native commands, with shared build, event and permission rules.
+---
+
+Plugins add commands to the shell process. Pick them when pages and server code need the same native API, or when code needs access to the native UI thread. For a server-only library, use an [addon](/native/addons). For process isolation, use a [sidecar](/native/sidecars) or [service](/native/services).
+
+## One API
+
+Every language registers a command as `service.op`. Call it from a page or SvelteKit server code:
+
+```ts
+import { native } from '@svelte-desktop/shell/native';
+
+// For a plugin that registers text.stats:
+const stats = await native.text.stats({ text: 'Hello from the app' });
+// The host global exposes the same object:
+const again = await host.native.text.stats({ text: 'Another call' });
+```
+
+Calls return promises. Arguments and results cross the bridge as JSON; omitted arguments become `{}`. A promise does not mean the handler runs in the background: its language SDK decides where it runs.
+
+In a packaged app, SvelteKit runs in a Bun Worker in the shell process. Pages run in the system webview's content processes. Both reach the native dispatcher on the UI thread. Plugins use replies for the caller and events for all listening pages and server code; they do not share JavaScript objects with either. See [threads and processes](/native/threads) and the [`host.native` reference](/host/data/native).
+
+## Generated types
+
+The dev launcher builds the plugins, reads their command descriptions, and generates `src/native.d.ts`. The macOS production packager does this too. Keep the file in Git; change the native declarations rather than editing the generated file.
+
+| Commands | Type source |
+| --- | --- |
+| Rust | The SDK's `TS` declarations. |
+| Go | The SDK's reflected argument and result types. |
+| Python | The functions' annotations, read by importing the modules. |
+| Typed Swift | The SDK's descriptions of `Decodable` arguments and results; unsupported shapes can become `unknown`. |
+| Untyped Swift, Objective-C and raw C/C++ | `args?: Record<string, unknown>` and `Promise<unknown>`. |
+
+Each library is inspected in a separate Bun subprocess. The build calls `sd_plugin_describe` when available. Otherwise, it calls `sd_plugin_init` with a recording host and collects `register_op` calls. Keep setup limited to registration: this inspection is not a running app, and its window functions return null.
+
+The file is written only when its contents change. A library that cannot be inspected, for example because it has another architecture or crashes, is omitted. No libraries means no rewrite, so removing every plugin does not clear an existing declaration file. Linux and Windows production packaging currently do not call the type generator. Generate and check declarations in native-window dev mode on a supported host before shipping those targets. Browser-only dev mode does not build or describe plugins.
+
+## Names and collisions
+
+Use one dot between a non-empty service and operation, such as `text.stats`. Use TypeScript identifier names for operations: the generator emits method names without quoting them. Avoid `then` as either name; the JavaScript proxy reserves it to avoid being treated as a promise. The SDKs do not all validate names in the same way, so use this form consistently.
+
+Names belong to one shared registry, including built-in operations. A plugin cannot override a built-in operation or an operation registered by an earlier plugin. The C host's `register_op` returns `-1` for an occupied name; the language wrappers log the rejected registration. Choose an app-specific service rather than reusing a built-in operation name. Generated declarations describe what a library declares, not proof that registration succeeded at runtime.
+
+## Errors
+
+Failures reject the JavaScript promise with `NativeApiError`, an `Error` with a `code` and message. The common plugin codes are:
+
+| Code | Meaning |
+| --- | --- |
+| `invalid_args` | The handler cannot accept the arguments. |
+| `unsupported` | The operation is not supported. The dispatcher also uses this for a missing operation in a known service. |
+| `unavailable` | A required resource or facility is unavailable. |
+| `denied` | Access was refused, including a page call blocked by the bridge policy. |
+| `internal` | An unexpected handler, encoding or transport failure. |
+| `unknown` | The dispatcher has no registered service with that name. |
+
+Rust and Go SDKs turn handler panics into `internal` errors. Swift turns thrown errors into rejections. Raw C/C++ handlers own their failure handling and must reply exactly once. There is no automatic plugin-call timeout or cancellation in the bus. A plugin crash can terminate the shell process; use a separate process when that isolation matters.
+
+## Events
+
+Emit app-defined events with `svelte_desktop::emit` in Rust, `desktop.Emit` in Go, `Desktop.emit` in Swift, `SDEmit` in Objective-C, or the C host's `emit` function. These functions may be called from another thread. The host delivers the event through the UI thread to app-origin pages and the server's event sink.
+
+Use an object payload. Other JSON values are wrapped as `{ value: ... }`. Event names and payloads are not added to `src/native.d.ts`.
+
+```ts
+// Page or server code; the generic describes the payload, without validating it.
+const off = host.on<{ count: number }>('counter.changed', ({ count }) => {
+  console.log(count);
+});
+
+// Dispose the listener when its owner goes away.
+off();
+```
+
+Events broadcast to listeners; replies return only to the original caller. Startup setup runs before the Worker installs its sink and before pages load, so do not use setup-time events as a reliable initialization handshake. See [events](/host/data/events).
+
+## Page access
+
+Plugin calls use the same native bridge policy as built-in operations:
+
+```ts desktop.config.ts
+import { defineConfig } from '@svelte-desktop/shell/config';
+
+export default defineConfig({
+  appName: 'Example',
+  identifier: 'com.example.plugins',
+  bridge: { allow: ['text.*', 'counter.read'] }
+});
+```
+
+Without `bridge.allow`, pages may call every operation. With it, pages may call only matching `service.op` or `service.*` entries; an empty array permits none. The native bridge also checks the page's origin and main frame. Server calls are unrestricted by `bridge.allow`. This is a page-call policy, not a sandbox around native code or an event subscription filter. See [configuration](/reference/config).
+
+## Source discovery
+
+The default source root is `native/`, if it exists. Set `native` to another path or `false` in the config.
+
+```text
+native/
+  macos/              Swift, Objective-C or macOS C/C++
+  linux/              Linux-only sources
+  windows/            Windows-only sources
+  text.rs             one Rust plugin
+  rust/               a Cargo.toml crate, built separately
+  go/                 a go.mod module, built separately
+  addons/             Node-API addons, not plugin commands
+  sidecars/           excluded from plugin discovery
+```
+
+The C-family scanner recursively collects `.swift`, `.m`, `.mm`, `.c`, `.cc` and `.cpp`. Headers are not compilation units. It skips `addons/`, `sidecars/`, `target/`, `node_modules/`, dot directories, folders containing `Cargo.toml` or `go.mod`, and other platforms' folders. The selected platform's folder and shared sources are combined.
+
+Rust and Go have a separate recursive scanner. A folder with `Cargo.toml` is one Rust plugin; a folder with `go.mod` is one Go plugin, including when the source root itself is that project. Each loose `.rs` file becomes its own crate. All loose `.go` files form one module; `_test.go` files are excluded from this loose-file list. Only one Go plugin is allowed per app. This scanner also skips `include/` and excludes other platforms' folders at the source root. Keep platform folders directly under `native/` for consistent discovery.
+
+Generated projects live under `.desktop/native-projects/`; Cargo output lives under `.desktop/cargo/`. `sidecars/` is merely excluded here: executables still need a `sidecars` config entry. See [addons](/native/addons), [sidecars](/native/sidecars), and [platform rules](/native/plugins/platforms).
+
+## Dev mode
+
+With the native window enabled, `src/vite.ts` builds the host-architecture C-family plugin and Rust/Go libraries into `.desktop/dev/native/`, then generates types. Rust and Go use development builds. The plugin spawns `src/dev/main.ts` as a separate Bun shell process. Its UI thread creates the window and loads the libraries before entering the native run loop.
+
+SvelteKit server code stays in the Vite process in dev. The shell's dev Worker connects that process to native calls and events over a token-protected loopback WebSocket. The page loads from Vite.
+
+For an existing file's `change` event under the configured native root:
+
+1. The watcher ignores paths in `target/`, plus `Cargo.lock` and `go.sum`.
+2. It sends `SIGTERM` to the shell process and waits for it to exit.
+3. It builds the plugins again, using each builder's cache where applicable, and regenerates types from the libraries it obtained.
+4. It starts a new shell process, which loads those libraries and opens a new window at the Vite URL. The Vite-side native bridge reconnects.
+
+This is a process restart, with page and native in-memory state lost. It is not native library hot replacement. Ordinary Svelte edits use Vite HMR. Native file additions and removals do not trigger this restart handler; restart dev manually after those changes. Build errors are logged, and the launcher can continue with the libraries that built successfully. A `desktop.config` change restarts Vite itself. Addons are prepared when Vite configures the dev server; a native-window restart alone does not rerun that preparation.
+
+The C-family cache compares the output's modification time with selected compilation units and the shell SDK's include files. It does not track headers in your source tree or compiler-option changes. A restart triggered by such an edit can therefore reuse the old library; remove that plugin's cached output under `.desktop/dev/native/` before restarting when a rebuild is required.
+
+The current dev C-family builder has macOS and Linux branches, not a Windows branch. Windows C/C++ production packaging uses a separate builder; do not infer a working Windows native dev build from that support.
+
+## Production and startup
+
+Swift and C-family sources produce one library per app. Each discovered Rust project or loose file produces another library; Go produces one more. The packager copies them alongside the shell library:
+
+| Target | C-family library | Rust and Go libraries |
+| --- | --- | --- |
+| macOS | `Contents/Frameworks/libapp-native.dylib` | `Contents/Frameworks/plugins/libapp-<name>.dylib` |
+| Linux | `lib/libapp-native.so` | `lib/plugins/libapp-<name>.so` |
+| Windows | `app-native.dll`, beside the executable | `plugins/app-<name>.dll` |
+
+On macOS, nested libraries, including the `plugins/` entries, are signed first, then the app bundle. Signing uses `sign.identity`, then `CODESIGN_IDENTITY`, otherwise ad-hoc signing. Linux packaging does not code-sign plugin libraries. On Windows, optional Authenticode signing includes `app-native.dll`; the current signing list does not include Rust/Go DLLs under `plugins/`. See [platforms and configuration](/native/plugins/platforms).
+
+At startup, the main Bun thread creates the server Worker, opens the shell library, creates the native window, and installs the page policy. It then loads the C-family library followed by the sorted entries in `plugins/`. Every library's `sd_plugin_init` runs on the UI thread before the run loop starts. The main thread then sends the Worker's initialization message and enters the blocking native run loop. The Worker may already be evaluating server modules, but its native transport and server initialization wait for that message.
+
+Load failures are logged; the shell continues starting. A successful library load is not a guarantee that every declared command registered successfully.
+
+## Handler threads and language guides
+
+| Language | Handler execution | Communicating across threads |
+| --- | --- | --- |
+| [Rust](/native/plugins/rust) | The SDK spawns an OS thread for each call. | Return a result or error; use `svelte_desktop::emit` for events. |
+| [Go](/native/plugins/go) | The SDK starts a goroutine for each call. | Return a result or error; use `desktop.Emit` for events. |
+| [Python](/native/plugins/python) | A thread from a pool of 8 (`def`) or one asyncio loop (`async def`), in a Python process of the app's own. | Return or raise; use `emit` for events. |
+| [Swift](/native/plugins/swift) | A `Task` on `MainActor`; handlers may suspend with `await`. | Return or throw; use `Desktop.emit`. Keep blocking work off `MainActor`. |
+| [Objective-C](/native/plugins/objective-c-and-c) | The `SDCommand` block starts on the UI thread. | Call its reply once from any thread; use `SDEmit`. |
+| [C and C++](/native/plugins/objective-c-and-c#the-c-abi) | The raw ABI handler starts on the UI thread. | Schedule work yourself; call `resolve`, `reject` or `emit` from another thread. |
+
+All these plugins except Python remain in the shell process: the Python bridge is a library in the shell process, but the commands run in a separate Python process. Rust threads and Go goroutines are separate from the Bun server Worker. Native window and webview handles must stay on the UI thread. For supported toolchains and build limits, see [platforms and configuration](/native/plugins/platforms).

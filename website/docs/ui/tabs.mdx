@@ -3,6 +3,10 @@ title: Tabs
 description: The window's tabs (SvelteKit routes in the title bar, kept alive, dragged between windows) with <WindowTabs>, and tabs inside a page with <Tabs> — each one configured by its props and drawn with snippets.
 ---
 
+:::note
+API reference: [`host.view`](/host/windows/view), [`host.windows`](/host/windows/window), [`host.menu`](/host/input/menu).
+:::
+
 Two components, each configured by its props and drawn with snippets:
 
 - **`<WindowTabs>`** — the window's tabs, in the title bar. Its tabs are your SvelteKit routes: you write links as usual, and the tabs follow.
@@ -53,16 +57,16 @@ From there, it's links:
 | You | The tabs |
 | --- | --- |
 | A link, `goto()`, the sidebar | The active tab goes there — the page you leave is unmounted, as on any SvelteKit navigation |
-| `target="_blank"` / ⌘-click, middle click | A new tab on it, in front / in the background |
-| A link or `goto()` to a `keepAlive` route | Its tab if it's open, else a new one: it runs in its own web view and goes on while you're elsewhere (timers, sockets, what you typed) |
+| `target="_blank"` / ⌘-click, middle click | A new tab on it, in front / in the background — on a `keepAlive` route too: another one, with its own view, running from the start (in the background too) |
+| A link or `goto()` to a `keepAlive` route | Its tab if it's open, else a new one: it runs in its own web view and goes on while you're elsewhere (timers, sockets, what you typed). The page you were on stays on screen until the view is drawn, then the window's address becomes the tab's: `page.url`, your sidebar's active link, follow it |
 | ⌘T / the + button | A new tab on `newTab` |
 | ⌘W / × | Close the tab (`beforeClose` can keep it); the main window keeps a tab on `newTab` |
-| Drag a tab | Reorder — out of the window: its own window, where it's let go; onto another window's bar: it moves there |
+| Drag a tab | Reorder. A regular route tab can move to another window's bar; with at least two tabs, dragging it outside opens a new window. Kept-alive and external tabs stay in their window |
 | Back / Forward | The browser's history, shared by the tabs |
 
-You never create a tab by hand: a route that must keep running is declared once, in `keepAlive`, with SvelteKit's route ids (`/terminal/[id]`, `/docs/[...rest]`), and every link to it follows. Each kept-alive tab costs a web content process (40–100 MB): keep it for what must really go on — a chat, a terminal, a long job.
+You never create a tab by hand: a route that must keep running is declared once, in `keepAlive`, with SvelteKit's route ids (`/terminal/[id]`, `/docs/[...rest]`), and every link to it follows. Each kept-alive tab uses another web view and consumes more memory: keep it for pages that need to stay mounted. Hidden views can still be throttled, and suspension or a process crash loses in-memory state. Put work that must outlive a page in [background jobs](/native/jobs) or [services](/native/services). While one is shown, the window takes its address without navigating there — no `load`, no page code in the window (the view runs the page) — and `page.url`, your sidebar's active link, Back and Forward follow. A link followed from your layout while it's shown (the sidebar) goes to a tab of the page: the one already at that address, else the last one shown.
 
-The tabs are restored at the next launch; the window title follows the active tab; a native **Tab** menu has ⌘T ⌘W ⇧⌘T ⌃⇥ and ⌘1–9 (in its **Select Tab** submenu), and wins over the page — and over a kept-alive tab's view; only the focused window acts on it. With `titleBarStyle: 'hiddenInset'` the bar sits next to the traffic lights: tabs and buttons stay clickable, the empty parts of the strip move the window.
+The main window's tabs are restored at the next launch. For a regular active tab, the window opens on its page. For a kept-alive active tab, it opens on the last regular page, then shows the tab's view when ready. Restored kept-alive tabs start after the window page hydrates, subject to `maxViews`; the window title follows the active tab; a native **Tab** menu has ⌘T ⌘W ⇧⌘T ⌃⇥ and ⌘1–9 (in its **Select Tab** submenu), and wins over the page — and over a kept-alive tab's view; only the focused window acts on it. These Command shortcuts use Ctrl on Linux and Windows, and ⌘9 / Ctrl+9 selects the last tab. With `titleBarStyle: 'hiddenInset'` the bar sits next to the traffic lights: tabs and buttons stay clickable, the empty parts of the strip move the window.
 
 ### Snippets
 
@@ -92,11 +96,11 @@ The tabs are restored at the next launch; the window title follows the active ta
 
 - `tab` draws each tab (default: its title and a close button).
 - `layout` gets `bar` (the tab bar: `class`, `label`, `start`, `end`), `content` (the page, and each kept-alive tab's view in the same place) and `api`; without it, the bar goes above the content.
-- `embedded`: a kept-alive tab's view runs your app again, layout included — there `<WindowTabs>` renders the page alone (or this snippet). Your own code can test `embedded` from `@svelte-desktop/shell/tabs`.
+- `embedded`: a kept-alive tab's view runs your app again, layout included — there `<WindowTabs>` renders the page alone (or this snippet), on the server too (the view's request says so), so the view shows at its first paint. Your own code can test `embedded` from `@svelte-desktop/shell/tabs` (in the page).
 
-`api` (also `bind:api`): `items`, `active`, `open(path | url, { background })`, `close(id?)`, `activate(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`. `api.open('https://…')` shows another site in a tab of its own (external links keep opening the browser); it can't call native APIs and receives none of the app's events. A tab is `{ id, path?, url?, title? }`.
+`api` (also `bind:api`, set in the browser: on the server, `layout`'s `api`): `items`, `active`, `open(path | url, { background, reuse })` (`reuse: false`: another tab on a kept-alive route already open), `close(id?)`, `activate(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`. `api.open('https://…')` shows another site in a tab of its own (external links keep opening the browser); it can't call native APIs and receives none of the app's events. A tab is `{ id, path?, url?, title? }`. Reuse of a kept-alive tab matches the pathname, ignoring query and hash; it activates the existing tab without changing its URL. Use `reuse: false` to open a separate tab with different parameters.
 
-A view is drawn over the page: your page's popovers and dialogs can't cover a kept-alive tab or another site.
+A view is drawn over the page: your page's popovers and dialogs can't cover a kept-alive tab or another site. A kept-alive tab's view is see-through: where its page paints nothing, the background of your layout around `content` shows — give the `embedded` page no background of its own and it blends in. It waits for its page-ready signal (or a load failure or three-second timeout); until then the tab you were on stays. A link to a kept-alive route makes its view ahead when SvelteKit would preload it — `data-sveltekit-preload-data="hover"` (in the default `app.html`) once the pointer rests on it, `"tap"` when pressed, `"false"` never — so the click shows it at once (unused, it's dropped after 5 s); at launch, restored kept-alive tabs start once your page is up.
 
 <TypeTable
   type={{
@@ -104,8 +108,10 @@ A view is drawn over the page: your page's popovers and dialogs can't cover a ke
     newTab: { type: "string", description: "The page ⌘T and + open. Without it, no new tab." },
     keepAlive: { type: "string[]", description: "Routes that keep running when their tab isn't shown, as SvelteKit route ids." },
     restore: { type: "boolean", default: "true", description: "Restore the tabs at the next launch." },
-    detachable: { type: "boolean | (tab) => boolean", default: "true", description: "Drag a tab out of the window: its own window, another window's bar." },
+    detachable: { type: "boolean | (tab) => boolean", default: "true", description: "Move regular route tabs between windows. Kept-alive and external tabs cannot detach; opening a new window requires at least two tabs." },
     windowAnimation: { type: "boolean | WindowAnimation", default: "true", description: "How the window a tab is dragged into comes in (macOS): see [Animation](/ui/windows#animation)." },
+    prewarm: { type: "boolean", default: "false", description: "Keep an extra view ready for the next kept-alive tab: it opens without starting a process or the app — any kept-alive route, by SvelteKit's router." },
+    maxViews: { type: "number", description: "Views running at once (kept-alive tabs, other sites): beyond, the least recently shown one is suspended (`data-suspended` on its tab) and its page loads again when shown. The system short of memory (macOS) suspends every hidden one. The active view and the view still on screen are retained during a switch; prewarmed views are separate from this limit. Default: no limit." },
     beforeClose: { type: "({ tab, index }) => boolean | void", description: "A tab is closing: return false to keep it." },
     onValueChange: { type: "({ value, tab, index, reason }) => void", description: "The active tab changed: reason 'user', or 'missing' (the active one was closed)." },
     value: { type: "string", description: "The active tab's id (bindable)." },
@@ -118,7 +124,7 @@ A view is drawn over the page: your page's popovers and dialogs can't cover a ke
 
 ## Tabs in a page
 
-`<Tabs>` takes your items and renders a bar and a panel per tab. An item is a string, or `{ value, label }` plus `pinned`, `closable` and your own fields:
+`<Tabs>` takes your items and renders a bar and a panel per tab. An item is a string, or `{ value, label }` plus `pinned`, `closable` and your own fields. Give each item a unique, stable `value`. `pinned` hides its close button and excludes it from `closeOthers`; use `closable: false` too if it must not close through the API or a middle click:
 
 ```svelte
 <script lang="ts">
@@ -145,7 +151,7 @@ A view is drawn over the page: your page's popovers and dialogs can't cover a ke
 </Tabs>
 ```
 
-Adding (the + button, with `onAdd`), closing and dragging write back to `bind:items`; your array changing is what the bar shows. A fixed segmented control is just items:
+`beforeClose` is synchronous: return `false` to veto a close; a promise is not awaited. Adding (the + button, with `onAdd`), closing and dragging write back to `bind:items`; your array changing is what the bar shows. Persisted items must be JSON-serializable. In-page groups save only in the main window. A fixed segmented control is just items:
 
 ```svelte
 <Tabs items={['Day', 'Week', 'Month']} bind:value={range} class="segmented">
@@ -196,7 +202,7 @@ The bar only lays out (zero-specificity styles): style it with `class` and the s
 | Selector | |
 | --- | --- |
 | `[role=tablist]` (`data-sd-tabbar`) | The bar; its `gap` spaces the tabs |
-| `[role=tab]`, `[data-active]`, `[data-pinned]`, `[data-dragging]` | A tab and its states |
+| `[role=tab]`, `[data-active]`, `[data-pinned]`, `[data-suspended]`, `[data-dragging]` | A tab and its states (`data-suspended`: its view closed to free memory) |
 | `[data-sd-tab-drop]` | The line where a dragged tab lands (`--sd-tab-drop-color`, default `Highlight`) |
 | `[data-sd-tab-title]`, `[data-sd-tab-close]` | The default content |
 | `[data-sd-tab-new]` | The + button |

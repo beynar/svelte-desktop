@@ -1,9 +1,9 @@
 ---
 title: Self-update
-description: Signed updates from any static host, with delta patches, verification of every file, swap after quit and automatic rollback.
+description: Signed updates from a static host, verified downloads, macOS delta patches and a post-exit install helper.
 ---
 
-The updater fetches a signed `update.json` from any static host (S3, R2, GitHub Releases, a CDN), downloads a sha256-pinned archive or a delta patch, verifies every file, swaps the app after it quits, relaunches, and rolls back if the new version doesn't start.
+The updater fetches a signed `update.json` from any static host (S3, R2, GitHub Releases, a CDN), downloads a SHA-256-pinned archive or a macOS delta patch, swaps the app after it quits and relaunches it. Delta reconstruction also verifies each resulting file. See the platform and rollback limits below.
 
 <Steps>
   <Step title="Create a key pair">
@@ -24,7 +24,7 @@ The updater fetches a signed `update.json` from any static host (S3, R2, GitHub 
     ```
   </Step>
   <Step title="Build and upload">
-    `vite build` writes `release/<version>/` with the archive (and a delta patch from the previous release found in `release/`) and a signed `release/update.json`. Upload the archives first and `update.json` last, so clients never see a manifest pointing at missing files.
+    `vite build` writes `release/<version>/` with the archive (and a delta patch from the previous release found in `release/`) and a signed `release/update.json`. Upload the archives first and `update.json` last, so clients never see a manifest pointing at missing files. To build every platform and publish from CI, follow [Release with CI](/shipping/release).
   </Step>
   <Step title="Check from the app">
     ```svelte
@@ -47,24 +47,34 @@ The updater fetches a signed `update.json` from any static host (S3, R2, GitHub 
     publicKey: { type: "string | string[]", required: true, description: "ed25519 public key(s), base64. An array allows key rotation." },
     channel: { type: "string", default: '"stable"', description: "A signed manifest for another channel is refused." },
     privateKey: { type: "string", default: "$SVELTE_DESKTOP_UPDATE_KEY", description: "Private key file used by vite build to sign release/update.json. Without it the manifest is written unsigned." },
-    baseUrl: { type: "string", description: "Public base URL where release/ is uploaded (artifact URLs in update.json)." },
+    baseUrl: { type: "string", description: "Public base URL where release/ is uploaded (absolute artifact URLs in update.json). Without it, URLs are relative to update.json, which works for every channel." },
   }}
 />
 
+## Platform support
+
+| Platform | Current behavior |
+| --- | --- |
+| macOS | Full `.app` replacement and delta patches; the parent install directory must be writable |
+| Windows | Full-archive file replacement through a PowerShell helper; no delta application. Automatic startup confirmation and rollback are not wired for Windows-style compiled paths. Real Windows validation remains required. |
+| Linux | The packager archives the enclosing app directory, while the installer expects executable-level entries or one replacement file. This can replace the executable or AppImage with a directory. Do not install the generated Linux feed; use manual downloads until the archive layout is fixed. |
+
 ## Security
 
-- **Signed manifest.** The client verifies the ed25519 signature before reading any field, then checks the app name, the channel, and that the version is strictly newer (an old signed manifest can't downgrade anyone).
+- **Signed manifest.** The client verifies the ed25519 signature before reading any field, then checks the app identifier (`identifier`, stored as the manifest's `name`), the channel, and that the version is strictly newer (an old signed manifest can't downgrade anyone).
 - **Pinned artifacts.** Every archive's sha256 and size are in the signed manifest and checked while streaming. A compromised CDN can cause a failed update, not a malicious one.
 - **Key rotation.** Ship a release embedding `[oldKey, newKey]`, then sign with the new key, then drop the old one.
 - Code signing and notarization are separate and still needed for Gatekeeper and SmartScreen.
 
 ## Delta updates
 
-With a previous release in `release/`, `vite build` also writes a `.sdpatch`: per-file operations (unchanged, rsync-style delta, new) with the size and sha256 of every resulting file. A client on that version downloads the patch, rebuilds the new app from its installed copy, verifies every file and applies it like a full update; any mismatch falls back to the full archive. A one-line change in the example app is a 14 KB patch against a 39 MB archive.
+With a previous release in `release/`, `vite build` also writes a `.sdpatch`: per-file operations (unchanged, rsync-style delta, new) with the size and sha256 of every resulting file. A macOS client on that version downloads the patch, rebuilds the new app from its installed copy, verifies every file and applies it like a full update; any mismatch falls back to the full archive. The packager can also produce Linux patches, but the client only applies patches to macOS app bundles. Windows packaging produces full archives only.
 
 ## Install and rollback
 
-The install is swapped by a helper after the app exits; the previous copy is kept as `.old`. The new version confirms itself once it starts cleanly; a version that fails to confirm within two starts is rolled back and not offered again.
+The install is swapped by a helper after the app exits; the previous copy is kept as `.old`. The lower-level updater counts unconfirmed starts and restores the backup on the second one, then skips that version in future checks.
+
+The shell currently calls rollback handling and then confirmation during Bun Worker initialization. This is not a page or application health check. If the new executable cannot start the Worker, no rollback code runs; recovery is not automatic. Windows-style compiled paths also bypass this startup hook. Applications using `createUpdater()` directly own the timing of `rollbackIfNeeded()`, `confirm()` and the restart after a rollback.
 
 The install directory must be writable by the user: `/Applications` for an admin on macOS, a per-user location on Windows (the NSIS installer is per-user) and a user-owned directory on Linux. A translocated (quarantined) macOS app is refused.
 

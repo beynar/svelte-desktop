@@ -1,0 +1,174 @@
+---
+title: 'host.webview: input policy'
+description: Intercept window-local shortcuts before WebKit and control native menu accelerators.
+---
+
+These `host.webview` methods declare native input rules for one window on macOS. Use them to reserve shortcuts before WebKit or the menu handles them, or to disable menu accelerators while an editor has focus. They are part of the service-only [`host.webview`](/host/web/webview), with no reactive store.
+
+How-to: [Native input policy](/ui/web-view#native-input-policy-macos).
+
+## Types
+
+### `InputPolicy`
+
+Each call replaces the window's whole policy; it does not merge with earlier settings.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `intercept` | `InputShortcut[]` | `[]` | Shortcut combinations consumed natively before WebKit and menu key equivalents. |
+| `menuShortcuts` | `boolean` | `true` | Whether native menu accelerators may run for this window. `false` leaves menu items clickable. |
+
+### `InputShortcut`
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `key` | `string` | Required | Nonempty character or named key. Matching is case-insensitive and uses layout-dependent characters ignoring modifiers. |
+| `modifiers` | `InputModifier[]` | `[]` | Exact combination of the four supported modifiers. |
+
+`InputModifier` is `'meta' | 'control' | 'alt' | 'shift'`. `meta` means Command, and `alt` means Option. Extra or missing modifiers prevent a match; Caps Lock and other flags are not part of the comparison.
+
+Named keys are `Enter` (also `Return`), `Escape`, `Tab`, `Space`, `Backspace`, `Delete` (forward delete), `ArrowUp`, `ArrowDown`, `ArrowLeft` and `ArrowRight`. Keypad Enter matches Enter. The `key` reported in events retains the spelling supplied in the rule.
+
+### `BeforeInputEvent`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `windowId` | `number` | Public native window id; the primary window uses `0`. |
+| `key` | `string` | Key from the matching rule. |
+| `keyCode` | `number` | Native hardware key code from the event. |
+| `type` | `'keyDown' \| 'keyUp'` | Native event phase. |
+| `isAutoRepeat` | `boolean` | Whether this is an auto-repeat event. |
+| `modifiers` | `InputModifier[]` | Modifiers from the matching rule. |
+| `intercepted` | `true` | The event has already been consumed natively. |
+
+The monitor checks both key-down and key-up against the exact combination. For example, a key-up after releasing a required modifier may no longer match. `beforeInput` is an observational native event, separate from the DOM's `beforeinput` event. It cannot prevent or resume a keystroke. Native code never waits for JavaScript before deciding what to consume; ordinary editing should use DOM listeners.
+
+## Methods
+
+### `setInputPolicy(policy, windowId?)`
+
+Replace a native window's input policy.
+
+```ts
+await host.webview.setInputPolicy({
+  intercept: [{ key: 'k', modifiers: ['meta', 'shift'] }],
+  menuShortcuts: false,
+}, 0);
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `policy` | `InputPolicy` | Required | All options are listed above. `{}` restores an empty intercept list and enables menu shortcuts. |
+| `windowId` | `number` | Caller window | Explicit public window id. In server code without a caller, defaults to the key application window, then the primary window. `0` selects the primary window. |
+
+Resolves `{ monitorInstalled: boolean; interceptCount: number; menuShortcuts: boolean }`. A successful set reports `monitorInstalled: true`; `interceptCount` is the number of rules accepted.
+
+Rejects with `invalid_args` for a non-array intercept list, a non-boolean menu-shortcut setting, a rule without a nonempty string key, a non-array modifier list or an unknown modifier. Rejects with `unavailable` if the target window is not open or the native monitor could not be installed.
+
+macOS only. Rules belong to the native window and expire when it closes. Other windows retain their own menu shortcuts. This policy does not unregister or disable OS-wide [`host.shortcuts`](/host/input/shortcuts).
+
+### `getInputPolicy(windowId?)`
+
+Read the policy currently attached to the target window.
+
+```ts
+const policy = await host.webview.getInputPolicy(0);
+console.log(policy.intercept, policy.menuShortcuts, policy.monitorInstalled);
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `windowId` | `number` | Caller window | Same window selection rules as `setInputPolicy`. |
+
+Resolves `{ monitorInstalled: boolean; intercept: InputShortcut[]; menuShortcuts: boolean }`. Before a policy is set, `intercept` is empty and `menuShortcuts` is `true`. `monitorInstalled` reports whether the native event monitor exists. Rejects with `unavailable` if the target window is not open.
+
+macOS only.
+
+## Events
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `beforeInput` | `BeforeInputEvent` | A window's intercepted key-down or key-up matches a rule and is consumed. macOS only. |
+
+`onBeforeInput(cb)` accepts `(event: BeforeInputEvent) => void` and returns an unsubscribe function synchronously. `host.on('beforeInput', cb)` is the raw event equivalent. Delivery is asynchronous to the server and pages; the helper does not filter by window. Check `windowId` before handling a window-specific command.
+
+```ts
+const off = host.webview.onBeforeInput((event) => {
+  if (event.windowId === 0 && event.type === 'keyDown' && !event.isAutoRepeat) console.log(event.key);
+});
+off();
+```
+
+Unsubscribing does not clear the input policy. Restore it explicitly with `setInputPolicy({})` or with a previously saved policy.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `setInputPolicy`, `getInputPolicy` | ✓ | — | — |
+| `onBeforeInput` | ✓ | — | — |
+
+Linux and Windows do not register the policy operations or emit `beforeInput`. A listener alone does not install interception rules.
+
+## Example
+
+Reserve Command+Shift+K and turn off [menu shortcuts](/host/input/menu) while an editor has focus. This macOS component runs in the primary window (`0`), owns its policy while mounted and restores the previous one when it leaves.
+
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
+
+  let paletteOpen = $state(false);
+  let inputError = $state<string | null>(null);
+  let editor: HTMLTextAreaElement;
+
+  onMount(() => {
+    let disposed = false;
+    const previous = host.webview.getInputPolicy(0).catch((error) => {
+      inputError = String(error);
+      return null;
+    });
+    const off = host.webview.onBeforeInput((event) => {
+      if (document.activeElement === editor && event.windowId === 0 &&
+          event.key === 'k' && event.type === 'keyDown' && !event.isAutoRepeat) {
+        paletteOpen = true;
+      }
+    });
+
+    async function setEditorPolicy(focused: boolean) {
+      try {
+        const saved = await previous;
+        if (disposed || !saved) return;
+        await host.webview.setInputPolicy(focused ? {
+          intercept: [{ key: 'k', modifiers: ['meta', 'shift'] }],
+          menuShortcuts: false,
+        } : { intercept: saved.intercept, menuShortcuts: saved.menuShortcuts }, 0);
+      } catch (error) {
+        inputError = String(error);
+      }
+    }
+
+    const focus = () => void setEditorPolicy(true);
+    const blur = () => void setEditorPolicy(false);
+    editor.addEventListener('focus', focus);
+    editor.addEventListener('blur', blur);
+    if (document.activeElement === editor) focus();
+
+    return () => {
+      disposed = true;
+      off();
+      editor.removeEventListener('focus', focus);
+      editor.removeEventListener('blur', blur);
+      void previous.then((saved) => {
+        if (saved) return host.webview.setInputPolicy({
+          intercept: saved.intercept, menuShortcuts: saved.menuShortcuts,
+        }, 0);
+      }).catch((error) => console.error('Restoring input policy failed', error));
+    };
+  });
+</script>
+
+<textarea bind:this={editor} aria-label="Document"></textarea>
+{#if paletteOpen}<p>Command palette is open.</p>{/if}
+{#if inputError}<p role="alert">{inputError}</p>{/if}
+```

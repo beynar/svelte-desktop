@@ -1,0 +1,68 @@
+---
+title: Native code
+description: Choose between native plugins, Node-API addons, sidecars, persistent services and background jobs.
+sidebar:
+  label: Overview
+---
+
+Native code extends the app beyond its page JavaScript and SvelteKit server. Use a plugin for an OS API or a library in another language, an addon for a Node-API library, a sidecar for an executable, a service for long-lived state, or a job for a task that finishes with a result.
+
+## Choose an execution model
+
+The thread column describes a packaged app. In development, SvelteKit runs in the Vite process; see [Threads and processes](/native/threads).
+
+| What it is | Language | Thread or process | Who can call it | Typing | Platforms | Page |
+| --- | --- | --- | --- | --- | --- | --- |
+| Plugin command | Rust | A new native thread per SDK command call, in the app process | Pages and server code through `host.native` | Generated from `TS` types | macOS, Linux, Windows; build on the target OS | [Rust](/native/plugins/rust) |
+| Plugin command | Go | A goroutine per SDK command call, in the app process | Pages and server code through `host.native` | Generated from Go types and JSON tags | macOS, Linux, Windows; build on the target OS | [Go](/native/plugins/go) |
+| Plugin command | Python | A thread from a pool (or an asyncio loop) in a Python process of the app's own | Pages and server code through `host.native` | Generated from annotations | macOS; Linux in dev only for now | [Python](/native/plugins/python) |
+| Plugin command | Swift | UI thread, `@MainActor`; may suspend asynchronously | Pages and server code through `host.native` | Generated for typed commands; raw commands return `unknown` | macOS | [Swift](/native/plugins/swift) |
+| Plugin command | Objective-C | UI thread; may reply later from another thread | Pages and server code through `host.native` | Commands discovered; results are `unknown` | macOS | [Objective-C and C](/native/plugins/objective-c-and-c) |
+| Plugin command through the C ABI | C, C++ | UI thread initially; plugin can dispatch work elsewhere | Pages and server code through `host.native` | Commands discovered; results are `unknown` | macOS, Linux, Windows; platform APIs differ | [Objective-C and C](/native/plugins/objective-c-and-c) |
+| Node-API addon, loaded as a `.node` library | C/C++, or another language producing a Node-API addon | Server Worker; synchronous addon functions block it | Server code through `host.loadAddon`; pages through your server API | Supplied by the addon or your `loadAddon<T>` declaration | macOS, Linux, Windows; needs a compatible binary | [Addons](/native/addons) |
+| Bundled executable | Any language | Separate child process | Server code through `host.sidecar`; pages through your server API | Bun subprocess API; the tool's protocol is yours | macOS, Linux, Windows; supply the target executable | [Sidecars](/native/sidecars) |
+| Persistent service in `src/services/` | TypeScript, JavaScript on Bun | Separate child process per `services.start` | Server owns the handle; pages use your server API | `HostService`, `ServiceHandle`; message payloads are `unknown`, request result generic is caller-supplied | macOS, Linux, Windows | [Services](/native/services) |
+| Finite job in `src/jobs/` | TypeScript, JavaScript on Bun | Separate child process per running job | Server starts and waits; pages watch and cancel | `HostJob`, `JobInfo`; no generated mapping from job names to argument/result types | macOS, Linux, Windows | [Jobs](/native/jobs) |
+| Additional Bun Worker | TypeScript, JavaScript | Another thread in the same process | Server code creates it; pages communicate through your server API | Your `postMessage` protocol | Bun runtime; application Worker files are not automatically bundled by the desktop adapter | [Bun Workers](/native/threads#bun-workers) |
+
+The [plugin overview](/native/plugins) explains registration and the shared ABI. The [platform guide](/native/plugins/platforms) covers platform source folders and build toolchains. Platform support in this table describes the implementation paths, not a claim that every library or OS API works on every target.
+
+## One API for plugin commands
+
+For example, register a Swift command:
+
+```swift native/Greeter.swift
+import Foundation
+
+struct HelloArgs: Codable { let name: String }
+
+func desktopSetup() {
+  Desktop.command("greeter.hello") { (args: HelloArgs) in
+    "Hello \(args.name)"
+  }
+}
+```
+
+After the plugin build generates `src/native.d.ts`, call it from a page or server code:
+
+```ts
+const greeting = await host.native.greeter.hello({ name: 'Ada' });
+// greeting: string
+```
+
+Rust, Go, Python, Objective-C and C commands use the same `host.native` API. Calls return promises and failures reject through the platform bus. A promise does not imply a background thread: Swift, Objective-C and C work can still block the UI thread.
+
+Plugins send events with their SDK's `emit` function; pages and server code subscribe with `host.on`. Use `host.broadcast` for messages between pages and the server. Addons have their own APIs. Jobs report through `ctx.progress` and `ctx.emit`; services use their message port; sidecars use the tool's streams or protocol. Server code forwards their output to pages. See the [message examples](/native/threads#messages-between-contexts).
+
+## Which one should I use?
+
+- **Call an OS API:** first check the [Host API](/host). Add a plugin when the operation is missing. Use Swift or Objective-C for AppKit; use the C ABI or Rust/Go for other libraries and platforms.
+- **Run CPU-heavy work:** use a Rust or Go plugin for in-process native computation. Use a job for a finite TypeScript task or when process isolation matters. A synchronous Node-API call blocks the server, so use an addon with its own asynchronous implementation or move the computation into a child process.
+- **Run an existing CLI:** ship it as a sidecar. Server code owns its arguments, streams and lifetime.
+- **Keep long-lived state:** use a service. Keep its handle in server code, send commands, and forward events to pages. Restarting the service starts its in-memory state again.
+- **Run a finite task with progress:** use a job. It includes progress, cancellation, result/error state and a page mirror.
+- **Use a Python library (data, local models) or existing Python code:** use [Python commands](/native/plugins/python). They run in a separate process the app ships and restarts.
+- **Reuse a crate or Go module:** use a Rust or Go plugin. Multiple Rust plugins are allowed; the build accepts one Go plugin per app.
+- **Reuse a Node-API library:** use an addon with a binary for the target OS and architecture. It runs with the server's privileges and shares the app process.
+
+Native libraries share the app's failure boundary. Moving a call to a Rust thread or Go goroutine keeps its body off the UI thread, but does not isolate a native crash. Jobs, services and sidecars put the work in separate processes. Read [Threads and processes](/native/threads) before choosing where expensive work belongs.

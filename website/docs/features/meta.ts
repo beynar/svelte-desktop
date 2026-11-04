@@ -4,5 +4,5 @@ export default defineMeta({
   title: "Features",
   icon: "puzzle",
   order: 4,
-  pages: ["notifications", "permissions", "native-code", "background-jobs", "testing"],
+  pages: ["notifications", "permissions", "websockets", "network", "protocols", "oauth", "ai", "terminal", "testing"],
 });

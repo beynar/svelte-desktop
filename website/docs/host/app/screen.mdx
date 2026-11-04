@@ -1,0 +1,94 @@
+---
+title: host.screen
+description: Inspect displays, their working areas and the global cursor position.
+---
+
+`host.screen` holds a display snapshot and refreshes it when displays change. Use it with [`host.window`](/host/windows/window) to place a window within a display's working area.
+
+How-to: [Screens](/ui/platform-services#screens).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `displays` | `DisplayInfo[]` | All displays; initially `[]`. |
+| `primary` | `DisplayInfo \| null` | Primary display snapshot. |
+| `nearestWindow` | `DisplayInfo \| null` | Display for the calling window, with a primary-display fallback; `null` if its query failed. |
+| `scaleFactor` | `number` | Native scale-factor snapshot; initially `1`. This is a value, not a callable method on `host.screen`. |
+| `cursorPoint` | `{ x: number; y: number } \| null` | Global cursor snapshot; no continuous tracking. |
+| `displayCount` | `number` | `displays.length`. |
+| `ready` | `boolean` | Whether initialization completed. |
+| `error` | `Error \| null` | Initialization failure, if any. |
+
+`DisplayInfo` has these declared fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `number` | Native display identifier (Linux uses monitor indices plus one). |
+| `uuid` | `string \| null` | Display identifier string; Linux synthesizes it from manufacturer, model and index. |
+| `bounds` | `WindowBounds` | Full display rectangle. |
+| `workArea` | `WindowBounds` | Usable rectangle excluding native panels or bars. |
+| `isPrimary` | `boolean` | Whether this is the primary display. |
+
+[`WindowBounds`](/host/windows/window) is `{ x: number; y: number; width: number; height: number }`. Display coordinates use a top-left origin with increasing `y` downward. Use the values in the platform's screen coordinate space, rather than assuming physical pixels.
+
+## Methods
+
+### `getAllDisplays()`
+
+Resolves `DisplayInfo[]`. Does not replace the store's `displays`.
+
+### `getPrimaryDisplay()`
+
+Resolves `DisplayInfo`. Rejects with `unavailable` if there is no display.
+
+### `getDisplayNearestWindow()`
+
+Resolves `DisplayInfo` for the calling window, with a primary-display fallback. Rejects with `unavailable` if there is no display.
+
+### `getCursorScreenPoint()`
+
+Read the global cursor and update `cursorPoint`. Resolves `{ x: number; y: number }`.
+
+```ts
+const point = await host.screen.getCursorScreenPoint();
+```
+
+### `refresh()`
+
+Read all display state, scale and cursor position; resolves the namespace. A failed nearest-window or cursor query becomes `null`; other query failures reject. Call this after moving a window when you need a new `nearestWindow` snapshot. It is not refreshed on every window move.
+
+### `init()` and `dispose()`
+
+`init()` calls `refresh()`, marks the store ready and subscribes to display changes; resolves the namespace. `dispose()` synchronously removes that internal subscription without resetting state or removing your listeners.
+
+## Events
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `displaysChanged` | `{}` | Display configuration changes on macOS and Windows; monitor attachment or removal on Linux. |
+
+Use `host.screen.onDisplaysChanged(fn)`, `host.screen.on('displaysChanged', fn)` or `host.on('displaysChanged', fn)`. Each returns an unsubscribe function. `host.screen.once('displaysChanged', fn)` listens once and returns an unsubscribe function too. The store refreshes automatically on this event.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `getAllDisplays`, `getPrimaryDisplay`, `getDisplayNearestWindow` | ✓ | ✓ | ✓ |
+| `getCursorScreenPoint`, `refresh`, `init` | ✓ | ✓ | ✓ |
+| `dispose`, `on`, `once`, `onDisplaysChanged` | ✓ | ✓ | ✓ |
+
+Linux cursor coordinates come from the current GDK seat; their availability and global meaning depend on the display server.
+
+## Example
+
+```svelte
+<p>{host.screen.displayCount} displays · scale {host.screen.scaleFactor}</p>
+{#each host.screen.displays as display (display.id)}
+  <p>
+    Display {display.id}{display.isPrimary ? ' (primary)' : ''}:
+    {display.workArea.width} × {display.workArea.height}
+  </p>
+{/each}
+<button onclick={() => host.screen.refresh()}>Refresh display snapshot</button>
+```

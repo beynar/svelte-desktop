@@ -1,0 +1,321 @@
+---
+title: host.menu
+description: Native application, context and Dock menus, item updates and menu events.
+---
+
+`host.menu` builds native menus and reports custom actions. It combines a reactive action history with the menu service. Use [`host.tray`](/host/input/tray) for a status item's menu and [`host.webview`](/host/web/webview) for the web view's built-in context menu.
+
+How-to: [Menus](/ui/menus).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `lastAction` | `string \| null` | Last `menuAction` id; initially `null`. |
+| `actionLog` | `string[]` | Most recent action ids, oldest first; limited to 100 entries. |
+| `appMenu` | `MenuSpec[] \| null` | What `getAppMenu()` resolves, without `await`. |
+| `dockMenu` | `MenuItemSpec[] \| null` | What `getDockMenu()` resolves, without `await`. |
+| `ready` | `boolean` | Whether the store has initialized. |
+| `error` | `Error \| null` | Initialization failure, if any. |
+
+The store subscribes automatically when the platform connects. Standard roles execute native actions rather than emitting `menuAction`.
+
+## Menu types
+
+### `MenuSpec`
+
+Each entry describes one top-level application menu.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | Required | Menu title. On macOS, `Window` and `Help` register the corresponding system menus. |
+| `items` | `MenuItemSpec[]` | Required | Menu contents. |
+| `id` | `string` | `name` | Lifecycle event identity on macOS. |
+
+### `MenuItemSpec`
+
+The same item type is used by application, context, Dock and tray menus.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `type` | `'action' \| 'separator' \| 'submenu' \| 'checkbox' \| 'radio'` | `'action'` | Item kind. Automatic checkbox toggling and radio exclusivity are macOS features. |
+| `group` | `string` | Unset | Required, nonempty group for a macOS radio item. Scoped to its immediate parent menu. |
+| `id` | `string` | Unset | Custom action id and lookup key for `update` and `get`. On macOS and Windows an action without an id reports its label; Linux requires an explicit id to emit an action. |
+| `label` | `string` | Role label, otherwise empty | Display text. |
+| `submenu` | `MenuItemSpec[]` | Unset | Nested items. A `submenu` item needs this array; Linux and macOS tray submenus require it to be nonempty. |
+| `checked` | `boolean` | `false` | Checkmark state. On Linux, supply this field to create a checkable item. |
+| `enabled` | `boolean` | `true` | Whether the item can be activated. On macOS this overrides `disabled`; on Linux and Windows either disabling field disables the item. |
+| `disabled` | `boolean` | `false` | Inverse enabled state. |
+| `visible` | `boolean` | `true` | macOS visibility. Ignored on Linux and Windows. |
+| `tooltip` | `string` | Unset | macOS native tooltip. Ignored on Linux and Windows. |
+| `role` | `MenuItemRole` | Unset | Standard native action or preset submenu. |
+| `accelerator` | `string` | Unset | Shortcut such as `'CmdOrCtrl+Shift+K'`. |
+| `icon` | `MenuItemIcon` | Unset | `{ native: NativeIconName }` or `{ path: string }`. macOS displays item icons; Linux validates the source but does not display it, and Windows ignores it. |
+
+`NativeIconName` is the exported `NATIVE_ICON_NAMES` vocabulary, including `add`, `refresh`, `folder`, `share` and `trashempty`. `MenuItemIcon` is also used by [`host.tray`](/host/input/tray).
+
+### Roles
+
+`MenuItemRole` accepts the following named roles and other strings; an unknown native role rejects with `invalid_args`. Role behavior depends on the backend, so acceptance alone does not guarantee an action.
+
+| Roles | Behavior and support |
+| --- | --- |
+| `undo`, `redo`, `cut`, `copy`, `paste`, `pasteAndMatchStyle`, `selectAll` | Edit the focused web view through native editing behavior on all three platforms. |
+| `delete` | Delete through native editing on macOS and Windows; accepted without an action on Linux. |
+| `about`, `quit` | Show application information or request application quit. |
+| `minimize`, `zoom`, `close`, `toggleFullscreen` | Change the target window; `zoom` toggles maximization on Linux and Windows. |
+| `reload`, `toggleDevTools`, `resetZoom`, `zoomIn`, `zoomOut` | Control the target web view. macOS developer tools depend on the inspector being available. |
+| `hide`, `front` | Native application actions on macOS; hide/show application windows on Windows; accepted without an action on Linux. |
+| `hideOthers` | Hide other applications on macOS; accepted without an action on Linux and Windows. |
+| `help` | macOS Help submenu; an empty submenu on Windows; accepted without an action on Linux. |
+| `appMenu`, `fileMenu`, `editMenu`, `viewMenu`, `windowMenu`, `window` | Expand to standard submenus on macOS and Windows. Linux rejects the five `*Menu` presets; `window` is accepted without an action. |
+
+The macOS backend also accepts `services`, `showAll`, `unhide`, `startSpeaking` and `stopSpeaking`. `services` installs the system Services submenu; `showAll` and `unhide` show hidden applications. Linux accepts `services` and `unhide` without an action; Windows skips `services` and implements `showAll` and `unhide` by showing application windows.
+
+On macOS, role names are case-insensitive. Accelerators accept modifiers such as `CmdOrCtrl`, `Cmd`, `Ctrl`, `Alt` and `Shift`, named keys such as `Plus`, `Space`, `Tab`, `Enter`, `Escape`, `Up` and `F1`, or a character. `CmdOrCtrl` means Command on macOS and Control on Linux and Windows. For shortcuts that work outside the application, use [`host.shortcuts`](/host/input/shortcuts). To suppress menu accelerators in one window, use [input policy](/host/input/input-policy).
+
+### Radio groups
+
+On macOS, radio items require `group` and cannot have a `role` or `submenu`. The last initially checked item in a group wins. Activation or `update({ checked: true })` unchecks siblings in that parent with the same group. Setting `checked: false` permits an empty selection. Groups in separate submenus are independent. Checkbox items toggle on activation. These rules apply to context, tray and Dock menus too; Linux and Windows do not implement these automatic state rules.
+
+### Item snapshots
+
+`MenuItemState` has optional fields `id: string`, `type: MenuItemSpec['type']`, `group: string`, `visible: boolean`, `tooltip: string`, `separator: boolean`, `text: string`, `enabled: boolean`, `checked: boolean` and `submenu: MenuItemState[]`. `MenuItemInfo` extends it with a required `id: string`.
+
+macOS supplies visibility, tooltip, type and group metadata. Separators report `separator` and visibility instead of action state. Linux and Windows snapshots primarily contain text, enabled, checked and nested items; `get` there returns only `id`, `text`, `enabled` and `checked`.
+
+## Methods
+
+### `setAppMenu(menus)`
+
+Replace the whole application menu bar.
+
+```ts
+await host.menu.setAppMenu([
+  { name: 'Notes', items: [{ role: 'about' }, { role: 'quit' }] },
+  { name: 'File', items: [{ id: 'new-note', label: 'New Note', accelerator: 'CmdOrCtrl+N' }] },
+  { name: 'Edit', items: [
+    { role: 'undo', accelerator: 'CmdOrCtrl+Z' },
+    { role: 'redo', accelerator: 'CmdOrCtrl+Shift+Z' },
+    { role: 'cut', accelerator: 'CmdOrCtrl+X' },
+    { role: 'copy', accelerator: 'CmdOrCtrl+C' },
+    { role: 'paste', accelerator: 'CmdOrCtrl+V' },
+    { role: 'selectAll', accelerator: 'CmdOrCtrl+A' },
+  ] },
+]);
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `menus` | `MenuSpec[]` | Complete replacement, including any Edit menu you need. |
+
+Resolves `null`. Invalid menu items and unknown roles reject with `invalid_args`. On macOS, the first menu appears under the application name; preserve an Edit menu for standard editing shortcuts. Linux and Windows attach a menu bar to application windows. See the field and role limitations above.
+
+`getAppMenu()` resolves the menus the app set with `setAppMenu()` and `insert()`, `null` with the default menus. The system's default menus and items changed with `update` aren't reflected: read those with `get(id)`.
+
+### `insert(options)`
+
+Add or replace a top-level entry by its name.
+
+```ts
+await host.menu.insert({ name: 'Tools', items: [{ id: 'refresh', label: 'Refresh' }] });
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | Required | Entry to insert or replace. Must be nonempty. |
+| `items` | `MenuItemSpec[]` | Unset | Dropdown contents. Without it, macOS creates a clickable bar item; Linux and Windows create a dropdown containing one action. |
+| `icon` | `MenuItemIcon` | Unset | Top-level icon on macOS. Ignored on Linux and Windows. |
+| `id` | `string` | `name` | Clickable entry's action id; also the macOS submenu lifecycle identity when supplied. |
+| `index` | `number` | Platform-dependent | Zero-based position. Defaults before `Window` on macOS, or at the end if absent; Linux and Windows append by default. |
+
+Typed as resolving `{ inserted: boolean; name: string }`. macOS and Windows return that object; the Linux backend currently returns `null`. An empty name rejects with `invalid_args`.
+
+### `remove(name)`
+
+Remove a top-level entry by name.
+
+```ts
+const result = await host.menu.remove('Tools');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `name` | `string` | Top-level menu name. |
+
+Typed as resolving `{ removed: boolean; name: string }`; Linux returns only `{ removed: boolean }`. An absent entry yields `removed: false`.
+
+### `popup(options)`
+
+Show a native context menu and wait for it to close.
+
+```ts
+await host.menu.popup({ id: 'note-actions', items: [{ id: 'rename', label: 'Rename' }] });
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `items` | `MenuItemSpec[]` | Required | Context menu contents. |
+| `id` | `string` | `'context'` | macOS lifecycle and `closePopup` identity. Ignored on Linux and Windows. |
+| `x` | `number` | Cursor | Horizontal position; supply together with `y`. |
+| `y` | `number` | Cursor | Vertical position. macOS and Windows use top-left screen coordinates (logical units); Linux uses coordinates in the caller's web view in CSS pixels. |
+
+Resolves `{ dismissed: boolean }`, with `dismissed: true` after either selection or cancellation. Listen to `menuAction` for the selection. Invalid items reject with `invalid_args`; Linux rejects with `unavailable` when no application window exists. In a DOM `contextmenu` listener, call `event.preventDefault()` to suppress the web view's own menu.
+
+### `closePopup(id?)`
+
+Cancel tracking of the identified native menu.
+
+```ts
+await host.menu.closePopup('note-actions');
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | `'context'` | Menu lifecycle identity. An unknown identity has no effect. |
+
+Resolves `null`. macOS only.
+
+### `setDockMenu(items, id?)`
+
+Replace the application's Dock menu; an empty list clears it.
+
+```ts
+await host.menu.setDockMenu([{ id: 'new-window', label: 'New Window' }], 'dock');
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `items` | `MenuItemSpec[]` | Required | Dock menu contents. |
+| `id` | `string` | `'dock'` | Lifecycle event identity. |
+
+Resolves `null`. Invalid items reject with `invalid_args`. macOS only.
+
+`getDockMenu()` resolves what `setDockMenu()` set, or `null` without one.
+
+### `addRecentDocument(path)`
+
+Add a file to the operating system's recent documents list.
+
+```ts
+await host.menu.addRecentDocument('/Users/me/notes.md');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `path` | `string` | File path; use an absolute path. |
+
+Resolves `null`. An empty path rejects with `invalid_args`; Linux also rejects a path it cannot turn into an absolute file URI.
+
+### `update(update)`
+
+Patch an existing item by its explicit id.
+
+```ts
+await host.menu.update({ id: 'pin', text: 'Unpin', checked: true });
+```
+
+`MenuItemUpdate` contains these fields. Omitted fields retain their current values.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Required | Existing item's explicit id. |
+| `text` | `string` | Unchanged | New label. |
+| `enabled` | `boolean` | Unchanged | New enabled state. |
+| `checked` | `boolean` | Unchanged | New check state; selects a macOS radio group when true. |
+| `accelerator` | `string` | Unchanged | New shortcut. |
+| `visible` | `boolean` | Unchanged | macOS visibility. |
+| `tooltip` | `string` | Unchanged | macOS tooltip. |
+
+Resolves `null`. Unknown ids reject with `invalid_args`. macOS also validates boolean state fields and string tooltips. On macOS the item registry includes live context, tray and Dock items; Linux lookup and updates cover app-menu items only. Linux and Windows ignore `visible` and `tooltip`.
+
+### `get(id)`
+
+Read one item's current state.
+
+```ts
+const pin = await host.menu.get('pin');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Explicit item id. |
+
+Resolves `MenuItemInfo | null`; an unknown id returns `null`.
+
+### `items()`
+
+Read the application menu bar, including nested item snapshots.
+
+```ts
+const menus = await host.menu.items();
+```
+
+Resolves `MenuItemState[]`. Context, tray and Dock menus are not included.
+
+### `init()` and `dispose()`
+
+`init()` installs the store's action-history listener once, sets `ready` and returns the store synchronously. It runs automatically. `dispose()` removes that listener synchronously; it does not remove native menus or unsubscribe listeners you registered separately. A later `init()` resumes observation without clearing history.
+
+```ts
+host.menu.dispose();
+host.menu.init();
+```
+
+## Events
+
+| Event | Payload | When | Platforms |
+| --- | --- | --- | --- |
+| `menuAction` | `{ id: string }` | Custom app, context, Dock or tray action activates. Standard roles do not emit it. | All |
+| `menuNeedsUpdate` | `{ id: string }` | Native menu requests an update. | macOS |
+| `menuWillShow` | `{ id: string }` | Native menu opens. | macOS |
+| `menuDidClose` | `{ id: string }` | Native menu closes. | macOS |
+
+`onAction(cb)` takes `(data: { id: string }) => void`. `onWillShow(id, cb)` and `onDidClose(id, cb)` take a menu id and a `() => void` callback. Each returns an unsubscribe function synchronously. `host.on('menuNeedsUpdate', cb)` exposes the update event. `host.on` also accepts the other event names.
+
+```ts
+const offAction = host.menu.onAction(({ id }) => console.log(id));
+const offOpen = host.menu.onWillShow('note-actions', () => console.log('opened'));
+const offClose = host.menu.onDidClose('note-actions', () => console.log('closed'));
+const offUpdate = host.on('menuNeedsUpdate', ({ id }) => console.log('update', id));
+```
+
+`on('menuAction', cb)` and `once('menuAction', cb)` are also available on `host.menu`; `once` unsubscribes after its first delivery. Both return an unsubscribe function.
+
+Lifecycle identities default to `MenuSpec.name` for app menus, a submenu item's `id` or label, `'context'` for popups, `'dock'` for Dock menus, and `'tray'` for a tray menu. Use distinct ids for menus that coexist. Callbacks are asynchronous observations: they do not hold the native menu open while JavaScript prepares its contents. Prepare state before opening, or call `update` while it is open.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `setAppMenu`, `insert` | ✓ | partial | partial |
+| `getAppMenu` | ✓ | ✓ | ✓ |
+| `remove`, `addRecentDocument` | ✓ | ✓ | ✓ |
+| `popup` | ✓ | partial | partial |
+| `setDockMenu`, `getDockMenu`, `closePopup` | ✓ | — | — |
+| `update`, `get`, `items` | ✓ | partial | partial |
+| `init`, `dispose`, `on`, `once`, `onAction` | ✓ | ✓ | ✓ |
+| `onWillShow`, `onDidClose` | ✓ | — | — |
+
+Partial support refers to the item fields, presets, coordinate conventions, lookup scope and response differences described above. Lifecycle listener helpers can be called on any platform, but Linux and Windows do not emit those events.
+
+## Example
+
+This macOS example keeps a radio selection in the native menu and reads it back after activation.
+
+```ts
+await host.menu.insert({ name: 'Mode', items: [
+  { id: 'mode-write', label: 'Write', type: 'radio', group: 'mode', checked: true },
+  { id: 'mode-read', label: 'Read', type: 'radio', group: 'mode' },
+] });
+
+const off = host.menu.onAction(async ({ id }) => {
+  if (id !== 'mode-write' && id !== 'mode-read') return;
+  const item = await host.menu.get(id);
+  console.log(item?.text, item?.checked);
+});
+
+// When this feature is removed:
+off();
+await host.menu.remove('Mode');
+```

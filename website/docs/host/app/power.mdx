@@ -1,0 +1,135 @@
+---
+title: host.power
+description: Inspect battery, thermal and idle state, prevent sleep and observe power events.
+---
+
+`host.power` combines power snapshots, sleep-blocking handles and native power events. Use the cancellable [app quit lifecycle](/host/app/app#cancellable-quit-macos) for quit decisions; a power `shutdown` notification cannot veto termination.
+
+How-to: [Power](/ui/platform-services#power).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `thermal` | `ThermalState \| null` | Last thermal reading; macOS updates it on changes. |
+| `battery` | `BatteryInfo \| null` | Battery snapshot; `null` before a successful query or after a failed refresh. |
+| `idleSeconds` | `number \| null` | Seconds since the last global input event, at the last refresh. |
+| `lastWakeAt` | `number \| null` | Local Unix milliseconds when the latest wake event arrived. |
+| `wakeCount` | `number` | Wake events received since initialization; initially `0`. |
+| `ready` | `boolean` | Whether initialization completed. |
+| `error` | `Error \| null` | Initialization failure, if any. |
+
+`ThermalState` is `'nominal' | 'fair' | 'serious' | 'critical'`. `BatteryInfo` has `percent: number | null` (0–100, or `null` when absent or unknown), `charging: boolean` and `external: boolean` (external power, or no battery). Battery-less machines can return an object with `percent: null`; a `null` store value does not by itself mean there is no battery. On macOS and Windows, `charging` is also true on external power.
+
+Battery and idle readings do not update continuously. A wake updates only `lastWakeAt` and `wakeCount`; a power-source event does not refresh `battery` automatically.
+
+## Methods
+
+### `getThermalState()`
+
+Resolves `{ state: ThermalState }`. Does not update `thermal`. macOS only.
+
+### `getSystemIdleTime()`
+
+Resolves `number`, seconds since the last global input event. Does not update `idleSeconds`. macOS and Windows only.
+
+### `getBattery()`
+
+Resolves `BatteryInfo`; does not update `battery`. macOS and Windows reject with `unavailable` if their native power-source query fails. Linux reads `/sys/class/power_supply`.
+
+### `blockSleep(options)`
+
+Create a sleep blocker. Resolves `{ id: number }`; retain the ID for `unblockSleep()`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `type` | `SleepBlockType` | Required | `'system'`, `'display'` or `'idle'`. |
+| `reason` | `string` | Platform default | Reason shown to native power services. macOS uses the app name plus `' sleep block'`; Linux uses the app name plus `' is busy'`; Windows does not use this text. |
+
+macOS creates separate native assertions for system sleep, idle display sleep and idle system sleep. Linux maps all three types to `org.freedesktop.ScreenSaver.Inhibit`; idle-suspend behavior depends on the desktop. Windows keeps the system awake for every type, and also keeps the display awake for `'display'`.
+
+Rejects with `invalid_args` for an unknown type, `unavailable` if Linux cannot obtain the D-Bus inhibitor, or `internal` if macOS cannot create the assertion.
+
+### `unblockSleep(id)`
+
+Release a live blocker. Resolves `null`.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `id` | `number` | ID returned by `blockSleep()` and not yet released. |
+
+Rejects with `invalid_args` for an unknown or released blocker; native release failures on macOS and Linux reject with `internal`.
+
+### `acquireSleepBlocker(options)`
+
+Create a blocker with the same options as `blockSleep()`. Resolves `SleepBlocker`, with a readonly `id: number` and an asynchronous disposal method. `await using` releases it when the scope ends, including when the scope throws. Repeated disposal reuses the same release promise.
+
+```ts
+await using blocker = await host.power.acquireSleepBlocker({
+  type: 'display', reason: 'Exporting a movie',
+});
+// Run the export within this scope.
+```
+
+### `refresh()`
+
+Read thermal state, idle time and battery concurrently; resolves the namespace. Failures are tolerated: battery and idle become `null`; thermal retains its previous value. Unsupported queries therefore do not fail the whole refresh.
+
+### `init()` and `dispose()`
+
+`init()` calls `refresh()`, marks the store ready and installs thermal/wake subscriptions; resolves the namespace. `dispose()` synchronously removes those internal subscriptions without clearing state, releasing blockers or removing listeners you registered. Release each blocker through its handle or ID.
+
+## Events
+
+| Event | Payload | Typed helper | Platforms |
+| --- | --- | --- | --- |
+| `thermalStateChanged` | `{}` | `onThermalStateChange(fn)` | macOS |
+| `systemSleep` | `{}` | `onSystemSleep(fn)` | macOS, Windows |
+| `systemWake` | `{}` | `onSystemWake(fn)` | macOS, Windows |
+| `screenLocked` | `{}` | `onScreenLocked(fn)` | macOS, Windows |
+| `screenUnlocked` | `{}` | `onScreenUnlocked(fn)` | macOS, Windows |
+| `memoryPressure` | `{ level: 'warning' \| 'critical' }` | `onMemoryPressure(fn)` | macOS |
+| `powerSourceChanged` | `{ onBattery: boolean }` | `onPowerSourceChange(fn)` | macOS |
+| `shutdown` | `{}` | `onShutdown(fn)` | macOS |
+| `displaySleep` | `{}` | Use `host.on()` | macOS, Windows |
+| `displayWake` | `{}` | Use `host.on()` | macOS, Windows |
+| `screensaverStarted` | `{}` | Use `host.on()` | macOS |
+| `screensaverStopped` | `{}` | Use `host.on()` | macOS |
+
+The helpers live on `host.power`. Each returns an unsubscribe function. `host.on(event, fn)` observes any of these events and also returns an unsubscribe function. The typed `host.power.on(event, fn)` and `once(event, fn)` cover thermal, sleep, wake, lock, unlock, power-source and shutdown events; `once()` removes its listener after delivery. Use the dedicated helper or `host.on()` for `memoryPressure`.
+
+`powerSourceChanged` fires when the machine switches between battery and external power, not for every percentage change and not as an initial snapshot. `shutdown` announces macOS shutdown, restart or logout. It is an observation, not an awaited cleanup phase; use [`host.app.onBeforeQuit()`](/host/app/app#cancellable-quit-macos) for bounded quit cleanup. Windows uses its app lifecycle for OS termination and does not emit this power event.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `getThermalState` | ✓ | — | — |
+| `getSystemIdleTime` | ✓ | — | ✓ |
+| `getBattery` | ✓ | ✓ | ✓ |
+| `blockSleep`, `acquireSleepBlocker` | ✓ | partial (desktop D-Bus inhibitor) | ✓ |
+| `unblockSleep` | ✓ | ✓ | ✓ |
+| `refresh`, `init`, `dispose` | ✓ | ✓ | ✓ |
+| `on`, `once` | ✓ | — | partial |
+| `onSystemSleep`, `onSystemWake`, `onScreenLocked`, `onScreenUnlocked` | ✓ | — | ✓ |
+| `onThermalStateChange`, `onMemoryPressure`, `onPowerSourceChange`, `onShutdown` | ✓ | — | — |
+
+Event listeners can be registered on every platform; the event table lists actual emitters. Linux does not emit these power events. Windows emits only the sleep, wake, lock and display events listed above.
+
+## Example
+
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
+
+  onMount(() => {
+    const offWake = host.power.onSystemWake(() => void host.power.refresh());
+    const offSource = host.power.onPowerSourceChange(() => void host.power.refresh());
+    return () => { offWake(); offSource(); };
+  });
+</script>
+
+<p>Battery: {host.power.battery?.percent ?? 'unknown'}%</p>
+<p>Thermal: {host.power.thermal ?? 'unavailable'}</p>
+<button onclick={() => host.power.refresh()}>Refresh power readings</button>
+```

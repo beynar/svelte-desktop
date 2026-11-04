@@ -1,0 +1,193 @@
+---
+title: host.popover
+description: Create warm app pages in native popovers or floating panels, then show and dismiss them.
+---
+
+`host.popover` keeps a separate page ready for quick access from a tray item, an element, or a shortcut. macOS offers an arrowed popover and a borderless panel; Linux and Windows use borderless windows. For an embedded page in an existing window, use [`host.view`](/host/windows/view).
+
+How-to: [Menu bar and popovers](/ui/menu-bar-and-popovers).
+
+## Methods
+
+### `create(options)`
+
+Create a hidden popover and resolve `PopoverInfo`. The page starts loading immediately unless `preload: false`; creation does not await readiness. Reusing an `id` destroys and replaces the previous popover.
+
+All fields in `PopoverCreateOptions` are optional:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Generated `popover-…` | Stable app-wide identifier. |
+| `route` | `string` | `'/'` | App route. |
+| `url` | `string` | App origin + `route` | Full URL, preferred over `route`. Other origins have no native bridge. |
+| `style` | `PopoverStyle` | `'popover'` | `'popover'` or `'panel'`. |
+| `width` | `number` | `320` | Content width; minimum `40`. |
+| `height` | `number` | `240` | Content height; minimum `24`. |
+| `behavior` | `'transient' \| 'semitransient' \| 'manual'` | `'transient'` | Dismissal policy. macOS popovers use the matching native behavior. Panels and Linux/Windows dismiss nonmanual popovers on focus loss/outside interaction. |
+| `edge` | `'top' \| 'bottom' \| 'left' \| 'right'` | `'bottom'` | Arrow/placement side for popover style. Windows does not use this option. |
+| `position` | `PanelPosition` | `'tray'` | Panel placement. Tray presets fall back to center without a tray. |
+| `closeOnEscape` | `boolean` | `true` | Dismiss the focused popover with Escape. |
+| `activate` | `boolean` | `true` | Request activation on show so the page can accept keyboard input. |
+| `transparent` | `boolean` | `true` | Transparent page background; macOS shows native vibrancy behind it. Windows ignores this option. |
+| `animate` | `boolean` | `true` on macOS | Native macOS popover animation. Ignored on Linux and Windows. |
+| `cornerRadius` | `number` | `12` on macOS | macOS panel material corner radius. Ignored on Linux and Windows. |
+| `debug` | `boolean` | `false` | Enable inspection. macOS `inspectable` requires 13.3+. |
+| `tray` | `boolean` | `false` | Bind immediately to the [tray](/host/input/tray) button for native click-to-toggle. |
+| `preload` | `boolean` | `true` | Load at creation; `false` defers loading until first show. |
+| `session` | `string` | Default session | macOS [session](/host/web/sessions) identifier. Ignored on Linux and Windows. |
+| `recovery` | `WebviewRecovery` | `'reload'` on macOS | `'reload'` or `'manual'` after content-process termination. Ignored on Linux and Windows. See [webview lifecycle](/host/web/webview). |
+
+Creation rejects `unavailable` if an app route needs an app origin that is not known yet. macOS rejects `invalid_args` for an unknown session or invalid recovery policy.
+
+### `PopoverInfo`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Popover identifier. |
+| `style` | `PopoverStyle` | `'popover'` or `'panel'`. |
+| `shown` | `boolean` | Whether the popover is shown. |
+| `width`, `height` | `number` | Content dimensions. |
+| `url` | `string \| null` | Page URL. |
+| `ready` | `boolean` | Whether the page has reported readiness. |
+
+### `show(id?, options?)`
+
+Show a popover and resolve `PopoverInfo`. For a lazy page, loading starts on first show and presentation waits for readiness or a fallback timeout.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `anchor` | `PopoverAnchor` | `'tray'` | Anchor for popover style. An explicit tray anchor needs a tray item. |
+| `position` | `PanelPosition` | Stored creation position | Placement for panel style. |
+
+`PopoverAnchor` accepts:
+
+```ts
+type PopoverAnchor =
+  | 'tray'
+  | 'cursor'
+  | { x: number; y: number; width: number; height: number; windowId?: number }
+  | { screen: { x: number; y: number; width: number; height: number } };
+
+type PanelPosition =
+  | 'tray' | 'trayLeft' | 'trayRight' | 'center' | 'cursor'
+  | { x: number; y: number };
+```
+
+A page rectangle uses CSS pixels from the calling window's page, or the supplied `windowId`. Screen rectangles and fixed positions use the backend's top-left screen coordinate system. These service options do not accept placement callbacks; the UI components in the guide add that behavior.
+
+```ts
+await host.popover.show('quick', { anchor: 'cursor' });
+```
+
+Unknown anchors/positions or a tray anchor without a tray item reject `invalid_args`.
+
+### `hide(id?)`
+
+Dismiss without destroying the page. Resolves `null`; page state remains available for the next show.
+
+### `toggle(id?, options?)`
+
+Hide a shown popover or show a hidden one. Accepts the same `anchor` and `position` options and defaults as `show()`. Resolves `{ shown: boolean }`.
+
+### `setSize(size)`
+
+Resize the content. Resolves `null` and emits `popoverResized`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Current popover page | Target identifier. |
+| `width` | `number` | Current width | Minimum `40`. |
+| `height` | `number` | Current height | Minimum `24`. |
+
+### `setPosition(position, id?)`
+
+Move a panel using `PanelPosition`. Resolves `null`. Rejects `unsupported` for `'popover'` style, which follows its anchor, or `invalid_args` for an unknown position.
+
+### `isShown(id?)`
+
+Resolve `boolean` for whether the target is shown.
+
+### `get(id?)`
+
+Resolve the target's `PopoverInfo`.
+
+### `list()`
+
+Resolve `PopoverInfo[]` for all popovers.
+
+### `eval(js, id?)`
+
+Evaluate the string `js` in the target page. Resolves `null` when requested; it does not return the script's result or wait for its completion. Missing `js` rejects `invalid_args`.
+
+### `reload(id?)`
+
+Reload the target page. Resolves `null` before loading finishes.
+
+### `destroy(id?)`
+
+Destroy the popover and its page. Resolves `{ destroyed: boolean }`. Targeted operations reject `invalid_args` for an unknown identifier, including a repeated destroy.
+
+Every optional `id` defaults to the calling popover page's identifier. Outside such a page, pass an explicit identifier. `create()` and `list()` do not target a current popover.
+
+## Current-page functions
+
+### `currentPopover()`
+
+Read the calling page's identity synchronously. Returns `{ id: string }` inside a popover page, or `null` elsewhere, including server code.
+
+### `closePopover()`
+
+Page-only convenience for `host.popover.hide(host.currentPopover()?.id)`. Resolves `null`; it hides rather than destroys. Calling it outside a popover page has no current target and rejects `invalid_args`.
+
+## Events
+
+| Event | Typed helper | Payload | When |
+| --- | --- | --- | --- |
+| `popoverReady` | `onReady(fn)` | `{ id: string }` | Page reports readiness. |
+| `popoverShown` | `onShown(fn)` | `{ id: string }` | Popover is shown. |
+| `popoverHidden` | `onHidden(fn)` | `{ id: string }` | Popover is dismissed. |
+| `popoverResized` | `onResized(fn)` | `{ id: string; width: number; height: number }` | Size is changed. |
+
+Use `host.popover.onShown(fn)` or `host.on('popoverShown', fn)`. Each helper accepts its payload callback and returns an unsubscribe function. Events include all popovers; filter by `id`.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `create` | ✓ | partial | partial |
+| `show`, `hide`, `toggle` | ✓ | ✓ | ✓ |
+| `setSize`, `setPosition` | ✓ | ✓ | ✓ |
+| `isShown`, `get`, `list` | ✓ | ✓ | ✓ |
+| `eval`, `reload`, `destroy` | ✓ | ✓ | ✓ |
+| `onReady`, `onShown`, `onHidden`, `onResized` | ✓ | ✓ | ✓ |
+| `currentPopover`, `closePopover` | ✓ | ✓ | ✓ |
+
+Partial: Linux and Windows use borderless windows without a native arrow or vibrancy. Both ignore `session`, `recovery`, `animate`, and `cornerRadius`; Windows also ignores `edge` and `transparent`. On macOS, the transparent under-page background refinement requires 12+, and `inspectable` requires 13.3+.
+
+## Example
+
+Create a panel from the main page, then exchange messages with its route:
+
+```ts
+await host.popover.create({
+  id: 'quick', route: '/quick', style: 'panel',
+  position: 'center', width: 360, height: 220, preload: true,
+});
+await host.popover.show('quick');
+```
+
+```svelte src/routes/quick/+page.svelte
+<script lang="ts">
+  let text = $state('');
+
+  async function submit() {
+    await host.broadcast('quick-note', { text });
+    await host.closePopover();
+  }
+</script>
+
+<textarea bind:value={text}></textarea>
+<button onclick={submit}>Send</button>
+```
+
+Listen from another page or the server with [`host.onBroadcast()`](/host/data/events).

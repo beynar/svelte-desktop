@@ -1,0 +1,211 @@
+---
+title: host.sessions
+description: Manage website profiles, cookies and per-session proxies.
+---
+
+`host.sessions` manages the website data stores used by [web views](/host/web/webview). Use named profiles for separate accounts or private browsing. This service has no reactive state and is macOS only.
+
+How-to: [Sessions and private profiles](/ui/web-view#sessions-and-private-profiles-macos).
+
+## Methods
+
+### `create(options)`
+
+Creates a named profile and resolves `SessionInfo`.
+
+```ts
+const profile = await host.sessions.create({ id: 'work', persistent: true });
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Required | Unique, nonempty profile id, at most 200 characters. Cannot be `'default'`. |
+| `persistent` | `boolean` | Required | Keep website data across launches, or use a private in-memory store. |
+
+`SessionInfo` has `id: string` and `persistent: boolean`. The shell owns the persistent `'default'` profile. Select a profile with the `session` option when creating a [window](/host/windows/window), [view](/host/windows/view) or [popover](/host/windows/popover). New views use `'default'` unless explicitly configured; they do not inherit the caller's profile. A view's profile cannot change after construction.
+
+Persistent named profiles require macOS 14+. Recreating the same id with the same app identifier opens its existing data. Private profiles keep their cookies and storage separate from other profiles.
+
+In the packaged app, creation copies only the shell authentication cookie and waits for WebKit to retain it. Other cookies and storage are not copied. Rejects with `invalid_args` for an invalid or duplicate id, `unsupported` for persistent named profiles before macOS 14, or `unavailable` when app authentication is not ready or WebKit does not retain it. Profiles still share the app's server authority.
+
+### `list()`
+
+Resolves `SessionInfo[]`, sorted by id, including `'default'` and profiles opened during this app run. It does not enumerate unopened profiles saved on disk.
+
+```ts
+const profiles = await host.sessions.list();
+```
+
+### `remove(id)`
+
+Removes a named profile and deletes its website data, including persistent data. Resolves `null`.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Profile to delete. |
+
+Close or destroy every window, view and popover using the profile, and await its pending cookie operations first. Rejects with `invalid_args` for an unknown or removing profile, `denied` for `'default'`, or `unavailable` while the profile is in use or deletion fails.
+
+### `setProxy(id, proxy)`
+
+Sets a profile's HTTP CONNECT or SOCKSv5 proxy. Pass `null` to restore system defaults. Resolves `null`. Requires macOS 14+.
+
+```ts
+await host.sessions.setProxy('work', {
+  type: 'http', host: 'proxy.example.com', port: 8080, tls: true
+});
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Profile to configure, including `'default'`. |
+| `proxy` | `SessionProxy \| null` | Configuration below, or system defaults. |
+
+Every field of `SessionProxy`:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `type` | `'http' \| 'socks'` | Required | HTTP CONNECT or SOCKSv5. |
+| `host` | `string` | Required | Nonempty proxy host. |
+| `port` | `number` | Required | Integer from 1 to 65535. |
+| `username` | `string` | Omitted | Proxy authentication username. |
+| `password` | `string` | Omitted | Proxy authentication password; requires `username`. |
+| `tls` | `boolean` | `false` | Encrypt the connection to an HTTP proxy; unavailable for SOCKS. |
+
+Loopback hosts (`127.0.0.1`, `localhost`, `::1`) always bypass the proxy. Direct failover is disabled. This affects WebKit networking, independently of Bun `fetch()` and jobs. Existing connections may outlive a configuration change. TLS validation and App Transport Security still apply.
+
+Rejects with `invalid_args` for invalid fields, an unknown profile, SOCKS with TLS, or a password without a username. Unknown proxy fields, including PAC and custom bypass options, reject with `unsupported`, as do proxy changes before macOS 14. Failure to create the native configuration rejects with `unavailable`.
+
+### `getProxy(id = 'default')`
+
+Resolves `SessionProxyInfo | null`. Returns the host-owned configuration, not resolved system settings or proof of a successful connection. `null` means system defaults.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | `'default'` | Profile to inspect. |
+
+`SessionProxyInfo` contains `type: 'http' | 'socks'`, `host: string`, `port: number`, `tls: boolean` and `authenticated: boolean`. Credentials are never returned. `authenticated` means a username was configured, not that authentication succeeded. Rejects with `invalid_args` for an unknown or removing profile.
+
+### `capabilities()`
+
+Resolves `SessionCapabilities` for the running macOS version.
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `private` | `boolean` | Private profiles are supported (`true`). |
+| `persistentNamed` | `boolean` | Named persistent profiles are supported on macOS 14+. |
+| `proxy` | `boolean` | Per-profile proxies are supported on macOS 14+. |
+| `proxyAuthentication` | `boolean` | Proxy credentials are supported on macOS 14+. |
+| `pac` | `boolean` | PAC configuration is unsupported (`false`). |
+| `customBypass` | `boolean` | Custom bypass rules are unsupported (`false`). |
+
+### `cookies.get(filter = {})`
+
+Resolves `SessionCookie[]` matching the filter.
+
+| `CookieFilter` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `session` | `string` | `'default'` | Profile id. |
+| `url` | `string` | Omitted | HTTP(S) URL; match domain, path boundaries and the cookie's Secure flag. |
+| `name` | `string` | Omitted | Exact cookie name. |
+
+`SessionCookie` contains:
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `name`, `value` | `string` | Cookie name and value. |
+| `domain`, `path` | `string` | Cookie scope. |
+| `secure` | `boolean` | Restricted to HTTPS. |
+| `httpOnly` | `boolean` | Hidden from page JavaScript. |
+| `sessionOnly` | `boolean` | A session cookie. |
+| `expires` | `number` (optional) | Seconds since the Unix epoch; omitted for session cookies. |
+| `sameSite` | `'Lax' \| 'Strict' \| 'None'` (optional) | SameSite policy when reported by WebKit. |
+
+Rejects with `invalid_args` for an unknown profile, invalid URL or invalid filter type. The shell authentication cookie is omitted; requesting its name (`'__svelte_desktop'`) rejects with `denied`.
+
+### `cookies.set(options)`
+
+Sets a cookie and resolves `null` after checking that WebKit retained it, or that its expiry is already in the past.
+
+| `CookieSetOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `session` | `string` | `'default'` | Profile id. |
+| `url` | `string` | Required | HTTP(S) origin URL for the cookie. |
+| `name` | `string` | Required | Nonempty cookie name. |
+| `value` | `string` | Required | Cookie value; may be empty. |
+| `domain` | `string` | URL host | Exact host, or a matching domain prefixed with `.`. |
+| `path` | `string` | `'/'` | Cookie path; must begin with `/`. |
+| `secure` | `boolean` | `false` | Requires an HTTPS URL. |
+| `httpOnly` | `boolean` | `false` | Hide the cookie from page JavaScript. |
+| `expires` | `number` | Omitted | Finite seconds since the Unix epoch; omit for a session cookie. |
+| `sameSite` | `'Lax' \| 'Strict' \| 'None'` | Omitted | `'None'` requires `secure: true`. |
+
+Rejects with `invalid_args` for an unknown profile or invalid cookie fields, including a domain that does not match the URL. Names cannot contain `=`, `;`, a space, CR, LF or tab; values cannot contain `;`, CR or LF. Replacing the shell authentication cookie rejects with `denied`. WebKit refusing to retain the cookie rejects with `unavailable`.
+
+### `cookies.remove(options)`
+
+Deletes all cookies matching the URL and name, across applicable paths. Resolves `{ removed: number }`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `session` | `string` | `'default'` | Profile id. |
+| `url` | `string` | Required | HTTP(S) URL, matched using the same rules as `cookies.get`. |
+| `name` | `string` | Required | Nonempty cookie name. |
+
+Rejects with `invalid_args` for an unknown profile, missing name or invalid URL. Removing the shell authentication cookie rejects with `denied`.
+
+## Events
+
+### `cookies.onChanged(callback)`
+
+Subscribes to cookie changes across profiles and returns `() => void` to unsubscribe.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `callback` | `(event: CookieChangedEvent) => void` | Receives each reported cookie change. |
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `sessionCookieChanged` | `CookieChangedEvent` | A cookie is added, updated or removed. |
+
+`CookieChangedEvent` contains `session: string`, `cookie: SessionCookie` and `removed: boolean`. Additions and updates have `removed: false`; removals carry the previous cookie and `removed: true`. The shell authentication cookie is excluded.
+
+WebKit observer snapshots may coalesce short-lived intermediate values. Native cookie mutations trigger a refresh immediately. To catch `document.cookie` changes that WebKit omits from observer callbacks, native code also polls profiles with open views once per second **only while someone listens through `cookies.onChanged`**. The first listener enables polling; the last unsubscribe disables it. Page unload removes that page's polling subscription.
+
+`host.on('sessionCookieChanged', callback)` also returns an unsubscribe function, but does not itself enable polling. Use the typed helper for polling-backed observation. These events are not an audit log.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `create` | partial | — | — |
+| `list`, `remove` | ✓ | — | — |
+| `setProxy` | ✓ (14+) | — | — |
+| `getProxy`, `capabilities` | ✓ | — | — |
+| `cookies.get`, `cookies.set`, `cookies.remove`, `cookies.onChanged` | ✓ | — | — |
+
+`create` supports private profiles on macOS; `persistent: true` requires macOS 14+.
+
+## Example
+
+```ts
+await host.sessions.create({ id: 'preview', persistent: false });
+const off = host.sessions.cookies.onChanged(({ session, cookie, removed }) => {
+  if (session === 'preview') console.log(cookie.name, removed);
+});
+
+try {
+  await host.sessions.cookies.set({
+    session: 'preview', url: 'https://example.com/',
+    name: 'theme', value: 'dark', secure: true, sameSite: 'Lax'
+  });
+  const cookies = await host.sessions.cookies.get({ session: 'preview' });
+  console.log(cookies.map((cookie) => cookie.name));
+  await host.sessions.cookies.remove({
+    session: 'preview', url: 'https://example.com/', name: 'theme'
+  });
+} finally {
+  off();
+  await host.sessions.remove('preview');
+}
+```

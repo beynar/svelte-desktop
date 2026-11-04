@@ -1,0 +1,136 @@
+---
+title: Sidecars
+description: Bundle existing executables, spawn them from server code and own their communication and cleanup.
+---
+
+A sidecar is an executable shipped beside your app and started by server code. Pick it for an existing CLI or local server, such as `ffmpeg`. Use a [service](/native/services) for a persistent Bun child that needs managed messages, request/reply, restarts and quit cleanup.
+
+## A complete example
+
+Supply an `ffmpeg` executable for each target you ship. The framework copies these files; it does not download or compile them.
+
+```ts desktop.config.ts
+import { defineConfig } from '@svelte-desktop/shell/config';
+
+export default defineConfig({
+  appName: 'Media Tools',
+  identifier: 'dev.example.media-tools',
+  sidecars: {
+    ffmpeg: {
+      macos: 'bin/ffmpeg-macos',
+      linux: 'bin/ffmpeg-linux',
+      windows: 'bin/ffmpeg.exe',
+    },
+  },
+});
+```
+
+Register cleanup when the desktop API is ready. Keep this module in server code so requests share its set of running children.
+
+```ts src/lib/server/ffmpeg.ts
+type Child = Awaited<ReturnType<typeof host.sidecar>>;
+const running = new Set<Child>();
+let quitting = false;
+
+host.ready(() => {
+  host.onBeforeQuit(async () => {
+    quitting = true;
+    const children = [...running];
+    for (const child of children) child.kill('SIGKILL');
+    await Promise.all(children.map((child) => child.exited));
+  });
+});
+
+export async function ffmpegVersion() {
+  if (quitting) throw new Error('App is quitting');
+  const child = await host.sidecar('ffmpeg', ['-version'], {
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env },
+    timeout: 5000,
+    killSignal: 'SIGKILL',
+  }) as Bun.Subprocess<'ignore', 'pipe', 'pipe'>;
+  running.add(child);
+  // A spawn may have been awaiting path resolution when quit began.
+  if (quitting) child.kill('SIGKILL');
+  try {
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    if (code !== 0) throw new Error(`ffmpeg exited with ${code}: ${stderr}`);
+    return stdout;
+  } finally {
+    child.kill('SIGKILL');
+    await child.exited;
+    running.delete(child);
+  }
+}
+```
+
+```ts src/routes/api/ffmpeg-version/+server.ts
+import { ffmpegVersion } from '$lib/server/ffmpeg';
+
+export async function GET() {
+  return new Response(await ffmpegVersion(), {
+    headers: { 'content-type': 'text/plain; charset=utf-8' },
+  });
+}
+```
+
+A page reads the result with `await fetch('/api/ffmpeg-version').then((r) => r.text())`. The endpoint exposes a fixed command rather than accepting arbitrary executable arguments from the page. Both output pipes are drained while the child runs, and nonzero exits become server errors.
+
+The subprocess type assertion matches the explicit stdio options. The helper's return type does not infer those options, so TypeScript otherwise includes file descriptors and missing streams in the output types.
+
+## Configuration and paths
+
+`sidecars` maps a name to a project-relative path or an object with `macos`, `linux` and `windows` paths. A string is used for every target. An omitted platform entry excludes the sidecar from that platform's bundle. There is no per-architecture selection: supply a binary matching the chosen target, or a universal binary for a universal macOS app.
+
+Names used by `host.sidecar` may contain letters, numbers, dots, underscores and hyphens. Prefer a name without an extension, such as `ffmpeg`; the Windows bundle adds `.exe`.
+
+| Location and preparation | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Development | Configured source path | Configured source path | Configured source path |
+| Bundle | `Contents/MacOS/<name>` | Beside the app executable as `<name>` | Beside the app executable as `<name>.exe` |
+| Executable mode | Bundle copy gets `chmod +x` | Bundle copy gets mode `0755` | Copied as an executable; warns if it lacks a PE header |
+
+The Vite plugin resolves dev paths from the project root and exposes them through `SVELTE_DESKTOP_SIDECAR_<NAME>` environment variables, with punctuation in the uppercase name replaced by underscores. Source files must already be executable on macOS/Linux in dev. A bundle build fails if a selected source file is missing. Dependent libraries or companion resource files are not collected automatically.
+
+Restart Vite after changing the mapping. The framework does not build or hot-reload the sidecar. Replacing an executable does not replace an already running process; stop it and spawn a new one.
+
+## Spawning and communication
+
+`await host.sidecar(name, args?, options?)` resolves a `Bun.spawn` subprocess, not its exit result. `args` defaults to `[]` and `options` to `{}`. Options pass through unchanged. Use `pid`, `stdin`, `stdout`, `stderr`, `kill()` and `exited` as with `Bun.spawn`. Invalid names, missing bundled executables and spawn failures reject. See the [server API reference](/host/data/server).
+
+There is no sidecar-specific environment or working directory. Bun defaults `cwd` to `process.cwd()`; it does not change to the executable's directory. Its default environment is the environment captured when Bun launched. Pass `env: { ...process.env, KEY: 'value' }` to include current environment changes and your own values. Set `cwd` explicitly when the tool needs one, for example `host.paths.data` for writable app data after `host.ready`.
+
+Choose the protocol your executable already supports:
+
+- For a CLI, pass arguments and read stdout/stderr. Set `stdin: 'pipe'` for a writable input stream, or pass input supported by `Bun.spawn`, such as a `Blob`. The framework adds no framing or JSON protocol.
+- For a local HTTP server, start it on a loopback port, wait for its readiness signal, then make requests with server-side `fetch`. You own port selection and startup timeouts.
+- For a WebSocket server, server code or a page can open a standard `WebSocket` to its loopback address. Return the selected address to the page through an endpoint. Bind to loopback and validate/authenticate clients in the sidecar; the app server's session gate does not protect a separate listener. See [WebSockets](/features/websockets).
+
+## Threads and processes
+
+The executable runs in its own OS process. In the packaged app, the SvelteKit server starts and controls it from the app's Bun Worker; in `vite dev`, server code runs in the Vite process. Pages cannot call `host.sidecar`. They communicate through your endpoints or remote functions, or directly through a protocol the sidecar exposes. See [Threads and processes](/native/threads).
+
+The child receives no `host` global, service port or automatic connection to the native UI thread. A sidecar crash ends that child; it is not restarted automatically. Inspect `exited` and handle failures in the owning server code.
+
+## Lifetime and quit
+
+The shell does not register sidecars in its job or service registry. App quit has no explicit sidecar stop/reap step, and `host.sidecar` does not install a parent-death handler. Do not rely on quitting the app to stop a sidecar: it may outlive the app, depending on its own behavior and the OS.
+
+Keep the subprocess handle and register a server `host.onBeforeQuit` callback, as above. Hooks are awaited in registration order; they run before automatic job and service cleanup. If a tool supports graceful shutdown, send its shutdown command first, then force-kill after a bounded wait. Quit cleanup itself has a limited window, and forced termination cannot guarantee it runs. Killing the direct subprocess does not provide process-tree supervision.
+
+Prefer a [service](/native/services) when you control a persistent Bun worker. Services add bounded JSON messaging, request timeouts, optional restart supervision, cleanup on parent disconnect and app-quit cleanup. A sidecar is the thinner wrapper for executables with their own protocol and lifecycle.
+
+## Signing and distribution
+
+| Packaging step | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Signing | Each sidecar is signed before the app bundle with the app's identity and runtime setting | No executable-signing step | Bundled `.exe` sidecars join Authenticode signing when configured |
+| Notarization | Included in the app with identity signing and `sign.notaryProfile` or `NOTARY_PROFILE` | Not applicable | Not applicable |
+
+macOS signing defaults to ad-hoc; distribution uses `sign.identity` or `CODESIGN_IDENTITY`. Nested sidecars are signed without the app executable's entitlement file. A sidecar with special runtime entitlement requirements needs its own packaging consideration. Windows uses `sign.windows.certificateFile` or `WINDOWS_CERT_PFX`. See [Distribution](/shipping/distribution) for the full signing setup.

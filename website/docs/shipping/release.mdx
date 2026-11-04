@@ -1,0 +1,552 @@
+---
+title: Release with CI
+description: Build and publish installers for macOS, Windows and Linux, plus signed macOS and Windows update feeds, through GitHub Actions and R2.
+---
+
+This page takes you from nothing to a pipeline where pushing a tag like `v1.4.0` builds the app for every platform, signs it, uploads the installers and the update archives to a [Cloudflare R2](https://developers.cloudflare.com/r2/) bucket, and publishes a signed `update.json` that installed macOS and Windows apps pick up through [self-update](/shipping/self-update). Linux installers are published for manual installation: the generated Linux update archive is not currently compatible with the installer.
+
+Follow it in order. Every step ends with a **Check**: don't go on until it passes.
+
+## What you end up with
+
+```
+git tag v1.4.0 && git push origin v1.4.0
+        │
+        ▼  GitHub Actions (.github/workflows/release.yml)
+  check ──► macos (sign + notarize) ─┐
+        ├─► linux (x64 + arm64) ─────┼─► publish: merge + sign update.json, upload to R2
+        └─► windows (cross-built) ───┘
+```
+
+The bucket, and the public URLs:
+
+```
+https://updates.example.com/myapp/
+├── stable/
+│   ├── update.json                      ← what installed apps check (uploaded last)
+│   ├── 1.4.0/                           ← update archives and delta patches for 1.4.0
+│   │   ├── MyApp-1.4.0-darwin-universal.tar.zst
+│   │   ├── MyApp-1.4.0-darwin-universal.from-1.3.0.sdpatch
+│   │   └── MyApp-1.4.0-windows-x64.tar.zst
+│   └── 1.3.0/ …
+└── downloads/
+    ├── 1.4.0/                           ← installers for your website, by version
+    │   ├── MyApp-1.4.0-darwin-universal.dmg
+    │   ├── MyApp-1.4.0-windows-x64-setup.exe
+    │   ├── myapp-1.4.0-linux-x64.AppImage
+    │   └── …
+    └── latest/                          ← the same files renamed with -latest-, for stable links
+        ├── MyApp-latest-darwin-universal.dmg
+        └── …
+```
+
+## Values you choose once
+
+Pick these and use them **exactly** everywhere this page shows them:
+
+| Placeholder | Example | What it is |
+| --- | --- | --- |
+| `updates.example.com` | `updates.acme.com` | The public domain of the bucket (or its `https://pub-….r2.dev` address) |
+| `myapp` | `acme-notes` | A folder name for this app in the bucket: lowercase, no spaces |
+| `stable` | `stable` | The update channel |
+
+In what follows, `UPDATES_URL` means `https://updates.example.com` with your domain, without a trailing slash.
+
+## One-time setup
+
+<Steps>
+  <Step title="Create the update signing key">
+    On your machine, in the project:
+
+    ```sh
+    bunx svelte-desktop keygen --out updater.key
+    ```
+
+    It writes `updater.key` (the private key) and `updater.key.pub` (the public key, one line of base64).
+
+    - Never commit `updater.key`. Add it to `.gitignore` now: `echo updater.key >> .gitignore`.
+    - Keep a copy of `updater.key` in a password manager. If you lose it and installed apps trust no other key, you cannot sign updates they will accept.
+
+    **Check:** `cat updater.key.pub` prints one line of about 44 characters, and `git status` doesn't list `updater.key`.
+  </Step>
+
+  <Step title="Configure updates in desktop.config.ts">
+    Add an `update` block. Replace the placeholders, and paste the line from `updater.key.pub` as `publicKey`:
+
+    ```ts desktop.config.ts
+    import { defineConfig } from '@svelte-desktop/shell/config';
+
+    export default defineConfig({
+      appName: 'MyApp',
+      identifier: 'com.example.myapp',
+      // version: taken from package.json — don't set it here.
+      build: { universal: true }, // one macOS app for Apple silicon and Intel
+      update: {
+        manifestUrl: 'https://updates.example.com/myapp/{channel}/update.json',
+        publicKey: 'PASTE-THE-LINE-FROM-updater.key.pub',
+        channel: process.env.RELEASE_CHANNEL ?? 'stable',
+      },
+    });
+    ```
+
+    - Don't set `privateKey` or `baseUrl`. The CI signs the manifest itself, and archive URLs relative to `update.json` work for every channel.
+    - Keep `{channel}` literally in `manifestUrl`: the app replaces it.
+    - If the app has an icon, use PNG, JPEG or WebP for this cross-platform workflow. SVG icon generation requires macOS and fails on the Linux and Windows jobs.
+
+    **Check:** `bunx --bun vite build` still succeeds on your machine, and prints a `release` line ending in `update.unsigned.json`.
+  </Step>
+
+  <Step title="Add a way to update in the app">
+    Installed apps only check when you ask. The smallest version, in any page or layout:
+
+    ```svelte
+    <script lang="ts">
+      import { onMount } from 'svelte';
+      onMount(() => void host.update.check());
+    </script>
+
+    {#if host.update.available}
+      <button onclick={() => host.update.available.downloadAndInstall()}>
+        Update to {host.update.available.version} and relaunch
+      </button>
+    {/if}
+    ```
+
+    See [Self-update](/shipping/self-update) for the full API.
+
+    **Check:** the page compiles (`bunx --bun vite dev` shows it without errors).
+  </Step>
+
+  <Step title="Create the R2 bucket">
+    In the [Cloudflare dashboard](https://dash.cloudflare.com):
+
+    1. **R2 Object Storage** → **Create bucket**. Name it, for example `releases`, and keep the defaults.
+    2. In the bucket: **Settings** → **Public access** → **Custom Domains** → **Connect Domain** → `updates.example.com`. It must be a domain on this Cloudflare account. Without a domain, use **R2.dev subdomain** → **Allow Access** instead, and use the `https://pub-….r2.dev` address it shows as `UPDATES_URL`.
+    3. **R2 Object Storage** → **Manage API tokens** → **Create API token**:
+       - Permissions: **Object Read & Write**.
+       - Specify bucket: only your bucket.
+       - Create, then copy the **Access Key ID** and the **Secret Access Key**. They are shown once.
+    4. Copy your **Account ID**, shown on the R2 overview page.
+
+    **Check:** upload any small file through the dashboard to `myapp/test.txt`, then `curl -I https://updates.example.com/myapp/test.txt` answers `HTTP/2 200`. Delete the file afterwards.
+  </Step>
+
+  <Step title="Get the Apple signing material (macOS)">
+    You need an Apple Developer Program membership.
+
+    1. **Developer ID Application certificate.** In Xcode → **Settings** → **Accounts** → your team → **Manage Certificates** → **+** → **Developer ID Application**.
+    2. **Export it.** Open **Keychain Access** → **login** → **My Certificates**. Right-click **Developer ID Application: …** → **Export** → format `.p12`, and set a password. Then:
+       ```sh
+       base64 -i Certificates.p12 | pbcopy   # the base64 is now in the clipboard
+       ```
+    3. **The identity name.** Run `security find-identity -v -p codesigning` and copy the quoted text of the Developer ID line, exactly, for example `Developer ID Application: Acme Inc (AB12CD34EF)`.
+    4. **A notarization API key.** In [App Store Connect](https://appstoreconnect.apple.com) → **Users and Access** → **Integrations** → **App Store Connect API** → **Team Keys** → **+**, access **Developer**. Download the `AuthKey_XXXXXXXXXX.p8` file (you can only download it once), and copy the **Key ID** and the **Issuer ID** shown on the page. Then:
+       ```sh
+       base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy
+       ```
+
+    **Check:** you have six values: the `.p12` base64, its password, the identity name, the `.p8` base64, the Key ID and the Issuer ID.
+  </Step>
+
+  <Step title="Windows signing (optional)">
+    Without a certificate, Windows builds are unsigned, and SmartScreen warns users the first time. To sign, get an Authenticode code-signing certificate as a `.pfx` file from a certificate authority, then:
+
+    ```sh
+    base64 -i certificate.pfx | pbcopy
+    ```
+
+    **Check:** you have the `.pfx` base64 and its password, or you decided to skip signing.
+  </Step>
+
+  <Step title="Add the secrets to GitHub">
+    In the GitHub repository: **Settings** → **Secrets and variables** → **Actions**.
+
+    Under **Secrets**, add each of these with **New repository secret**. Names must match exactly:
+
+    | Secret | Value |
+    | --- | --- |
+    | `UPDATE_PRIVATE_KEY` | The whole content of `updater.key`, including the `-----BEGIN` and `-----END` lines |
+    | `R2_ACCOUNT_ID` | Cloudflare Account ID |
+    | `R2_ACCESS_KEY_ID` | R2 token Access Key ID |
+    | `R2_SECRET_ACCESS_KEY` | R2 token Secret Access Key |
+    | `R2_BUCKET` | The bucket name, for example `releases` |
+    | `MACOS_CERTIFICATE_P12_BASE64` | The `.p12` base64 |
+    | `MACOS_CERTIFICATE_PASSWORD` | The `.p12` password |
+    | `MACOS_SIGNING_IDENTITY` | The identity name, for example `Developer ID Application: Acme Inc (AB12CD34EF)` |
+    | `APPLE_API_KEY_P8_BASE64` | The `.p8` base64 |
+    | `APPLE_API_KEY_ID` | The API Key ID |
+    | `APPLE_API_ISSUER_ID` | The API Issuer ID |
+    | `WINDOWS_CERT_PFX_BASE64` | Optional: the `.pfx` base64 |
+    | `WINDOWS_CERT_PASSWORD` | Optional: the `.pfx` password |
+
+    Under **Variables**, add these with **New repository variable**:
+
+    | Variable | Value |
+    | --- | --- |
+    | `UPDATE_PUBLIC_KEY` | The line from `updater.key.pub` |
+    | `UPDATES_URL` | `https://updates.example.com`, without a trailing slash |
+    | `APP_SLUG` | `myapp` |
+
+    **Check:** the Secrets tab lists at least the 11 required names, and the Variables tab the 3 variables.
+  </Step>
+
+  <Step title="Add the workflow">
+    Create `.github/workflows/release.yml` with the content of [the workflow below](#the-workflow), as is. Commit it, together with `desktop.config.ts`, and push.
+
+    **Check:** the repository's **Actions** tab lists a workflow named **Release**. It doesn't run yet: it runs on tags.
+  </Step>
+</Steps>
+
+## The workflow
+
+Copy this file as is for a project at the repository root, using the default `.desktop/dist` output and with `build.zip` and `build.dmg` enabled. Every configured value comes from the secrets and variables above.
+
+:::warning
+The Windows job cross-builds C/C++ plugins and addons, but skips Rust and Go plugins. If the Windows app needs Rust or Go plugins, it needs a native Windows build job instead of this cross-build job. Swift and Objective-C plugins are macOS only. See [plugin platforms](/native/plugins/platforms).
+
+The publish job deliberately excludes Linux updater manifests because of the [archive-layout limitation](/shipping/self-update#platform-support). Linux still gets manual installers.
+:::
+
+```yaml .github/workflows/release.yml
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: "1.4.4" # the packager detects optional --trim / --aot support
+  CHANNEL: stable
+  UPDATES_URL: ${{ vars.UPDATES_URL }}
+  APP_SLUG: ${{ vars.APP_SLUG }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: The tag matches package.json
+        run: |
+          VERSION=$(jq -r .version package.json)
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match package.json version $VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: check
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+
+      - name: Signing certificate and notarization key
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # shellcheck disable=SC2046 # the existing keychains, one argument each
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$KEYCHAIN"
+          rm "$RUNNER_TEMP/certificate.p12"
+          echo "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          xcrun notarytool store-credentials notary --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --keychain "$KEYCHAIN"
+
+      - name: Previous release (for delta patches)
+        run: bunx svelte-desktop release fetch-previous "$UPDATES_URL/$APP_SLUG/$CHANNEL/update.json" --platform darwin-arm64 --platform darwin-x64 --public-key "${{ vars.UPDATE_PUBLIC_KEY }}"
+
+      - name: Build, sign and notarize
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          NOTARY_PROFILE: notary
+          RELEASE_CHANNEL: ${{ env.CHANNEL }}
+        run: bunx --bun vite build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos
+          if-no-files-found: error
+          include-hidden-files: true # .desktop/ is a hidden folder
+          path: |
+            .desktop/dist/*.dmg
+            .desktop/dist/*.zip
+            .desktop/dist/release/${{ needs.check.outputs.version }}/
+            .desktop/dist/release/update.unsigned.json
+
+  linux:
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+
+      - name: GTK, WebKitGTK and appimagetool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libsecret-1-dev
+          sudo curl -fsSL -o /usr/local/bin/appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$(uname -m).AppImage"
+          sudo chmod +x /usr/local/bin/appimagetool
+
+      - name: Build
+        env:
+          RELEASE_CHANNEL: ${{ env.CHANNEL }}
+        run: bunx --bun vite build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          if-no-files-found: error
+          include-hidden-files: true # .desktop/ is a hidden folder
+          path: |
+            .desktop/dist/*.tar.gz
+            .desktop/dist/*.AppImage
+
+  windows:
+    needs: check
+    runs-on: ubuntu-24.04 # cross-built: the Windows toolchain runs in Docker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+
+      - name: Authenticode certificate (when set)
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+        run: |
+          if [ -n "$WINDOWS_CERT_PFX_BASE64" ]; then
+            echo "$WINDOWS_CERT_PFX_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.pfx"
+            echo "WINDOWS_CERT_PFX=$RUNNER_TEMP/certificate.pfx" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build
+        env:
+          SVELTE_DESKTOP_TARGET: windows
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          RELEASE_CHANNEL: ${{ env.CHANNEL }}
+        run: bunx --bun vite build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows
+          if-no-files-found: error
+          include-hidden-files: true # .desktop/ is a hidden folder
+          path: |
+            .desktop/dist/*.zip
+            .desktop/dist/*-setup.exe
+            .desktop/dist/release/${{ needs.check.outputs.version }}/
+            .desktop/dist/release/update.unsigned.json
+
+  publish:
+    needs: [check, macos, linux, windows]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      BUCKET: ${{ secrets.R2_BUCKET }}
+      R2: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          path: dists # one folder per job: dists/dist-macos, dists/dist-linux-x64, …
+
+      - name: One signed update.json for macOS and Windows
+        env:
+          UPDATE_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
+        run: |
+          bunx svelte-desktop release merge dists/dist-macos/release/update.unsigned.json dists/dist-windows/release/update.unsigned.json --key-env UPDATE_PRIVATE_KEY --out update.json
+          bunx svelte-desktop release verify update.json --public-key "${{ vars.UPDATE_PUBLIC_KEY }}"
+
+      - name: Upload the update archives
+        run: |
+          for dir in dists/*/release/"$VERSION"; do
+            aws s3 cp "$dir" "s3://$BUCKET/$APP_SLUG/$CHANNEL/$VERSION/" --recursive --endpoint-url "$R2" \
+              --cache-control "public, max-age=31536000, immutable"
+          done
+
+      - name: Upload the installers
+        run: |
+          mkdir downloads
+          find dists -maxdepth 2 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*-setup.exe' -o -name '*.tar.gz' -o -name '*.AppImage' \) -exec cp {} downloads/ \;
+          aws s3 cp downloads "s3://$BUCKET/$APP_SLUG/downloads/$VERSION/" --recursive --endpoint-url "$R2" \
+            --cache-control "public, max-age=31536000, immutable"
+          for file in downloads/*; do
+            latest=$(basename "$file" | sed "s/-$VERSION-/-latest-/")
+            aws s3 cp "$file" "s3://$BUCKET/$APP_SLUG/downloads/latest/$latest" --endpoint-url "$R2" --cache-control "public, max-age=300"
+          done
+
+      - name: Publish update.json (last)
+        run: |
+          aws s3 cp update.json "s3://$BUCKET/$APP_SLUG/$CHANNEL/update.json" --endpoint-url "$R2" \
+            --cache-control "no-cache, max-age=0" --content-type application/json
+
+      - name: The published update.json is this release
+        run: |
+          PUBLISHED=$(curl -fsSL -H 'cache-control: no-cache' "$UPDATES_URL/$APP_SLUG/$CHANNEL/update.json" | jq -r .version)
+          if [ "$PUBLISHED" != "$VERSION" ]; then
+            echo "::error::published update.json is $PUBLISHED, expected $VERSION"
+            exit 1
+          fi
+```
+
+What each job does:
+
+- **check** stops everything if the tag doesn't match the `version` in `package.json`.
+- **macos**:
+  - imports the certificate into a temporary keychain and stores the notarization key as the `notary` profile;
+  - downloads the previously published macOS archive, so the build can make a delta patch;
+  - runs `vite build`, which builds the universal app, signs it with the hardened runtime, notarizes and staples it, makes the `.dmg` and `.zip`, and writes `release/<version>/` with an unsigned partial manifest.
+- **linux** builds natively on x64 and arm64 runners and uploads `.tar.gz` and `.AppImage` installers. Its generated updater output is left out of publication.
+- **windows** cross-builds from Linux (the toolchain runs in Docker; the first run builds the image, which takes a few minutes): the folder `.zip`, the per-user NSIS installer and `release/`.
+- **publish**:
+  - merges the partial manifests into one `update.json` and signs it with the private key, which only this job sees;
+  - checks the signature against the public key;
+  - uploads the archives, then the installers, then `update.json` last, so a client never reads a manifest pointing at missing files;
+  - reads the published file back.
+
+The Linux upload step accepts either installer if the other is missing. To require `.AppImage` output, add a shell check after the build; `appimagetool` failures are warnings in the packager.
+
+## Cutting a release
+
+<Steps>
+  <Step title="Bump the version">
+    In `package.json`, set `"version"` to a number higher than the last release: `1.4.0`, then `1.4.1`, and so on. Never reuse a published number.
+  </Step>
+  <Step title="Commit, tag and push">
+    ```sh
+    git commit -am "1.4.0"
+    git tag v1.4.0
+    git push origin main v1.4.0
+    ```
+    The tag must be `v` followed by exactly the `package.json` version.
+  </Step>
+  <Step title="Watch it">
+    Open the repository's **Actions** tab → **Release**. The check, macOS, both Linux matrix runs, Windows and publish jobs must all turn green.
+  </Step>
+  <Step title="Check what's published">
+    ```sh
+    curl -s https://updates.example.com/myapp/stable/update.json | jq '{version, artifacts: (.artifacts | keys)}'
+    ```
+    It must show the new version and the keys `darwin-arm64`, `darwin-x64` and `windows-x64`. Linux installers must be present under `downloads/`; Linux keys are deliberately absent from the update feed. An installed older macOS or Windows version offers the update the next time it calls `host.update.check()`.
+  </Step>
+</Steps>
+
+## Download links for your website
+
+The `latest/` names never change, so link them once:
+
+| Platform | Link |
+| --- | --- |
+| macOS | `https://updates.example.com/myapp/downloads/latest/MyApp-latest-darwin-universal.dmg` |
+| Windows | `https://updates.example.com/myapp/downloads/latest/MyApp-latest-windows-x64-setup.exe` |
+| Linux x64 | `https://updates.example.com/myapp/downloads/latest/myapp-latest-linux-x64.AppImage` |
+| Linux arm64 | `https://updates.example.com/myapp/downloads/latest/myapp-latest-linux-arm64.AppImage` |
+
+macOS and Windows installer names remove characters outside letters, digits, `_` and `-` from `appName` (falling back to `App`). Linux lowercases it and replaces runs of punctuation and spaces with `-` (falling back to `app`). Update archive names on macOS and Linux are derived separately from the app directory name. Check the exact names in the bucket after the first release.
+
+## A beta channel
+
+Users on `beta` get beta builds. Users on `stable` never see them, because a manifest signed for another channel is refused.
+
+1. Copy `release.yml` to `release-beta.yml`, and in the copy change only:
+   - `name: Release` to `name: Release beta`;
+   - `tags: ["v*"]` to `tags: ["v*-beta*"]`;
+   - `CHANNEL: stable` to `CHANNEL: beta`;
+   - `$APP_SLUG/downloads/` to `$APP_SLUG/downloads/beta/` in both installer upload commands, so beta builds do not replace the stable `latest/` downloads.
+2. In `release.yml`, change `tags: ["v*"]` to `tags: ["v*", "!v*-beta*"]`, so beta tags don't also run the stable release.
+3. Release a beta by setting `"version": "1.5.0-beta.1"` in `package.json` and pushing the tag `v1.5.0-beta.1`.
+
+`RELEASE_CHANNEL` sets the channel baked into those builds (`desktop.config.ts` reads it), and the update files go to `myapp/beta/`. Beta installers go to `myapp/downloads/beta/` with the extra change above.
+
+## Releasing from your Mac, without CI
+
+For a first test, or a hotfix. This builds only for your Mac, and the manifest then lists macOS only:
+
+```sh
+export CODESIGN_IDENTITY="Developer ID Application: Acme Inc (AB12CD34EF)"
+export NOTARY_PROFILE=notary   # once: xcrun notarytool store-credentials notary
+VERSION=$(jq -r .version package.json)
+
+bunx svelte-desktop release fetch-previous https://updates.example.com/myapp/stable/update.json --platform darwin-arm64 --platform darwin-x64 --public-key "$(cat updater.key.pub)"
+bunx --bun vite build
+bunx svelte-desktop release merge .desktop/dist/release/update.unsigned.json --key updater.key --out update.json
+
+# R2 credentials for the aws CLI (an R2 API token, as in the setup)
+export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… AWS_DEFAULT_REGION=auto
+R2="https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com"
+aws s3 cp ".desktop/dist/release/$VERSION" "s3://releases/myapp/stable/$VERSION/" --recursive --endpoint-url $R2
+aws s3 cp update.json s3://releases/myapp/stable/update.json --endpoint-url $R2 --cache-control "no-cache, max-age=0"
+```
+
+:::warning
+A Mac-only `update.json` replaces the feed listing macOS and Windows: Windows users stop seeing updates until the next full release. Use CI for real releases.
+:::
+
+## Rules
+
+- **Never reuse a version.** Clients only take a strictly newer version, and the archives are cached for a year.
+- **`update.json` is uploaded last**, always.
+- **To pull a bad release,** publish a fixed one with a higher version. Re-uploading an older `update.json` does nothing: installed apps never downgrade. To mark the fix as mandatory, publish it with `minimumVersion` (`release merge --minimum-version 1.4.1`). This sets `mandatory: true` for older installs; your app decides how to enforce it.
+- **CI only needs the private key in the publish job**, through `UPDATE_PRIVATE_KEY`. Keep local `updater.key` files ignored and backed up in your password manager. Builds do not need the key.
+- **This workflow makes delta patches for macOS** against the previous published version. Windows always downloads the full archive. macOS clients on older versions also get the full archive. Linux updater archives and patches are excluded until the layout limitation is fixed.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `check` fails: tag doesn't match | The tag must be `v` + the `package.json` version. Delete the tag (`git push origin :v1.4.0`), fix, and tag again. |
+| macOS: `no identity found` / `errSecInternalComponent` | `MACOS_SIGNING_IDENTITY` doesn't exactly match the certificate, or the `.p12` password is wrong. Compare with `security find-identity -v -p codesigning` on your Mac. |
+| macOS: notarization `Invalid` | The build prints the `xcrun notarytool log <id> --keychain-profile notary` command. Run it on your Mac with the same API key to see Apple's reasons. Run `bunx svelte-desktop preflight .desktop/dist/MyApp.app` locally first. |
+| macOS: `notarytool` can't find the profile `notary` | Check the credential-import step, the selected keychain and `APPLE_API_KEY_P8_BASE64`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID`. |
+| linux: `Package gtk+-3.0 was not found` | The apt step didn't run or failed: it must come before the build. |
+| linux: no `.AppImage` | The build prints `AppImage: appimagetool failed …`. The `.tar.gz` still ships; check that the appimagetool download step succeeded. Linux updates are excluded from this workflow. |
+| windows: Docker errors | This cross-build job needs Docker. On the configured Ubuntu runner, check `docker info` and the native toolchain build output. A native Windows job uses a different toolchain setup. |
+| publish: `merge: … is 1.4.0, … is 1.3.9` | A job built from another commit. Re-run all jobs of the workflow. |
+| publish: `verify` fails | `UPDATE_PUBLIC_KEY` isn't the public half of `UPDATE_PRIVATE_KEY`. Run `cat updater.key.pub` and fix the variable. |
+| publish: `aws` `Access Denied` / `InvalidAccessKeyId` | Wrong R2 secrets, or the token isn't **Object Read & Write** on this bucket. |
+| The app never offers the update | `curl` the `manifestUrl` from `desktop.config.ts` with `{channel}` replaced: it must return the new version. The installed app's `version` must be lower, its `channel` the same, and its `publicKey` must match. Also call `host.update.check()` somewhere. |
+
+:::note
+Wine smoke tests cover the Windows native layer and installer, without loading a WebView2 page. Try the installer and app on a real PC before announcing the release. See [Limitations](/shipping/limitations).
+:::

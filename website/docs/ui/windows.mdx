@@ -3,6 +3,10 @@ title: Windows
 description: The main window, title bar styles and drag regions, multiple windows, how they come in, saved frames and full screen.
 ---
 
+:::note
+API reference: [`host.window, host.windows`](/host/windows/window), [`host.windowState`](/host/windows/window-state), [`host.view`](/host/windows/view).
+:::
+
 The main window is described by `window` in `desktop.config.ts` and controlled at run time through `host.window`.
 
 ```ts desktop.config.ts
@@ -18,6 +22,10 @@ window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 
     title: { type: "string", description: "Window title. Default: appName." },
     autosaveName: { type: "string", description: "Persist and restore the window frame under this name (NSUserDefaults on macOS)." },
     titleBarStyle: { type: '"default" | "transparent" | "hidden" | "hiddenInset"', default: '"default"', description: "See Title bar styles below." },
+    vibrancy: { type: '"sidebar" | "titlebar" | "window" | "underWindow" | "hud" | "menu" | "popover" | …', description: "The system's translucent material behind the page (macOS). See Vibrancy and Liquid Glass below." },
+    trafficLightPosition: { type: "{ x: number; y: number }", description: "The traffic lights at your own place (macOS, titleBarStyle hidden or hiddenInset). See Traffic lights below." },
+    aspectRatio: { type: "number", description: "Width / height kept while the user resizes (16 / 9, 1 for a square)." },
+    backgroundThrottling: { type: "boolean", default: "true", description: "false disables WebKit background throttling on macOS. See Running out of sight below." },
     visible: { type: "boolean", default: "true", description: "Shown at launch. false creates it hidden." },
     hiddenUntilReady: { type: "boolean", default: "true", description: "Keep the window invisible until DOMContentLoaded, to avoid a white flash." },
     readyTimeoutMs: { type: "number", default: "3000", description: "How long hiddenUntilReady waits for the page before showing the window anyway (8000 in dev)." },
@@ -26,7 +34,7 @@ window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 
   }}
 />
 
-`window: false` starts with no visible main window, for [menu-bar apps](/ui/menu-bar-and-popovers). `quitOnLastWindowClosed: false` keeps the app running when the last window closes, like most macOS apps: background work and push connections go on, and a Dock click, a notification click or a second launch shows the window again.
+`window: false` creates the main window hidden, for [menu-bar apps](/ui/menu-bar-and-popovers). It can still load your app and be shown with `host.window.show()`. `quitOnLastWindowClosed` defaults to `true`. Set it to `false` to hide the last visible window instead of quitting: its page keeps its state, background work and push connections go on, and a Dock click, a notification click or a second launch shows it again.
 
 ## At run time
 
@@ -37,14 +45,14 @@ window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 
 <button onclick={() => host.window.setTitle('Untitled')}>Rename</button>
 ```
 
-`host.window` is reactive (`title`, `focused`, `maximized`, `fullscreen`, `bounds`, `size`, `position`, `state`, `scaleFactor`) and carries every window op:
+`host.window` exposes reactive state (`title`, `focused`, `maximized`, `fullscreen`, `bounds`, `size`, `position`, `state`, `scaleFactor`) and window operations. Use `host.windows` when targeting another window by id; the reactive `host.window` wrappers act on the calling window. See the [window reference](/host/windows/window) for signatures and platform support:
 
 | Group | Ops |
 | --- | --- |
 | Geometry | `setSize`, `setPosition`, `setBounds`, `center`, `positionTo(preset)`, `setMinSize`, `setMaxSize`, `getBounds`, `innerSize`, `outerSize` |
 | State | `minimize`, `unminimize`, `maximize`, `unmaximize`, `toggleMaximize`, `restore`, `show`, `hide`, `focus`, `blur`, `close` |
 | Full screen | `setFullscreen`, `toggleFullscreen`, `setSimpleFullscreen` (macOS, non-native) |
-| Chrome | `setTitle`, `setTitleBarStyle`, `setDecorations`, `setResizable`, `setClosable`, `setMinimizable`, `setMaximizable`, `setHasShadow`, `setOpacity`, `setTheme` |
+| Chrome | `setTitle`, `setTitleBarStyle`, `setDecorations`, `setResizable`, `setClosable`, `setMinimizable`, `setMaximizable`, `setHasShadow`, `setOpacity`, `setTheme`, `setVibrancy`, `setGlass`, `setTrafficLightPosition`, `setAspectRatio` |
 | Behavior | `setAlwaysOnTop`, `setAlwaysOnBottom`, `setVisibleOnAllWorkspaces`, `setMovable`, `setMovableByWindowBackground`, `setIgnoresMouseEvents`, `setContentProtected`, `setFocusable` |
 | macOS document | `setDocumentEdited` (the dot in the close button), `setRepresentedFilename` (title bar document icon) |
 | Misc | `requestAttention`, `showCharacterPalette`, `getControlsArea`, `setCursorHidden`, `setCursorPosition` |
@@ -99,6 +107,120 @@ A hidden title bar there is a frameless window: there are no native buttons to k
 </div>
 ```
 
+## Vibrancy and Liquid Glass
+
+macOS draws translucent materials behind an app's content, as in Finder's sidebar or the Music app. On macOS 26 it also draws Liquid Glass, the glass of its own controls, with refraction and highlights. The system draws them behind the web view, so they cost the page nothing, unlike a CSS `backdrop-filter`. They blur what's behind the *window* (the desktop, other windows), not the page's own content.
+
+### In CSS
+
+Declare a material on an element. The shell draws it behind that element, at its size and with its `border-radius`, and follows it as it moves, resizes, appears and disappears:
+
+```css
+.sidebar  { --desktop-material: sidebar; }
+.toolbar  { --desktop-material: glass; --desktop-material-tint: var(--color-primary); }
+.overlay  { --desktop-material: hud; --desktop-material-state: active; border-radius: 12px; }
+
+@media (prefers-color-scheme: dark) { .panel { --desktop-material: glass-clear; } }
+```
+
+| Property | Values |
+| --- | --- |
+| `--desktop-material` | `sidebar`, `titlebar`, `header`, `content`, `window`, `underWindow`, `underPage`, `menu`, `popover`, `sheet`, `hud`, `tooltip`, `fullscreenUI`, `selection`; `glass` or `glass-clear` for Liquid Glass (macOS 26; `underWindow` before); `none` |
+| `--desktop-material-tint` | Any CSS color: the glass's tint, its alpha the strength (`color-mix(in oklab, var(--color-primary) 30%, transparent)`) |
+| `--desktop-material-state` | `active` keeps a vibrancy material vivid while the window is inactive; `inactive` always dims it. By default it dims with the window, like the system's own. |
+
+The attribute `data-desktop-material="sidebar"` does the same. The properties are not inherited: only the element that declares one gets the material, not its children.
+
+**The element must not paint a background, and neither may what's under it in the page.** The material is behind the page, so any background above it covers it: the element's own, and its ancestors' up to `html`. Where the shell draws materials, `html` has the `data-desktop-materials` attribute. Use it to drop those backgrounds in the app and keep them in a browser, on Linux and on Windows:
+
+```css
+html[data-desktop-materials],
+html[data-desktop-materials] body,
+html[data-desktop-materials] .sidebar { background: transparent; }
+main { background: var(--surface); } /* opaque where you want it */
+```
+
+An element whose material is drawn right now has `data-desktop-material-on`. A material has no strength setting: to show less of it, give the element a partly transparent background (`color-mix(in oklab, var(--surface) 40%, transparent)` shows 60% of it).
+
+Glass shows what's behind the window, so while an element has glass, the window is non-opaque: where the page paints nothing at all, the desktop shows through. Vibrancy needs nothing of the kind.
+
+Materials are drawn behind the window's page only, not behind a kept-alive tab's own web view ([`<WindowTabs>`](/ui/tabs) `keepAlive`). They follow elements on each frame they move; during a live window resize, they can lag a frame behind. An element clipped by a scrolling parent gets its material at its full box, within the window.
+
+### With Tailwind
+
+```css app.css
+@import 'tailwindcss';
+@plugin '@svelte-desktop/shell/tailwind';
+```
+
+```svelte
+<aside class="material-sidebar bg-surface">…</aside>                   <!-- bg-surface in a browser -->
+<div class="material-glass material-tint-primary/20 rounded-xl">…</div>
+<div class="material-hud material-active rounded-lg">…</div>
+<div class="bg-surface material:bg-surface/40">…</div>                 <!-- material: = in the app -->
+```
+
+| Utility | Sets |
+| --- | --- |
+| `material-sidebar`, `material-titlebar`, `material-header`, `material-content`, `material-window`, `material-under-window`, `material-under-page`, `material-menu`, `material-popover`, `material-sheet`, `material-hud`, `material-tooltip`, `material-fullscreen-ui`, `material-selection`, `material-glass`, `material-glass-clear` | `--desktop-material`, and a transparent background in the app (it overrides the element's `bg-*` there, and keeps it elsewhere) |
+| `material-none` | No material |
+| `material-tint-{color}`, `material-tint-[#5f62ef]` | `--desktop-material-tint`, from the theme's colors; `/20` for the strength |
+| `material-active`, `material-inactive` | `--desktop-material-state` |
+| `material:` (variant) | Applies where the shell draws materials (`html[data-desktop-materials]`) |
+
+Ancestors still need their backgrounds dropped in the app: `material:bg-transparent` on them.
+
+### The whole window
+
+For the whole window instead, behind every transparent part of the page:
+
+```ts desktop.config.ts
+window: { titleBarStyle: 'hiddenInset', vibrancy: 'sidebar' },
+```
+
+Change it at run time with `host.window.setVibrancy('hud')` (`{ state: 'active' }` keeps it vivid while the window is inactive), or remove it with `setVibrancy(null)`. On macOS 26, `host.window.setGlass()` puts Liquid Glass there instead:
+
+```ts
+await host.window.setGlass({ style: 'regular' });                 // frosted, readable over anything
+await host.window.setGlass({ style: 'clear', tint: '#5f62ef40' }); // more transparent, tinted
+await host.window.setGlass(null);                                  // back to an opaque window
+```
+
+`tint` is `#rgb`, `#rrggbb` or `#rrggbbaa`. `cornerRadius` rounds the glass, in points. A window has one of these at a time: `setGlass` removes vibrancy, and `setVibrancy` removes glass. Before macOS 26, `setGlass` uses the `underWindow` material and resolves `{ glass: false }`. Materials declared in CSS can be used along with them.
+
+### Light and dark
+
+Materials are light or dark with the window's appearance, which follows the system, not your page. If the page can be light while the system is dark (a theme picker), give the window the page's theme, or a light page sits on a dark material:
+
+```ts
+const dark = getComputedStyle(document.documentElement).colorScheme.includes('dark');
+await host.window.setTheme(dark ? 'dark' : 'light'); // 'system' to go back
+```
+
+macOS only: elsewhere, `--desktop-material` is ignored and `html` has no `data-desktop-materials`.
+
+## Traffic lights
+
+With a hidden title bar and a taller toolbar of your own, place the traffic lights where it wants them (macOS): `{ x, y }` is the close button's top-left corner, in points from the window's top-left.
+
+```ts desktop.config.ts
+window: { titleBarStyle: 'hidden', trafficLightPosition: { x: 18, y: 18 } },
+```
+
+Their custom placement is reapplied after resizing, focus changes and leaving full screen; macOS controls their presentation during full screen. `--desktop-titlebar-height` grows to reach below them, and `--desktop-controls-width` follows. At run time, call `host.window.setTrafficLightPosition({ x: 20, y: 24 })`, or pass `null` to put them back.
+
+## Running out of sight
+
+On macOS, WebKit can slow a page down when its window is covered or minimized. A player or a live dashboard may need to keep going:
+
+```ts desktop.config.ts
+window: { backgroundThrottling: false },
+```
+
+At run time, use `host.webview.setBackgroundThrottling(false)`. For an embedded view, pass `backgroundThrottling: false` to `host.view.create` along with its route and bounds.
+
+Disabling throttling costs energy and does not guarantee a timer rate; macOS can still throttle minimized windows. This option and `setBackgroundThrottling` are macOS-only. Put long-running work in [background jobs](/native/jobs) or [services](/native/services), where it does not depend on page timers.
+
 ## No elastic overscroll
 
 On desktop, the bridge sets `:where(html, body) { overscroll-behavior: none }`, with zero specificity, so the page doesn't rubber-band. Bring it back with `html { overscroll-behavior: auto }`, or set it per scroll container.
@@ -111,13 +233,13 @@ await host.windows.setTitle('Inspector (2)', windowId);
 host.windows.onClosed(({ windowId }) => console.log('closed', windowId));
 ```
 
-Every window op takes an optional trailing `windowId`; without it the op targets the window whose page made the call (`0` is the main window). `host.windows.list()` returns `{ windowId, label, focused, visible, bounds }` rows, `host.windows.getInfo()` the calling window's own row, and `host.windows.get(label)` finds one.
+Window-targeted operations on `host.windows` take an optional trailing `windowId`; without it they target the calling page's window (the main window from server code). `0` is the main window. `host.windows.list()` returns `{ windowId, label, focused, visible, bounds }` rows, `host.windows.getInfo()` the calling window's own row, and `host.windows.get(label)` finds one.
 
 <TypeTable
   type={{
     label: { type: "string", description: "Unique per app; a duplicate rejects invalid_args." },
     path: { type: "string", description: "The app route to open.", default: '"/"' },
-    url: { type: "string", description: "Another site instead (no native bridge)." },
+    url: { type: "string", description: "A full URL instead; another origin gets no native bridge." },
     title: { type: "string" },
     "x, y, width, height": { type: "number" },
     "minWidth, minHeight": { type: "number" },
@@ -134,7 +256,47 @@ Every window op takes an optional trailing `windowId`; without it the op targets
   }}
 />
 
-Window events: `onCreated`, `onClosed`, `onFocusChanged`, `onBoundsChanged`, `onScaleFactorChanged`, `onWillClose`. Use [`host.broadcast`](/concepts/host#talking-across-windows-and-the-server) to message between windows.
+Window events: `onCreated`, `onClosed`, `onFocusChanged`, `onBoundsChanged`, `onScaleFactorChanged`, `onWillClose`. Use [`host.broadcast`](/host/data/events#broadcast-between-contexts) to message between windows.
+
+### Parents, modal children and panels (macOS)
+
+```ts
+const parent = await host.windows.getInfo();
+const child = await host.windows.create({
+  parentId: parent.windowId, type: 'panel', focusable: false,
+  title: 'Inspector', path: '/inspector', width: 320, height: 420,
+});
+const modal = await host.windows.create({
+  parentId: parent.windowId, modal: true, path: '/confirm', width: 420, height: 260,
+});
+await host.windows.close(modal.windowId);
+await host.windows.setParent(null, child.windowId); // detach the panel
+```
+
+A normal child uses AppKit's child-window relationship: moving the parent moves its children. `modal: true` requires a valid parent and presents a native sheet, which blocks interaction with that parent until closed or hidden. It uses the same AppKit sheet mechanism as `host.dialog.sheet`; use that route-dialog API when you need its result contract. A second attached modal is rejected. Hide a modal before changing its parent, then show it on the new parent. Modal children must remain focusable and cannot be detached; close one and create an independent window instead.
+
+`type: 'normal'` is the default. `type: 'panel'` creates an `NSPanel`, which can become key when `focusable: true` but does not become the application's main document window. `focusable: false` prevents key focus, including during creation. `setFocusable(bool, windowId)` changes that policy at runtime; `isFocusable(windowId)` reads it. `focus: false` shows a window without requesting key focus.
+
+Normal windows own native full-screen Spaces; panels and modal children are auxiliary windows and reject requests to own a full-screen Space. `focus()` rejects `unavailable` for nonfocusable windows. macOS controls application activation: a refused request resolves `{ activated: false }`, and a successful one does not guarantee that another foreground app will yield focus.
+
+`getParent(windowId)` returns a parent info row or `null`; `getChildren(windowId)` returns direct child info rows. On macOS, info rows also expose `parentId`, `modal`, `sheetAttached`, `type`, and `focusable`; `sheetAttached` observes whether AppKit has actually presented the sheet. `setParent(parentId, windowId)` reparents a child and rejects missing parents and cycles. Closing a parent also closes its descendants. Relationship options, panel policy and these getters are macOS-only; other backends return `unsupported` for the new operations.
+
+### Window transitions (macOS)
+
+```ts
+const off = host.windows.on('fullscreenChanged', ({ windowId, fullscreen, transition }) => {
+  // transition: 'entered' | 'exited'; macOS has finished the Spaces transition.
+  console.log(windowId, fullscreen, transition);
+});
+```
+
+`host.windows.on(name, callback)` supports `shown`, `hidden`, `minimized`, `restored`, `fullscreenChanged`, `moved`, `resized`, `focus` and `blur`. Every payload carries `windowId`; `moved` and `resized` also carry the outer frame `{ x, y, width, height }` in screen points with a top-left origin. Geometry events stream after each native change. Full-screen events come from AppKit's completed-transition notifications, not the setter's early reply. `restored` means deminiaturized. Visibility events track ordering, alpha, and application hide/unhide; merely covering a window does not hide it.
+
+Named helpers are also available: `onShown`, `onHidden`, `onMinimized`, `onRestored`, `onFullscreenChanged`, `onMoved`, `onResized`, `onFocus`, `onBlur`. They return unsubscribe functions. Existing `focusChanged` and `boundsChanged` events remain, and `host.window.fullscreen` refreshes after full-screen completion.
+
+Read window policy with `getLevel()` (numeric AppKit level), `isAlwaysOnTop()`, `hasShadow()`, `isMovable()`, `getMinSize()` and `getMaxSize()`. Size limits use **content points**, matching `setMinSize` / `setMaxSize`; a maximum axis of `0` means unconstrained. Every getter accepts a trailing `windowId`, as do the existing setters.
+
+For an app-wide unsaved-work guard, see [Cancellable quit](/host/app/app#cancellable-quit-macos). The close veto below handles individual window closes.
 
 ## Animation
 
@@ -161,28 +323,33 @@ The same goes in `desktop.config.ts` for the main window (`window: { animate: �
 
 ## Confirm before closing
 
-Arm the close veto: the red button and Cmd+W then emit `willClose` instead of closing.
+Arm the close veto: the red button and the native Close menu action then emit `willClose` instead of closing. With `<WindowTabs>`, Cmd+W closes a tab; use its `beforeClose` prop for that guard.
 
 ```ts
-await host.windows.setCloseVeto(true);
-host.windows.onWillClose(async () => {
+const current = await host.windows.getInfo();
+const off = host.windows.onWillClose(async ({ windowId }) => {
+  if (windowId !== current.windowId) return;
   const { response } = await host.dialog.showMessageBox({
     type: 'warning', message: 'Discard unsaved changes?', buttons: ['Discard', 'Cancel'],
   });
   if (response === 0) {
-    await host.windows.setCloseVeto(false);
-    await host.windows.close();
+    await host.windows.setCloseVeto(false, current.windowId);
+    off();
+    await host.windows.close(current.windowId);
   }
 });
+await host.windows.setCloseVeto(true, current.windowId);
 ```
+
+Programmatic `host.windows.close()` bypasses the veto. For a single-window app, `host.window.onCloseRequested(handler)` subscribes and arms it together, returning an async cleanup function that disarms and unsubscribes.
 
 ## Saving the frame
 
-`autosaveName` persists the main window's frame natively. For more control, `host.windowState` writes a JSON snapshot (`window-state.json` in the app's data directory). It uses Bun's file API, so call it from server code:
+`autosaveName` persists the main window's frame natively. For more control, `host.windowState` writes a JSON snapshot (`window-state.json` in the app's data directory). It uses Bun's file API in the app server; page code can call it too, through the server:
 
 ```ts
 await host.windowState.save({ flags: ['size', 'position', 'maximized'] });
 await host.windowState.restore(); // applies what the snapshot captured
 ```
 
-Flags: `size`, `position`, `maximized`, `visible`, `fullscreen` (default: all).
+Flags: `size`, `position`, `maximized`, `visible`, `fullscreen` (default: all). The JSON snapshot is shared, not one file per window. Its `visible` flag records whether the window is minimized, not whether it was explicitly hidden. It captures outer-frame bounds but restores size with the content-size setter, so decorated windows can restore to a different outer size. Prefer `autosaveName` for native main-window frame persistence. See [window state](/host/windows/window-state) for the restore rules.

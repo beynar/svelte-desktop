@@ -15,6 +15,13 @@ export default defineConfig({
     repo: "svelte-desktop",
     dir: "website",
   },
+  navigation: {
+    tabs: [
+      { label: "Guide", path: "/", icon: "book-open" },
+      { label: "Host API", path: "/host", icon: "code" },
+      { label: "Native code", path: "/native", icon: "cpu" },
+    ],
+  },
   agents: {
     llmsTxt: true,
   },

@@ -1,0 +1,154 @@
+---
+title: host.view
+description: Embed additional native web views in a window and control their bounds and navigation.
+---
+
+`host.view` places an independent native web view over a window's page. Use it for embedded web content or kept-alive app routes. Bounds are CSS pixels from the window content's top-left. External pages may load, but the native bridge only answers the app origin's main frame.
+
+How-to: [Windows](/ui/windows). For operations on a view's browser engine, see [`host.webview`](/host/web/webview) and its `viewId` target.
+
+## Methods
+
+### `create(options)`
+
+Create and start loading a view. Resolves `{ id: string; windowId: number }`; this does not wait for the page to load. Creating an existing `id` destroys and replaces that view.
+
+```ts
+const { id } = await host.view.create({
+  id: 'preview', route: '/preview',
+  bounds: { x: 220, y: 48, width: 640, height: 480 },
+  autoresize: 'both',
+});
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Generated `view-…` | App-wide view identifier. |
+| `windowId` | `number` | Native default target | Parent window; `0` addresses the primary window. See [window targeting](/host/windows/window#hostwindows). |
+| `url` | `string` | None | Full URL; takes precedence over `route`. |
+| `route` | `string` | None | App route. Supply `url` or `route`. |
+| `bounds` | `ViewBounds` | Required | `{ x: number; y: number; width: number; height: number }`. |
+| `autoresize` | `'width' \| 'height' \| 'both' \| 'none'` | `'none'` | Axes that follow parent-window resizing. |
+| `transparent` | `boolean` | `false` | Let the underlying page show where this page has no background. |
+| `hidden` | `boolean` | `false` | Load without showing. On macOS, keep drawing at zero alpha with pointer events passing through until `show()`. |
+| `backgroundThrottling` | `boolean` | `true` | macOS: `false` keeps the view running while out of sight. Ignored on Linux and Windows. |
+| `debug` | `boolean` | `false` | Enable inspection; the macOS `inspectable` property requires macOS 13.3+. |
+| `session` | `string` | Default session | macOS [session](/host/web/sessions) identifier. Ignored on Linux and Windows. |
+| `recovery` | `WebviewRecovery` | `'reload'` on macOS | `'reload'` or `'manual'` after content-process termination. Ignored on Linux and Windows. See [webview lifecycle](/host/web/webview). |
+
+Rejects `invalid_args` for a missing parent window, missing `bounds`, or a missing/invalid target. On macOS, an unknown session or invalid recovery policy also rejects `invalid_args`.
+
+### `setBounds(id, bounds)`
+
+Set a view's rectangle. `id` is a `string`; `bounds` is `ViewBounds` with all four numeric fields. Resolves `null`.
+
+```ts
+await host.view.setBounds('preview', { x: 220, y: 48, width: 720, height: 520 });
+```
+
+### `getBounds(id)`
+
+Resolve the current `ViewBounds` for the string `id`.
+
+### `navigate(id, target)`
+
+Start loading another page in the existing view. Resolves `null` without waiting for navigation to finish.
+
+| Option in `target` | Type | Default | Description |
+| --- | --- | --- | --- |
+| `url` | `string` | None | Full URL, preferred over `route`. |
+| `route` | `string` | None | App route. Supply one target. |
+
+A missing/invalid target rejects `invalid_args`.
+
+### `show(id, options?)`
+
+Show the view. Resolves `null`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `seeThrough` | `boolean` | `false` | macOS: draw at zero alpha and let the pointer pass through. Ignored on Linux and Windows. |
+
+### `hide(id)`
+
+Hide the view without destroying its page. Resolves `null`. On macOS it removes the view from the window and returns keyboard focus to the main page if needed. Use `show(id, { seeThrough: true })` for an attached, drawing view on macOS.
+
+### `reload(id)`
+
+Reload the current page. Resolves `null` when requested, before loading finishes.
+
+### `getInfo(id)`
+
+Resolve `{ id: string; url: string | null; title: string; loading: boolean; hidden: boolean }`. On macOS, a view shown with `seeThrough: true` also reports `hidden: true`.
+
+### `executeJavaScript<T = unknown>(id, code)`
+
+Evaluate the string `code` in the view's page and resolve its JSON-serializable result as `T`. The type argument describes the expected result; it does not validate it. JavaScript execution failures reject `internal`; missing `code` rejects `invalid_args`.
+
+```ts
+const title = await host.view.executeJavaScript<string>('preview', 'document.title');
+```
+
+### `list()`
+
+Resolve `Array<{ id: string; windowId: number; url: string | null }>` for embedded views across windows.
+
+### `destroy(id)`
+
+Destroy the view and its page. Resolves `{ destroyed: boolean }`. Methods targeting an unknown `id` reject `invalid_args`, including repeated `destroy()` calls. Operations on a view whose parent has closed also reject `invalid_args`.
+
+## Events
+
+| Event | Typed helper | Payload | When |
+| --- | --- | --- | --- |
+| `viewLoaded` | `onLoaded(fn)` | `{ id: string; url: string }` | Page navigation finishes loading. |
+| `viewNavigated` | `onNavigated(fn)` | `{ id: string; url: string }` | Main-frame navigation is accepted/starts. |
+| `viewFailed` | `onFailed(fn)` | `{ id: string; error: string }` | Navigation fails. |
+| `viewTitle` | `onTitle(fn)` | `{ id: string; title: string }` | Document title changes. |
+
+Listen with `host.view.onLoaded(fn)` or `host.on('viewLoaded', fn)`. Every helper takes the callback shown by its payload type and returns an unsubscribe function. Events cover all views: filter by `id`.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `create` | ✓ | partial | partial |
+| `setBounds`, `getBounds`, `navigate` | ✓ | ✓ | ✓ |
+| `show` | ✓ | partial | partial |
+| `hide`, `reload`, `getInfo` | ✓ | ✓ | ✓ |
+| `executeJavaScript`, `list`, `destroy` | ✓ | ✓ | ✓ |
+| `onLoaded`, `onNavigated`, `onFailed`, `onTitle` | ✓ | ✓ | ✓ |
+
+Partial: Linux and Windows ignore `session`, `recovery`, `backgroundThrottling`, and `seeThrough`. On macOS, the transparent under-page background refinement requires macOS 12+, and inspection uses `inspectable` on macOS 13.3+.
+
+## Example
+
+Subscribe before creation so a fast page load cannot be missed:
+
+```ts
+const offLoaded = host.view.onLoaded(({ id }) => {
+  if (id === 'preview') void host.view.show(id);
+});
+const offFailed = host.view.onFailed(({ id, error }) => {
+  if (id === 'preview') console.error(error);
+});
+
+try {
+  await host.view.create({
+    id: 'preview', route: '/preview', hidden: true,
+    bounds: { x: 240, y: 48, width: 600, height: 480 },
+    autoresize: 'both',
+  });
+} catch (error) {
+  offLoaded();
+  offFailed();
+  throw error;
+}
+
+// When this embedded preview is no longer needed:
+async function disposePreview() {
+  offLoaded();
+  offFailed();
+  await host.view.destroy('preview');
+}
+```

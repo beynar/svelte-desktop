@@ -1,0 +1,131 @@
+---
+title: Node-API addons
+description: Compile C and C++ addons or ship prebuilt .node libraries, then load them from server code.
+---
+
+A Node-API addon exposes native functions to Bun as JavaScript exports. Pick it for an existing Node-API library or C/C++ code used by the SvelteKit server. Use a [plugin](/native/plugins) for native commands called from pages, or a [job](/native/jobs) or [service](/native/services) when the work needs its own process.
+
+## A complete example
+
+Put this file in your app's `native/addons/` directory. It exports a synchronous `add` function and rejects non-number arguments.
+
+```c native/addons/math.c
+#include <node_api.h>
+
+static napi_value Add(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2];
+  double a, b;
+  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok)
+    return NULL;
+  if (argc != 2 ||
+      napi_get_value_double(env, argv[0], &a) != napi_ok ||
+      napi_get_value_double(env, argv[1], &b) != napi_ok) {
+    napi_throw_type_error(env, NULL, "add expects two numbers");
+    return NULL;
+  }
+  napi_value result;
+  if (napi_create_double(env, a + b, &result) != napi_ok) return NULL;
+  return result;
+}
+
+static napi_value Init(napi_env env, napi_value exports) {
+  napi_value fn;
+  if (napi_create_function(env, "add", NAPI_AUTO_LENGTH, Add, NULL, &fn) != napi_ok)
+    return NULL;
+  if (napi_set_named_property(env, exports, "add", fn) != napi_ok) return NULL;
+  return exports;
+}
+
+NAPI_MODULE(math, Init)
+```
+
+The default native directory is `native/` when it exists. You can also set it explicitly:
+
+```ts desktop.config.ts
+import { defineConfig } from '@svelte-desktop/shell/config';
+
+export default defineConfig({
+  appName: 'Math',
+  identifier: 'dev.example.math',
+  native: 'native',
+});
+```
+
+Load it in a server endpoint. The type argument describes the addon's exports; it does not check them at runtime.
+
+```ts src/routes/api/add/+server.ts
+import { error, json } from '@sveltejs/kit';
+
+type MathAddon = { add(a: number, b: number): number };
+let math: MathAddon | undefined;
+
+export function GET({ url }: { url: URL }) {
+  const a = Number(url.searchParams.get('a') ?? '0');
+  const b = Number(url.searchParams.get('b') ?? '0');
+  if (!Number.isFinite(a) || !Number.isFinite(b)) error(400, 'Expected numbers');
+  math ??= host.loadAddon<MathAddon>('math');
+  return json({ result: math.add(a, b) });
+}
+```
+
+A page can call `fetch('/api/add?a=2&b=3')` and read `{ result: 5 }`. It cannot call `host.loadAddon` itself. See the [server API reference](/host/data/server).
+
+## Source compilation
+
+Each top-level `native/addons/*.c`, `*.cc` or `*.cpp` file becomes a separate addon. The source basename is its load name: `math.c` becomes `host.loadAddon('math')`. Subdirectories are not scanned. Changing `native` changes the parent directory; `native: false` disables source discovery, but configured prebuilt addons still work.
+
+The build includes the vendored C Node-API headers from the shell package's `native/vendor/node-api/include/`. Include `node_api.h`; Bun provides the `napi_*` functions at load time. This is not a `node-gyp` build and does not install the C++ `node-addon-api` wrapper.
+
+| Build detail | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Compiler | `clang` | `cc` for C; `c++` for C++ | LLVM-MinGW `clang`/`clang++` in Docker |
+| Link and optimization flags | `-bundle -undefined dynamic_lookup -O2` | `-shared -fPIC -O2` | `-shared -static -s -O2`; delay-loads `node.exe` through a hook to the running Bun executable |
+| Language flags | C++: `-std=c++17 -lc++` | C++: `-std=c++17` | C: `-std=c17`; C++: `-std=c++17`; defines `NODE_GYP_MODULE_NAME` |
+| Target | `-arch arm64` or `-arch x86_64`; both for `build.universal` | Matching Linux host architecture only | `build.targetArch`: `x64` or `arm64` |
+| Minimum OS flag | `-mmacosx-version-min`, from `build.minimumSystemVersion` (default `12.0`) | No equivalent flag | No equivalent flag |
+| Other sources | `.m` and `.mm` also compile, with `-fobjc-arc -fmodules` | Objective-C is skipped with a warning | Only `.c`, `.cc`, `.cpp` are scanned |
+
+Linux source addons are skipped with a warning when the build is not on a Linux host of the target architecture. Windows source addons are skipped with a warning when Docker is unavailable. Supply a matching prebuilt addon when source compilation is unavailable.
+
+There is no addon compiler-flags or extra-libraries config option. For builds needing other flags, linked libraries or multiple translation units, build the `.node` yourself and use `addons`.
+
+## Prebuilt addons
+
+```ts desktop.config.ts
+import { defineConfig } from '@svelte-desktop/shell/config';
+
+export default defineConfig({
+  appName: 'Math',
+  identifier: 'dev.example.math',
+  addons: { math: 'prebuilt/math.node' },
+});
+```
+
+Paths resolve from the project root. A configured entry overrides a source addon with the same name. `addons` maps names to single paths; it has no per-platform path object. Select the appropriate file in your build configuration for each target. macOS and Linux copy prebuilt files without checking their format. Windows skips a prebuilt file with a warning unless it has a PE header. None of these checks establishes architecture compatibility.
+
+`host.loadAddon<T>(name)` calls `process.dlopen` synchronously. Invalid names, missing files and loader failures throw. Names may contain letters, numbers, dots, underscores and hyphens. Load once in a server module and keep its exports; the helper has no JavaScript module cache of its own.
+
+## Threads and processes
+
+In a packaged app, the SvelteKit server runs in a Bun Worker inside the app process. A synchronous addon function executes on that Worker's thread. A slow call blocks server requests and other Worker work. A native crash can terminate the whole app. In `vite dev`, the addon runs in the Vite server process instead. See [Threads and processes](/native/threads).
+
+For long work, implement an asynchronous Node-API function using `napi_create_async_work`, or move the call into a [job](/native/jobs) or [service](/native/services). Those children do not receive the server's `host` global. Import `loadAddon` from `@svelte-desktop/shell/server` there and return results through the job context or service port. Native background threads must use the appropriate Node-API completion or thread-safe function mechanism to call JavaScript.
+
+Pages communicate through server endpoints or remote functions. The addon has no page bridge or UI-thread access of its own. Return values to the server and let server code send page events or invoke native APIs.
+
+## Development, cache and packaging
+
+At Vite startup, source addons build into `.desktop/dev/addons/`; prebuilt entries keep their configured paths. macOS cache filenames include the architecture set, such as `math-arm64.node`; Linux uses `math.node`. These builds reuse an output newer than its source file. Header changes, compiler changes and configuration changes are not part of that cache check. Remove the affected cached output to force a rebuild after those changes. Windows packaging rebuilds its source addons rather than using this mtime cache.
+
+Restart Vite after editing addon sources or replacing prebuilt files. Addon preparation runs at server startup. The native-file watcher can restart the window, but that does not rerun addon preparation or reload a library already loaded into the server process.
+
+Windows source compilation is a packaging path. Vite's addon preparation has no Windows-specific source compiler; its non-Linux branch uses macOS `clang` flags. For Windows dev, use prebuilt addons without discoverable addon source files.
+
+| Bundle detail | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Addon location | `Contents/Frameworks/addons/<name>.node` | `lib/addons/<name>.node`, relative to the app executable | `addons/<name>.node`, relative to the app executable |
+| Signing | Signed before the app bundle, with the app identity and runtime setting | No addon code-signing step | Included in Authenticode signing when configured |
+| Distribution | Included in app notarization with identity signing and `sign.notaryProfile` or `NOTARY_PROFILE` | Included in the packaged app | Included in the packaged app |
+
+Source addons can be universal on macOS. Prebuilt addons are copied as supplied: a universal app needs a universal prebuilt addon. On every platform, the addon and its dependencies must match the target OS and architecture; packaging does not convert a prebuilt binary or collect its dependent libraries.

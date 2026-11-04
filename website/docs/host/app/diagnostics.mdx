@@ -1,0 +1,88 @@
+---
+title: host.diagnostics
+description: Read native process diagnostics and collect a local support archive from server code.
+---
+
+`host.diagnostics` holds a native process snapshot. In server code it also exposes `collect()` for local support archives. For a running backend's operation report, use [`host.capabilities`](/host/app/capabilities).
+
+How-to: [Local support bundles](/native/services#local-support-bundles).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `info` | `DiagnosticsInfo \| null` | Latest snapshot; initially `null`. A property, not `host.diagnostics.info()`. |
+| `pid` | `number \| null` | Native process ID from `info`. |
+| `uptimeSeconds` | `number \| null` | Process uptime at the last read; does not tick automatically. |
+| `ready` | `boolean` | Whether initialization completed. |
+| `error` | `Error \| null` | Initialization failure, if any. |
+
+`DiagnosticsInfo` declares these fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `pid` | `number` | Native shell process ID. |
+| `uptimeSeconds` | `number` | Seconds since the native process started. |
+| `os` | `string` | `'macos'`, `'linux'` or `'windows'`. |
+| `family` | `string` | `'unix'` or `'windows'`. |
+| `arch` | `string` | Native architecture name. |
+| `renderer` | `string` | `'wkwebview'`, `'webkitgtk'` or `'webview2'`. |
+| `rendererVersion` | `string` | Native web renderer version. |
+
+## Methods
+
+### `refresh()`
+
+Read native diagnostics into `info`. Resolves the namespace. Call this for a fresh uptime snapshot.
+
+```ts
+await host.diagnostics.refresh();
+console.log(host.diagnostics.pid, host.diagnostics.uptimeSeconds);
+```
+
+### `init()`
+
+Call `refresh()`, mark the store ready and resolve the namespace. Store startup normally calls it. There is no `dispose()` method or diagnostic change event.
+
+### `collect(options = {})`
+
+**Server only.** Collect a local support archive. Resolves `string`, the absolute path to a private `.tar.gz` under [`host.paths.cache`](/host/data/server), in its `support/` directory. It does not upload the result.
+
+| `CollectOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `logs` | `boolean` | `true` | Include up to 10 `app.log` and numbered rotation files. |
+| `crashes` | `boolean` | `true` | Include previous-run state and up to 20 newest discovered OS crash reports. |
+| `metadata` | `boolean` | `true` | Include app info, name, OS, release, architecture, Bun version and collection time. |
+
+```ts
+// Server module, endpoint or remote function.
+const path = await host.diagnostics.collect({ logs: true, crashes: false });
+await host.shell.showItemInFolder(path);
+```
+
+The archive contains `logs/`, `crashes/previous-run.json`, discovered crash reports, `metadata.json` and a `manifest.json` describing omissions. Disabled sections are absent. OS report discovery covers matching macOS `.ips`/`.crash` reports and Windows `.dmp` files; Linux has no automatic system crash-report discovery. Development runs normally have no file logs or tracked previous-run crash state.
+
+Source files are limited to 10 MiB each and 50 MiB overall. Collection skips non-regular files, including symlinks, and records unreadable or oversized files as omissions. Missing log directories are allowed. Metadata lookup, directory creation and archive writes can reject; an unreadable log or report alone does not fail the whole collection. The archive is created with mode `0600` in a directory created with mode `0700`.
+
+Included text logs and crash reports, plus previous-run state, receive best-effort masking of common authorization, token and code fields. Metadata and binary dumps are not masked. Arbitrary application data can still contain sensitive information. The application owns consent, review, upload, retention and deletion. Collection snapshots logs while the app continues running.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `refresh`, `init` | ✓ | ✓ | ✓ |
+| `collect` (server only) | ✓ | partial | ✓ |
+
+Linux bundles include available logs, previous-run state and metadata, but no automatically discovered OS crash reports.
+
+## Example
+
+```ts src/lib/support.remote.ts
+import { command } from '$app/server';
+
+export const collectSupport = command(async () => {
+  const path = await host.diagnostics.collect();
+  await host.shell.showItemInFolder(path);
+  return { path };
+});
+```

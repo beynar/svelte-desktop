@@ -38,11 +38,12 @@ App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without o
 
 <TypeTable
   type={{
-    app: { type: "string", description: "Path to a built .app, a Linux app directory or an AppImage. Default: the first one in .desktop/dist." },
+    app: { type: "string", description: "Path to a built .app, a Windows app folder, a Linux app directory or an AppImage. Default: the first app bundle or app directory in .desktop/dist." },
     dev: { type: "boolean | { cwd, port }", description: "Run vite dev in this project instead of a built app." },
     args: { type: "string[]", description: "Command-line arguments for a built app (URLs, documents)." },
     env: { type: "Record<string, string>" },
     timeout: { type: "number", default: "30000", description: "ms to wait for the app to connect and its page to load." },
+    connect: { type: "(testUrl: string) => void | Promise<void>", description: "Start the app yourself with testUrl as SVELTE_DESKTOP_TEST; launch waits for its connection. For example, to test a Windows toast activation." },
   }}
 />
 
@@ -61,4 +62,6 @@ App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without o
 | `origin`, `stdout` | The app's server origin and its output |
 | `close()` | Quit the app |
 
-The test channel exists only when `launch()` starts the app (it sets `SVELTE_DESKTOP_TEST`); shipped apps don't expose it.
+`click`, `fill` and `press` run JavaScript in the page. They do not send OS input: `press` dispatches keyboard events, and for `Enter` also submits the element's form. Use `platform()` for native operations. Page functions passed to `eval()` or `waitFor()` are serialized; pass values as `eval()` arguments rather than capturing local variables.
+
+The test channel is enabled by `SVELTE_DESKTOP_TEST`, which `launch()` sets. A built app can connect when that variable is supplied; a normal launch without it exposes no test channel. With `connect`, your callback must set the variable on the app it starts. `stdout` is empty in that mode.

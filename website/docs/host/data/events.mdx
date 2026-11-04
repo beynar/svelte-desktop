@@ -1,0 +1,171 @@
+---
+title: Events and broadcast
+description: Listen to native events, dispatch local events and send messages between pages and server code.
+---
+
+Use `host.on` for native notifications, `host.events` for local application events, and `host.broadcast` to reach other contexts. Subscriptions return synchronous unsubscribe functions; dispose them when their owner goes away.
+
+How-to: [Menus](/ui/menus) and [menu bar and popovers](/ui/menu-bar-and-popovers).
+
+## Native events
+
+### `host.on<T = unknown>(event, fn)`
+
+Listens to a native event by name. Returns `() => void`. `event` is a `string`; `fn` has type `(data: T) => void`. The type parameter describes the payload; it does not validate it or infer it from the event name.
+
+```ts
+const off = host.on<{ dark: boolean }>('appearanceChanged', (info) => {
+  console.log(info.dark);
+});
+off();
+```
+
+Most services also offer typed helpers such as `host.theme.onChange`, `host.menu.onAction` and `host.webview.onFileDrop`. These return unsubscribe functions too. Use the helpers when available.
+
+### Event index
+
+These are page-visible native event names from the macOS backend's `platform_emit` calls and notification maps, including its included download implementation. Links identify the reference that owns each event's details and platform availability. A name in this index does not imply that every backend emits it. Events go to app-origin pages; embedded views showing other sites do not receive them.
+
+| Owner | Event names | Payload / trigger |
+| --- | --- | --- |
+| [App](/host/app/app) | `reopened` | `{ hasVisibleWindows: boolean }`; app reopened. |
+| [App](/host/app/app) | `appActivated`, `appDeactivated`, `willRestart` | `{}`; activation changes or restart requested. |
+| [App](/host/app/app) | `secondInstance` | `{ argv: string[]; cwd: string }`; another launch. |
+| [App lifecycle](/host/app/app) | `quitRequested`, `beforeQuit`, `willQuit` | Quit request: `requestId`, `reason`, `deadline`, plus native participant `tokens`. Use the typed lifecycle helpers to participate. |
+| [App lifecycle](/host/app/app) | `quitCancelled`, `quitTimedOut` | `requestId`, `reason`; timeout also carries `phase`. |
+| [Deep links](/host/app/deep-link) | `openUrls` | `{ urls: string[] }`; URLs opened with the app. |
+| [Files](/host/os/files) | `openFiles` | `{ paths: string[] }`; files opened with the app. |
+| [Windows](/host/windows/window) | `created` | `{ windowId: number; label: string }`; secondary window created. |
+| [Windows](/host/windows/window) | `willClose`, `closed`, `shown`, `hidden`, `minimized`, `restored`, `focus`, `blur` | `{ windowId: number }`; window lifecycle, visibility or focus. |
+| [Windows](/host/windows/window) | `focusChanged` | `{ windowId: number; focused: boolean }`. |
+| [Windows](/host/windows/window) | `boundsChanged`, `moved`, `resized` | `{ windowId: number; x: number; y: number; width: number; height: number }`. |
+| [Windows](/host/windows/window) | `scaleFactorChanged` | `{ windowId: number; scaleFactor: number }`. |
+| [Windows](/host/windows/window) | `fullscreenChanged` | `{ windowId: number; fullscreen: boolean; transition: 'entered' \| 'exited' }`. |
+| [Popovers](/host/windows/popover) | `popoverReady`, `popoverShown`, `popoverHidden` | `{ id: string }`; popover lifecycle. |
+| [Popovers](/host/windows/popover) | `popoverResized` | `{ id: string; width: number; height: number }`. |
+| [Views](/host/windows/view) | `viewTitle` | `{ id: string; title: string }`. |
+| [Views](/host/windows/view) | `viewNavigated`, `viewLoaded` | `{ id: string; url: string }`. |
+| [Views](/host/windows/view) | `viewFailed` | `{ id: string; error: string }`. |
+| [Screen](/host/app/screen) | `displaysChanged` | `{}`; display configuration changed. |
+| [Theme](/host/app/theme) | `appearanceChanged` | `ThemeInfo`: `appearance` and `dark`. |
+| [System](/host/app/system) | `keyboardLayoutChanged` | `{}`; keyboard layout changed. |
+| [Power](/host/app/power) | `systemSleep`, `systemWake`, `displaySleep`, `displayWake`, `screenLocked`, `screenUnlocked`, `screensaverStarted`, `screensaverStopped`, `thermalStateChanged`, `shutdown` | `{}`; the corresponding OS notification. |
+| [Power](/host/app/power) | `powerSourceChanged` | `{ onBattery: boolean }`; power source changed. |
+| [Power](/host/app/power) | `memoryPressure` | `{ level: 'warning' \| 'critical' }`. |
+| [Menus](/host/input/menu) | `menuAction`, `menuNeedsUpdate`, `menuWillShow`, `menuDidClose` | `{ id: string }`; item action or menu lifecycle. |
+| [Tray](/host/input/tray) | `trayClick` | `TrayClickRect`: optional `x`, `y`, `width`, `height`. |
+| [Shortcuts](/host/input/shortcuts) | `shortcutPressed`, `shortcutReleased` | `{ id: string }`. |
+| [Input policy](/host/input/input-policy) | `beforeInput` | `BeforeInputEvent`; intercepted keyboard input, with a per-page `target` flag added by native delivery. |
+| [Permissions](/host/os/permissions) | `permissionChanged` | `{ name: string; status: PermissionStatus }`; observed permission change. |
+| [Notifications](/host/os/notifications) | `notificationShown` | `id`, `push`, optional serialized `payload`; foreground presentation. |
+| [Notifications](/host/os/notifications) | `notificationResponse` | Wire response: `id`, `kind`, `actionId`, `seq`, `tag`, optional `input` and serialized `payload`; pages also receive `target`. Use notification helpers for the decoded `NotificationEvent`. |
+| [Push](/host/os/push) | `pushToken` | `{ provider: 'apns'; token: string }`; APNs token update. |
+| [Push](/host/os/push) | `pushMessage` | Raw push `data`, `foreground`, optional `id`, serialized `payload` and `notification`. Push helpers convert it to `PushMessage`. |
+| [Sessions](/host/web/sessions) | `sessionCookieChanged` | `{ session: string; cookie: SessionCookie; removed: boolean }`; observed cookie change. |
+| [Webview](/host/web/webview) | `webviewLifecycle` | `WebviewLifecycleEvent`; navigation, failure or content-process termination with its source. |
+| [Webview](/host/web/webview) | `fileDragEnter`, `fileDrop` | `FileDropEvent`; source plus file paths and position. |
+| [Webview](/host/web/webview) | `fileDragLeave`, `closeRequested` | `WebviewSource`; drag left or page requested close. |
+| [Webview](/host/web/webview) | `jsDialog` | Source, dialog `type`, `message`, optional `defaultValue`. |
+| [Input policy](/host/input/input-policy) | `contextMenu` | `ContextMenuEvent`; source, position, mode and context. |
+| [Webview](/host/web/webview) | `printFinished` | Source, `success`, optional PDF `path`. |
+| [Downloads](/host/web/downloads) | `downloadChanged`, `downloadStarted`, `downloadProgress` | `DownloadRecord` snapshots. |
+| [Downloads](/host/web/downloads) | `downloadRequested` | Source/id, `handlerId`, `suggestedFilename`, `mimeType`, `size`. |
+| [Downloads](/host/web/downloads) | `downloadFinished` | Source/id and `bytes`. |
+| [Downloads](/host/web/downloads) | `downloadFailed` | Source/id, `error`, `canceled`, optionally `canResume`. |
+| [Broadcast](#broadcast-between-contexts) | `message` | `{ channel: string; data: unknown; from: string \| number }`. |
+
+Plugins can emit additional app-defined names: see [`host.native`](/host/data/native). Server-owned [protocol requests](/host/web/protocol) and [web permission/authentication challenges](/host/web/web-policy) are sent only to the server, so are not page events in this index.
+
+## Local events: `host.events`
+
+This bus stays in the current JavaScript context. Its events do not enter the native bridge or reach other pages.
+
+### Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `ready` | `boolean` | `true` after initialization. |
+| `error` | `Error \| null` | Initialization failure, normally `null` for this local bus. |
+
+### `on<T = unknown>(name, cb)`
+
+Subscribes to a local event. `name` is a `string`; `cb` is `(data: T) => void`. Returns `() => void`.
+
+### `once<T = unknown>(name, cb)`
+
+The same signature as `on`, but removes the subscription before the first callback. Its unsubscribe function can cancel it before delivery.
+
+### `emit(name, payload?)`
+
+Calls local listeners synchronously. `name` is a `string`, `payload` is `unknown` and defaults to `undefined`. Returns `void`. A throwing listener is caught so other listeners still run.
+
+### `emitTo(windowId, name, payload?)`
+
+Returns `Promise<void>`. `windowId` and `name` are strings; `payload` is optional `unknown`.
+
+| `windowId` | Delivery |
+| --- | --- |
+| `'main'` or `'0'` | Calls `host.events.emit` in this context. |
+| A string converting to a positive integer, such as `'2'` | Dispatches on this context's platform bus with a numeric `windowId`. Receive with `host.on` or the platform module's `onWindow(id, name, fn)`. Object payloads gain `windowId`; other supplied values become `{ windowId, data }`. |
+| Anything else | Rejects with `invalid_args`. |
+
+Despite its name, `emitTo` does not send to another process or page. Use `host.broadcast` for cross-context messages.
+
+### `init()`
+
+Sets `ready` and returns the store itself synchronously. Called automatically by the runtime.
+
+## Broadcast between contexts
+
+### `host.broadcast(channel, data?)`
+
+Sends a message to every app window, popover and server listener, including the sender's context. Resolves `null`.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `channel` | `string` | Required | Non-empty channel name. An empty name rejects with `invalid_args`. |
+| `data` | `unknown` | `null` | JSON-serializable message data. `undefined` also becomes `null`. |
+
+### `host.onBroadcast<T = unknown>(channel, fn)`
+
+Subscribes to one `string` channel. `fn` is `(data: T, from: string | number) => void`. Returns `() => void`.
+
+`from` is the sender's popover id (`string`) or public window id (`number`). Server calls use `0`, as does the primary window; it is a routing identity, not a unique identity for each context.
+
+```ts
+// In a popover route:
+await host.broadcast('notes-changed');
+
+// In the main window (dispose off when the component unmounts):
+const off = host.onBroadcast('notes-changed', (_data, from) => {
+  console.log('Refresh requested by', from);
+});
+```
+
+For the explicit `desktop.publish` / `onDesktopEvent` API, see [Server code](/host/data/server#messages-to-pages).
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `host.on` (subscription) | ✓ | ✓ | ✓ |
+| `host.events.on`, `once`, `emit`, `emitTo`, `init` | ✓ | ✓ | ✓ |
+| `host.broadcast`, `host.onBroadcast` | ✓ | ✓ | ✓ |
+
+Local methods do not require native operations. Native event availability follows the owning service, as linked in the index.
+
+## Example
+
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
+
+  let lastSender = $state<string | number | null>(null);
+  onMount(() => host.onBroadcast('notes-changed', (_data, from) => {
+    lastSender = from;
+  }));
+</script>
+
+<button onclick={() => host.broadcast('notes-changed')}>Notify all pages</button>
+{#if lastSender !== null}<p>Last update from {lastSender}</p>{/if}
+```

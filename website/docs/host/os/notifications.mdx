@@ -1,0 +1,311 @@
+---
+title: host.notifications
+description: Show, schedule and manage local notifications, with actions, replies and click navigation.
+---
+
+`host.notifications` presents OS notifications and tracks their permission and responses. Remote delivery uses [`host.push`](/host/os/push); clicks on remote pushes use these same notification events. In a plain browser page, this service also has a Notification API and service-worker fallback.
+
+How-to: [Notifications and push](/features/notifications).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `permission` | `NotificationPermission \| 'unknown'` | Initially `'unknown'`; refreshed on initialization, app activation and `requestPermission()`. |
+| `lastResponse` | `NotificationEvent \| null` | Last response delivered through a normalized `on()` or `once()` listener in this context. Initially `null`. |
+| `badge` | `number \| null` | The app's badge, without `await`. |
+| `ready` | `boolean` | Initialization completed; initially `false`. |
+| `error` | `Error \| null` | Initialization failure captured by automatic store initialization. |
+
+`NotificationPermission` is `'granted' | 'denied' | 'notDetermined' | 'unavailable'`. It differs from the general [`PermissionStatus`](/host/os/permissions) type.
+
+## Methods
+
+### `show(options)`
+
+Show a notification now, or schedule it with `at` or `delay`.
+
+```ts
+const { id, scheduled } = await host.notifications.show({
+  id: 'report-ready', title: 'Report ready', body: 'Open the finished report.',
+  url: '/reports/latest', data: { reportId: 42 },
+});
+```
+
+Takes `NotificationOptions<D>` and resolves `{ id: string; scheduled: boolean; skipped?: boolean }`. The same `id` replaces an existing delivered or pending notification. With `replace: false`, an existing id is kept and the result has `skipped: true` and `scheduled: false`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Generated id | Dedupe key. |
+| `tag` | `string` | Omitted | Deprecated alias, used when `id` is absent. |
+| `title` | `string` | Required | Notification title. |
+| `body` | `string` | Empty | Main text. |
+| `subtitle` | `string` | Omitted | Subtitle; Linux combines it with the body. |
+| `group` | `string` | Omitted | Thread on macOS, toast group on Windows. |
+| `image` | `string` | Omitted | Attachment or picture: path, `file:`, `data:`, HTTP(S), or app-relative URL. |
+| `icon` | `string` | App icon | Large icon override on Linux and Windows; same input forms as `image`. |
+| `sound` | `string` | Default sound | `'default'` or a sound shipped with the app. Linux also accepts a sound name or file path. |
+| `silent` | `boolean` | `false` | Suppress sound. |
+| `renotify` | `boolean` | `true` | Alert again on replacement. Linux and Windows implement `false`; macOS ignores it. |
+| `badge` | `number` | Omitted | Badge carried by the notification on macOS. |
+| `urgency` | `NotificationUrgency` | `'normal'` | `'low' \| 'normal' \| 'critical'`; macOS interruption levels require macOS 12+. |
+| `requireInteraction` | `boolean` | `false` | Request a persistent banner on Linux and Windows. |
+| `timestamp` | `Date \| number` | Omitted | Displayed timestamp; Windows supports it. Numbers are epoch milliseconds. |
+| `actions` | `NotificationAction[]` | No actions | Buttons and reply fields; fields below. |
+| `foreground` | `boolean` | Configured foreground preference | macOS banner behavior while the app is frontmost. |
+| `at` | `Date \| number \| string` | Immediate | Delivery time; numbers are epoch milliseconds and strings are parsed as dates. Takes precedence over `delay`. |
+| `delay` | `number` | Omitted | Milliseconds from now until delivery. |
+| `repeat` | `NotificationRepeat` | No repeat | `'minute' \| 'hour' \| 'day' \| 'week' \| 'month' \| 'year'`; needs `at` or `delay`. |
+| `url` | `string` | Omitted | Default click destination. |
+| `data` | `D` | Omitted | JSON-serializable data returned in events and lists. |
+| `replace` | `boolean` | `true` | `false` keeps a delivered or pending notification with this id. |
+| `lines` | `string[]` | Omitted | Joined with newlines into `body` if `body` is absent. |
+| `ongoing` | `boolean` | `false` | Keep the notification in the list on Linux and Windows. |
+| `autoCancel` | `boolean` | `true` | Remove on click; `false` requests retention on Linux and Windows. |
+| `closeButtonText` | `string` | Omitted | Dismiss-button label on Linux and Windows. |
+| `toastXml` | `string` | Omitted | Windows-only raw toast XML. |
+
+`NotificationAction` fields:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Required | Nonempty action identifier, returned as `actionId`. |
+| `title` | `string` | Required | Button title. |
+| `label` | `string` | Omitted | Deprecated title alias; use `title`, which is required by the public type. |
+| `input` | `boolean \| { placeholder?: string; button?: string }` | `false` | Text reply on macOS and Windows. Linux displays a plain action. |
+| `input.placeholder` | `string` | Empty | Reply-field placeholder. |
+| `input.button` | `string` | Action title | Reply submit-button title. |
+| `destructive` | `boolean` | `false` | Destructive styling where supported, including macOS. |
+| `foreground` | `boolean` | `true` | Bring the app forward when selected. |
+| `url` | `string` | Notification's `url` | Override the click destination for this action. |
+
+Invalid titles, dates, repeat values, action definitions or image loads reject with `invalid_args`. A repeat without `at` or `delay` also rejects with `invalid_args`. Native delivery failures reject, including `denied` when macOS refuses notifications and `unavailable` when macOS lacks an app bundle or Linux lacks its notification service. `data` must survive JSON serialization.
+
+Platform-specific limits:
+
+- macOS ignores `icon`, `renotify`, `requireInteraction`, `timestamp`, `ongoing`, `autoCancel`, `closeButtonText` and `toastXml`. Its `critical` urgency maps to time-sensitive delivery, not a critical-alert entitlement.
+- Linux depends on `libnotify` and a notification daemon. Actions, images and persistence hints depend on that daemon; text input becomes an ordinary action. `group`, `badge`, `timestamp` and `toastXml` have no native effect.
+- Windows uses native toasts when available, with a tray-balloon fallback that has fewer features. Generated toasts include at most five action buttons, or four when `closeButtonText` adds a dismiss button.
+
+### `schedule(options)`
+
+Alias of `show()` requiring a delivery time in the TypeScript signature:
+
+```ts
+await host.notifications.schedule({ id: 'tea', title: 'Tea is ready', delay: 240_000 });
+```
+
+Takes `NotificationOptions<D> & ({ at: Date | number | string } | { delay: number })`. Options and return value are the same as `show()`.
+
+macOS schedules survive quitting. A repeating calendar schedule rejects with `invalid_args` if its next calendar match would precede `at`; start within one repeat period or schedule the first occurrence separately. Windows schedules survive quitting, but repeats are filled ahead for at most 30 days and 128 occurrences, replenished while running and at startup. Linux persists the queue, delivers while running, and catches up on the next start.
+
+### `dismiss(id)`
+
+Remove a delivered notification and cancel its pending schedule.
+
+```ts
+await host.notifications.dismiss('report-ready');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Notification identifier. |
+
+Resolves `null`. Invalid ids reject with `invalid_args` in native backends.
+
+### `cancel(id)`
+
+Alias of `dismiss(id)`. Takes `string`, resolves `null`, and also removes any delivered notification with that id.
+
+### `dismissAll()`
+
+Remove all delivered and pending notifications belonging to the app. Resolves `null`.
+
+```ts
+await host.notifications.dismissAll();
+```
+
+### `delivered<D>()`
+
+List notifications still delivered in the notification center. Resolves `NotificationInfo<D>[]`. Backends that cannot enumerate the OS list return the notifications they track.
+
+```ts
+const shown = await host.notifications.delivered<{ reportId: number }>();
+```
+
+`NotificationInfo<D>`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Notification identifier. |
+| `title`, `body` | `string` | Displayed title and main text. |
+| `subtitle`, `group`, `url` | `string` (optional) | Supplied metadata when available. |
+| `data` | `D` (optional) | Supplied JSON data. |
+| `date` | `Date` (optional) | Delivery date when available. |
+
+### `pending<D>()`
+
+List scheduled notifications not yet delivered. Resolves `PendingNotification<D>[]`, with all `NotificationInfo<D>` fields plus:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `at` | `Date \| null` | Next delivery time, or `null` when unavailable. |
+| `repeat` | `NotificationRepeat` (optional) | Repeat interval. |
+
+```ts
+const waiting = await host.notifications.pending();
+```
+
+### `setBadge(count)`
+
+Set the app icon badge; `null` or `0` clears it.
+
+```ts
+await host.notifications.setBadge(3);
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `count` | `number \| null` | Badge count. |
+
+Resolves `null`. Linux and Windows reject negative or nonnumeric counts with `invalid_args`. Linux needs a dock supporting its launcher badge integration and may reject with `unavailable`. Windows uses a taskbar overlay; macOS uses the Dock badge.
+
+`getBadge()` resolves the count, or `null` without a badge.
+
+### `setForeground(show)`
+
+Set macOS's default foreground-banner preference for local notifications and pushes. Resolves `null`.
+
+```ts
+await host.notifications.setForeground(false);
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `show` | `boolean` | Required | Whether to show foreground banners. A notification's `foreground` overrides it. |
+
+`desktop.config.ts` can set `notifications: { foreground: false }`; the default is `true`. Linux and Windows accept this method but always show banners according to OS policy.
+
+### `isSupported()`
+
+Resolve `boolean`: whether permission status is something other than `'unavailable'`. A status-query failure yields `false`. A denied permission still counts as supported.
+
+```ts
+const supported = await host.notifications.isSupported();
+```
+
+### `getPermissionStatus()`
+
+Resolve `{ status: NotificationPermission }` without prompting. This service query does not update the reactive `permission` field; use `refresh()` for that.
+
+### `requestPermission()`
+
+Request notification permission and update reactive `permission`. Resolves `{ status: NotificationPermission }`. In `vite dev` on macOS it resolves `'unavailable'`. In the built app, macOS may reject with `unavailable` when authorization cannot run. Linux has no notification consent prompt. Windows reports the existing OS setting; use [`host.permissions.openSettings('notifications')`](/host/os/permissions) to change it.
+
+```ts
+const { status } = await host.notifications.requestPermission();
+```
+
+### `on(event, callback)`
+
+Subscribe to a notification event. Returns an unsubscribe function synchronously. Event names and payloads are listed below.
+
+### `once(event, callback)`
+
+Like `on()`, but unsubscribe after the first delivery. Returns an unsubscribe function synchronously.
+
+### `onResponse(callback)`
+
+Deprecated raw-event helper. Takes `(data: { tag: string; actionId: string | null }) => void` and returns an unsubscribe function synchronously. Prefer `on('response', callback)` for normalized payloads, retention and page targeting.
+
+### `init()`, `refresh()`
+
+Both resolve the namespace. `init()` binds app-activation refresh, applies the configured foreground preference, refreshes permission and sets `ready`; it runs automatically. `refresh()` rereads permission, storing `'unavailable'` if the query fails.
+
+### `dispose()`
+
+Currently a synchronous no-op. Use the unsubscribe functions to remove your listeners.
+
+## Events
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `click` | `NotificationEvent` | The notification body is selected. |
+| `action` | `NotificationEvent` | An action button is selected. |
+| `reply` | `NotificationEvent` | Text is submitted on macOS or Windows. |
+| `dismiss` | `NotificationEvent` | The user dismisses it. |
+| `response` | `NotificationEvent` | Any of the four response kinds above. |
+| `shown` | `NotificationShownEvent` | The backend reports delivery while running. On macOS this comes from foreground presentation. |
+| `notificationResponse` | `{ tag: string; id: string; actionId: string \| null; kind: string }` | Raw native response; prefer normalized events. |
+
+`NotificationEvent<D>` fields:
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Notification identifier. |
+| `kind` | `NotificationEventKind` | `'click' \| 'action' \| 'reply' \| 'dismiss'`. |
+| `actionId` | `string \| null` | Selected action, or `null`. |
+| `input` | `string` (optional) | Submitted reply text. |
+| `url` | `string` (optional) | Action URL, otherwise notification URL; absent for dismissals. |
+| `data` | `D` (optional) | Original JSON data. |
+| `target` | `boolean` | Whether this context is the target page for default navigation. |
+| `preventDefault()` | `void` | Skip default navigation; call synchronously in the listener. |
+| `defaultPrevented` | `boolean` (readonly) | Whether navigation was prevented. |
+
+`NotificationShownEvent<D>` has `id: string`, optional `url: string` and `data: D`, and `push: boolean` indicating remote push.
+
+```ts
+const off = host.notifications.on('response', (event) => {
+  if (event.kind === 'click') event.preventDefault();
+});
+// Later: off();
+```
+
+Only the target page receives normalized responses; server listeners see all responses. A launch click is replayed at startup, and unhandled response events wait for their first listener in a bounded queue. `shown` is not retained. Default navigation routes same-origin URLs through SvelteKit, opens other HTTP(S) URLs externally, and delivers custom schemes through [`host.deepLink`](/host/app/deep-link).
+
+## Browser fallback
+
+In a plain browser page, notifications use the Notification API, with a service worker when available. Permission requests should run from a user gesture. Web Push requires a secure context and service workers; see [`host.push`](/host/os/push).
+
+Browser delays last only while the page stays open. Repeats reject with `unsupported`. Text replies and other presentation features depend on the browser. Badge calls resolve harmlessly when the browser lacks the badge API; `setForeground()` is a no-op.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `show`, `schedule` | partial | partial | partial |
+| `dismiss`, `cancel`, `dismissAll`, `delivered`, `pending` | ✓ | ✓ | ✓ |
+| `setBadge`, `getBadge` | ✓ | partial | ✓ |
+| `setForeground` | ✓ | partial | partial |
+| `isSupported`, `getPermissionStatus`, `requestPermission` | ✓ | ✓ | ✓ |
+| `on`, `once`, `onResponse` | ✓ | partial | partial |
+| `init`, `refresh`, `dispose` | ✓ | ✓ | ✓ |
+
+Partial support means the option, scheduler, dock, daemon and fallback limits described above. macOS urgency levels require macOS 12+. Windows tray balloons and Linux daemons may provide fewer event kinds than full native toasts.
+
+## Example
+
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
+
+  let result = $state('');
+  onMount(() => host.notifications.on('response', (event) => {
+    result = `${event.kind}: ${event.id}`;
+  }));
+
+  async function remind() {
+    const { status } = await host.notifications.requestPermission();
+    if (status !== 'granted') return;
+    await host.notifications.schedule({
+      id: 'review-report', title: 'Review the report', delay: 60_000,
+      url: '/reports', actions: [{ id: 'open', title: 'Open reports' }],
+    });
+  }
+</script>
+
+<p>Notifications: {host.notifications.permission}</p>
+<button onclick={remind}>Remind me in a minute</button>
+<button onclick={() => host.notifications.cancel('review-report')}>Cancel reminder</button>
+<p>{result}</p>
+```

@@ -1,0 +1,218 @@
+---
+title: 'host.webview: permissions, auth and certificates'
+description: Server-owned web permission decisions, HTTP authentication challenges and exact certificate exceptions.
+---
+
+These members of `host.webview` set policy for web content in windows, embedded views, popovers and sheets. All methods on this page are **server only** and macOS-only; page calls reject with `denied`. Policy is shared across views and [sessions](/host/web/sessions). Requests and credentials travel to the server, not to page event listeners.
+
+How-to: [Web view](/ui/web-view#authentication-challenges-and-tls-macos).
+
+## Methods
+
+### `setPermissionHandler(handler, options?)`
+
+**Server only.** Register a handler for per-origin web permission requests, or pass `null` to remove it.
+
+```ts
+await host.webview.setPermissionHandler((request) =>
+  request.origin === 'https://meet.example' && request.permission === 'microphone'
+    ? 'allow'
+    : 'deny'
+);
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `handler` | `PermissionHandler \| null` | Required | Returns a `WebPermissionDecision` or a promise of one. |
+| `options` | `{ timeoutMs?: number }` | `{}` | Handler settings. |
+| `options.timeoutMs` | `number` | `15000` | Reply deadline in milliseconds, from 50 to 30000 inclusive. |
+
+Resolves `void`. Invalid timeouts reject with `invalid_args`. A thrown/rejected handler, invalid answer, timeout, detached view or changed page URL denies the request. Handler answers are not persisted automatically.
+
+`WebPermission` is `'camera' | 'microphone' | 'location' | 'speech' | 'screenRecording'`. `WebPermissionDecision` is `'allow' | 'deny' | 'prompt'`.
+
+| `WebPermissionRequest` field | Type | Description |
+| --- | --- | --- |
+| `origin` | `string` | Normalized requesting HTTP(S) origin. |
+| `frame` | `{ origin: string; url: string; main: boolean } \| null` | Initiating frame; `null` when speech SPI does not expose it. |
+| `permission` | `WebPermission` | Requested capability. |
+| `viewId` | `string`, optional | Embedded-view identifier. |
+| `windowId` | `number`, optional | Public window id, including the owner of an embedded view. |
+| `popoverId` | `string`, optional | Popover identifier. |
+
+Saved decisions take precedence over the handler. Without a saved decision or handler, the exact app origin is allowed and other origins are denied. Unusable origins and mismatched initiating-frame origins are denied.
+
+`allow` permits the web request to proceed to usage-string and OS consent checks; it does not grant an OS permission. `prompt` asks WebKit to prompt where its delegate supports that distinction. Older boolean location callbacks, speech and screen-capture callbacks cannot express a separate WebKit prompt. Location, speech and display-capture integration depends on WebKit SPI. Camera plus microphone requests check each permission; speech also checks microphone policy. See [OS permissions](/host/os/permissions) for app declarations and system grants.
+
+### `setPermissionDecision(record)`
+
+**Server only.** Persist an explicit decision for an origin and permission, replacing any previous decision for that pair.
+
+```ts
+await host.webview.setPermissionDecision({
+  origin: 'https://meet.example',
+  permission: 'microphone',
+  decision: 'allow',
+});
+```
+
+| `WebPermissionRecord` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `origin` | `string` | Required | HTTP(S) origin; the native layer normalizes host case and default ports. |
+| `permission` | `WebPermission` | Required | Permission name from the union above. |
+| `decision` | `WebPermissionDecision` | Required | `allow`, `deny` or `prompt`. |
+
+Resolves `null`. Invalid origins, permission names or decisions reject with `invalid_args`. Records live in app-identifier-scoped user defaults, survive relaunches and apply across sessions. They govern later permission checks; they do not revoke an active capture stream.
+
+### `listPermissionDecisions()`
+
+**Server only.** Read the saved app-owned decisions.
+
+```ts
+const records = await host.webview.listPermissionDecisions();
+```
+
+Resolves `WebPermissionRecord[]`, described above. There is no guaranteed sort order.
+
+### `revokePermissionDecision(record)`
+
+**Server only.** Remove a saved origin/permission pair so future checks use the handler or default policy again.
+
+```ts
+await host.webview.revokePermissionDecision({
+  origin: 'https://meet.example', permission: 'microphone',
+});
+```
+
+`record` is `Pick<WebPermissionRecord, 'origin' | 'permission'>`: both fields are required and use the same validation as `setPermissionDecision`. Resolves `null`, including when no matching record exists. Invalid fields reject with `invalid_args`.
+
+### `onAuthChallenge(handler, options?)`
+
+**Server only.** Register one authentication handler, or pass `null` to remove it. Despite its `on` prefix, this method resolves `void`, not an unsubscribe function.
+
+```ts
+await host.webview.onAuthChallenge(async (challenge) => {
+  if (challenge.origin === 'https://intranet.example' &&
+      challenge.realm === 'Staff' && challenge.method === 'basic' &&
+      challenge.previousFailures === 0) {
+    return { username: 'alice', password: await readPassword() };
+  }
+  return 'default';
+});
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `handler` | `AuthChallengeHandler \| null` | Required | Returns an `AuthChallengeAnswer` or a promise of one. |
+| `options` | `{ timeoutMs?: number }` | `{}` | Handler settings. |
+| `options.timeoutMs` | `number` | `15000` | Reply deadline in milliseconds, from 50 to 30000 inclusive. |
+
+Invalid timeouts reject with `invalid_args`. A thrown/rejected handler, invalid answer, timeout, detached view or changed page URL cancels the challenge. Without a handler, WebKit uses system defaults. The app server's exact loopback origin always uses default handling. Unrecognized authentication methods also use system defaults.
+
+| `AuthChallenge` field | Type | Description |
+| --- | --- | --- |
+| `origin` | `string` | Normalized protection-space origin. |
+| `host` | `string` | Challenged host. |
+| `port` | `number` | Challenged port. |
+| `realm` | `string` | Authentication realm, or an empty string. |
+| `method` | `'basic' \| 'digest' \| 'ntlm' \| 'clientCertificate' \| 'serverTrust'` | Challenge type. |
+| `proxy` | `boolean` | Whether this is proxy authentication. |
+| `previousFailures` | `number` | Earlier failed attempts for this challenge. |
+| `viewId` | `string`, optional | Embedded-view identifier. |
+| `windowId` | `number`, optional | Public window identifier. |
+| `popoverId` | `string`, optional | Popover identifier. |
+| `fingerprint` | `string`, optional | Failed server-trust leaf certificate's SHA-256 DER fingerprint, lowercase hex. |
+| `identities` | `ClientIdentity[]` | Choices for client-certificate authentication; otherwise empty. |
+
+`AuthChallengeAnswer` is one of:
+
+| Answer | Effect |
+| --- | --- |
+| `{ username: string; password: string }` | Supply credentials for Basic, Digest or NTLM. |
+| `{ identity: string }` | Select a client identity offered in this challenge. |
+| `'cancel'` | Cancel authentication. |
+| `'default'` | Use system handling. This alone never accepts invalid server trust. |
+
+Credentials use `NSURLCredentialPersistenceNone`: the framework does not save them. Check the exact origin and realm and bound retries before supplying credentials. Valid system trust retains normal handling; failed trust can be accepted only through an exact registered certificate exception.
+
+### `listClientIdentities()`
+
+**Server only.** Enumerate Keychain identity choices without requesting Keychain UI.
+
+```ts
+const identities = await host.webview.listClientIdentities();
+```
+
+Resolves `ClientIdentity[]`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `identity` | `string` | Identifier to return from a client-certificate challenge. |
+| `label` | `string` | Certificate subject summary, possibly empty. |
+| `fingerprint` | `string` | SHA-256 of the DER certificate, lowercase hex. |
+
+No identities gives an empty array. Keychain enumeration errors reject with `unavailable`. A challenge accepts only an identity offered for that request. The private key stays in Keychain; using it may still require OS authorization. No identity is selected automatically.
+
+### `allowCertificate(pin)`
+
+**Server only.** Trust one exact host and leaf certificate for this app run.
+
+```ts
+await host.webview.allowCertificate({
+  host: 'intranet.example', fingerprint: expectedSha256Hex,
+});
+```
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `host` | `string` | Required | Exact hostname, without a URL, slash or wildcard. Matching is case-insensitive. |
+| `fingerprint` | `string` | Required | 64 hexadecimal characters: SHA-256 of the DER leaf certificate. Normalized to lowercase. |
+
+Resolves `null`. An empty host, a host containing `/` or `*`, or a malformed fingerprint rejects with `invalid_args`. The exception matches that host and certificate across ports and sessions, and is not persisted. There is no wildcard or global trust bypass. This controls WebKit, not Bun fetch or server TLS settings.
+
+Register an independently verified expected fingerprint before navigation. A server-trust handler may register that expected fingerprint and then return `default`. Do not derive trust merely from the fingerprint of a failed connection.
+
+### `revokeCertificate(pin)`
+
+**Server only.** Remove the exception for an exact host/fingerprint pair.
+
+```ts
+await host.webview.revokeCertificate({
+  host: 'intranet.example', fingerprint: expectedSha256Hex,
+});
+```
+
+`pin` has the same required fields and validation as `allowCertificate`. Resolves `null`, including for an absent exception; invalid fields reject with `invalid_args`. Revocation affects later challenges, not existing TLS connections.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `setPermissionHandler` | ✓ | — | — |
+| `setPermissionDecision`, `listPermissionDecisions`, `revokePermissionDecision` | ✓ | — | — |
+| `onAuthChallenge`, `listClientIdentities` | ✓ | — | — |
+| `allowCertificate`, `revokeCertificate` | ✓ | — | — |
+
+These are handler registrations and request/reply flows, not page-broadcast events. Use the callbacks above to receive requests.
+
+## Example
+
+Server code can offer an explicit client identity only to a known server:
+
+```ts
+const choices = await host.webview.listClientIdentities();
+const chosen = choices.find((item) => item.identity === savedIdentity);
+await host.webview.onAuthChallenge((challenge) => {
+  if (challenge.origin !== 'https://intranet.example') return 'default';
+  if (challenge.method !== 'clientCertificate' || challenge.previousFailures > 0) {
+    return 'cancel';
+  }
+  return chosen && challenge.identities.some((item) => item.identity === chosen.identity)
+    ? { identity: chosen.identity }
+    : 'cancel';
+});
+// On logout, remove the handler:
+await host.webview.onAuthChallenge(null);
+```
+
+For navigation vetoes and declarative request blocking, see [content rules and scripts](/host/web/web-content).

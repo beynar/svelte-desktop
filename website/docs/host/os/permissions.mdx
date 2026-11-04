@@ -1,0 +1,223 @@
+---
+title: host.permissions
+description: Read reactive OS permission statuses, request access and guide users to system settings.
+---
+
+`host.permissions` tracks app-level OS consent. Declare reasons in `desktop.config.ts`, then check or request access at run time. Per-origin decisions for websites and embedded views are a separate layer: see [web permissions](/host/web/web-policy).
+
+How-to: [Permissions](/features/permissions).
+
+## Reactive state
+
+`PermissionStatus` is `'granted' | 'denied' | 'notDetermined' | 'unknown'`. A property read returns the cached status; it does not initiate a native check. An unread or uninitialized entry is `'unknown'`.
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `camera`, `microphone`, `location`, `contacts`, `calendars`, `reminders`, `photos`, `bluetooth` | `PermissionStatus` | One reactive status for each permission name. |
+| `speech`, `appleEvents`, `notifications`, `screenRecording`, `accessibility`, `inputMonitoring` | `PermissionStatus` | One reactive status for each permission name. |
+| `fullDiskAccess`, `desktopFolder`, `documentsFolder`, `downloadsFolder` | `PermissionStatus` | One reactive status for each permission name. |
+| `ready` | `boolean` | Initialization completed; initially `false`. |
+| `error` | `Error \| null` | Initialization error captured by automatic store initialization. |
+
+These eighteen names form the exported `PermissionName` type. They are accepted by the TypeScript API and configuration; not every native backend implements a meaningful check for every name.
+
+Declared and previously checked statuses refresh on app activation and window focus. Requests and guides update the relevant cached status. A refresh failure stores `'unknown'` for that entry.
+
+## Configuration
+
+Each `permissions` entry is a reason string or `false`. The build turns known reasons into Info.plist usage descriptions and relevant macOS entitlements.
+
+```ts desktop.config.ts
+permissions: {
+  camera: 'Scan documents',
+  microphone: 'Record voice notes',
+  screenRecording: 'Capture screenshots for reports',
+  location: false,
+},
+```
+
+| Entry | Type | Default | Description |
+| --- | --- | --- | --- |
+| `camera`, `microphone`, `location`, `speech` | `string \| false` | App-specific reason | Default reasons allow page web APIs to work. A string replaces the reason; `false` removes the default. |
+| All other `PermissionName` entries | `string \| false` | Undeclared | Declare the reason for the capability the app uses. |
+| Raw usage-description keys, such as `NSCameraUsageDescription` | `string` | Omitted | Passed through to Info.plist. |
+| `pages` | `string[]` | Omitted | Deprecated bridge allowlist; use `bridge.allow`. This is not OS consent or per-origin web policy. |
+
+`request()` and `guide()` require a named declaration for `camera`, `microphone`, `location`, `contacts`, `calendars`, `reminders`, `photos`, `bluetooth`, `speech`, `appleEvents`, `desktopFolder`, `documentsFolder` and `downloadsFolder`. Missing declarations reject with `undeclared`, before calling native code. The check applies on every platform. Use the named entry for these calls; a raw Info.plist key alone does not satisfy the named declaration check.
+
+## Methods
+
+### `status(name)`
+
+Check the status now, cache it and keep it in subsequent refreshes.
+
+```ts
+const status = await host.permissions.status('camera');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `name` | `PermissionName \| string` | Permission to check. This same type is used by all name-taking methods below. |
+
+Resolves `PermissionStatus`. On macOS, native checks exist for `camera`, `microphone`, `notifications`, `screenRecording`, `accessibility`, `inputMonitoring` and `fullDiskAccess`. Other names reject with `invalid_args`, even when declared. Full Disk Access detection can return `'unknown'`.
+
+Windows checks desktop-wide camera, microphone and location consent; other names return `'granted'`. Linux checks camera device access, X11 screen-capture availability and notification-service availability; other names return `'granted'`. These broad results do not prove a particular resource can be used. The Linux notification check can return `'unavailable'` at run time despite the narrower `PermissionStatus` type; use [`host.notifications.getPermissionStatus()`](/host/os/notifications) for notification-specific statuses.
+
+### `request(name, options?)`
+
+Request access and update the cached status.
+
+```ts
+const status = await host.permissions.request('camera');
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `guide` | `boolean` | `true` | For Settings-only permissions, use the guided flow. Other permissions use the native request operation. |
+
+Resolves `PermissionStatus`. The four Settings-only names are `screenRecording`, `accessibility`, `inputMonitoring` and `fullDiskAccess`. With `guide: false`, macOS performs its native request instead; Full Disk Access then rejects with `unsupported`.
+
+macOS directly requests camera, microphone and notifications, and provides native request behavior for Screen Recording, Accessibility and Input Monitoring. Other names reject with `invalid_args` after the declaration check. Camera or microphone requests without the packaged Info.plist usage key reject with `unavailable`.
+
+Windows and Linux native requests read the current status without a grant prompt. They do not open Settings automatically for camera or microphone; use `openSettings()` explicitly. A Settings-only request uses the guide fallback described below.
+
+### `guide(name, options?)`
+
+Open a system-settings guide and wait for a grant or cancellation.
+
+```ts
+const { status, canceled } = await host.permissions.guide('screenRecording');
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `open` | `boolean` | `true` | Open Settings as well as showing the panel. |
+
+Resolves `{ status: PermissionStatus; canceled: boolean }`. macOS supports guides for `screenRecording`, `accessibility`, `inputMonitoring`, `fullDiskAccess`, `camera` and `microphone`; other names reject with `invalid_args`. The panel displays the configured reason and live status. Eligible panes let the user drag the app icon into the list. Starting another guide cancels the previous one. A permission already granted resolves immediately with `canceled: false`.
+
+Linux and Windows have no guide panel. The wrapper attempts to open Settings for mapped names unless `open: false`, then reads the current status and returns `canceled: false`. That fallback returns `'unknown'` if the check fails and ignores errors opening Settings. It does not wait for a user decision.
+
+### `cancelGuide()`
+
+Close the active guide. Resolves `{ canceled: boolean }`; `true` means an open guide was canceled. Its pending `guide()` call also resolves with `canceled: true`. Without a native guide, or if the native call fails, resolves `{ canceled: false }`.
+
+```ts
+await host.permissions.cancelGuide();
+```
+
+### `guideState()`
+
+Inspect the current native guide panel.
+
+```ts
+const panel = await host.permissions.guideState();
+```
+
+Resolves `{ open: boolean; name?: string; anchored?: boolean; draggable?: boolean }`. `name` identifies the guided permission, `anchored` describes placement next to Settings, and `draggable` indicates whether the pane accepts the app icon. A closed guide returns `{ open: false }`.
+
+macOS only.
+
+### `openSettings(name)`
+
+Open the permission's mapped settings pane.
+
+```ts
+await host.permissions.openSettings('camera');
+```
+
+Typed to resolve `{ opened: boolean }`. macOS maps camera, microphone, notifications and the four Settings-only names; an unmapped name rejects with `invalid_args`. Windows opens its privacy settings, falling back to the general privacy page when no specific pane is mapped. Linux launches `gnome-control-center`, rejects with `unavailable` when it cannot launch, and currently returns `null` rather than the typed object.
+
+### `get(name)`
+
+Synchronously return the reactive cached `PermissionStatus`, or `'unknown'` if it has not been checked. This is the method form of `host.permissions.camera`.
+
+```ts
+const camera = host.permissions.get('camera');
+```
+
+### `all()`
+
+Synchronously return the reactive known-status map as `Record<string, PermissionStatus>`. It contains declared or previously checked names, not necessarily all eighteen names.
+
+```ts
+const statuses = host.permissions.all();
+```
+
+### `declared()`
+
+Synchronously return a copy of the resolved configuration as `Record<string, string>`, including default reasons. This lists declarations, not grants.
+
+```ts
+const reasons = host.permissions.declared();
+```
+
+### `settingsOnly(name)`
+
+Synchronously return `boolean`: whether the name is one of `screenRecording`, `accessibility`, `inputMonitoring` or `fullDiskAccess`. This is the API's classification for macOS guides, not a test of current OS support.
+
+```ts
+const needsSettings = host.permissions.settingsOnly('screenRecording');
+```
+
+### `init()`
+
+Bind permission and focus listeners, refresh statuses and set `ready`. Resolves the namespace. Runs automatically when the platform binds.
+
+### `refresh()`
+
+Recheck declared and previously checked permissions. Resolves the namespace. Individual failed checks become `'unknown'`.
+
+```ts
+await host.permissions.refresh();
+```
+
+### `on('change', callback)`
+
+Subscribe to cached status changes; returns an unsubscribe function synchronously.
+
+## Events
+
+| Event | Callback | When |
+| --- | --- | --- |
+| `change` | `(name: string, status: PermissionStatus) => void` | A previously known cached status changes. Initial insertion does not emit. |
+
+```ts
+const off = host.permissions.on('change', (name, status) => {
+  console.log(name, status);
+});
+// Later: off();
+```
+
+`host.on('permissionChanged', callback)` is the lower-level macOS guide event with `{ name: string; status: PermissionStatus }`. It reports grants seen by the guide; the store's `change` event also covers status changes found by refresh. Both subscriptions return unsubscribe functions.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `status`, `request` | partial | partial | partial |
+| `guide` | partial | partial | partial |
+| `cancelGuide` | ✓ | ✓ | ✓ |
+| `guideState` | ✓ | — | — |
+| `openSettings` | partial | partial | ✓ |
+| `get`, `all`, `declared`, `settingsOnly` | ✓ | ✓ | ✓ |
+| `init`, `refresh`, `on` | ✓ | ✓ | ✓ |
+
+Partial support refers to the permission-name limits, fallback guides and Linux return-shape difference documented above. A declaration is not evidence of a native permission implementation.
+
+## Example
+
+```svelte
+<script lang="ts">
+  let message = $state('');
+
+  async function allowCamera() {
+    const status = await host.permissions.request('camera');
+    message = status === 'granted' ? 'Camera allowed' : 'Camera is not allowed';
+  }
+</script>
+
+<p>Camera: {host.permissions.camera}</p>
+<button onclick={allowCamera}>Allow camera</button>
+<button onclick={() => host.permissions.openSettings('camera')}>Camera settings</button>
+<p>{message}</p>
+```

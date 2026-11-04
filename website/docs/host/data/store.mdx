@@ -1,0 +1,99 @@
+---
+title: host.store
+description: A reactive key-value record persisted as JSON.
+---
+
+Use `host.store` for small JSON settings and remembered values. It works in pages and server code; pages ask the app server to read and write the file.
+
+How-to: [Dialogs, clipboard and services](/ui/platform-services#key-value-store).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `data` | `Record<string, unknown>` | This context's in-memory record. Updated by `set`, `delete`, `clear` and `load`. |
+| `path` | `string \| null` | `null` until loaded, then the filename `svelte-desktop-store.json`, not an absolute path. |
+| `ready` | `boolean` | `true` after successful initialization. |
+| `error` | `Error \| null` | Initialization failure, or `null`. Later `load` and `flush` failures reject their promises. |
+
+The file is in the directory returned by [`host.app.getPath('appData')`](/host/app/app). This is the OS app-data root, not the app-specific `host.paths.data` directory. In-memory records are local to each context: writes do not automatically refresh another window's record. Use [`host.broadcast`](/host/data/events) and `load()` when coordinating changes.
+
+## Methods
+
+### `get<T = unknown>(key)`
+
+Returns `T | undefined` synchronously. `key` is a `string`; a missing key returns `undefined`. The type parameter does not validate stored data.
+
+```ts
+const lastOpened = host.store.get<string>('lastOpened');
+```
+
+### `set(key, value)`
+
+Updates the record synchronously and schedules a disk write. Returns `void`.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `key` | `string` | Record key. |
+| `value` | `unknown` | A JSON-serializable value. `undefined` deletes the key. |
+
+```ts
+host.store.set('lastOpened', '/Users/me/notes.md');
+```
+
+Writes are debounced by 250 ms. Scheduled write failures are swallowed; use `flush()` when the caller needs to know whether persistence succeeded. Values use JSON serialization, so do not store cyclic objects or values that cannot round-trip through JSON.
+
+### `delete(key)`
+
+Removes the `string` key and schedules a write. A missing key is harmless. Returns `void`.
+
+### `clear()`
+
+Replaces the record with `{}` and schedules a write. Returns `void`.
+
+### `load()`
+
+Re-reads the file, replaces `data` and updates `path`. Resolves `Record<string, unknown>`. A missing file, malformed JSON, array or non-object JSON value loads as `{}`. File I/O failures reject.
+
+### `flush()`
+
+Cancels the pending debounce and writes the current record immediately. Resolves `void`; serialization and file I/O failures reject. Calling it before any successful load rejects with `Error('store.flush() before load()')`.
+
+### `init()`
+
+Loads the file, updates `data` and `path`, sets `ready` and resolves the store itself. The runtime calls it automatically when the native backend becomes available; normal app code does not need to call it.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `get`, `set`, `delete`, `clear` | ✓ | ✓ | ✓ |
+| `load`, `flush`, `init` | ✓ | ✓ | ✓ |
+
+Persistence uses Bun in the app server. Page requests time out after ten seconds if the app server does not answer. The underlying file helper uses `localStorage` in a browser page without a native backend; automatic store initialization still depends on backend readiness.
+
+## Example
+
+```svelte
+<script lang="ts">
+  let saved = $state(false);
+  let error = $state('');
+
+  async function remember() {
+    saved = false;
+    error = '';
+    try {
+      host.store.set('lastOpened', '/Users/me/notes.md');
+      await host.store.flush();
+      saved = true;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+</script>
+
+<p>Last opened: {host.store.get<string>('lastOpened') ?? 'None'}</p>
+<button disabled={!host.store.ready} onclick={remember}>Remember</button>
+{#if saved}<p>Saved</p>{/if}
+{#if error}<p role="alert">{error}</p>{/if}
+```

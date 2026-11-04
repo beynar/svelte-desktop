@@ -1,0 +1,98 @@
+---
+title: host.files
+description: Persist and reopen macOS file bookmarks with a scoped access lifetime.
+---
+
+`host.files` stores access to a user-selected file or folder across launches. It manages bookmarks and access handles; read and write file contents in server code while the handle remains open.
+
+How-to: [Security-scoped file bookmarks](/ui/platform-services#security-scoped-file-bookmarks-macos).
+
+## Methods
+
+### `createBookmark(path)`
+
+Create an opaque bookmark for a path the app can already access.
+
+```ts
+const { bookmark } = await host.files.createBookmark('/Users/me/Documents/Reports');
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `path` | `string` | Absolute file or directory path. macOS expands `~` before checking it. |
+
+Resolves `{ bookmark: string }`, a base64-encoded bookmark suitable for persistent storage. Rejects with `invalid_args` for a non-absolute path, or `unavailable` if macOS cannot create the bookmark. Creating a bookmark cannot grant new sandbox access.
+
+macOS only.
+
+### `openBookmark(bookmark)`
+
+Resolve a saved bookmark and hold its file access until released.
+
+```ts
+const access = await host.files.openBookmark(bookmark);
+try {
+  // Complete the operation that needs access.path here.
+} finally {
+  await access.release();
+}
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `bookmark` | `string` | Opaque string from `createBookmark()` or an open dialog with `securityScoped: true`. |
+
+Resolves `BookmarkAccess`:
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `path` | `string` | Resolved current filesystem path. |
+| `stale` | `boolean` | Recreate and persist the bookmark while this access remains open. |
+| `release()` | `Promise<void>` | Release this handle. Repeated calls share the successful release; a failed release can be retried. |
+
+Each open acquires an independent handle, even for the same bookmark. Release each one in `finally`. In a sandbox this balances native `startAccessingSecurityScopedResource` and `stopAccessingSecurityScopedResource` calls.
+
+Rejects with `invalid_args` for empty or invalid base64 data, `unavailable` if bookmark resolution fails or does not yield a file URL, and `denied` if scoped access cannot start. Well-formed base64 containing an invalid bookmark may fail during resolution with `unavailable`.
+
+macOS only.
+
+## Sandbox access
+
+In an App Sandbox build, including Mac App Store apps, these APIs create and resolve security-scoped bookmarks. The app still needs the appropriate user-selected file entitlements. Bookmarks do not bypass them.
+
+Start with [`host.dialog.showOpenDialog({ securityScoped: true })`](/host/windows/dialog). Its `bookmarks` array aligns with `paths`; cancellation returns empty arrays. Bookmark creation failures reject the dialog call instead of returning incomplete grants.
+
+Outside the sandbox, the same API creates and resolves ordinary bookmarks. No extra file access is required, but each returned handle should still be released. Keep access open for the entire native or server operation, including work in another context that uses the resolved path.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `createBookmark`, `openBookmark` | ✓ | — | — |
+| `BookmarkAccess.release` | ✓ | — | — |
+
+## Example
+
+Save a selected folder in [`host.store`](/host/data/store), then refresh a stale bookmark before releasing access:
+
+```ts
+const selection = await host.dialog.showOpenDialog({
+  directories: true,
+  files: false,
+  securityScoped: true,
+});
+if (!selection.canceled && selection.bookmarks?.[0]) {
+  let bookmark = selection.bookmarks[0];
+  const access = await host.files.openBookmark(bookmark);
+  try {
+    if (access.stale) {
+      ({ bookmark } = await host.files.createBookmark(access.path));
+    }
+    host.store.set('reports-folder', bookmark);
+    await host.store.flush();
+    await host.shell.showItemInFolder(access.path);
+  } finally {
+    await access.release();
+  }
+}
+```

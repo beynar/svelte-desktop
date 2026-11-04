@@ -4,7 +4,7 @@ description: The svelte-desktop command and the Vite commands that drive develop
 ---
 
 ```sh
-bunx svelte-desktop <create|init|doctor|icon|preflight|keygen>
+bunx svelte-desktop <create|init|doctor|icon|add|preflight|keygen|release>
 ```
 
 ## create
@@ -25,7 +25,7 @@ Adds desktop support to the SvelteKit project in the current directory:
 
 - writes `desktop.config.ts` (left alone if it exists), with `appName` and `identifier` derived from `package.json`;
 - rewrites `sveltekit(` to `desktop(` in `vite.config.ts` and removes the adapter, which the desktop plugin sets;
-- adds the scripts `dev` (`bunx --bun vite dev`), `build` (`bunx --bun vite build`) and `test:desktop`;
+- sets the scripts `dev` (`bunx --bun vite dev`), `build` (`bunx --bun vite build`) and `test:desktop` (`bun test --timeout 30000 tests/`), replacing any existing values;
 - adds `.desktop` to `.gitignore`.
 
 Then `bun add -d @sveltejs/adapter-bun @svelte-desktop/shell && bun run dev`.
@@ -36,7 +36,15 @@ Then `bun add -d @sveltejs/adapter-bun @svelte-desktop/shell && bun run dev`.
 bunx svelte-desktop doctor
 ```
 
-Checks Bun (1.4 or newer, and whether it's a canary for `aot`/`trim`), macOS and the Xcode tools (`clang`, `swiftc`, `codesign`, `hdiutil`, `lipo`), `@sveltejs/adapter-bun`, the config and icon, the signing identity, the notary profile (by querying `notarytool`), and the update signing key when `update` is set.
+Checks Bun (1.4 or newer, and whether its revision says canary), the host toolchain, `@sveltejs/adapter-bun`, the config and icon setting. It reports installed `cargo` and `go` tools when found.
+
+| Host | Toolchain checks |
+| --- | --- |
+| macOS | `clang`, `swiftc`, `codesign`, `hdiutil`, `lipo` |
+| Linux | WebKitGTK 4.1 through `pkg-config`; `c++`, `appimagetool` |
+| Windows | `makensis`, `osslsigncode` |
+
+The signing checks query `security find-identity`, the notary profile through `xcrun notarytool`, and the update private-key file when `update` is set. These signing checks use macOS tools, even on other hosts. The canary check is a revision heuristic; builds inspect the compiler's supported flags directly. Reported failed checks do not set a non-zero exit status, so `doctor` is a diagnostic report, not a CI gate.
 
 ## icon
 
@@ -44,15 +52,15 @@ Checks Bun (1.4 or newer, and whether it's a canary for `aot`/`trim`), macOS and
 bunx svelte-desktop icon [image] [--background '#hex'] [--out dir]
 ```
 
-Generates every target's icons now, from `image` or from the configured icon, into `.desktop/icons` (what the build uses) or `--out`. See [App icon](/shipping/app-icon).
+Generates every target's icons now, from `image` or from the configured icon, into `.desktop/icons` (what the build uses) or `--out`. `--background` overrides the macOS icon background. Without `image`, this command loads the config and its icon fallback only when `desktop.config.ts` exists; a project using only `.js` or `.mjs` must pass the image explicitly. Passing an image generates a preview; it does not change the config. See [App icon](/shipping/app-icon).
 
 ## add
 
 ```sh
-bunx svelte-desktop add rust|go
+bunx svelte-desktop add rust|go|python
 ```
 
-Creates a working native plugin in `native/rust` (a cargo crate) or `native/go` (a Go module), wired to the SDK in the package, with one example command. `vite dev` builds it and types it in `src/native.d.ts`. See [Native code](/features/native-code#rust-and-go-plugins).
+Creates a working native plugin in `native/rust` (a Cargo crate) or `native/go` (a Go module), wired to the SDK in the package, with the example command `hello.rust` or `hello.go`. `add python` creates `native/python` with a `pyproject.toml` and a `hello.python` command; Python commands need `uv`. Requires `cargo` or `go` to build. An existing destination is left untouched and returns an error. With the default `native` directory, `vite dev` builds it and writes its types to `src/native.d.ts`; this command always scaffolds under `native/`, even if your config uses another directory. See [Native code](/native/plugins).
 
 ## preflight
 
@@ -70,11 +78,31 @@ bunx svelte-desktop keygen [--out updater.key] [--force]
 
 Creates the ed25519 key pair for [signed updates](/shipping/self-update): the private key (mode 0600) and `<out>.pub` with the base64 public key for `update.publicKey`.
 
+## release
+
+```sh
+bunx svelte-desktop release <merge|fetch-previous|sign|verify|make-manifest|pack|keygen> …
+```
+
+Publishing updates, mostly from CI (see [Release with CI](/shipping/release)):
+
+| Command | |
+| --- | --- |
+| `release fetch-previous <update.json URL> --platform <os-arch> [--platform …] [--dir .desktop/dist/release] [--public-key <base64>]` | Downloads archives into `<dir>/<version>/`, checking SHA-256 and size against the manifest, so the next build makes delta patches. Repeat `--public-key` to accept several keys; supplying keys also verifies the manifest signature. HTTP 403 or 404 means no previous release; missing platform artifacts are skipped. |
+| `release merge <manifest.json>… (--key <file> \| --key-env VAR) [--out update.json] [--notes <text> \| --notes-file <file>] [--minimum-version x.y.z]` | Combines signed or unsigned manifests into one signed manifest. They must have the same name, version and channel. Writes to stdout when `--out` is absent. |
+| `release sign <manifest.json> (--key <file> \| --key-env VAR) [--out <file>]` | Signs or re-signs a manifest. Overwrites the input when `--out` is absent. |
+| `release verify <manifest.json> --public-key <base64> [--public-key …]` | Checks the manifest signature against any supplied key. |
+| `release make-manifest --name <app> --version <x.y.z> --artifact <os-arch>=<archive> [--artifact …] (--key <file> \| --key-env VAR) [--channel <ch>] [--base-url <url>] [--notes <text> \| --notes-file <file>] [--minimum-version <x.y.z>] [--released-at <iso>] [--out <file>]` | Creates a signed manifest. Channel defaults to `stable`, release date to now, and output to stdout. Archives must end in `.tar.zst` or `.tar.gz`. |
+| `release pack <path>… --out <archive.tar.zst\|archive.tar.gz>` | Packs one or more paths into an archive; it does not sign a manifest. |
+| `release keygen [--out updater.key] [--force]` | The same key generation command as top-level `keygen`. |
+
+`--key-env VAR` reads the private key text from `VAR`; `--key` reads a file. When both are supplied, the file wins. `--notes-file` takes precedence over `--notes`. Run `bunx svelte-desktop release --help` for the updater command usage.
+
 ## Vite
 
 | Command | |
 | --- | --- |
-| `bunx --bun vite dev` | The native window on the Vite server. Closing it stops Vite. |
-| `bunx --bun vite build` | Build and package for `build.target` (default: the host) into `.desktop/dist` |
+| `bunx --bun vite dev` | The native window on the Vite server. Closing it stops Vite unless `exitOnClose` is `false`. `noWindow` or `SVELTE_DESKTOP_NO_WINDOW` skips the shell. |
+| `bunx --bun vite build` | Build and package for `build.target` (default: the host) into `build.outDir` (default `.desktop/dist`). |
 | `SVELTE_DESKTOP_TARGET=<target> bunx --bun vite build` | Another target without editing the config |
 | `bun test --timeout 30000 tests/` | [End-to-end tests](/features/testing) against the built app |

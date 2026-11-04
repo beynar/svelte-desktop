@@ -1,0 +1,110 @@
+---
+title: host.windowState
+description: Save and restore a window snapshot in the app's user data directory.
+---
+
+`host.windowState` stores one window snapshot in `window-state.json` under `host.app.getPath('userData')`. Page code asks the app server to read and write it; server code uses Bun's file API directly. All windows share this file, so saving from another window replaces the previous snapshot.
+
+How-to: [Saving the frame](/ui/windows#saving-the-frame).
+
+## Reactive state
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `persisted` | `PersistedWindowState \| null` | Last snapshot read during `init()`, written by `save()`, or applied by `restore()`. Initially `null`. |
+| `saving` | `boolean` | `true` while `save()` is running, including its file write. Initially `false`; resets after failure too. |
+| `ready` | `boolean` | `true` after initialization. Initially `false`. |
+| `error` | `Error \| null` | Initialization failure, if any. Initially `null`. |
+
+### `PersistedWindowState`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `bounds` | `{ x: number; y: number; width: number; height: number }` | The outer frame returned by [`host.windows.getBounds()`](/host/windows/window#geometry). Always captured, even with partial flags. |
+| `state` | `WindowStateName` (optional) | `'normal'`, `'maximized'`, or `'fullscreen'`; captured when `maximized` or `fullscreen` is selected. |
+| `visible` | `boolean` (optional) | Captured when `visible` is selected. Uses the inverse of `isMinimized()`, not actual hidden/visible state; falls back to `true` if that query fails. |
+| `flags` | `WindowStateFlag[]` (optional) | The aspects selected when saving. Optional for older snapshots. |
+| `savedAt` | `number` | Save time from `Date.now()`, in milliseconds since the Unix epoch. |
+
+`WindowStateFlag` is `'size' | 'position' | 'maximized' | 'visible' | 'fullscreen'`.
+
+## Methods
+
+### `save(options?)`
+
+Capture the current window, write the snapshot, update `persisted`, and resolve `PersistedWindowState`.
+
+```ts
+await host.windowState.save({ flags: ['position', 'size', 'maximized'] });
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `flags` | `WindowStateFlag[]` | All five flags | Aspects to capture. An empty array still records `bounds`, `flags`, and `savedAt`. |
+
+Window-query and file-write failures reject. The previous `persisted` value stays in place if saving fails.
+
+### `load()`
+
+Read the file without changing the window. Resolves `PersistedWindowState | null`. A missing file, invalid JSON, or bounds without all four numeric fields returns `null`; file I/O failures reject. This direct method does **not** update the reactive `persisted` field.
+
+```ts
+const snapshot = await host.windowState.load();
+```
+
+### `restore(options?)`
+
+Load the snapshot and apply selected aspects to the current window. Resolves `PersistedWindowState | null`, with `null` meaning there was no usable snapshot. A successful restore updates `persisted`; a `null` result leaves it unchanged.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `flags` | `WindowStateFlag[]` | Saved `flags`, or all five for older snapshots | Aspects to apply. |
+
+Application order is position, size, maximized state, fullscreen, then visibility. Operations run sequentially; failure rejects and can leave earlier changes applied. Position uses `setPosition()`, size uses `setSize()`, and visibility uses `show()` or `hide()`.
+
+The stored size is an outer frame, while `setSize()` accepts content size. With native decorations, restoring size can therefore produce a different outer frame. This API does not convert between those sizes or save separate normal-state bounds while maximized or fullscreen. For native main-window frame persistence, see `autosaveName` in the [guide](/ui/windows#saving-the-frame).
+
+### `init()`
+
+Load `persisted`, set `ready` to `true`, and resolve the namespace itself. The host initializes this store during startup.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `init`, `load` | ✓ | ✓ | ✓ |
+| `save`, `restore` | ✓ | ✓ | ✓ |
+
+These are JavaScript methods using app-file storage and the supported [window operations](/host/windows/window). They target the calling page's window; server calls use the native default target. There is no `windowId` option and no per-window filename.
+
+## Example
+
+Save only position and maximized state when a user asks, then apply that same selection next time:
+
+```svelte
+<script lang="ts">
+  let message = $state('');
+
+  async function save() {
+    try {
+      await host.windowState.save({ flags: ['position', 'maximized'] });
+      message = 'Window position saved';
+    } catch (error) {
+      message = String(error);
+    }
+  }
+
+  async function restore() {
+    try {
+      const snapshot = await host.windowState.restore();
+      message = snapshot ? 'Window position restored' : 'No saved position';
+    } catch (error) {
+      message = String(error);
+    }
+  }
+</script>
+
+<button disabled={host.windowState.saving} onclick={save}>Save position</button>
+<button onclick={restore}>Restore position</button>
+<p>{message}</p>
+```

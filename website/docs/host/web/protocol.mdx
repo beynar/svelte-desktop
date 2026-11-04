@@ -1,0 +1,111 @@
+---
+title: host.protocol
+description: Serve custom-scheme web resources from server-side Request handlers.
+---
+
+`host.protocol` registers custom resource handlers for URLs such as `asset://archive/cover.svg`. Native resource loading is macOS only. All three methods are synchronous and server-only; this service has no reactive state.
+
+How-to: [Custom resource protocols](/features/protocols).
+
+## Configuration
+
+Declare schemes in `desktop.config.ts` before any web views are created:
+
+```ts
+protocols: ['asset']
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `protocols` | `string[]` | `[]` | Resource schemes installed on every native web-view configuration at startup. Adding a scheme requires a restart. |
+
+Schemes must match `^[a-z][a-z0-9+.-]*$`. The names `http`, `https`, `file`, `data`, `blob`, `about`, `javascript`, `ws` and `wss` are reserved. Native code also excludes schemes already handled by WebKit.
+
+This option is separate from `schemes`, which registers [OS deep links](/host/app/deep-link). A resource handler answers a web-view request; it does not register an application URL handler or grant access to the host bridge.
+
+## Methods
+
+### `handle(scheme, handler)`
+
+Server-only. Registers one handler and returns `void`.
+
+```ts
+host.protocol.handle('asset', (request) => {
+  const url = new URL(request.url);
+  if (url.hostname !== 'archive') return new Response('Not found', { status: 404 });
+  return Response.json({ path: url.pathname });
+});
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `scheme` | `string` | Lowercase custom scheme declared in `protocols`. |
+| `handler` | `ProtocolHandler` | `(request: Request) => Response \| Promise<Response>`. |
+
+The `Request` includes URL, method, headers, an abort signal and a buffered body when available. Streaming request uploads are unsupported. Return a standard `Response`; its body can be a `ReadableStream` or `Bun.file`. Response bodies stream in acknowledged chunks of at most 64 KiB. `HEAD` responses send headers without a body.
+
+The registry is process-global across [sessions](/host/web/sessions), windows, views and popovers. Register handlers again on each launch. Registration does not check that the scheme was declared in config; a registry entry alone does not install a native scheme handler.
+
+Throws `invalid_args` for an invalid or duplicate scheme, `TypeError` for a non-function handler, or `denied` from page code. A handler that throws or returns something other than a `Response` fails the resource load. A declared scheme without a registered handler returns 404. Native code cancels requests that have not produced response headers within 30 seconds; an active response stream has no such deadline after headers.
+
+When WebKit stops a request, the handler's `request.signal` is aborted and the response reader is canceled. Pass that signal to asynchronous work to release resources promptly.
+
+### `unhandle(scheme)`
+
+Server-only. Removes the handler for future requests and returns `void`. Removing an absent handler is harmless. Active responses continue, and native scheme registration remains installed.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `scheme` | `string` | Lowercase custom scheme. |
+
+```ts
+host.protocol.unhandle('asset');
+```
+
+Throws `invalid_args` for an invalid scheme or `denied` from page code.
+
+### `isProtocolHandled(scheme)`
+
+Server-only. Returns `boolean`: whether this process currently has a handler for the exact string. It does not check native registration, config declarations or platform support.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `scheme` | `string` | Registry key to inspect; unlike `handle` and `unhandle`, this method does not validate or normalize it. |
+
+```ts
+const registered = host.protocol.isProtocolHandled('asset');
+```
+
+Throws `denied` from page code.
+
+## Web-origin restrictions
+
+Custom schemes retain WebKit's normal origin restrictions. Declaring a protocol does not grant secure-context, CORS, `fetch()` or Service Worker privileges. In particular, **custom-scheme `fetch()` is not guaranteed to work**, even when an image or frame can load that URL. Use authenticated SvelteKit HTTP routes when you need ordinary web-origin behavior.
+
+Validate URLs before serving private files. Neither the scheme nor the requested path establishes permission to read a file.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `handle`, `unhandle`, `isProtocolHandled` | ✓ | partial | partial |
+
+On Linux and Windows, the JavaScript registry methods run, but native custom resource protocols are not implemented. A successful registration or `isProtocolHandled` result does not mean a resource can load there. On macOS, handlers run in the Bun Worker in packaged apps and in the Vite server during development.
+
+## Example
+
+```ts src/hooks.server.ts
+// desktop.config.ts declares protocols: ['asset'].
+if (!host.protocol.isProtocolHandled('asset')) {
+  host.protocol.handle('asset', (request) => {
+    const url = new URL(request.url);
+    if (url.hostname === 'archive' && url.pathname === '/cover.svg') {
+      return new Response(Bun.file('/path/to/cover.svg'), {
+        headers: { 'content-type': 'image/svg+xml' }
+      });
+    }
+    return new Response('Not found', { status: 404 });
+  });
+}
+// A page can use <img src="asset://archive/cover.svg" alt="Cover" />.
+```
