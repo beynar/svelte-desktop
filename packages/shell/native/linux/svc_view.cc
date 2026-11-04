@@ -1,6 +1,7 @@
 // view.* — extra web views embedded in a window (Electron's BrowserView), same ops
 // and events as native/platform_view.mm:
-//   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, debug?} → {id, windowId}
+//   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, hidden?, debug?} → {id, windowId}
+//   (`hidden`: it loads out of sight, until `show`)
 //   (the view's page has window.__desktopView = its id)
 //   setBounds {id, x, y, width, height} · getBounds · navigate {id, url|route} · show · hide · reload
 //   getInfo · executeJavaScript {id, code} → JSON · list · destroy
@@ -174,7 +175,7 @@ void register_view() {
     gtk_widget_set_valign(wid, GTK_ALIGN_START);
     place(v);
     gtk_overlay_add_overlay(GTK_OVERLAY(w->overlay), wid);
-    gtk_widget_show(wid);
+    if (!c->flag("hidden", false)) gtk_widget_show(wid);
     if (v->autoresize != "none") v->sizeHandler = g_signal_connect(w->overlay, "size-allocate", G_CALLBACK(on_overlay_size), key);
     webkit_web_view_load_uri(v->wv, url.c_str());
     c->ok(json{{"id", ident}, {"windowId", public_id(w->id)}});

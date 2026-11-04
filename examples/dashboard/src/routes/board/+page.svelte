@@ -19,6 +19,18 @@
 		return { value: board, label: `Board ${++count}`, board };
 	}
 
+	// New board…: a route of the app in a native sheet on the window (/sheets/new-board), sliding
+	// down from under the tab strip; it resolves with what that page passes to host.dialog.close(),
+	// undefined when canceled.
+	async function newBoardInSheet() {
+		const top = document.querySelector('.titlebar')?.getBoundingClientRect().bottom ?? 0;
+		const made = await host.dialog.sheet<{ name: string }>('/sheets/new-board', { width: 420, height: 230, style: 'attached', top });
+		if (!made) return;
+		const tab = { ...newBoard(), label: made.name };
+		boards.push(tab);
+		active = tab.value;
+	}
+
 	let renaming = $state<string | null>(null);
 </script>
 
@@ -33,7 +45,7 @@
 	reorderable
 	onAdd={newBoard}
 	label="Boards"
-	class="board-tabs border-neutral-muted gap-5 border-b px-6"
+	class="board-tabs min-w-0 flex-1 gap-5 px-6"
 >
 	{#snippet tab({ item, closable, close })}
 		{#if renaming === item.value}
@@ -59,7 +71,10 @@
 
 	{#snippet layout({ bar, content })}
 		<div class="flex h-full flex-col">
-			{@render bar()}
+			<div class="border-neutral-muted flex items-center border-b pr-4">
+				{@render bar()}
+				<button type="button" class="state-layer text-neutral-readable h-7 shrink-0 rounded-md px-2 text-sm" onclick={newBoardInSheet}>New board…</button>
+			</div>
 			{@render content({ class: 'min-h-0 flex-1 overflow-x-auto p-6' })}
 		</div>
 	{/snippet}

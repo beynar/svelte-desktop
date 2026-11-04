@@ -1,4 +1,6 @@
 @import 'tailwindcss';
+/* material-sidebar, material-glass…: the shell's native materials as utilities. */
+@plugin '@svelte-desktop/shell/tailwind';
 
 @plugin 'entasis/tailwind-plugin/theme' {
 	name: light;
@@ -33,10 +35,13 @@
 /* entasis components live in node_modules: let Tailwind see their classes. */
 @source '../node_modules/entasis/dist';
 
+/* A window, not a document: it never scrolls as a whole, the title bar and its tabs stay put and
+   each pane scrolls on its own. */
 html,
 body {
 	height: 100%;
 	margin: 0;
+	overflow: hidden;
 }
 
 /* Desktop title bar (titleBarStyle: 'hiddenInset'): a strip across the window, the traffic lights on
@@ -87,4 +92,17 @@ body {
 }
 html[data-desktop-titlebar] [data-slot='page-shell-header'] {
 	--app-region: drag;
+}
+
+/* The shell takes the window's height (`--window-height`): here, what the title bar leaves. */
+.app {
+	--window-height: calc(100dvh - max(var(--desktop-titlebar-height, 0px), 2.75rem));
+}
+
+/* No blur under the page's sticky header and footer: their background is opaque already, and a
+   backdrop filter keeps a copy of what's behind (~50 MB of graphics memory on a large window). */
+[data-slot='page-shell-header'],
+[data-slot='page-shell-footer'] {
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
 }

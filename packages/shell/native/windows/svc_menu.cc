@@ -520,6 +520,7 @@ static std::vector<HMENU> all_roots() {
 }
 
 void register_menu() {
+  reg("menu", "getAppMenu", [](CallPtr c) { c->ok(g_app_menus); });
   reg_many("menu", {"setAppMenu", "setApplicationMenu"}, [](CallPtr c) {
     std::string error;
     json menus = c->args.contains("menus") ? c->args["menus"] : json();

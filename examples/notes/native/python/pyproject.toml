@@ -1,0 +1,6 @@
+# The Python commands' project: its dependencies ship with the app (uv installs them).
+[project]
+name = "notes-python"
+version = "0.0.0"
+requires-python = ">=3.10"
+dependencies = []

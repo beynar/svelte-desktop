@@ -95,3 +95,42 @@ test("make-manifest rejects bad artifact specs", async () => {
 	expect((await cli(["make-manifest", "--name", "A", "--version", "1.0.0", "--artifact", "linux-x64=x.zip", "--key", "k3.pem"])).stderr).toContain(".tar.zst or .tar.gz");
 	expect((await cli(["make-manifest", "--name", "A", "--version", "nope", "--artifact", "linux-x64=missing.tar.gz", "--key", "k3.pem"])).code).toBe(1);
 });
+
+test("merge: one signed update.json from each platform's manifest; fetch-previous downloads the published archives", async () => {
+	const publicKey = (await cli(["keygen", "--out", "km.pem"])).stdout;
+	const art = (name: string, size: number) => ({ url: `1.3.0/${name}`, sha256: "a".repeat(64), size, format: "tar.zst" });
+	const part = (key: string, file: string, patches?: unknown) => ({ name: "dev.test.app", version: "1.3.0", channel: "stable", releasedAt: "2026-11-03T10:00:00.000Z", artifacts: { [key]: art(file, 10) }, ...(patches ? { patches: { [key]: patches } } : {}) });
+	await Bun.write(join(root.dir, "mac.json"), JSON.stringify(part("darwin-arm64", "A-1.3.0-darwin-arm64.tar.zst", [{ from: "1.2.0", url: "1.3.0/p.sdpatch", sha256: "b".repeat(64), size: 3 }])));
+	await Bun.write(join(root.dir, "linux.json"), JSON.stringify(part("linux-x64", "a-1.3.0-linux-x64.tar.zst")));
+	await Bun.write(join(root.dir, "win.json"), JSON.stringify(part("windows-x64", "A-1.3.0-windows-x64.tar.zst")));
+	const mg = await cli(["merge", "mac.json", "linux.json", "win.json", "--key", "km.pem", "--out", "merged.json"]);
+	expect(mg.code).toBe(0);
+	const merged = await parseSignedManifest(await Bun.file(join(root.dir, "merged.json")).text(), [publicKey]);
+	expect(Object.keys(merged.artifacts).sort()).toEqual(["darwin-arm64", "linux-x64", "windows-x64"]);
+	expect(Object.keys(merged.patches as object)).toEqual(["darwin-arm64"]);
+	// Another version among the parts: refused.
+	await Bun.write(join(root.dir, "other.json"), JSON.stringify({ ...part("linux-arm64", "x.tar.zst"), version: "1.4.0" }));
+	expect((await cli(["merge", "mac.json", "other.json", "--key", "km.pem", "--out", "x.json"])).stderr).toContain("merge:");
+
+	// fetch-previous: the archive the manifest pins, into <dir>/<version>/; a 404 manifest is a first release.
+	const bytes = new TextEncoder().encode("archive bytes");
+	const sha = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+	const signed = (await cli(["make-manifest", "--name", "dev.test.app", "--version", "1.3.0", "--artifact", "linux-x64=" + (await Bun.write(join(root.dir, "a-1.3.0-linux-x64.tar.zst"), bytes), "a-1.3.0-linux-x64.tar.zst"), "--key", "km.pem"])).stdout;
+	const manifest = JSON.parse(signed);
+	expect(manifest.artifacts["linux-x64"].sha256).toBe(sha);
+	manifest.artifacts["linux-x64"].url = "1.3.0/a-1.3.0-linux-x64.tar.zst";
+	await Bun.write(join(root.dir, "pub.json"), JSON.stringify(manifest));
+	expect((await cli(["sign", "pub.json", "--key", "km.pem"])).code).toBe(0);
+	const site = serveStatic({ "/stable/update.json": () => new Response(Bun.file(join(root.dir, "pub.json"))), "/stable/1.3.0/a-1.3.0-linux-x64.tar.zst": () => new Response(bytes) });
+	try {
+		const fp = await cli(["fetch-previous", `${site.base}/stable/update.json`, "--platform", "linux-x64", "--platform", "darwin-arm64", "--dir", "rel", "--public-key", publicKey]);
+		expect(fp.code).toBe(0);
+		expect(await Bun.file(join(root.dir, "rel/1.3.0/a-1.3.0-linux-x64.tar.zst")).text()).toBe("archive bytes");
+		expect(fp.stderr).toContain("no darwin-arm64 archive");
+		const none = await cli(["fetch-previous", `${site.base}/beta/update.json`, "--platform", "linux-x64", "--dir", "rel"]);
+		expect(none.code).toBe(0);
+		expect(none.stderr).toContain("first release");
+	} finally {
+		site.stop();
+	}
+});

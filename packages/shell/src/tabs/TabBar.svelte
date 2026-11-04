@@ -4,7 +4,7 @@
 	a line shows where the tab lands) — and, for a detachable group, a tab dragged out of the
 	window opens in its own window, or joins another window's bar — ←/→ move along. In an isolated tab's own web view it renders nothing.
 	Unstyled but for layout: style it with `class` and the state attributes —
-	[data-active], [data-pinned], [data-dragging] on each [role=tab], [data-sd-tab-close],
+	[data-active], [data-pinned], [data-suspended], [data-dragging] on each [role=tab], [data-sd-tab-close],
 	[data-sd-tab-new], [data-sd-tab-drop] (the drop line, colored by --sd-tab-drop-color) — or
 	render each tab yourself with the `tab` snippet.
 
@@ -75,6 +75,7 @@
 					title={tabs.titleOf(t)}
 					data-active={active || undefined}
 					data-pinned={t.pinned || undefined}
+					data-suspended={tabs.suspended.has(t.id) || undefined}
 					data-dragging={dragging === t.id || undefined}
 					use:tabDrag={{ tabs, tab: t, dragging: (on) => (dragging = on ? t.id : null) }}
 					onmousedown={(e) => e.button === 0 && !onControl(e) && tabs.activate(t.id)}

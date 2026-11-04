@@ -5,11 +5,13 @@
 //   doctor   check the toolchain, the project and signing/notarization setup
 //   keygen   create the ed25519 key pair for signed updates
 //   preflight <App.app>  check a bundle against Apple's notarization requirements
+//   release <merge|fetch-previous|sign|verify|make-manifest|pack>  publishing updates (CI)
 //   icon [source]  generate every target's app icons from one image (the build does it too)
-//   add rust|go    a native plugin in Rust (native/rust) or Go (native/go), typed for the pages
+//   add rust|go|python    a native plugin in Rust (native/rust) or Go (native/go), or Python
+//                         commands (native/python), typed for the pages
 import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const root = process.cwd();
@@ -125,7 +127,7 @@ async function doctor() {
     ok(`Windows ${process.arch}`);
     for (const [tool, why] of [["makensis", "installer"], ["osslsigncode", "Authenticode"]] as const) (await has(tool)) ? ok(`${tool} (${why})`) : warn(`${tool} missing (${why})`);
   } else bad(`${process.platform} is not supported (macOS, Linux, Windows)`);
-  for (const [tool, why] of [["cargo", "Rust plugins"], ["go", "Go plugins"]] as const) if (await has(tool)) ok(`${tool} (${why})`);
+  for (const [tool, why] of [["cargo", "Rust plugins"], ["go", "Go plugins"], ["uv", "Python commands"]] as const) if (await has(tool)) ok(`${tool} (${why})`);
 
   try {
     Bun.resolveSync("@sveltejs/adapter-bun", root);
@@ -182,11 +184,27 @@ async function icon(args: string[]) {
   console.log("");
 }
 
-/** `svelte-desktop add rust|go`: a working native plugin wired to the SDK in this package. */
+/** `svelte-desktop add rust|go|python`: a working native plugin wired to the SDK in this package. */
 function addPlugin(lang: string | undefined) {
-  if (lang !== "rust" && lang !== "go") throw new Error("usage: svelte-desktop add rust|go");
+  if (lang !== "rust" && lang !== "go" && lang !== "python") throw new Error("usage: svelte-desktop add rust|go|python");
   const dir = join(root, "native", lang);
   if (existsSync(dir)) throw new Error(`native/${lang} exists — left as is`);
+  if (lang === "python") {
+    // The SDK comes with the app's Python process (and the dev environment): nothing to wire.
+    mkdirSync(dir, { recursive: true });
+    const name = basename(root).replace(/[^A-Za-z0-9]+/g, "-").toLowerCase() || "app";
+    writeFileSync(
+      join(dir, "pyproject.toml"),
+      `# The Python commands' dependencies: \`uv add <package>\` here, or edit the list. They ship with the app.\n[project]\nname = "${name}-python"\nversion = "0.0.0"\nrequires-python = ">=3.10"\ndependencies = []\n`,
+    );
+    writeFileSync(
+      join(dir, "hello.py"),
+      `# Python commands: callable from pages and server code, typed from the annotations —\n# native.hello.python({ name }) (types in src/native.d.ts, written by the build).\nfrom dataclasses import dataclass\n\nfrom svelte_desktop import InvalidArgs, command\n\n\n@dataclass\nclass Greeting:\n    message: str\n\n\n@command("hello.python")\ndef hello(name: str) -> Greeting:\n    if not name:\n        raise InvalidArgs("name is empty")\n    return Greeting(message=f"Hello {name} from Python")\n`,
+    );
+    ok("native/python");
+    console.log("\n  `bun run dev` sets up Python with uv (https://docs.astral.sh/uv) and types native.hello in src/native.d.ts.\n");
+    return;
+  }
   // The SDK through node_modules when the package is installed there (stable), else where it is.
   const installed = join(root, "node_modules", "@svelte-desktop", "shell");
   const sdk = join(existsSync(installed) ? installed : resolve(import.meta.dir, ".."), "native", "sdk", lang);
@@ -228,8 +246,9 @@ try {
     console.log(formatPreflight(issues));
     process.exit(issues.some((i) => i.level === "error") ? 1 : 0);
   } else if (cmd === "keygen") await $`bun ${join(import.meta.dir, "../scripts/updater-cli.ts")} keygen ${rest}`;
+  else if (cmd === "release") await $`bun ${join(import.meta.dir, "../scripts/updater-cli.ts")} ${rest}`;
   else {
-    console.log("usage: svelte-desktop <create|init|doctor|icon|add|preflight|keygen> — see packages/shell/README.md");
+    console.log("usage: svelte-desktop <create|init|doctor|icon|add|preflight|keygen|release> — see packages/shell/README.md");
     process.exit(cmd ? 1 : 0);
   }
 } catch (err) {

@@ -28,7 +28,7 @@ import {
 	app as appSvc, windows as windowSvc, screen as screenSvc,
 	clipboard as clipboardSvc, theme as themeSvc, system as systemSvc,
 	power as powerSvc, deepLink as deepLinkSvc, menu as menuSvc,
-	notifications as notificationsSvc, push as pushSvc, onNotification, capture as captureSvc,
+	notifications as notificationsSvc, push as pushSvc, onNotification, capture as captureSvc, webview as webviewSvc,
 	diagnostics as diagnosticsSvc, capabilities as capabilitiesSvc,
 	updater as updaterSvc, tray as traySvc, shortcuts as shortcutsSvc,
 	emitTo as emitToWindow,
@@ -38,7 +38,7 @@ import {
 } from './index';
 import { windowState as windowStateSvc } from './windowState';
 import { store as storeSvc } from './store';
-import { onPlatform, oncePlatform, onPlatformReady, NativeApiError } from './bus';
+import { onPlatform, oncePlatform, onPlatformReady, platformReady, watchPlatformOp, STATE_CHANNEL, NativeApiError } from './bus';
 import type {
 	AccessibilityInfo, AccentColor, AppearancePreference, AvailableUpdate,
 	BatteryInfo, CaptureSource, UpdateEndpoints, DockProgress,
@@ -89,6 +89,76 @@ abstract class PlatformNamespace {
 	abstract init(): unknown;
 }
 
+/**
+ * Native state read without `await`: `host.window.alwaysOnTop`, `host.app.loginItem`. A page can't
+ * wait for the native side synchronously, so this keeps the last value, reactive:
+ * - null until known, and on a platform without the getter;
+ * - read at the first access, so what no one uses costs nothing (kept-alive tabs load fast);
+ * - read again when a setter runs in any context, and when the app comes back: the user can change
+ *   a login item or a default app in the system's settings, which sends no event.
+ * The getters (`host.window.isAlwaysOnTop()`) stay: they answer with the value now.
+ */
+class Mirror<T> {
+	#value = $state<T | null>(null);
+	#started = false;
+	#latest = 0;
+	#json = 'null';
+	readonly #read: () => Promise<T>;
+	readonly ops: string[];
+
+	constructor(ops: string[], read: () => Promise<T>) {
+		this.ops = ops;
+		this.#read = read;
+		for (const op of ops) watchPlatformOp(op);
+		mirrors.add(this);
+	}
+	get value(): T | null {
+		if (!this.#started && platformReady()) void this.pull();
+		return this.#value;
+	}
+	get started() {
+		return this.#started;
+	}
+	async pull(): Promise<void> {
+		this.#started = true;
+		watchMirrors();
+		const n = ++this.#latest;
+		try {
+			const value = await this.#read();
+			const json = JSON.stringify(value ?? null);
+			// The last read wins, and an equal value doesn't wake what depends on it.
+			if (n === this.#latest && json !== this.#json) {
+				this.#json = json;
+				this.#value = value;
+			}
+		} catch {
+			/* not on this platform, or the window is gone: the last value stays */
+		}
+	}
+}
+
+const mirrors = new Set<Mirror<any>>();
+let mirrorsWatched = false;
+function watchMirrors() {
+	if (mirrorsWatched) return;
+	mirrorsWatched = true;
+	const pull = (only?: string) => {
+		for (const m of mirrors) if (m.started && (!only || m.ops.includes(only))) void m.pull();
+	};
+	onBroadcast<{ op: string }>(STATE_CHANNEL, ({ op }) => pull(op));
+	onPlatform('appActivated', () => pull());
+	onPlatform<{ focused: boolean }>('focusChanged', ({ focused }) => focused && pull());
+}
+const mirror = <T>(ops: string | string[], read: () => Promise<T>) => new Mirror<T>(typeof ops === 'string' ? [ops] : ops, read);
+
+/** A setter whose new value is readable once it resolves. */
+const thenPull = <A extends unknown[], R>(set: (...args: A) => Promise<R>, ...read: Mirror<any>[]) =>
+	async (...args: A): Promise<R> => {
+		const result = await set(...args);
+		await Promise.all(read.map((m) => m.pull()));
+		return result;
+	};
+
 /** `{}` payloads — the platform emits an empty object for these events. */
 type EmptyPayload = Record<string, never>;
 
@@ -121,6 +191,8 @@ interface PowerEvents {
 	systemSleep: EmptyPayload;
 	screenLocked: EmptyPayload;
 	screenUnlocked: EmptyPayload;
+	powerSourceChanged: { onBattery: boolean };
+	shutdown: EmptyPayload;
 }
 interface DeepLinkEvents {
 	openUrls: { urls: string[] };
@@ -147,8 +219,6 @@ class AppNamespace extends PlatformNamespace {
 	lastReopenedAt = $state<number | null>(null);
 	quitting = $state(false);
 	restarting = $state(false);
-	/** Echo of the last setDockBadge() arg. */
-	dockBadge = $state<string | null>(null);
 	secondInstanceCount = $state(0);
 	/** argv/cwd of the most recent second-instance launch attempt. */
 	lastSecondInstance = $state<{ argv: string[]; cwd: string } | null>(null);
@@ -157,6 +227,18 @@ class AppNamespace extends PlatformNamespace {
 	 * op exists; appActivated/appDeactivated keep it correct thereafter.
 	 */
 	active = $state(true);
+
+	#loginItem = mirror('app.setLoginItem', () => appSvc.getLoginItem());
+	#activationPolicy = mirror('app.setActivationPolicy', () => appSvc.getActivationPolicy());
+	#dockBadge = mirror(['app.setDockBadge', 'notifications.setBadge'], () => appSvc.getDockBadge());
+	#dockIcon = mirror('app.setDockIcon', () => appSvc.getDockIcon());
+	#dockProgress = mirror('app.setDockProgress', () => appSvc.getDockProgress());
+	/** Launch at login: on, needs approval, and whether this launch came from it. */
+	get loginItem() { return this.#loginItem.value; }
+	get activationPolicy() { return this.#activationPolicy.value; }
+	get dockBadge() { return this.#dockBadge.value; }
+	get dockIcon() { return this.#dockIcon.value; }
+	get dockProgress() { return this.#dockProgress.value; }
 
 	get name() { return this.info?.name ?? null; }
 	get version() { return this.info?.version ?? null; }
@@ -196,15 +278,14 @@ class AppNamespace extends PlatformNamespace {
 	hideOthers = appSvc.hideOthers;
 	showAll = appSvc.showAll;
 	addRecentDocument = appSvc.addRecentDocument;
-	async setDockBadge(text: string | null) {
-		await appSvc.setDockBadge(text);
-		this.dockBadge = text;
-	}
+	setDockBadge = thenPull(appSvc.setDockBadge, this.#dockBadge);
+	setDockIcon = thenPull(appSvc.setDockIcon, this.#dockIcon);
 	bounceDock = appSvc.bounceDock;
-	setLoginItem = appSvc.setLoginItem;
-	setActivationPolicy = appSvc.setActivationPolicy;
+	getLoginItem = appSvc.getLoginItem;
+	setLoginItem = thenPull(appSvc.setLoginItem, this.#loginItem);
+	setActivationPolicy = thenPull(appSvc.setActivationPolicy, this.#activationPolicy);
 	requestSingleInstanceLock = appSvc.requestSingleInstanceLock;
-	setDockProgress = appSvc.setDockProgress;
+	setDockProgress = thenPull(appSvc.setDockProgress, this.#dockProgress);
 	getBundleType = appSvc.getBundleType;
 	defaultWindowIcon = appSvc.defaultWindowIcon;
 	aboutPanel = appSvc.aboutPanel;
@@ -232,6 +313,10 @@ export const app = new AppNamespace();
 // ── window ──────────────────────────────────────────────────────────
 
 class WindowNamespace extends PlatformNamespace {
+	#windowId: number | undefined;
+	#ownsEvent(data: { windowId?: number }) {
+		return this.#windowId === undefined || data.windowId === undefined || data.windowId === this.#windowId;
+	}
 	live = $state<{ bounds: WindowBounds; state: WindowStateName } | null>(null);
 	title = $state('');
 	focused = $state(false);
@@ -247,6 +332,67 @@ class WindowNamespace extends PlatformNamespace {
 	 *  fullscreen + titlebar-style transitions stay current. */
 	controlsArea = $state<WindowControlsArea | null>(null);
 
+	#alwaysOnTop = mirror('window.setAlwaysOnTop', () => windowSvc.isAlwaysOnTop());
+	#alwaysOnBottom = mirror('window.setAlwaysOnBottom', () => windowSvc.isAlwaysOnBottom());
+	#onAllWorkspaces = mirror('window.setVisibleOnAllWorkspaces', () => windowSvc.isVisibleOnAllWorkspaces());
+	#resizable = mirror('window.setResizable', () => windowSvc.isResizable().then((r) => r.resizable));
+	#closable = mirror('window.setClosable', () => windowSvc.isClosable().then((r) => r.closable));
+	#minimizable = mirror('window.setMinimizable', () => windowSvc.isMinimizable().then((r) => r.minimizable));
+	#maximizable = mirror('window.setMaximizable', () => windowSvc.isMaximizable().then((r) => r.maximizable));
+	#movable = mirror('window.setMovable', () => windowSvc.isMovable());
+	#movableByBackground = mirror('window.setMovableByWindowBackground', () => windowSvc.isMovableByWindowBackground());
+	#focusable = mirror('window.setFocusable', () => windowSvc.isFocusable());
+	#decorations = mirror('window.setDecorations', () => windowSvc.hasDecorations());
+	#shadow = mirror('window.setHasShadow', () => windowSvc.hasShadow());
+	#opacity = mirror('window.setOpacity', () => windowSvc.getOpacity().then((r) => r.opacity));
+	#titleBar = mirror(['window.setTitleBarStyle', 'window.setDecorations'], () => windowSvc.getTitleBarStyle());
+	#trafficLights = mirror('window.setTrafficLightPosition', () => windowSvc.getTrafficLightPosition());
+	#vibrancy = mirror(['window.setVibrancy', 'window.setGlass'], () => windowSvc.getVibrancy());
+	#glass = mirror(['window.setVibrancy', 'window.setGlass'], () => windowSvc.getGlass());
+	#windowTheme = mirror('window.setTheme', () => windowSvc.getTheme());
+	#minSize = mirror('window.setMinSize', () => windowSvc.getMinSize());
+	#maxSize = mirror('window.setMaxSize', () => windowSvc.getMaxSize());
+	#aspectRatio = mirror('window.setAspectRatio', () => windowSvc.getAspectRatio());
+	#contentSize = mirror(['window.setSize', 'window.setBounds'], () => windowSvc.getContentSize());
+	#closeVeto = mirror('window.setCloseVeto', () => windowSvc.hasCloseVeto());
+	#representedFilename = mirror('window.setRepresentedFilename', () => windowSvc.getRepresentedFilename());
+	#documentEdited = mirror('window.setDocumentEdited', () => windowSvc.isDocumentEdited().then((r) => r.edited));
+	#contentProtected = mirror('window.setContentProtected', () => windowSvc.isContentProtected().then((r) => r.contentProtected));
+	#ignoresMouse = mirror('window.setIgnoresMouseEvents', () => windowSvc.ignoresMouseEvents().then((r) => r.ignored));
+	#cursorHidden = mirror('window.setCursorHidden', () => windowSvc.isCursorHidden());
+
+	get alwaysOnTop() { return this.#alwaysOnTop.value; }
+	get alwaysOnBottom() { return this.#alwaysOnBottom.value; }
+	get visibleOnAllWorkspaces() { return this.#onAllWorkspaces.value; }
+	get resizable() { return this.#resizable.value; }
+	get closable() { return this.#closable.value; }
+	get minimizable() { return this.#minimizable.value; }
+	get maximizable() { return this.#maximizable.value; }
+	get movable() { return this.#movable.value; }
+	get movableByWindowBackground() { return this.#movableByBackground.value; }
+	get focusable() { return this.#focusable.value; }
+	get decorations() { return this.#decorations.value; }
+	get shadow() { return this.#shadow.value; }
+	get opacity() { return this.#opacity.value; }
+	get titleBarStyle() { return this.#titleBar.value?.style ?? null; }
+	get frameless() { return this.#titleBar.value?.frameless ?? null; }
+	get trafficLightPosition() { return this.#trafficLights.value; }
+	get vibrancy() { return this.#vibrancy.value; }
+	get glass() { return this.#glass.value; }
+	/** The window's own theme; `host.theme` is the app's. */
+	get theme() { return this.#windowTheme.value; }
+	get minSize() { return this.#minSize.value; }
+	get maxSize() { return this.#maxSize.value; }
+	get aspectRatio() { return this.#aspectRatio.value; }
+	/** The page's area; `size` is the outer frame. */
+	get contentSize() { return this.#contentSize.value; }
+	get closeVeto() { return this.#closeVeto.value; }
+	get representedFilename() { return this.#representedFilename.value; }
+	get documentEdited() { return this.#documentEdited.value; }
+	get contentProtected() { return this.#contentProtected.value; }
+	get ignoresMouse() { return this.#ignoresMouse.value; }
+	get cursorHidden() { return this.#cursorHidden.value; }
+
 	get bounds() { return this.live?.bounds ?? null; }
 	get size() { return this.live ? { width: this.live.bounds.width, height: this.live.bounds.height } : null; }
 	get position() {
@@ -259,26 +405,33 @@ class WindowNamespace extends PlatformNamespace {
 		this.ready = true;
 		// Event-driven live bounds — the OS streams move/resize here.
 		this.#events ??= [
-			onPlatform<WindowBounds>('boundsChanged', (bounds) => {
+			onPlatform<WindowBounds & { windowId?: number }>('boundsChanged', (bounds) => {
+				if (!this.#ownsEvent(bounds)) return;
 				this.live = { bounds, state: this.live?.state ?? 'normal' };
 				// OS-chrome zoom/maximize also moves bounds — re-pull so
 				// state/maximized/fullscreen don't go stale.
 				this.#syncLater();
 			}),
-			onPlatform<{ focused: boolean }>('focusChanged', ({ focused }) => {
-				this.focused = focused;
+			onPlatform<{ focused: boolean; windowId?: number }>('focusChanged', (event) => {
+				if (this.#ownsEvent(event)) this.focused = event.focused;
 			}),
-			onPlatform<{ scaleFactor: number }>('scaleFactorChanged', ({ scaleFactor }) => {
-				this.scaleFactor = scaleFactor;
+			onPlatform<{ scaleFactor: number; windowId?: number }>('scaleFactorChanged', (event) => {
+				if (this.#ownsEvent(event)) this.scaleFactor = event.scaleFactor;
 			}),
+			onPlatform<{ windowId?: number }>('fullscreenChanged', (event) => {
+				if (this.#ownsEvent(event)) this.#syncLater();
+			}),
+			// Closing the primary can change the remaining windows' public ids.
+			onPlatform('closed', () => { this.#syncLater(); }),
 		];
 		return this;
 	}
 
 	/** Re-pull every live field (bounds also stream in via boundsChanged). */
 	async refresh(): Promise<this> {
-		const [live, title, focused, maximized, fullscreen, simpleFullscreen, scaleFactor, cursor, controlsArea] =
+		const [info, live, title, focused, maximized, fullscreen, simpleFullscreen, scaleFactor, cursor, controlsArea] =
 			await Promise.all([
+				windowSvc.getInfo().catch(() => null),
 				windowSvc.getBounds().catch(() => null),
 				windowSvc.getTitle().catch(() => this.title),
 				windowSvc.isFocused().catch(() => this.focused),
@@ -292,6 +445,8 @@ class WindowNamespace extends PlatformNamespace {
 				windowSvc.getCursorPoint().catch(() => null),
 				windowSvc.getControlsArea().catch(() => null),
 			]);
+		// Pages own one window; the server's default target remains the key window.
+		if (typeof document !== 'undefined') this.#windowId = info?.windowId;
 		this.live = live;
 		this.title = title;
 		this.focused = focused;
@@ -301,6 +456,7 @@ class WindowNamespace extends PlatformNamespace {
 		this.scaleFactor = scaleFactor;
 		this.cursor = cursor;
 		this.controlsArea = controlsArea;
+		if (this.#contentSize.started) void this.#contentSize.pull();
 		return this;
 	}
 
@@ -328,7 +484,8 @@ class WindowNamespace extends PlatformNamespace {
 	async minimize() { await windowSvc.minimize(); }
 	// No optimistic `focused` write — the OS can refuse focus; focusChanged
 	// is the source of truth.
-	async focus() { await windowSvc.focus(); }
+	// Resolves the service's answer: `{ activated }` on macOS (activation is best-effort).
+	focus() { return windowSvc.focus(); }
 	/**
 	 * Arm/disarm the close veto. While armed, OS-initiated closes are
 	 * suppressed and `willClose` fires instead — disarm then `close()` to
@@ -336,6 +493,7 @@ class WindowNamespace extends PlatformNamespace {
 	 */
 	async setCloseVeto(enabled: boolean) {
 		const { armed } = await windowSvc.setCloseVeto(enabled);
+		await this.#closeVeto.pull();
 		return armed;
 	}
 	/**
@@ -367,7 +525,7 @@ class WindowNamespace extends PlatformNamespace {
 		};
 	}
 	requestAttention = windowSvc.requestAttention;
-	setRepresentedFilename = windowSvc.setRepresentedFilename;
+	setRepresentedFilename = thenPull(windowSvc.setRepresentedFilename, this.#representedFilename);
 	async close() {
 		await windowSvc.close();
 		// The window is gone — live state is stale from here on.
@@ -417,51 +575,55 @@ class WindowNamespace extends PlatformNamespace {
 		this.#syncLater();
 	}
 	isSimpleFullscreen = windowSvc.isSimpleFullscreen;
-	setAlwaysOnTop = windowSvc.setAlwaysOnTop;
-	setAlwaysOnBottom = windowSvc.setAlwaysOnBottom;
+	setAlwaysOnTop = thenPull(windowSvc.setAlwaysOnTop, this.#alwaysOnTop);
+	setAlwaysOnBottom = thenPull(windowSvc.setAlwaysOnBottom, this.#alwaysOnBottom);
 	blur = windowSvc.blur;
 	isHovered = windowSvc.isHovered;
 	isActive = windowSvc.isActive;
 
 	// ── chrome toggles ──────────────────────────────────────────────
-	setResizable = windowSvc.setResizable;
+	setResizable = thenPull(windowSvc.setResizable, this.#resizable);
 	isResizable = windowSvc.isResizable;
-	setClosable = windowSvc.setClosable;
+	setClosable = thenPull(windowSvc.setClosable, this.#closable);
 	isClosable = windowSvc.isClosable;
-	setMinimizable = windowSvc.setMinimizable;
+	setMinimizable = thenPull(windowSvc.setMinimizable, this.#minimizable);
 	isMinimizable = windowSvc.isMinimizable;
-	setMaximizable = windowSvc.setMaximizable;
+	setMaximizable = thenPull(windowSvc.setMaximizable, this.#maximizable);
 	isMaximizable = windowSvc.isMaximizable;
-	setTitleBarStyle = windowSvc.setTitleBarStyle;
-	setDecorations = windowSvc.setDecorations;
-	setHasShadow = windowSvc.setHasShadow;
+	setTitleBarStyle = thenPull(windowSvc.setTitleBarStyle, this.#titleBar);
+	setDecorations = thenPull(windowSvc.setDecorations, this.#decorations, this.#titleBar);
+	setHasShadow = thenPull(windowSvc.setHasShadow, this.#shadow);
 	invalidateShadow = windowSvc.invalidateShadow;
 
 	// ── appearance + behavior ───────────────────────────────────────
-	setOpacity = windowSvc.setOpacity;
+	setOpacity = thenPull(windowSvc.setOpacity, this.#opacity);
 	getOpacity = windowSvc.getOpacity;
-	setMovable = windowSvc.setMovable;
-	setMovableByWindowBackground = windowSvc.setMovableByWindowBackground;
-	setIgnoresMouseEvents = windowSvc.setIgnoresMouseEvents;
+	setMovable = thenPull(windowSvc.setMovable, this.#movable);
+	setMovableByWindowBackground = thenPull(windowSvc.setMovableByWindowBackground, this.#movableByBackground);
+	setIgnoresMouseEvents = thenPull(windowSvc.setIgnoresMouseEvents, this.#ignoresMouse);
 	ignoresMouseEvents = windowSvc.ignoresMouseEvents;
-	setContentProtected = windowSvc.setContentProtected;
+	setContentProtected = thenPull(windowSvc.setContentProtected, this.#contentProtected);
 	isContentProtected = windowSvc.isContentProtected;
-	setVisibleOnAllWorkspaces = windowSvc.setVisibleOnAllWorkspaces;
-	setDocumentEdited = windowSvc.setDocumentEdited;
+	setVisibleOnAllWorkspaces = thenPull(windowSvc.setVisibleOnAllWorkspaces, this.#onAllWorkspaces);
+	setDocumentEdited = thenPull(windowSvc.setDocumentEdited, this.#documentEdited);
 	isDocumentEdited = windowSvc.isDocumentEdited;
-	setEdited = windowSvc.setEdited;
-	setFocusable = windowSvc.setFocusable;
-	setCursorHidden = windowSvc.setCursorHidden;
+	setEdited = thenPull(windowSvc.setEdited, this.#documentEdited);
+	setFocusable = thenPull(windowSvc.setFocusable, this.#focusable);
+	setCursorHidden = thenPull(windowSvc.setCursorHidden, this.#cursorHidden);
 	setCursorPosition = windowSvc.setCursorPosition;
-	setTheme = windowSvc.setTheme;
+	setTheme = thenPull(windowSvc.setTheme, this.#windowTheme);
+	setVibrancy = thenPull(windowSvc.setVibrancy, this.#vibrancy, this.#glass);
+	setGlass = thenPull(windowSvc.setGlass, this.#vibrancy, this.#glass);
+	setAspectRatio = thenPull(windowSvc.setAspectRatio, this.#aspectRatio);
+	setTrafficLightPosition = thenPull(windowSvc.setTrafficLightPosition, this.#trafficLights);
 
 	// ── size + position queries ─────────────────────────────────────
 	innerSize = windowSvc.innerSize;
 	innerPosition = windowSvc.innerPosition;
 	outerSize = windowSvc.outerSize;
 	outerPosition = windowSvc.outerPosition;
-	setMinSize = windowSvc.setMinSize;
-	setMaxSize = windowSvc.setMaxSize;
+	setMinSize = thenPull(windowSvc.setMinSize, this.#minSize);
+	setMaxSize = thenPull(windowSvc.setMaxSize, this.#maxSize);
 
 	/** Typed subscription to this namespace's platform events. */
 	on<E extends keyof WindowEvents & string>(
@@ -604,6 +766,11 @@ class ClipboardNamespace extends PlatformNamespace {
 		await clipboardSvc.writeText(text);
 		this.text = text;
 		this.formats = ['text/plain'];
+	}
+	async write(data: Parameters<typeof clipboardSvc.write>[0]) {
+		const result = await clipboardSvc.write(data);
+		await this.refresh();
+		return result;
 	}
 	async writeHtml(html: string) {
 		await clipboardSvc.writeHtml(html);
@@ -810,15 +977,31 @@ class DeepLinkNamespace extends PlatformNamespace {
 	/** URLs delivered by the OS, most recent last. */
 	urls = $state<string[]>([]);
 	get last() { return this.urls[this.urls.length - 1] ?? null; }
+	/** Whether this app opens each scheme it asked about (isDefault, register); read again when the
+	 *  app comes back, since the user or another app can take a scheme over. */
+	defaults = $state<Record<string, boolean>>({});
 
 	init(): this {
 		this.#unsub ??= onPlatform<{ urls: string[] }>('openUrls', ({ urls }) => {
 			this.urls = [...this.urls, ...urls].slice(-100);
 		});
+		this.#activated ??= onPlatform('appActivated', () => {
+			for (const scheme of Object.keys(this.defaults)) void this.isDefault(scheme).catch(() => {});
+		});
 		this.ready = true;
 		return this;
 	}
-	register = deepLinkSvc.register;
+	async register(scheme: string) {
+		const result = await deepLinkSvc.register(scheme);
+		await this.isDefault(result.scheme);
+		return result;
+	}
+	async isDefault(scheme: string) {
+		const value = await deepLinkSvc.isDefault(scheme);
+		if (this.defaults[scheme] !== value) this.defaults = { ...this.defaults, [scheme]: value };
+		return value;
+	}
+	#activated: (() => void) | null = null;
 
 	on<E extends keyof DeepLinkEvents & string>(
 		event: E,
@@ -845,6 +1028,11 @@ class MenuNamespace extends PlatformNamespace {
 	/** id of the last activated app/dock menu item. */
 	lastAction = $state<string | null>(null);
 	actionLog = $state<string[]>([]);
+	#appMenu = mirror(['menu.setAppMenu', 'menu.insert', 'menu.remove'], () => menuSvc.getAppMenu());
+	#dockMenu = mirror('menu.setDockMenu', () => menuSvc.getDockMenu());
+	/** What the app set with setAppMenu and insert; null with the default menus. */
+	get appMenu() { return this.#appMenu.value; }
+	get dockMenu() { return this.#dockMenu.value; }
 
 	init(): this {
 		this.#unsub ??= onPlatform<{ id: string }>('menuAction', ({ id }) => {
@@ -855,8 +1043,10 @@ class MenuNamespace extends PlatformNamespace {
 		this.ready = true;
 		return this;
 	}
-	setAppMenu = menuSvc.setAppMenu;
-	setDockMenu = menuSvc.setDockMenu;
+	setAppMenu = thenPull(menuSvc.setAppMenu, this.#appMenu);
+	setDockMenu = thenPull(menuSvc.setDockMenu, this.#dockMenu);
+	insert = thenPull(menuSvc.insert, this.#appMenu);
+	remove = thenPull(menuSvc.remove, this.#appMenu);
 	addRecentDocument = menuSvc.addRecentDocument;
 	popup = menuSvc.popup;
 	update = menuSvc.update;
@@ -891,6 +1081,9 @@ class NotificationsNamespace extends PlatformNamespace {
 	permission = $state<NotificationPermission | 'unknown'>('unknown');
 	/** The last click/action/reply/dismiss handled in this context. */
 	lastResponse = $state<NotificationEvent | null>(null);
+	#badge = mirror('notifications.setBadge', () => notificationsSvc.getBadge());
+	get badge() { return this.#badge.value; }
+	setBadge = thenPull(notificationsSvc.setBadge, this.#badge);
 
 	async init(): Promise<this> {
 		if (!this.#bound) {
@@ -1409,12 +1602,50 @@ class PermissionsNamespace extends PlatformNamespace {
 }
 export const permissions = new PermissionsNamespace();
 
+// ── webview ─────────────────────────────────────────────────────────
+
+class WebviewNamespace extends PlatformNamespace {
+	#info = mirror(
+		['webview.setBackgroundThrottling', 'webview.setRecovery', 'webview.setZoom', 'webview.setUserAgent', 'webview.setFileDrop', 'webview.setContextMenu', 'webview.setInspectable'],
+		() => webviewSvc.getInfo(),
+	);
+	#media = mirror('webview.setAudioMuted', () => webviewSvc.getMediaState());
+	#contentRules = mirror(['webview.setContentRules', 'webview.removeContentRules'], () => webviewSvc.listContentRules());
+	/** This page's web view: its settings. Each is null until known. */
+	get zoom() { return this.#info.value?.zoom ?? null; }
+	get userAgent() { return this.#info.value?.userAgent ?? null; }
+	get fileDrop() { return this.#info.value?.fileDrop ?? null; }
+	get contextMenu() { return this.#info.value?.contextMenu ?? null; }
+	get inspectable() { return this.#info.value?.inspectable ?? null; }
+	get backgroundThrottling() { return this.#info.value?.backgroundThrottling ?? null; }
+	get recovery() { return this.#info.value?.recovery ?? null; }
+	get audioMuted() { return this.#media.value?.muted ?? null; }
+	get contentRules() { return this.#contentRules.value; }
+
+	setZoom = thenPull(webviewSvc.setZoom, this.#info);
+	setUserAgent = thenPull(webviewSvc.setUserAgent, this.#info);
+	setFileDrop = thenPull(webviewSvc.setFileDrop, this.#info);
+	setContextMenu = thenPull(webviewSvc.setContextMenu, this.#info);
+	setInspectable = thenPull(webviewSvc.setInspectable, this.#info);
+	setBackgroundThrottling = thenPull(webviewSvc.setBackgroundThrottling, this.#info);
+	setRecovery = thenPull(webviewSvc.setRecovery, this.#info);
+	setAudioMuted = thenPull(webviewSvc.setAudioMuted, this.#media);
+	setContentRules = thenPull(webviewSvc.setContentRules, this.#contentRules);
+	removeContentRules = thenPull(webviewSvc.removeContentRules, this.#contentRules);
+
+	init(): this {
+		this.ready = true;
+		return this;
+	}
+}
+export const webview = new WebviewNamespace();
+
 // ── aggregate init ──────────────────────────────────────────────────
 
 const ALL: PlatformNamespace[] = [
 	app, window, windowState, screen, clipboard, theme, system, power,
 	deepLink, menu, notifications, push, capture, diagnostics, capabilities, update,
-	tray, shortcuts, store, events, jobs, permissions,
+	tray, shortcuts, store, events, jobs, permissions, webview,
 ];
 
 let running: Promise<PlatformNamespace[]> | null = null;

@@ -497,7 +497,8 @@ static void register_diagnostics() {
       auto dot = key.find('.');
       if (dot == std::string::npos || key.find("._") != std::string::npos) continue; // internal test hooks
       std::string svc = key.substr(0, dot), op = key.substr(dot + 1);
-      services[svc][op] = down.count(key) || down.count(svc + ".*") ? "unavailable" : "implemented";
+      bool off = down.count(key) || down.count(svc + ".*") || (key == "app.setLoginItem" && !packaged());
+      services[svc][op] = off ? "unavailable" : "implemented";
     }
     c->ok(json{{"platform", "linux"}, {"arch", arch_name()}, {"services", services}});
   });

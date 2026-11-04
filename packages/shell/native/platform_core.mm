@@ -5,6 +5,8 @@
 #include <string>
 
 #include "platform_internal.h"
+#include "platform_app_windows.h"
+#include "platform_input.h"
 
 #include <set>
 #include "shell.h"
@@ -111,6 +113,8 @@ static NSString *json_string(id obj) {
 
 // Events reach the app's own pages only: a view showing another site gets none.
 static void deliver_to_page(WKWebView *wv, NSString *name, id data) {
+  // Evaluating into a terminated page can create an empty content process before recovery.
+  if (platform_webview_terminated(wv)) return;
   NSString *app = platform_app_origin();
   NSString *guard = app ? [NSString stringWithFormat:@"location.origin===%@&&", json_string(app)] : @"";
   NSString *js = [NSString stringWithFormat:@"%@window.__shell&&window.__shell.deliver(%@,%@)", guard, json_string(name),
@@ -145,6 +149,8 @@ void platform_emit_targeted(NSString *name, NSDictionary *data, int target) {
 
 void platform_page_unloaded(int native_id) {
   g_ready_pages.erase(native_id);
+  platform_app_page_unloaded(native_id);
+  platform_sessions_page_unloaded(native_id);
 }
 
 int platform_target_window(int preferred) {
@@ -174,7 +180,11 @@ static NSString *const kBridgeScript =
      "deliver:(n,d)=>{sink?sink(n,d):q.push([n,d]);}});"
      "document.addEventListener('DOMContentLoaded',()=>post({t:'ready'}));"
      // No elastic overscroll (rubber band): zero specificity, so the app's CSS can bring it back.
-     "const os=()=>{const s=document.createElement('style');s.textContent=':where(html,body){overscroll-behavior:none}';(document.head||document.documentElement).prepend(s);};document.documentElement?os():addEventListener('DOMContentLoaded',os,{once:true});"
+     // CSS materials (src/host/materials.ts): html[data-desktop-materials] for the page's CSS, and
+     // the properties not inherited, so only the element that declares one carries it.
+     "const os=()=>{const s=document.createElement('style');s.textContent=':where(html,body){overscroll-behavior:none}'"
+     "+['','-tint','-state'].map((p)=>`@property --desktop-material${p}{syntax:\\'*\\';inherits:false}`).join('');"
+     "document.documentElement.setAttribute('data-desktop-materials','');(document.head||document.documentElement).prepend(s);};document.documentElement?os():addEventListener('DOMContentLoaded',os,{once:true});"
      // Drag regions: [data-desktop-drag], `--app-region: drag` (inherited, so
      // `--app-region: no-drag` carves holes) and the title bar strip of a hidden/inset title bar
      // (like a native title bar: Swish and the like drag it); controls stay clickable.
@@ -272,7 +282,16 @@ void platform_attach_webview(int native_id, WKWebView *webview) {
   g_webviews[native_id] = webview;
 }
 
+// Policy replies may arrive after a view was destroyed while AppKit still retains it.
+BOOL platform_webview_is_attached(WKWebView *view) {
+  if (!view) return NO;
+  for (auto &[id, wv] : g_webviews) if (wv == view) return YES;
+  return NO;
+}
+
 void platform_detach_webview(int native_id) {
+  platform_app_page_unloaded(native_id);
+  platform_session_detach(native_id);
   auto it = g_webviews.find(native_id);
   if (it == g_webviews.end()) return;
   if (WKWebView *wv = it->second) [wv.configuration.userContentController removeScriptMessageHandlerForName:@"__shell__"];
@@ -333,14 +352,7 @@ static void install_app_delegate_hooks(void) {
                     return platform_dock_menu ? platform_dock_menu() : nil;
                   }),
                   "@@:@");
-  // Dock > Quit, logout and `osascript quit` send terminate:. Route them through
-  // the graceful path (Worker beforeQuit hooks) instead of an immediate exit().
-  class_addMethod(cls, @selector(applicationShouldTerminate:), imp_implementationWithBlock(^NSUInteger(id, NSApplication *) {
-                    platform_emit(@"willQuit", @{});
-                    shell_quit();
-                    return NSTerminateCancel;
-                  }),
-                  "Q@:@");
+  platform_app_install_quit_hook();
 }
 
 void platform_init(void) {
@@ -348,10 +360,12 @@ void platform_init(void) {
   if (done) return;
   done = YES;
   platform_register_app();
+  platform_register_metrics();
   platform_register_window();
   platform_register_screen();
   platform_register_clipboard();
   platform_register_shell();
+  platform_register_sessions();
   platform_register_dialog();
   platform_register_theme();
   platform_register_menu();
@@ -363,6 +377,7 @@ void platform_init(void) {
   platform_register_deep_link();
   platform_register_tray();
   platform_register_shortcuts();
+  platform_register_input();
   platform_register_diagnostics();
   platform_register_popover();
   platform_register_webview();

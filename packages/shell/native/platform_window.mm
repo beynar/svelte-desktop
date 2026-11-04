@@ -4,9 +4,286 @@
 // Events (emitted by shell_macos.mm): focusChanged, boundsChanged,
 // scaleFactorChanged, willClose, closed, created.
 #include <map>
+#include <cfloat>
 
 #include "platform_internal.h"
+#include "platform_app_windows.h"
 #include <objc/runtime.h>
+
+static NSDictionary *g_window_creation_options;
+static char kWindowId, kWindowObservers, kWindowVisible, kModalWindow, kParentWindow, kShowFocus, kSuspendedSheet, kSheetEnding, kSheetWaiters;
+static NSWindow *window_parent(NSWindow *w);
+static BOOL defer_window_close(NSWindow *w, dispatch_block_t done);
+static void close_owned_window(NSWindow *w, dispatch_block_t done);
+static void end_owned_sheet(NSWindow *w, dispatch_block_t done);
+static void hide_owned_window(NSWindow *w, dispatch_block_t done);
+
+static BOOL creation_wants_focus() {
+  id visible = g_window_creation_options[@"visible"] ?: g_window_creation_options[@"show"];
+  return (!visible || [visible boolValue]) && (!g_window_creation_options[@"focus"] || [g_window_creation_options[@"focus"] boolValue]);
+}
+
+@interface SDNativeWindow : NSWindow
+@property(nonatomic) BOOL sdFocusable;
+@end
+@interface SDNativePanel : NSPanel
+@property(nonatomic) BOOL sdFocusable;
+@end
+
+// Class policy is fixed before the vendor creates the WKWebView. No private
+// isa changes, and a nonfocusable panel never briefly steals the key window.
+#define SD_WINDOW_POLICY \
+- (BOOL)canBecomeKeyWindow { return self.sdFocusable; } \
+- (void)makeKeyAndOrderFront:(id)sender { \
+  if (!self.sdFocusable || !creation_wants_focus()) [self orderFront:sender]; \
+  else [super makeKeyAndOrderFront:sender]; \
+} \
+- (void)orderWindow:(NSWindowOrderingMode)place relativeTo:(NSInteger)other { \
+  [super orderWindow:place relativeTo:other]; platform_window_visibility_changed(self); \
+} \
+- (void)setAlphaValue:(CGFloat)value { [super setAlphaValue:value]; platform_window_visibility_changed(self); }
+// End AppKit's modal session before NSWindow starts destroying its sheet.
+#define SD_SHEET_CLOSE \
+- (void)close { \
+  if (defer_window_close(self, nil)) return; \
+  NSWindow *parent = window_parent(self); \
+  [super close]; \
+  if (parent.isVisible) [parent makeKeyAndOrderFront:nil]; \
+}
+
+@implementation SDNativeWindow
+SD_WINDOW_POLICY
+SD_SHEET_CLOSE
+- (BOOL)canBecomeMainWindow { return self.sdFocusable && [super canBecomeMainWindow]; }
+@end
+@implementation SDNativePanel
+SD_WINDOW_POLICY
+SD_SHEET_CLOSE
+- (BOOL)canBecomeMainWindow { return NO; }
+@end
+#undef SD_WINDOW_POLICY
+#undef SD_SHEET_CLOSE
+
+void platform_window_creation_options(NSDictionary *options) { g_window_creation_options = options; }
+
+// Returns +1, adopted by the vendor's existing owning-window lifecycle.
+extern "C" void *webview_sd_create_window(void) {
+  BOOL panel = [g_window_creation_options[@"type"] isEqual:@"panel"];
+  Class cls = panel ? SDNativePanel.class : SDNativeWindow.class;
+  NSWindow *w = [[cls alloc] initWithContentRect:NSZeroRect styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+  [(id)w setSdFocusable:!g_window_creation_options[@"focusable"] || [g_window_creation_options[@"focusable"] boolValue]];
+  objc_setAssociatedObject(w, &kShowFocus, g_window_creation_options[@"focus"] ?: @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  if (panel) {
+    ((NSPanel *)w).hidesOnDeactivate = NO;
+    ((NSPanel *)w).becomesKeyOnlyIfNeeded = YES;
+  }
+  return (__bridge_retained void *)w;
+}
+
+static NSWindow *parent_option(id publicId) {
+  if (![publicId isKindOfClass:NSNumber.class] || [publicId doubleValue] < 0 || [publicId doubleValue] != [publicId intValue]) return nil;
+  int native = [publicId intValue];
+  if (!native) native = platform_window_ids().firstObject.intValue;
+  return platform_window(native);
+}
+
+BOOL platform_window_options_valid(NSDictionary *o) {
+  if (o[@"type"] && ![@[ @"normal", @"panel" ] containsObject:o[@"type"]]) return NO;
+  for (NSString *key in @[ @"modal", @"focusable" ])
+    if (o[key] && ![o[key] isKindOfClass:NSNumber.class]) return NO;
+  NSWindow *parent = parent_option(o[@"parentId"]);
+  if (o[@"parentId"] && !parent) return NO;
+  if ([o[@"modal"] boolValue] && (!parent || parent.attachedSheet || (o[@"focusable"] && ![o[@"focusable"] boolValue]))) return NO;
+  return YES;
+}
+
+static NSWindow *window_parent(NSWindow *w) { return objc_getAssociatedObject(w, &kParentWindow); }
+
+BOOL platform_window_last_family(NSWindow *window) {
+  for (NSNumber *native in platform_window_ids()) {
+    NSWindow *candidate = platform_window(native.intValue);
+    while (candidate && candidate != window) candidate = window_parent(candidate);
+    if (!candidate) return NO;
+  }
+  return YES;
+}
+
+static NSString *set_parent(NSWindow *w, NSWindow *parent, BOOL modal) {
+  if (modal && (!parent || (parent.attachedSheet && parent.attachedSheet != w))) return @"modal requires a parent without another attached sheet";
+  for (NSWindow *ancestor = parent; ancestor; ancestor = window_parent(ancestor))
+    if (ancestor == w) return @"parent relationship cannot contain a cycle";
+  if (window_parent(w) == parent && [objc_getAssociatedObject(w, &kModalWindow) boolValue] == modal) return nil;
+  if (modal && (w.sheetParent || [objc_getAssociatedObject(w, &kSheetEnding) boolValue])) return @"hide the modal before changing its parent";
+  if (w.sheetParent) [w.sheetParent endSheet:w];
+  if (w.parentWindow) [w.parentWindow removeChildWindow:w];
+  // Cleared before either window closes; do not retain an ancestor through its child.
+  objc_setAssociatedObject(w, &kParentWindow, parent, OBJC_ASSOCIATION_ASSIGN);
+  objc_setAssociatedObject(w, &kModalWindow, @(modal), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  if (parent) {
+    if (modal && w.isVisible && w.alphaValue > 0) platform_window_present(w);
+    else if (!modal) [parent addChildWindow:w ordered:NSWindowAbove];
+  }
+  return nil;
+}
+
+void platform_window_configure_relationship(NSWindow *w, NSDictionary *o) {
+  set_parent(w, parent_option(o[@"parentId"]), [o[@"modal"] boolValue]);
+}
+
+void platform_window_present(NSWindow *w) {
+  objc_setAssociatedObject(w, &kSuspendedSheet, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  if ([objc_getAssociatedObject(w, &kSheetEnding) boolValue]) {
+    end_owned_sheet(w, ^{ if (objc_getAssociatedObject(w, &kWindowId)) platform_window_present(w); });
+    return;
+  }
+  NSWindow *parent = window_parent(w);
+  if (parent && [objc_getAssociatedObject(w, &kModalWindow) boolValue] && !w.sheetParent) {
+    // The vendor stages windows ordered front with alpha zero. AppKit requires
+    // a sheet to be ordered out before beginSheet (as dialog.sheet does).
+    [w orderOut:nil];
+    NSWindow *__weak weak = w;
+    [parent beginSheet:w completionHandler:^(NSModalResponse) {
+      NSWindow *sheet = weak;
+      [sheet orderOut:nil];
+      objc_setAssociatedObject(sheet, &kSheetEnding, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+      NSArray *waiters = [objc_getAssociatedObject(sheet, &kSheetWaiters) copy];
+      objc_setAssociatedObject(sheet, &kSheetWaiters, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+      for (dispatch_block_t done in waiters) done();
+    }];
+  }
+  else if ([objc_getAssociatedObject(w, &kShowFocus) boolValue]) [w makeKeyAndOrderFront:nil];
+  else [w orderFront:nil];
+  platform_window_visibility_changed(w);
+}
+
+static void end_owned_sheet(NSWindow *w, dispatch_block_t done) {
+  BOOL ending = [objc_getAssociatedObject(w, &kSheetEnding) boolValue];
+  if (!ending && !w.sheetParent) { if (done) done(); return; }
+  NSMutableArray *waiters = objc_getAssociatedObject(w, &kSheetWaiters);
+  if (!waiters) {
+    waiters = [NSMutableArray array];
+    objc_setAssociatedObject(w, &kSheetWaiters, waiters, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  if (done) [waiters addObject:[done copy]];
+  if (ending) return;
+  objc_setAssociatedObject(w, &kSheetEnding, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  [w.sheetParent endSheet:w];
+}
+
+static void hide_owned_window(NSWindow *w, dispatch_block_t done) {
+  if (w.sheetParent || [objc_getAssociatedObject(w, &kSheetEnding) boolValue]) {
+    end_owned_sheet(w, ^{ hide_owned_window(w, done); });
+    return;
+  }
+  [w orderOut:nil];
+  platform_window_visibility_changed(w);
+  if (done) done();
+}
+
+static BOOL defer_window_close(NSWindow *w, dispatch_block_t done) {
+  for (NSNumber *native in platform_window_ids()) {
+    NSWindow *child = platform_window(native.intValue);
+    if (window_parent(child) != w) continue;
+    close_owned_window(child, ^{ close_owned_window(w, done); });
+    return YES;
+  }
+  if (w.sheetParent || [objc_getAssociatedObject(w, &kSheetEnding) boolValue]) {
+    end_owned_sheet(w, ^{ close_owned_window(w, done); });
+    return YES;
+  }
+  return NO;
+}
+
+static void close_owned_window(NSWindow *w, dispatch_block_t done) {
+  if (objc_getAssociatedObject(w, &kWindowId)) {
+    if (defer_window_close(w, done)) return;
+    [w close];
+  }
+  if (done) done();
+}
+
+void platform_window_suspend_sheets_for_quit(void (^ready)(NSArray<NSWindow *> *)) {
+  NSMutableArray<NSWindow *> *sheets = [NSMutableArray array];
+  NSMutableArray<NSWindow *> *endingSheets = [NSMutableArray array];
+  for (NSNumber *native in platform_window_ids().reverseObjectEnumerator) {
+    NSWindow *w = platform_window(native.intValue);
+    BOOL ending = [objc_getAssociatedObject(w, &kSheetEnding) boolValue];
+    if ((!w.sheetParent && !ending) || ![objc_getAssociatedObject(w, &kModalWindow) boolValue]) continue;
+    [endingSheets addObject:w];
+    if (!ending) {
+      objc_setAssociatedObject(w, &kSuspendedSheet, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+      [sheets addObject:w];
+    }
+  }
+  if (!endingSheets.count) { ready(sheets); return; }
+  __block NSUInteger pending = endingSheets.count;
+  for (NSWindow *w in endingSheets) end_owned_sheet(w, ^{
+    [w orderOut:nil];
+    if (!--pending) ready(sheets);
+  });
+}
+
+void platform_window_restore_sheets_after_quit(NSArray<NSWindow *> *sheets) {
+  for (NSWindow *w in sheets.reverseObjectEnumerator) {
+    if (!objc_getAssociatedObject(w, &kWindowId) || ![objc_getAssociatedObject(w, &kSuspendedSheet) boolValue]) continue;
+    if (window_parent(w) && !window_parent(w).attachedSheet) platform_window_present(w);
+    objc_setAssociatedObject(w, &kSuspendedSheet, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+}
+
+void platform_window_visibility_changed(NSWindow *w) {
+  NSNumber *native = objc_getAssociatedObject(w, &kWindowId);
+  if (!native) return;
+  BOOL visible = w.isVisible && w.alphaValue > 0 && !NSApp.hidden;
+  NSNumber *before = objc_getAssociatedObject(w, &kWindowVisible);
+  if (before && before.boolValue == visible) return;
+  objc_setAssociatedObject(w, &kWindowVisible, @(visible), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  platform_emit(visible ? @"shown" : @"hidden", @{@"windowId":@(platform_public_window_id(native.intValue))});
+}
+
+void platform_window_observe(int nativeId, NSWindow *w) {
+  NSWindowCollectionBehavior full = ([w isKindOfClass:NSPanel.class] || [objc_getAssociatedObject(w, &kModalWindow) boolValue])
+      ? NSWindowCollectionBehaviorFullScreenAuxiliary : NSWindowCollectionBehaviorFullScreenPrimary;
+  w.collectionBehavior = (w.collectionBehavior & ~(NSWindowCollectionBehaviorFullScreenPrimary | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorFullScreenNone)) | full;
+  objc_setAssociatedObject(w, &kWindowId, @(nativeId), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  objc_setAssociatedObject(w, &kWindowVisible, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  NSMutableArray *tokens = [NSMutableArray array];
+  objc_setAssociatedObject(w, &kWindowObservers, tokens, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+  NSWindow *__weak weak = w;
+  NSDictionary *events = @{
+    NSWindowDidMiniaturizeNotification:@"minimized", NSWindowDidDeminiaturizeNotification:@"restored",
+    NSWindowDidEnterFullScreenNotification:@"fullscreenChanged", NSWindowDidExitFullScreenNotification:@"fullscreenChanged",
+    NSWindowDidMoveNotification:@"moved", NSWindowDidResizeNotification:@"resized",
+    NSWindowDidBecomeKeyNotification:@"focus", NSWindowDidResignKeyNotification:@"blur"
+  };
+  for (NSNotificationName name in events)
+    [tokens addObject:[nc addObserverForName:name object:w queue:nil usingBlock:^(NSNotification *) {
+      NSWindow *win = weak;
+      if (!win) return;
+      NSMutableDictionary *data = [@{@"windowId":@(platform_public_window_id(nativeId))} mutableCopy];
+      NSString *event = events[name];
+      if ([event isEqual:@"fullscreenChanged"]) {
+        BOOL full = [name isEqualToString:NSWindowDidEnterFullScreenNotification];
+        data[@"fullscreen"] = @(full);
+        data[@"transition"] = full ? @"entered" : @"exited";
+      } else if ([event isEqual:@"moved"] || [event isEqual:@"resized"]) [data addEntriesFromDictionary:platform_rect_dict(platform_to_top_left(win.frame))];
+      platform_emit(event, data);
+      platform_window_visibility_changed(win);
+    }]];
+  for (NSNotificationName name in @[ NSApplicationDidHideNotification, NSApplicationDidUnhideNotification ])
+    [tokens addObject:[nc addObserverForName:name object:NSApp queue:nil usingBlock:^(NSNotification *) { platform_window_visibility_changed(weak); }]];
+  [tokens addObject:[nc addObserverForName:NSWindowDidChangeOcclusionStateNotification object:w queue:nil usingBlock:^(NSNotification *) { platform_window_visibility_changed(weak); }]];
+  [tokens addObject:[nc addObserverForName:NSWindowWillCloseNotification object:w queue:nil usingBlock:^(NSNotification *) {
+    NSWindow *win = weak;
+    if (win.parentWindow) [win.parentWindow removeChildWindow:win];
+    objc_setAssociatedObject(win, &kParentWindow, nil, OBJC_ASSOCIATION_ASSIGN);
+    for (id token in (NSArray *)objc_getAssociatedObject(win, &kWindowObservers)) [NSNotificationCenter.defaultCenter removeObserver:token];
+    objc_setAssociatedObject(win, &kWindowObservers, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(win, &kWindowId, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }]];
+  platform_window_visibility_changed(w);
+}
 
 // ── title bar styles ────────────────────────────────────────────────────
 // default: the system title bar. transparent: the page extends under a title bar
@@ -15,7 +292,7 @@
 // --desktop-titlebar-height / --desktop-controls-width and
 // html[data-desktop-titlebar] to lay itself out, kept current across fullscreen.
 
-static char kStyleKey, kObserversKey;
+static char kStyleKey, kObserversKey, kTrafficLightsKey, kTrafficObserversKey, kTrafficHomeKey;
 
 static void publish_chrome(NSWindow *w, WKWebView *wv) {
   if (!wv) return;
@@ -23,6 +300,9 @@ static void publish_chrome(NSWindow *w, WKWebView *wv) {
   BOOL hidden = ![style isEqual:@"default"];
   BOOL full = (w.styleMask & NSWindowStyleMaskFullScreen) != 0;
   CGFloat bar = hidden && !full ? MAX(0, NSHeight(w.frame) - NSHeight(w.contentLayoutRect)) : 0;
+  // Traffic lights moved down (setTrafficLightPosition): the strip reaches below them.
+  if (NSValue *at = objc_getAssociatedObject(w, &kTrafficLightsKey); at && hidden && !full)
+    bar = MAX(bar, at.pointValue.y * 2 + NSHeight([w standardWindowButton:NSWindowCloseButton].frame));
   NSButton *zoom = [w standardWindowButton:NSWindowZoomButton];
   CGFloat controls = hidden && !full && zoom ? NSMaxX([zoom convertRect:zoom.bounds toView:nil]) + 12 : 0;
   NSString *js = [NSString stringWithFormat:
@@ -37,23 +317,96 @@ static void publish_chrome(NSWindow *w, WKWebView *wv) {
                                                                            forMainFrameOnly:YES]];
 }
 
+// Traffic lights at a position of your own ({x, y}: the close button's top-left, in points from the
+// window's top-left), for a custom title bar. AppKit lays them out again on resize and focus
+// changes: placed again after each.
+static void place_traffic_lights(NSWindow *w) {
+  NSValue *at = objc_getAssociatedObject(w, &kTrafficLightsKey);
+  NSButton *close = [w standardWindowButton:NSWindowCloseButton], *mini = [w standardWindowButton:NSWindowMiniaturizeButton],
+           *zoom = [w standardWindowButton:NSWindowZoomButton];
+  if (!at || !close.superview.superview || (w.styleMask & NSWindowStyleMaskFullScreen)) return;
+  NSPoint p = at.pointValue;
+  NSView *titlebar = close.superview, *container = titlebar.superview;
+  // Where AppKit had them, to put them back (setTrafficLightPosition(null)).
+  if (!objc_getAssociatedObject(w, &kTrafficHomeKey))
+    objc_setAssociatedObject(w, &kTrafficHomeKey, @[ [NSValue valueWithRect:container.frame], [NSValue valueWithPoint:close.frame.origin],
+                                                     [NSValue valueWithPoint:mini.frame.origin], [NSValue valueWithPoint:zoom.frame.origin] ], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  CGFloat bh = NSHeight(close.frame), height = bh + 2 * p.y;
+  NSRect r = container.frame;
+  r.size.height = height;
+  r.origin.y = NSHeight(w.frame) - height;
+  container.frame = r;
+  CGFloat space = mini ? NSMinX(mini.frame) - NSMinX(close.frame) : 20;
+  if (space <= 0) space = 20;
+  NSArray *buttons = @[ close, mini ?: NSNull.null, zoom ?: NSNull.null ];
+  for (NSUInteger i = 0; i < buttons.count; i++) {
+    if (buttons[i] == NSNull.null) continue;
+    NSButton *b = buttons[i];
+    [b setFrameOrigin:NSMakePoint(p.x + i * space, NSHeight(titlebar.frame) - p.y - bh)];
+  }
+}
+
+void platform_window_set_traffic_lights(NSWindow *w, WKWebView *_Nullable wv, NSValue *_Nullable at) {
+  objc_setAssociatedObject(w, &kTrafficLightsKey, at, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  if (at && !objc_getAssociatedObject(w, &kTrafficObserversKey)) {
+    NSMutableArray *tokens = [NSMutableArray array];
+    NSWindow *__weak weak = w;
+    for (NSNotificationName n in @[ NSWindowDidResizeNotification, NSWindowDidEndLiveResizeNotification, NSWindowDidExitFullScreenNotification,
+                                    NSWindowDidBecomeKeyNotification, NSWindowDidResignKeyNotification, NSWindowDidChangeBackingPropertiesNotification ])
+      [tokens addObject:[NSNotificationCenter.defaultCenter addObserverForName:n object:w queue:NSOperationQueue.mainQueue
+                                                                    usingBlock:^(NSNotification *) {
+                                                                      if (weak) place_traffic_lights(weak);
+                                                                    }]];
+    objc_setAssociatedObject(w, &kTrafficObserversKey, tokens, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  if (at) place_traffic_lights(w);
+  else if (NSArray<NSValue *> *home = objc_getAssociatedObject(w, &kTrafficHomeKey)) {
+    // Back where AppKit had them.
+    NSButton *close = [w standardWindowButton:NSWindowCloseButton];
+    NSView *container = close.superview.superview;
+    NSRect r = home[0].rectValue;
+    r.origin.y = NSHeight(w.frame) - NSHeight(r);
+    r.size.width = NSWidth(container.frame);
+    container.frame = r;
+    NSArray *buttons = @[ close, [w standardWindowButton:NSWindowMiniaturizeButton] ?: NSNull.null, [w standardWindowButton:NSWindowZoomButton] ?: NSNull.null ];
+    for (NSUInteger i = 0; i < buttons.count; i++)
+      if (buttons[i] != NSNull.null) [(NSButton *)buttons[i] setFrameOrigin:home[i + 1].pointValue];
+    objc_setAssociatedObject(w, &kTrafficHomeKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  publish_chrome(w, wv);
+}
+
+// hiddenInset's traffic lights sit in an empty unified toolbar. In full screen macOS shows that toolbar
+// as an opaque strip across the top: it goes while the window is full screen.
+static void update_inset_toolbar(NSWindow *w, BOOL enteringFullScreen = NO) {
+  BOOL inset = [objc_getAssociatedObject(w, &kStyleKey) isEqual:@"hiddenInset"];
+  BOOL full = enteringFullScreen || (w.styleMask & NSWindowStyleMaskFullScreen);
+  if (inset && !full) {
+    if (!w.toolbar) w.toolbar = [[NSToolbar alloc] initWithIdentifier:@"sd-inset"];
+    w.toolbarStyle = NSWindowToolbarStyleUnifiedCompact;
+  } else if ([w.toolbar.identifier isEqual:@"sd-inset"]) {
+    w.toolbar = nil;
+  }
+}
+
 void platform_apply_title_bar_style(NSWindow *w, WKWebView *_Nullable wv, NSString *style) {
   BOOL transparent = ![style isEqual:@"default"];
   w.titlebarAppearsTransparent = transparent;
   if (transparent) w.styleMask |= NSWindowStyleMaskFullSizeContentView;
   else w.styleMask &= ~NSWindowStyleMaskFullSizeContentView;
   w.titleVisibility = [style hasPrefix:@"hidden"] ? NSWindowTitleHidden : NSWindowTitleVisible; // transparent keeps the title
-  if ([style isEqual:@"hiddenInset"]) {
-    if (!w.toolbar) w.toolbar = [[NSToolbar alloc] initWithIdentifier:@"sd-inset"];
-    w.toolbarStyle = NSWindowToolbarStyleUnifiedCompact;
-  } else if ([w.toolbar.identifier isEqual:@"sd-inset"]) {
-    w.toolbar = nil;
-  }
   objc_setAssociatedObject(w, &kStyleKey, style, OBJC_ASSOCIATION_COPY_NONATOMIC);
+  update_inset_toolbar(w);
   if (!objc_getAssociatedObject(w, &kObserversKey)) {
     NSMutableArray *tokens = [NSMutableArray array];
     WKWebView *__weak weakView = wv;
     NSWindow *__weak weakWindow = w;
+    // Off before the full-screen animation starts, back once it has ended (as Electron does).
+    for (NSNotificationName n in @[ NSWindowWillEnterFullScreenNotification, NSWindowDidExitFullScreenNotification ])
+      [tokens addObject:[NSNotificationCenter.defaultCenter addObserverForName:n object:w queue:NSOperationQueue.mainQueue
+                                                                    usingBlock:^(NSNotification *note) {
+                                                                      if (weakWindow) update_inset_toolbar(weakWindow, [note.name isEqual:NSWindowWillEnterFullScreenNotification]);
+                                                                    }]];
     for (NSNotificationName n in @[ NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification ])
       [tokens addObject:[NSNotificationCenter.defaultCenter addObserverForName:n object:w queue:NSOperationQueue.mainQueue
                                                                     usingBlock:^(NSNotification *) {
@@ -76,6 +429,234 @@ void platform_window_drag(NSWindow *w, BOOL doubleClick) {
   }
   NSEvent *e = NSApp.currentEvent;
   if (e && (e.type == NSEventTypeLeftMouseDown || e.type == NSEventTypeLeftMouseDragged)) [w performWindowDragWithEvent:e];
+}
+
+// Vibrancy: an NSVisualEffectView behind the page, filling the window; where the page paints no
+// background, the material shows (the system blurs what's behind or under the window — nothing in
+// the page's own memory, unlike a CSS backdrop-filter).
+static NSDictionary<NSString *, NSNumber *> *vibrancy_materials(void) {
+  return @{
+    @"sidebar" : @(NSVisualEffectMaterialSidebar),
+    @"titlebar" : @(NSVisualEffectMaterialTitlebar),
+    @"header" : @(NSVisualEffectMaterialHeaderView),
+    @"content" : @(NSVisualEffectMaterialContentBackground),
+    @"window" : @(NSVisualEffectMaterialWindowBackground),
+    @"underWindow" : @(NSVisualEffectMaterialUnderWindowBackground),
+    @"underPage" : @(NSVisualEffectMaterialUnderPageBackground),
+    @"menu" : @(NSVisualEffectMaterialMenu),
+    @"popover" : @(NSVisualEffectMaterialPopover),
+    @"sheet" : @(NSVisualEffectMaterialSheet),
+    @"hud" : @(NSVisualEffectMaterialHUDWindow),
+    @"tooltip" : @(NSVisualEffectMaterialToolTip),
+    @"fullscreenUI" : @(NSVisualEffectMaterialFullScreenUI),
+    @"selection" : @(NSVisualEffectMaterialSelection),
+  };
+}
+
+static NSString *const kVibrancyId = @"sd-vibrancy";
+static NSString *const kGlassId = @"sd-glass";
+static char kGlassSavedKey, kRegionsKey, kRegionGlassKey, kMaterialNameKey, kGlassTintKey;
+static BOOL g_cursor_hidden = NO;
+
+// What the effects need from the window and the page, from all of them together: window vibrancy
+// or glass, and the CSS materials. The page draws no background while any is on; the window is
+// non-opaque while there's glass (its opacity and color come back after).
+static void update_backdrop(NSWindow *w, WKWebView *page) {
+  BOOL windowVibrancy = NO, windowGlass = NO;
+  for (NSView *v in w.contentView.subviews) {
+    windowVibrancy |= [v.identifier isEqual:kVibrancyId];
+    windowGlass |= [v.identifier isEqual:kGlassId];
+  }
+  NSDictionary *regions = objc_getAssociatedObject(w, &kRegionsKey);
+  if (page) [page setValue:@(!(windowVibrancy || windowGlass || regions.count)) forKey:@"drawsBackground"];
+  BOOL clear = windowGlass || [objc_getAssociatedObject(w, &kRegionGlassKey) boolValue];
+  NSArray *saved = objc_getAssociatedObject(w, &kGlassSavedKey);
+  if (clear && !saved) {
+    objc_setAssociatedObject(w, &kGlassSavedKey, @[ @(w.opaque), w.backgroundColor ?: NSColor.windowBackgroundColor ], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    w.opaque = NO;
+    w.backgroundColor = NSColor.clearColor;
+  } else if (!clear && saved) {
+    w.opaque = [saved[0] boolValue];
+    w.backgroundColor = saved[1];
+    objc_setAssociatedObject(w, &kGlassSavedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+}
+
+/// Sets (or, with a nil material, removes) the window's vibrancy. Returns an error message.
+NSString *platform_window_set_vibrancy(NSWindow *w, int nativeId, NSString *material, NSString *state) {
+  NSView *host = w.contentView;
+  NSVisualEffectView *fx = nil;
+  for (NSView *v in host.subviews)
+    if ([v.identifier isEqual:kVibrancyId]) fx = (NSVisualEffectView *)v;
+  WKWebView *page = platform_webview(nativeId);
+  if (!material) {
+    [fx removeFromSuperview];
+    update_backdrop(w, page);
+    return nil;
+  }
+  NSNumber *m = vibrancy_materials()[material];
+  if (!m) return [NSString stringWithFormat:@"unknown material `%@`, expected one of %@", material, [vibrancy_materials().allKeys componentsJoinedByString:@", "]];
+  platform_window_set_glass(w, nativeId, nil, nil); // one effect at a time
+  if (!fx) {
+    fx = [[NSVisualEffectView alloc] initWithFrame:host.bounds];
+    fx.identifier = kVibrancyId;
+    fx.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    fx.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    [host addSubview:fx positioned:NSWindowBelow relativeTo:nil];
+  }
+  fx.material = (NSVisualEffectMaterial)m.integerValue;
+  objc_setAssociatedObject(fx, &kMaterialNameKey, material, OBJC_ASSOCIATION_COPY_NONATOMIC);
+  fx.state = [state isEqual:@"active"] ? NSVisualEffectStateActive : [state isEqual:@"inactive"] ? NSVisualEffectStateInactive : NSVisualEffectStateFollowsWindowActiveState;
+  update_backdrop(w, page); // the page's transparent parts show it
+  return nil;
+}
+
+// Liquid Glass (macOS 26): an NSGlassEffectView behind the page, filling the window, which is made
+// non-opaque so the glass shows what's behind it. Before macOS 26, the `underWindow` vibrancy
+// material instead. One effect at a time: glass removes vibrancy and the other way round.
+/// "#rgb", "#rrggbb" or "#rrggbbaa", or nil.
+static NSColor *parse_hex_color(NSString *hex) {
+  if (![hex hasPrefix:@"#"]) return nil;
+  NSString *h = [hex substringFromIndex:1];
+  if (h.length == 3) h = [NSString stringWithFormat:@"%C%C%C%C%C%C", [h characterAtIndex:0], [h characterAtIndex:0], [h characterAtIndex:1], [h characterAtIndex:1], [h characterAtIndex:2], [h characterAtIndex:2]];
+  if (h.length == 6) h = [h stringByAppendingString:@"ff"];
+  if (h.length != 8) return nil;
+  unsigned v = 0;
+  if (![[NSScanner scannerWithString:h] scanHexInt:&v]) return nil;
+  return [NSColor colorWithSRGBRed:((v >> 24) & 0xff) / 255.0 green:((v >> 16) & 0xff) / 255.0 blue:((v >> 8) & 0xff) / 255.0 alpha:(v & 0xff) / 255.0];
+}
+
+/// Sets (or, with nil options, removes) the window's glass. Returns an error message; `*glass`
+/// tells whether it is Liquid Glass (NO: the vibrancy fallback, before macOS 26).
+NSString *platform_window_set_glass(NSWindow *w, int nativeId, NSDictionary *opts, BOOL *glass) {
+  NSView *host = w.contentView;
+  NSView *existing = nil;
+  for (NSView *v in host.subviews)
+    if ([v.identifier isEqual:kGlassId]) existing = v;
+  WKWebView *page = platform_webview(nativeId);
+  if (!opts) {
+    if (!existing) return nil;
+    [existing removeFromSuperview];
+    update_backdrop(w, page);
+    return nil;
+  }
+  NSString *style = [opts[@"style"] isKindOfClass:NSString.class] ? opts[@"style"] : @"regular";
+  if (![style isEqual:@"regular"] && ![style isEqual:@"clear"]) return [NSString stringWithFormat:@"unknown style `%@`, expected regular or clear", style];
+  NSString *tintSpec = [opts[@"tint"] isKindOfClass:NSString.class] ? opts[@"tint"] : nil;
+  NSColor *tint = tintSpec ? parse_hex_color(tintSpec) : nil;
+  if (tintSpec && !tint) return [NSString stringWithFormat:@"tint `%@` is not a #rgb, #rrggbb or #rrggbbaa color", tintSpec];
+  if (@available(macOS 26.0, *)) {
+    platform_window_set_vibrancy(w, nativeId, nil, nil);
+    NSGlassEffectView *g = (NSGlassEffectView *)existing;
+    if (!g) {
+      g = [[NSGlassEffectView alloc] initWithFrame:host.bounds];
+      g.identifier = kGlassId;
+      g.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+      [host addSubview:g positioned:NSWindowBelow relativeTo:nil];
+    }
+    g.style = [style isEqual:@"clear"] ? NSGlassEffectViewStyleClear : NSGlassEffectViewStyleRegular;
+    g.tintColor = tint;
+    objc_setAssociatedObject(g, &kGlassTintKey, tintSpec, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    g.cornerRadius = MAX(0, [opts[@"cornerRadius"] isKindOfClass:NSNumber.class] ? [opts[@"cornerRadius"] doubleValue] : 0);
+    update_backdrop(w, page);
+    if (glass) *glass = YES;
+    return nil;
+  }
+  if (glass) *glass = NO;
+  return platform_window_set_vibrancy(w, nativeId, @"underWindow", nil);
+}
+
+// Materials from CSS (src/host/materials.ts): the page sends the elements that declare
+// `--desktop-material` — their rects in CSS px, radius, tint — and each gets an effect view behind
+// the web view at that place: NSVisualEffectView for a vibrancy material, NSGlassEffectView for
+// `glass` / `glass-clear` (macOS 26; the `underWindow` material before). The whole list each
+// time: views of elements gone are removed. Glass needs a non-opaque window to show what's behind.
+static char kRegionRadiusKey;
+
+static NSImage *rounded_mask(CGFloat r) {
+  NSImage *img = [NSImage imageWithSize:NSMakeSize(2 * r + 1, 2 * r + 1)
+                                flipped:NO
+                         drawingHandler:^BOOL(NSRect rect) {
+                           [NSColor.blackColor setFill];
+                           [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:r yRadius:r] fill];
+                           return YES;
+                         }];
+  img.capInsets = NSEdgeInsetsMake(r, r, r, r);
+  img.resizingMode = NSImageResizingModeStretch;
+  return img;
+}
+
+static NSString *apply_material_regions(NSWindow *w, int nativeId, NSArray *regions) {
+  WKWebView *page = platform_webview(nativeId);
+  if (!page) return @"no web view";
+  NSView *host = page.superview ?: w.contentView;
+  NSMutableDictionary<NSString *, NSView *> *views = objc_getAssociatedObject(w, &kRegionsKey);
+  if (!views) objc_setAssociatedObject(w, &kRegionsKey, views = [NSMutableDictionary new], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  CGFloat zoom = page.magnification;
+  if (@available(macOS 11.0, *)) zoom *= page.pageZoom;
+  NSMutableSet *seen = [NSMutableSet new];
+  BOOL anyGlass = NO;
+  for (NSDictionary *r in regions) {
+    if (![r isKindOfClass:NSDictionary.class]) continue;
+    NSString *rid = [r[@"id"] description];
+    NSString *material = [r[@"material"] isKindOfClass:NSString.class] ? r[@"material"] : nil;
+    if (!rid || !material) continue;
+    BOOL glass = [material isEqual:@"glass"] || [material isEqual:@"glass-clear"];
+    NSNumber *vm = glass ? nil : vibrancy_materials()[material];
+    if (!glass && !vm) return [NSString stringWithFormat:@"unknown material `%@`", material];
+    NSRect rr = NSMakeRect([r[@"x"] doubleValue] * zoom, [r[@"y"] doubleValue] * zoom, [r[@"width"] doubleValue] * zoom, [r[@"height"] doubleValue] * zoom);
+    if (!page.isFlipped) rr.origin.y = NSHeight(page.bounds) - NSMaxY(rr);
+    NSRect frame = [page convertRect:rr toView:host];
+    CGFloat radius = MAX(0, [r[@"radius"] doubleValue] * zoom);
+    NSString *tintSpec = [r[@"tint"] isKindOfClass:NSString.class] ? r[@"tint"] : nil;
+    [seen addObject:rid];
+    NSView *v = views[rid];
+    BOOL useGlass = NO;
+    if (glass) {
+      if (@available(macOS 26.0, *)) useGlass = YES;
+    }
+    Class want = useGlass ? NSClassFromString(@"NSGlassEffectView") : NSVisualEffectView.class;
+    if (v && ![v isKindOfClass:want]) {
+      [v removeFromSuperview];
+      v = nil;
+    }
+    if (!v) {
+      v = [[want alloc] initWithFrame:frame];
+      v.identifier = [@"sd-material-" stringByAppendingString:rid];
+      if (!useGlass) ((NSVisualEffectView *)v).blendingMode = NSVisualEffectBlendingModeBehindWindow;
+      [host addSubview:v positioned:NSWindowBelow relativeTo:page];
+      views[rid] = v;
+    }
+    if (!NSEqualRects(v.frame, frame)) v.frame = frame;
+    if (useGlass) {
+      if (@available(macOS 26.0, *)) {
+        NSGlassEffectView *g = (NSGlassEffectView *)v;
+        g.style = [material isEqual:@"glass-clear"] ? NSGlassEffectViewStyleClear : NSGlassEffectViewStyleRegular;
+        g.cornerRadius = radius;
+        g.tintColor = tintSpec ? parse_hex_color(tintSpec) : nil;
+      }
+      anyGlass = YES;
+    } else {
+      NSVisualEffectView *fx = (NSVisualEffectView *)v;
+      NSVisualEffectMaterial m = glass ? NSVisualEffectMaterialUnderWindowBackground : (NSVisualEffectMaterial)vm.integerValue;
+      if (fx.material != m) fx.material = m;
+      NSString *state = [r[@"state"] isKindOfClass:NSString.class] ? r[@"state"] : nil;
+      fx.state = [state isEqual:@"active"] ? NSVisualEffectStateActive : [state isEqual:@"inactive"] ? NSVisualEffectStateInactive : NSVisualEffectStateFollowsWindowActiveState;
+      NSNumber *had = objc_getAssociatedObject(fx, &kRegionRadiusKey);
+      if (!had || had.doubleValue != radius) {
+        fx.maskImage = radius > 0 ? rounded_mask(radius) : nil;
+        objc_setAssociatedObject(fx, &kRegionRadiusKey, @(radius), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+      }
+    }
+  }
+  for (NSString *rid in views.allKeys)
+    if (![seen containsObject:rid]) {
+      [views[rid] removeFromSuperview];
+      [views removeObjectForKey:rid];
+    }
+  objc_setAssociatedObject(w, &kRegionGlassKey, @(anyGlass), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  update_backdrop(w, page);
+  return nil;
 }
 
 typedef void (^WindowOp)(PlatformCall *c, NSWindow *w, int nativeId);
@@ -110,7 +691,13 @@ static NSString *state_name(NSWindow *w) {
 
 static NSDictionary *info_row(int id) {
   NSWindow *w = platform_window(id);
+  NSNumber *parent = objc_getAssociatedObject(window_parent(w), &kWindowId);
   return @{
+    @"parentId" : parent ? @(platform_public_window_id(parent.intValue)) : (NSObject *)NSNull.null,
+    @"modal" : @([objc_getAssociatedObject(w, &kModalWindow) boolValue]),
+    @"sheetAttached" : @(w.sheetParent != nil),
+    @"type" : [w isKindOfClass:NSPanel.class] ? @"panel" : @"normal",
+    @"focusable" : @([(SDNativeWindow *)w sdFocusable]),
     @"windowId" : @(platform_public_window_id(id)),
     @"label" : platform_window_label(id) ?: @"",
     @"focused" : @(w.isKeyWindow),
@@ -178,10 +765,12 @@ void platform_register_window(void) {
   // ── multi-window ──────────────────────────────────────────────────────
   platform_register(@"window", @"create", ^(PlatformCall *c) {
     int id = platform_create_window(c.args);
+    if (id == -6) return [c fail:@"invalid_args" message:@"window.create: invalid parent, modal, type or focusable option"];
+    if (id == -5) return [c fail:@"invalid_args" message:@"window.create: unknown session or invalid recovery policy"];
     if (id == -4) return [c fail:@"invalid_args" message:[NSString stringWithFormat:@"window.create: label `%@` is already used", [c string:@"label"]]];
     if (id <= 0) return [c fail:@"internal" message:@"window.create failed"];
     if ([c has:@"opacity"]) platform_window(id).alphaValue = [c number:@"opacity" or:1];
-    if ([c boolean:@"focus" or:YES] && [c boolean:@"visible" or:YES]) [NSApp activateIgnoringOtherApps:YES];
+    if ([c boolean:@"focus" or:YES] && [c boolean:@"focusable" or:YES] && [c boolean:@"visible" or:YES]) [NSApp activateIgnoringOtherApps:YES];
     [c ok:@{@"windowId" : @(platform_public_window_id(id)), @"label" : platform_window_label(id) ?: @""}];
   });
   platform_register(@"window", @"list", ^(PlatformCall *c) {
@@ -199,6 +788,35 @@ void platform_register_window(void) {
   // ── geometry ──────────────────────────────────────────────────────────
   // The calling page's own window (or windowId's): {windowId, label, focused, visible, bounds}.
   reg(@"getInfo", ^(PlatformCall *c, NSWindow *, int id) { [c ok:info_row(id)]; });
+  reg(@"setParent", ^(PlatformCall *c, NSWindow *w, int) {
+    id requested = c.args[@"parentId"];
+    NSWindow *parent = requested == NSNull.null ? nil : parent_option(requested);
+    if (requested != NSNull.null && !parent) return [c fail:@"invalid_args" message:@"window.setParent: no such parent"];
+    if (NSString *error = set_parent(w, parent, [objc_getAssociatedObject(w, &kModalWindow) boolValue])) return [c fail:@"invalid_args" message:error];
+    [c ok:nil];
+  });
+  reg(@"getParent", ^(PlatformCall *c, NSWindow *w, int) {
+    NSNumber *native = objc_getAssociatedObject(window_parent(w), &kWindowId);
+    [c ok:native ? info_row(native.intValue) : nil];
+  });
+  reg(@"getChildren", ^(PlatformCall *c, NSWindow *w, int) {
+    NSMutableArray *children = [NSMutableArray array];
+    for (NSNumber *native in platform_window_ids())
+      if (window_parent(platform_window(native.intValue)) == w) [children addObject:info_row(native.intValue)];
+    [c ok:children];
+  });
+  reg(@"getLevel", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@(w.level)]; });
+  reg(@"isAlwaysOnTop", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@(w.level > NSNormalWindowLevel)]; });
+  reg(@"hasShadow", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@(w.hasShadow)]; });
+  reg(@"isMovable", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@(w.movable)]; });
+  reg(@"isFocusable", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@([(id)w sdFocusable])]; });
+  reg(@"getMinSize", ^(PlatformCall *c, NSWindow *w, int) {
+    [c ok:@{@"width":@(w.contentMinSize.width), @"height":@(w.contentMinSize.height)}];
+  });
+  reg(@"getMaxSize", ^(PlatformCall *c, NSWindow *w, int) {
+    NSSize size = w.contentMaxSize;
+    [c ok:@{@"width":@(size.width >= FLT_MAX ? 0 : size.width), @"height":@(size.height >= FLT_MAX ? 0 : size.height)}];
+  });
   reg(@"getBounds", ^(PlatformCall *c, NSWindow *w, int) {
     [c ok:@{@"bounds" : platform_rect_dict(platform_to_top_left(w.frame)), @"state" : state_name(w)}];
   });
@@ -353,10 +971,14 @@ void platform_register_window(void) {
   reg(@"setFullscreen", ^(PlatformCall *c, NSWindow *w, int) {
     BOOL want = [c boolean:@"fullscreen" or:YES];
     BOOL is = (w.styleMask & NSWindowStyleMaskFullScreen) != 0;
+    if (want != is && !(w.collectionBehavior & NSWindowCollectionBehaviorFullScreenPrimary))
+      return [c fail:@"unsupported" message:@"panels and modal children do not own native fullscreen Spaces"];
     if (want != is) [w toggleFullScreen:nil];
     [c ok:@{@"fullscreen" : @(want)}]; // the transition animates; the state lands ~0.5–1 s later
   });
   reg(@"toggleFullscreen", ^(PlatformCall *c, NSWindow *w, int) {
+    if (!(w.collectionBehavior & NSWindowCollectionBehaviorFullScreenPrimary))
+      return [c fail:@"unsupported" message:@"panels and modal children do not own native fullscreen Spaces"];
     BOOL is = (w.styleMask & NSWindowStyleMaskFullScreen) != 0;
     [w toggleFullScreen:nil];
     [c ok:@{@"fullscreen" : @(!is)}];
@@ -389,9 +1011,16 @@ void platform_register_window(void) {
   reg(@"isFocused", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@(w.isKeyWindow)]; });
   reg(@"isActive", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@(w.isKeyWindow && NSApp.isActive)]; });
   reg(@"focus", ^(PlatformCall *c, NSWindow *w, int) {
-    [NSApp activateIgnoringOtherApps:YES];
+    if (!w.canBecomeKeyWindow) return [c fail:@"unavailable" message:@"window.focus: this window is not focusable"];
+    [NSApp unhide:nil];
     [w makeKeyAndOrderFront:nil];
-    [c ok:nil];
+    // Best effort, like a browser's window.focus(): macOS may keep another app in front (it decides);
+    // the answer says whether the app is active now, it doesn't fail.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [NSApp activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
+    [c ok:@{@"activated" : @(NSApp.isActive)}];
   });
   reg(@"blur", ^(PlatformCall *c, NSWindow *w, int) {
     [w resignKeyWindow];
@@ -407,16 +1036,20 @@ void platform_register_window(void) {
   reg(@"isVisible", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@(w.isVisible && w.alphaValue > 0)]; });
   reg(@"show", ^(PlatformCall *c, NSWindow *w, int) {
     if (w.alphaValue == 0) w.alphaValue = 1;
-    [w makeKeyAndOrderFront:nil];
+    platform_window_present(w);
     [c ok:nil];
   });
   reg(@"hide", ^(PlatformCall *c, NSWindow *w, int) {
-    [w orderOut:nil];
-    [c ok:nil];
+    objc_setAssociatedObject(w, &kSuspendedSheet, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    hide_owned_window(w, ^{ [c ok:nil]; });
   });
   reg(@"close", ^(PlatformCall *c, NSWindow *w, int id) {
-    [c ok:nil];
     platform_set_close_veto(id, NO); // programmatic close bypasses the veto
+    if ([objc_getAssociatedObject(w, &kModalWindow) boolValue]) {
+      close_owned_window(w, ^{ [c ok:nil]; });
+      return;
+    }
+    [c ok:nil];
     [w performClose:nil];
   });
   reg(@"setCloseVeto", ^(PlatformCall *c, NSWindow *, int id) {
@@ -473,6 +1106,34 @@ void platform_register_window(void) {
   });
 
   // ── appearance + behavior ─────────────────────────────────────────────
+  reg(@"setTrafficLightPosition", ^(PlatformCall *c, NSWindow *w, int id) {
+    NSDictionary *at = [c.args[@"position"] isKindOfClass:NSDictionary.class] ? c.args[@"position"] : nil;
+    platform_window_set_traffic_lights(w, platform_webview(id), at ? [NSValue valueWithPoint:NSMakePoint([at[@"x"] doubleValue], [at[@"y"] doubleValue])] : nil);
+    [c ok:nil];
+  });
+  // Width / height kept while resizing (16/9, 1 for a square), or null.
+  reg(@"setAspectRatio", ^(PlatformCall *c, NSWindow *w, int) {
+    double ratio = [c number:@"ratio" or:0];
+    if (ratio > 0) w.contentAspectRatio = NSMakeSize(ratio, 1);
+    else w.contentResizeIncrements = NSMakeSize(1, 1); // clears the aspect ratio
+    [c ok:nil];
+  });
+  reg(@"setVibrancy", ^(PlatformCall *c, NSWindow *w, int id) {
+    NSString *material = [c.args[@"material"] isKindOfClass:NSString.class] ? c.args[@"material"] : nil;
+    if (NSString *err = platform_window_set_vibrancy(w, id, material, [c string:@"state"])) return [c fail:@"invalid_args" message:[@"window.setVibrancy: " stringByAppendingString:err]];
+    [c ok:nil];
+  });
+  reg(@"setGlass", ^(PlatformCall *c, NSWindow *w, int id) {
+    NSDictionary *opts = [c.args[@"glass"] isKindOfClass:NSDictionary.class] ? c.args[@"glass"] : nil;
+    BOOL glass = NO;
+    if (NSString *err = platform_window_set_glass(w, id, opts, &glass)) return [c fail:@"invalid_args" message:[@"window.setGlass: " stringByAppendingString:err]];
+    [c ok:opts ? @{@"glass" : @(glass)} : nil];
+  });
+  reg(@"setMaterialRegions", ^(PlatformCall *c, NSWindow *w, int id) {
+    NSArray *regions = [c.args[@"regions"] isKindOfClass:NSArray.class] ? c.args[@"regions"] : @[];
+    if (NSString *err = apply_material_regions(w, id, regions)) return [c fail:@"invalid_args" message:[@"window.setMaterialRegions: " stringByAppendingString:err]];
+    [c ok:nil];
+  });
   reg(@"setOpacity", ^(PlatformCall *c, NSWindow *w, int) {
     w.alphaValue = MAX(0, MIN(1, [c number:@"opacity" or:1]));
     [c ok:nil];
@@ -501,11 +1162,18 @@ void platform_register_window(void) {
     [c ok:nil];
   });
   reg(@"isDocumentEdited", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@{@"edited" : @(w.isDocumentEdited)}]; });
-  reg(@"setFocusable", ^(PlatformCall *c, NSWindow *, int) {
-    [c fail:@"unsupported" message:@"window.setFocusable: NSWindow focusability is fixed by its class on macOS"];
+  reg(@"setFocusable", ^(PlatformCall *c, NSWindow *w, int) {
+    BOOL enabled = [c boolean:@"enabled" or:YES];
+    if (!enabled && [objc_getAssociatedObject(w, &kModalWindow) boolValue]) return [c fail:@"invalid_args" message:@"modal windows must be focusable"];
+    [(id)w setSdFocusable:enabled];
+    if (!enabled && w.isKeyWindow) [w resignKeyWindow];
+    [c ok:nil];
   });
+  // NSCursor counts: hiding twice would need showing twice, and no one could read the state.
   reg(@"setCursorHidden", ^(PlatformCall *c, NSWindow *, int) {
-    [c boolean:@"hidden" or:YES] ? [NSCursor hide] : [NSCursor unhide];
+    BOOL hidden = [c boolean:@"hidden" or:YES];
+    if (hidden != g_cursor_hidden) hidden ? [NSCursor hide] : [NSCursor unhide];
+    g_cursor_hidden = hidden;
     [c ok:nil];
   });
   reg(@"setCursorPosition", ^(PlatformCall *c, NSWindow *, int) {
@@ -517,6 +1185,48 @@ void platform_register_window(void) {
     w.appearance = [t isEqual:@"dark"]    ? [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua]
                    : [t isEqual:@"light"] ? [NSAppearance appearanceNamed:NSAppearanceNameAqua]
                                           : nil;
+    [c ok:nil];
+  });
+  reg(@"isCursorHidden", ^(PlatformCall *c, NSWindow *, int) { [c ok:@(g_cursor_hidden)]; });
+  reg(@"hasCloseVeto", ^(PlatformCall *c, NSWindow *, int id) { [c ok:@(platform_close_veto(id))]; });
+  reg(@"getRepresentedFilename", ^(PlatformCall *c, NSWindow *w, int) { [c ok:w.representedURL.path]; });
+  reg(@"isAlwaysOnBottom", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@(w.level == kCGDesktopIconWindowLevel + 1)]; });
+  reg(@"hasDecorations", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@((w.styleMask & NSWindowStyleMaskTitled) != 0)]; });
+  reg(@"isMovableByWindowBackground", ^(PlatformCall *c, NSWindow *w, int) { [c ok:@(w.movableByWindowBackground)]; });
+  reg(@"getTrafficLightPosition", ^(PlatformCall *c, NSWindow *w, int) {
+    NSValue *at = objc_getAssociatedObject(w, &kTrafficLightsKey);
+    [c ok:at ? @{@"x" : @(at.pointValue.x), @"y" : @(at.pointValue.y)} : nil];
+  });
+  reg(@"getTheme", ^(PlatformCall *c, NSWindow *w, int) {
+    NSAppearance *a = w.appearance;
+    [c ok:!a ? @"system" : [a.name isEqual:NSAppearanceNameDarkAqua] ? @"dark" : @"light"];
+  });
+  reg(@"isVisibleOnAllWorkspaces", ^(PlatformCall *c, NSWindow *w, int) {
+    [c ok:@((w.collectionBehavior & NSWindowCollectionBehaviorCanJoinAllSpaces) != 0)];
+  });
+  reg(@"getAspectRatio", ^(PlatformCall *c, NSWindow *w, int) {
+    NSSize r = w.contentAspectRatio;
+    [c ok:r.width > 0 && r.height > 0 ? @(r.width / r.height) : nil];
+  });
+  reg(@"getVibrancy", ^(PlatformCall *c, NSWindow *w, int) {
+    for (NSView *v in w.contentView.subviews) {
+      if (![v.identifier isEqual:kVibrancyId]) continue;
+      NSVisualEffectView *fx = (NSVisualEffectView *)v;
+      NSString *state = fx.state == NSVisualEffectStateActive ? @"active" : fx.state == NSVisualEffectStateInactive ? @"inactive" : @"followsWindow";
+      return [c ok:@{@"material" : objc_getAssociatedObject(fx, &kMaterialNameKey), @"state" : state}];
+    }
+    [c ok:nil];
+  });
+  reg(@"getGlass", ^(PlatformCall *c, NSWindow *w, int) {
+    if (@available(macOS 26.0, *)) {
+      for (NSView *v in w.contentView.subviews) {
+        if (![v.identifier isEqual:kGlassId]) continue;
+        NSGlassEffectView *g = (NSGlassEffectView *)v;
+        NSMutableDictionary *d = [@{@"style" : g.style == NSGlassEffectViewStyleClear ? @"clear" : @"regular", @"cornerRadius" : @(g.cornerRadius)} mutableCopy];
+        d[@"tint"] = objc_getAssociatedObject(g, &kGlassTintKey);
+        return [c ok:d];
+      }
+    }
     [c ok:nil];
   });
 }

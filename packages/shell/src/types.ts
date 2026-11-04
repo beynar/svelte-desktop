@@ -1,4 +1,4 @@
-import type { WindowAnimation } from "./platform/index.ts";
+import type { VibrancyMaterial, VibrancyState, WindowAnimation } from "./platform/index.ts";
 
 export interface WindowOptions {
   /** Shown at launch (default true). false: created hidden (menu-bar apps). */
@@ -18,6 +18,17 @@ export interface WindowOptions {
    *  `--desktop-controls-width` and `html[data-desktop-titlebar]`. Scrolling over the title bar strip
    *  doesn't scroll the page (title-bar gesture tools such as Swish keep working). */
   titleBarStyle?: "default" | "transparent" | "hidden" | "hiddenInset";
+  /** Vibrancy behind the page (macOS): 'sidebar', 'titlebar', 'window', 'underWindow', 'menu', 'popover',
+   *  'hud'… It shows where the page paints no background; change it later with windows.setVibrancy. */
+  vibrancy?: VibrancyMaterial;
+  vibrancyState?: VibrancyState;
+  /** The traffic lights at your own place (macOS, titleBarStyle hidden / hiddenInset): the close button's
+   *  top-left, in points from the window's top-left — for a taller custom title bar. */
+  trafficLightPosition?: { x: number; y: number };
+  /** Width / height kept while resizing (16/9, 1 for a square). */
+  aspectRatio?: number;
+  /** false: the page runs at full speed when hidden or covered (timers, audio, sockets). Default true. */
+  backgroundThrottling?: boolean;
   /** Come in animated when it shows (macOS): `true` or a WindowAnimation (duration, easing, offset, scale, opacity). */
   animate?: boolean | WindowAnimation;
   /** Keep the window invisible until DOMContentLoaded to avoid a white flash. Default true. */
@@ -41,6 +52,10 @@ export interface ShellOptions {
   quitOnLastWindowClosed?: boolean;
   /** permissions.pages from desktop.config; undefined = allow all. */
   pagePermissions?: string[];
+  /** Dev mode: the config's usage descriptions (no Info.plist then; a bundle has its own). */
+  usageDescriptions?: Record<string, string>;
+  /** Custom resource schemes registered before any web view is created (macOS). */
+  protocols?: string[];
   /** Main window URL override (dev mode points it at the Vite server). */
   url?: string;
   /** Dock icon PNG (dev mode: the app's icon instead of bun's; a bundle has its own). */

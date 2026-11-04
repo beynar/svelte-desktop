@@ -1,7 +1,8 @@
 <!-- A page that keeps running in its own tab (keepAlive in the layout): leave it, come back, the
      counter went on. -->
 <script lang="ts">
-	const started = Date.now();
+	let { data } = $props();
+	const started = $derived(data.startedAt);
 	let now = $state(Date.now());
 	$effect(() => {
 		const timer = setInterval(() => (now = Date.now()), 1000);

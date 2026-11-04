@@ -165,27 +165,101 @@ test('an app route isolated in its own view: the page alone, its own group stays
 	await until(views, (v) => !v.some((x) => x.id === `app-${id}`));
 }, 30_000);
 
-test('a keepAlive route: a link opens it in its own tab, which keeps running while hidden', async () => {
+test('a keepAlive route: a link opens it in its own tab — shown once drawn, the address its own — which keeps running while hidden', async () => {
 	await app.waitFor(() => location.pathname === (window as any).__tabs.active?.path); // settled on the active tab
 	const before = await titles('.app-tabs');
 	const path = await app.eval<string>('location.pathname');
-	await app.eval(`document.querySelector('a[href="/activity"]').click()`);
+	// The page stays on screen while the tab's view loads out of sight: no blank in between.
+	expect(await app.eval(`(document.querySelector('a[href="/activity"]').click(), document.querySelector('[data-sd-tabcontent]').hidden)`)).toBe(false);
 	await until(() => titles('.app-tabs'), (t) => t.length === before.length + 1);
-	expect(await app.eval('location.pathname')).toBe(path); // the page stays: /activity is in its own view
 	const id = await app.eval<string>('window.__tabs.active.id');
-	await until(views, (v) => v.some((x) => x.id === `app-${id}` && !!x.url?.endsWith('/activity')));
+	await until(views, (v) => v.some((x) => x.id === `app-${id}`));
+	const hidden = () => app.platform<{ hidden: boolean }>('view', 'getInfo', { id: `app-${id}` }).then((i) => i.hidden);
+	expect(await hidden()).toBe(true); // loading, behind the page
+	expect(await app.eval('location.pathname')).toBe(path);
+	// Drawn: in front, and the window's address is its own — the sidebar follows; the page isn't
+	// rendered in the window (the view runs it).
+	await app.waitFor(() => location.pathname === '/activity', { timeout: 10_000 });
 	const seconds = () => inView<string | null>(`app-${id}`, `document.querySelector('[data-activity-seconds]')?.textContent ?? null`).then((t) => (t ? parseInt(t) : -1)).catch(() => -1);
-	const first = await until(seconds, (n) => n >= 0);
+	const first = await seconds();
+	expect(first).toBeGreaterThanOrEqual(0); // drawn before it was shown
+	expect(await hidden()).toBe(false);
+	expect(await app.eval(`document.querySelector('a[href="/activity"]').getAttribute('aria-current')`)).toBe('page');
+	expect(await app.eval(`performance.getEntriesByName('activity:load').length`)).toBe(0); // its load ran in the view only
+	expect(await app.eval(`!!document.querySelector('[data-sd-tabcontent] [data-activity-seconds]')`)).toBe(false);
+	await shot('8-keepalive');
 	await app.eval(`(window.__tabs.activate(window.__tabs.items[0].id), true)`);
+	await app.waitFor(() => location.pathname !== '/activity');
 	await Bun.sleep(2200);
+	expect(await hidden()).toBe(true);
 	expect(await seconds()).toBeGreaterThanOrEqual(first + 2); // ran on, hidden
+	// A sidebar link from the kept-alive tab: back to a tab of the page.
+	await app.eval(`(window.__tabs.activate(${JSON.stringify(id)}), true)`);
+	await app.waitFor(() => location.pathname === '/activity');
+	// Back and forward: the address and page.url follow (the sidebar).
+	await app.eval('history.back()');
+	await app.waitFor(() => location.pathname !== '/activity' && !(window as any).__tabs.isIsolated((window as any).__tabs.active));
+	expect(await app.eval(`document.querySelector('a[href="/activity"]').getAttribute('aria-current')`)).toBe(null);
+	await app.eval('history.forward()');
+	await app.waitFor(() => location.pathname === '/activity' && document.querySelector('a[href="/activity"]')!.getAttribute('aria-current') === 'page');
+	expect(await app.eval('window.__tabs.active.id')).toBe(id);
+	await app.eval(`document.querySelector('a[href="/calendar"]').click()`);
+	await app.waitFor(() => location.pathname === '/calendar' && !(window as any).__tabs.isIsolated((window as any).__tabs.active));
+	expect((await titles('.app-tabs')).length).toBe(before.length + 1);
+	expect(await app.eval(`performance.getEntriesByName('activity:load').length`)).toBe(0);
 	expect(await until(() => titles('.app-tabs'), (t) => t.includes('Activity'))).toContain('Activity'); // its page's <title>
 	await app.eval(`document.querySelector('a[href="/activity"]').click()`); // again: the same tab
 	await Bun.sleep(300);
 	expect((await titles('.app-tabs')).length).toBe(before.length + 1);
 	expect(await app.eval('window.__tabs.active.id')).toBe(id);
+	// ⌘-click: another one, in the background, with its own view — running already, out of sight.
+	await app.eval(`document.querySelector('a[href="/activity"]').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, metaKey: true }))`);
+	await until(() => titles('.app-tabs'), (t) => t.length === before.length + 2);
+	expect(await app.eval('window.__tabs.active.id')).toBe(id);
+	const second = await app.eval<string>(`window.__tabs.items.find((t) => t.path === '/activity' && t.id !== ${JSON.stringify(id)}).id`);
+	const ticks = () => inView<string | null>(`app-${second}`, `document.querySelector('[data-activity-seconds]')?.textContent ?? null`).then((t) => (t ? parseInt(t) : -1)).catch(() => -1);
+	const started = await until(ticks, (n) => n >= 0);
+	expect(started).toBeGreaterThanOrEqual(0);
+	expect(await until(ticks, (n) => n >= started + 1)).toBeGreaterThan(started);
+	expect((await until(() => app.platform<{ hidden: boolean }>('view', 'getInfo', { id: `app-${second}` }), (i) => i.hidden)).hidden).toBe(true);
+	expect(await app.eval('window.__tabs.active.id')).toBe(id);
+	await app.eval(`(window.__tabs.activate(${JSON.stringify(second)}), true)`);
+	await until(() => app.platform<{ hidden: boolean }>('view', 'getInfo', { id: `app-${second}` }), (i) => !i.hidden);
+	await app.eval(`(window.__tabs.close(${JSON.stringify(second)}), window.__tabs.activate(${JSON.stringify(id)}), true)`);
 	await app.eval(`(window.__tabs.close(${JSON.stringify(id)}), true)`);
 	await until(views, (v) => !v.some((x) => x.id === `app-${id}`));
+}, 30_000);
+
+test('a hovered link to a kept-alive route: its view is made ahead (as SvelteKit preloads), and the click shows it at once', async () => {
+	await app.eval(`(window.__tabs.items.filter((t) => t.path === '/activity').forEach((t) => window.__tabs.close(t.id)), true)`);
+	await until(views, (v) => !v.length);
+	const hover = () => app.eval(`(document.querySelector('a[href="/activity"]').dispatchEvent(new PointerEvent('pointerover', { bubbles: true })), true)`);
+	// data-sveltekit-preload-data="false": not made ahead (the body says "hover").
+	await app.eval(`(document.querySelector('a[href="/activity"]').dataset.sveltekitPreloadData = 'false', true)`);
+	await hover();
+	await Bun.sleep(400);
+	expect(await views()).toEqual([]);
+	await app.eval(`(delete document.querySelector('a[href="/activity"]').dataset.sveltekitPreloadData, true)`);
+	await hover();
+	const [made] = await until(views, (v) => v.length === 1);
+	expect(made).toBeDefined();
+	await until(() => app.platform<{ hidden: boolean; loading: boolean }>('view', 'getInfo', { id: made!.id }), (i) => i.hidden && !i.loading);
+	await Bun.sleep(300); // drawn
+	// Click → the view in front (the page hidden under it), timed in the page.
+	await app.eval(`(() => { const el = document.querySelector('[data-sd-tabcontent]'); window.__shownAfter = 0; const t = performance.now(); new MutationObserver((_, o) => el.hidden && ((window.__shownAfter = performance.now() - t), o.disconnect())).observe(el, { attributes: true }); document.querySelector('a[href="/activity"]').click(); return true; })()`);
+	await app.waitFor(() => (window as any).__shownAfter > 0);
+	expect(await app.eval<number>('window.__shownAfter')).toBeLessThan(100);
+	expect(`app-${await app.eval<string>('window.__tabs.active.id')}`).toBe(made!.id); // that view, not another
+	expect((await views()).length).toBe(1);
+	await app.eval(`(window.__tabs.close(window.__tabs.active.id), true)`);
+	await until(views, (v) => !v.length);
+}, 30_000);
+
+test('a view made ahead and not used goes: with the page (a reload) — and after a while', async () => {
+	await app.eval(`(document.querySelector('a[href="/activity"]').dispatchEvent(new PointerEvent('pointerover', { bubbles: true })), window.__reloading = true, setTimeout(() => location.reload(), 0), true)`);
+	await app.waitFor(() => !(window as any).__reloading && !!document.querySelector('.app-tabs [role=tab]'), { timeout: 20_000 });
+	await Bun.sleep(500);
+	expect(await views()).toEqual([]);
 }, 30_000);
 
 test('a tab dragged out opens in its own window (with its title); one taken by another window\'s bar leaves', async () => {

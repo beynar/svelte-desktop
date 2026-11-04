@@ -106,6 +106,8 @@ static std::string unavailable() {
 
 std::string notifications_unavailable() { return notify::unavailable(); }
 
+static long long g_badge_count = 0; // the docks have no way to read it back
+
 static std::string data_dir() { return std::string(g_get_user_data_dir()) + "/" + app_identifier(); }
 static std::string cache_dir() { return std::string(g_get_user_cache_dir()) + "/" + app_identifier() + "/notification-images"; }
 
@@ -409,8 +411,10 @@ void register_notifications() {
     }
     std::string err = badge_error(count);
     if (!err.empty()) return c->fail("unavailable", "notifications.setBadge: " + err);
+    g_badge_count = count;
     c->ok();
   });
+  reg("notifications", "getBadge", [](CallPtr c) { c->ok(g_badge_count > 0 ? json(g_badge_count) : json(nullptr)); });
   reg("notifications", "setForeground", [](CallPtr c) { c->ok(); }); // banners always show on Linux
   reg_many("push", {"register", "unregister", "token"}, [](CallPtr c) {
     c->fail("unsupported", "push." + c->op + ": Linux desktops have no push notification service; use push.server (your own push server)");

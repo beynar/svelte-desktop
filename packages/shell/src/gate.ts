@@ -1,8 +1,11 @@
 // The loopback gate in front of the SvelteKit handler: Host check (DNS rebinding), one-time secret →
 // HttpOnly SameSite=Strict session cookie, then the app. Static build assets
-// (adapter-bun `routes`) are served as-is.
+// (adapter-bun `routes`) are served as-is. One way in without the cookie: the system browser coming
+// back from an OAuth sign-in (oauth-server.ts), to a single-use URL.
 import type { Server } from "bun";
 import { PROTOCOL_HEADER } from "./worker-env.ts";
+import { oauthCallback, oauthRoutes } from "./oauth-server.ts";
+import { socketCallbacks, socketServer, upgradeSocket, type WebSocketHandlers } from "./websocket.ts";
 
 type KitHandler = (req: Request, server: Server<any>) => Response | Promise<Response>;
 
@@ -18,6 +21,10 @@ export interface GateOptions {
   extra?: (req: Request, url: URL, origin: string) => Response | Promise<Response> | undefined;
   debug?: boolean;
   port?: number;
+  /** Named in the page the browser shows after an OAuth sign-in. */
+  appName?: string;
+  /** src/websocket.ts: upgrades on its paths, after the session cookie. */
+  websocket?: WebSocketHandlers<any>;
 }
 
 /**
@@ -55,7 +62,8 @@ export function startGate(o: GateOptions): { server: Server<any>; origin: string
     // loopback-only server has no idle clients to shed.
     idleTimeout: 0,
     routes: o.routes ?? {},
-    async fetch(req, srv): Promise<Response> {
+    ...(o.websocket ? { websocket: socketCallbacks() } : {}),
+    async fetch(req, srv): Promise<Response | undefined> {
       if (req.headers.get("host") !== host) return new Response("Misdirected Request", { status: 421 });
       const url = new URL(req.url);
 
@@ -73,9 +81,24 @@ export function startGate(o: GateOptions): { server: Server<any>; origin: string
         });
       }
 
+      const callback = oauthCallback(url, o.appName);
+      if (callback) return callback;
+
       const cookie = req.headers.get("cookie") ?? "";
       const got = /(?:^|;\s*)__svelte_desktop=([0-9a-f]+)/.exec(cookie)?.[1] ?? "";
       if (!timingSafeEqual(got, session)) return new Response("Forbidden", { status: 403 });
+
+      const oauth = await oauthRoutes(req, url);
+      if (oauth) return oauth;
+
+      if (o.websocket) {
+        // The app's own pages only: their Origin is this server (a page of another site, with the
+        // cookie somehow, still gets refused).
+        const from = req.headers.get("origin");
+        if (req.headers.get("upgrade") && from && from !== `http://${host}`) return new Response("Forbidden", { status: 403 });
+        const upgraded = await upgradeSocket(() => o.websocket, req, srv);
+        if (upgraded !== null) return upgraded; // undefined: it's a socket now
+      }
 
       const extra = await o.extra?.(req, url, `http://${host}`);
       if (extra) return extra;
@@ -87,6 +110,11 @@ export function startGate(o: GateOptions): { server: Server<any>; origin: string
     },
   });
   host = `127.0.0.1:${server.port}`;
+  if (o.websocket) {
+    const registration = socketServer(server);
+    const stop = server.stop.bind(server);
+    server.stop = ((closeActive?: boolean) => (registration.release(), stop(closeActive))) as typeof server.stop;
+  }
   const origin = `http://${host}`;
   return { server, origin, authUrl: (next = "/") => `${origin}${AUTH_PATH}?t=${o.secret}&next=${encodeURIComponent(next)}` };
 }

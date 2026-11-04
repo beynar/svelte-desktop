@@ -20,30 +20,32 @@
 	const tabs = useTabs<T>();
 	const seen = new SvelteSet<string>();
 	$effect.pre(() => void (tabs.activeId && seen.add(tabs.activeId)));
-	const shown = $derived(
-		mount === 'eager' ? tabs.items : tabs.items.filter((t) => t.id === tabs.activeId || (mount === 'once' && seen.has(t.id))),
+	// Rendered: the active panel, the one on screen while it comes (an isolated one loading), the
+	// ones seen ('once') or all ('eager'). On screen: `tabs.shown` only.
+	const mounted = $derived(
+		mount === 'eager' ? tabs.items : tabs.items.filter((t) => t.id === tabs.activeId || t.id === tabs.shown || (mount === 'once' && seen.has(t.id))),
 	);
 </script>
 
-{#each shown as t (t.id)}
-	{@const active = t.id === tabs.activeId}
+{#each mounted as t (t.id)}
+	{@const shown = t.id === tabs.shown}
 	{#if tabs.isIsolated(t)}
 		<div
 			role="tabpanel"
 			id={`${tabs.id}-panel-${t.id}`}
 			aria-labelledby={`${tabs.id}-tab-${t.id}`}
-			hidden={!active}
+			hidden={!shown}
 			data-sd-tabpanel
 			data-sd-tabview
 			class={className}
-			use:isolatedView={{ tabs, tab: t, active }}
+			use:isolatedView={{ tabs, tab: t, active: t.id === tabs.activeId, shown, suspended: tabs.suspended.has(t.id) }}
 		></div>
 	{:else}
 		<div
 			role="tabpanel"
 			id={`${tabs.id}-panel-${t.id}`}
 			aria-labelledby={`${tabs.id}-tab-${t.id}`}
-			hidden={!active}
+			hidden={!shown}
 			data-sd-tabpanel
 			class={className}
 		>

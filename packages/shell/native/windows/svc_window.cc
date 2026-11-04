@@ -235,6 +235,8 @@ void register_window() {
     w->maxH = c->num("height", 0);
     c->ok();
   });
+  wreg("getMinSize", [](CallPtr c, Window *w) { c->ok(size_json(w->minW, w->minH)); });
+  wreg("getMaxSize", [](CallPtr c, Window *w) { c->ok(size_json(w->maxW, w->maxH)); });
   wreg("getScaleFactor", [](CallPtr c, Window *w) { c->ok(hwnd_scale(w->hwnd)); });
   wreg("getCursorPoint", [](CallPtr c, Window *w) {
     POINT p;
@@ -340,6 +342,7 @@ void register_window() {
     w->veto = c->flag("enabled", true);
     c->ok(json{{"armed", w->veto}});
   });
+  wreg("hasCloseVeto", [](CallPtr c, Window *w) { c->ok(w->veto); });
   auto flash = [](CallPtr c, Window *w) {
     FLASHWINFO fi{sizeof fi, w->hwnd, FLASHW_ALL | FLASHW_TIMERNOFG, 0, 0};
     FlashWindowEx(&fi);
@@ -352,9 +355,12 @@ void register_window() {
   flag_op("setAlwaysOnTop", "", "", [](Window *w, bool on) {
     SetWindowPos(w->hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
   }, nullptr);
+  wreg("isAlwaysOnTop", [](CallPtr c, Window *w) { c->ok((GetWindowLongPtrW(w->hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0); });
   flag_op("setAlwaysOnBottom", "", "", [](Window *w, bool on) {
+    w->alwaysOnBottom = on;
     SetWindowPos(w->hwnd, on ? HWND_BOTTOM : HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
   }, nullptr);
+  wreg("isAlwaysOnBottom", [](CallPtr c, Window *w) { c->ok(w->alwaysOnBottom); });
   flag_op("setResizable", "isResizable", "resizable", [](Window *w, bool on) { set_style_bit(w, WS_THICKFRAME, on); },
           [](Window *w) { return (style_of(w) & WS_THICKFRAME) != 0; });
   flag_op("setMinimizable", "isMinimizable", "minimizable", [](Window *w, bool on) { set_style_bit(w, WS_MINIMIZEBOX, on); },
@@ -368,6 +374,7 @@ void register_window() {
     mii.fMask = MIIM_STATE;
     return !(GetMenuItemInfoW(GetSystemMenu(w->hwnd, FALSE), SC_CLOSE, FALSE, &mii) && (mii.fState & MFS_GRAYED));
   });
+  wreg("hasDecorations", [](CallPtr c, Window *w) { c->ok((style_of(w) & WS_CAPTION) == WS_CAPTION); });
   flag_op("setDecorations", "", "", [](Window *w, bool on) {
     LONG_PTR s = style_of(w);
     if (on) s = (s & ~WS_POPUP) | WS_CAPTION | WS_SYSMENU;
@@ -401,10 +408,15 @@ void register_window() {
     c->ok();
   });
   wreg("isDocumentEdited", [](CallPtr c, Window *w) { c->ok(json{{"edited", w->documentEdited}}); });
+  // ShowCursor counts: hiding twice would need showing twice, and no one could read the state.
+  static bool cursor_hidden = false;
   wreg("setCursorHidden", [](CallPtr c, Window *) {
-    ShowCursor(c->flag("hidden", true) ? FALSE : TRUE);
+    bool hidden = c->flag("hidden", true);
+    if (hidden != cursor_hidden) ShowCursor(hidden ? FALSE : TRUE);
+    cursor_hidden = hidden;
     c->ok();
   });
+  wreg("isCursorHidden", [](CallPtr c, Window *) { c->ok(cursor_hidden); });
   wreg("setCursorPosition", [](CallPtr c, Window *w) {
     double s = hwnd_scale(w->hwnd);
     SetCursorPos((int)(c->num("x", 0) * s), (int)(c->num("y", 0) * s));
@@ -417,6 +429,7 @@ void register_window() {
     theme_apply_window(w);
     c->ok();
   });
+  wreg("getTheme", [](CallPtr c, Window *w) { c->ok(w->theme); });
 }
 
 } // namespace sd::win

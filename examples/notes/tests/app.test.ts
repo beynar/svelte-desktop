@@ -11,6 +11,14 @@ beforeAll(async () => {
 });
 afterAll(() => app?.close());
 
+test.skipIf(!!process.env.DESKTOP_TEST_DEV)('opens its own URL scheme, not others', async () => {
+	expect(await app.eval(`host.deepLink.isDefault('svelte-notes')`)).toBe(true);
+	expect(await app.eval(`host.deepLink.isDefault('https')`)).toBe(false);
+	expect(await app.eval(`host.deepLink.register('svelte-notes')`)).toEqual({ scheme: 'svelte-notes', registered: true });
+	// Not declared in the bundle: a mistake in the app, in dev or built.
+	expect(await app.eval(`host.deepLink.register('not-declared').catch((e) => e.code)`)).toBe('unavailable');
+});
+
 test('SSR + hydration + remote command', async () => {
 	const before = Number(await app.text('#counter'));
 	await app.click('button:not([type=button])');
@@ -75,6 +83,21 @@ test('native Rust and Go plugins: typed commands, errors, events, a panic-free r
 	expect(await app.platform('clock', 'countdown', { from: 3 })).toBe(3);
 	await done;
 	expect(ticks).toEqual([3, 2, 1]);
+});
+
+test('Python commands: typed, errors, events, a crash restarts the process', async () => {
+	expect(await app.platform('hello', 'python', { name: 'Ada' })).toEqual({ message: 'Hello Ada from Python' });
+	expect(await app.eval(`host.native.hello.python({ name: 'page' })`)).toEqual({ message: 'Hello page from Python' });
+	expect((await app.platform('hello', 'python', { name: '' }).catch((e: unknown) => e)) as object).toMatchObject({ code: 'invalid_args', message: 'name is empty' });
+	expect((await app.platform('hello', 'python', { nope: 1 }).catch((e: unknown) => e)) as object).toMatchObject({ code: 'invalid_args' });
+	const ticks: number[] = [];
+	const done = app.nextEvent<{ n: number }>('py.tick', (d) => (ticks.push(d.n), d.n === 1));
+	expect(await app.platform('clock', 'pythonCountdown', { start: 3 })).toBe(3);
+	await done;
+	expect(ticks).toEqual([3, 2, 1]);
+	// The process is replaced (as `vite dev` does on a .py change): the next call is served again.
+	await app.platform('__python', 'restart', {});
+	expect(await app.platform('hello', 'python', { name: 'again' })).toEqual({ message: 'Hello again from Python' });
 });
 
 test('host.store and host.windowState from the page: the app server owns the files', async () => {
@@ -220,12 +243,19 @@ test('the `host` global, without imports, in the page and in server code', async
 
 test('permissions: declared in desktop.config, reactive statuses, undeclared error, the guided panel', async () => {
 	const declared = await app.eval<Record<string, string>>('host.permissions.declared()');
-	expect(declared).toEqual({ camera: 'Notes can attach photos from your camera.', screenRecording: 'Notes can attach a screenshot of your screen.' });
+	// Its own reasons, and the shell's defaults for what a page can ask for (microphone, location, speech).
+	expect(declared).toEqual({
+		camera: 'Notes can attach photos from your camera.',
+		screenRecording: 'Notes can attach a screenshot of your screen.',
+		microphone: 'Svelte Notes uses the microphone when you record audio.',
+		location: 'Svelte Notes uses your location when a page asks for it.',
+		speech: 'Svelte Notes uses speech recognition for dictation.'
+	});
 	await app.waitFor(() => ['granted', 'denied', 'notDetermined'].includes(document.querySelector('[data-permission=camera]')?.textContent ?? ''));
 	expect(['granted', 'denied', 'notDetermined']).toContain(await app.eval<string>('host.permissions.camera'));
-	const undeclared = await app.eval<{ code: string; message: string }>(`host.permissions.request('microphone').then(() => null, (e) => ({ code: e.code, message: e.message }))`);
+	const undeclared = await app.eval<{ code: string; message: string }>(`host.permissions.request('contacts').then(() => null, (e) => ({ code: e.code, message: e.message }))`);
 	expect(undeclared.code).toBe('undeclared');
-	expect(undeclared.message).toContain("permissions: { microphone:");
+	expect(undeclared.message).toContain("permissions: { contacts:");
 	// The guided flow (without opening System Settings here): the panel opens with the draggable icon…
 	const screen = await app.eval<string>(`host.permissions.status('screenRecording')`);
 	if (screen === 'granted') return; // nothing to guide on a machine that already granted it
@@ -246,8 +276,8 @@ test('permissions: declared in desktop.config, reactive statuses, undeclared err
 test('notifications: dedupe by id, schedule, lists, deep link on click, actions/reply, cold-start claim', async () => {
 	const first = await app.eval<{ id?: string; code?: string }>(`host.notifications.show({ id: 'e2e-1', title: 'E2E', body: 'one', url: '/about', data: { n: 1 } }).then((r) => r, (e) => ({ code: e.code }))`);
 	if (process.env.DESKTOP_TEST_DEV) {
-		// `vite dev` runs the shell unbundled: macOS only notifies from a .app.
-		expect(first.code).toBe('unavailable');
+		// `vite dev` runs the shell unbundled: macOS only notifies from a .app. Nothing happens, no error.
+		expect(first).toMatchObject({ id: 'e2e-1', scheduled: false, skipped: true });
 		return;
 	}
 	expect(first).toMatchObject({ id: 'e2e-1', scheduled: false });

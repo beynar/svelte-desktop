@@ -33,6 +33,24 @@ function reportDir(): { dir: string; match: (file: string, exe: string) => boole
   return null; // Linux: systemd-coredump / apport are system-wide and need privileges
 }
 
+/** OS reports for this executable; collection does not change launch tracking. */
+export function findCrashReports(exe: string, since = 0): CrashReport[] {
+  const where = reportDir();
+  if (!where || !existsSync(where.dir)) return [];
+  const reports: CrashReport[] = [];
+  for (const file of readdirSync(where.dir)) {
+    if (!where.match(file, exe)) continue;
+    const path = join(where.dir, file);
+    try {
+      const stat = statSync(path);
+      if (stat.isFile() && stat.mtimeMs >= since) reports.push({ path, time: stat.mtimeMs });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  return reports.sort((a, b) => a.time - b.time);
+}
+
 /** Read the previous run's state and mark this one as running. Call once at startup. */
 export function startCrashTracking(dataDir: string, exe = basename(process.execPath).replace(/\.exe$/i, "")): CrashInfo {
   const marker = join(dataDir, ".running");
@@ -50,17 +68,7 @@ export function startCrashTracking(dataDir: string, exe = basename(process.execP
     uncleanExit = !alive;
   }
   const previousLaunch = existsSync(launches) ? Number(readFileSync(launches, "utf8").trim()) || null : null;
-  const reports: CrashReport[] = [];
-  const where = reportDir();
-  if (where && previousLaunch && existsSync(where.dir)) {
-    for (const f of readdirSync(where.dir)) {
-      if (!where.match(f, exe)) continue;
-      const path = join(where.dir, f);
-      const time = statSync(path).mtimeMs;
-      if (time >= previousLaunch) reports.push({ path, time });
-    }
-    reports.sort((a, b) => a.time - b.time);
-  }
+  const reports = previousLaunch ? findCrashReports(exe, previousLaunch) : [];
   writeFileSync(marker, String(process.pid));
   writeFileSync(launches, String(Date.now()));
   return { uncleanExit, previousLaunch, reports };

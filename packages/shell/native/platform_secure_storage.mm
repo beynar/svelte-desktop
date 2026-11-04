@@ -119,11 +119,13 @@ static void delete_password(PlatformCall *call) {
 static void authenticate(PlatformCall *call) {
   NSString *reason = [call string:@"reason"];
   if (!reason.length) reason = @"authenticate to continue";
+  // biometricsOnly: Touch ID, no account-password fallback.
+  LAPolicy policy = [call boolean:@"biometricsOnly" or:NO] ? LAPolicyDeviceOwnerAuthenticationWithBiometrics : LAPolicyDeviceOwnerAuthentication;
   LAContext *ctx = [LAContext new];
   NSError *error = nil;
-  if (![ctx canEvaluatePolicy:LAPolicyDeviceOwnerAuthentication error:&error])
+  if (![ctx canEvaluatePolicy:policy error:&error])
     return [call ok:@{@"authenticated" : @NO, @"reason" : error.localizedDescription ?: @"owner authentication unavailable"}];
-  [ctx evaluatePolicy:LAPolicyDeviceOwnerAuthentication
+  [ctx evaluatePolicy:policy
       localizedReason:reason
                 reply:^(BOOL success, NSError *err) {
                   (void)ctx; // keep the context alive until the reply

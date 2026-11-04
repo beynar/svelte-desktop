@@ -5,6 +5,7 @@
 //   shell → vite  {t:'result', id, ok, value|error} | {t:'platform', name, data} | {t:'shell', event}
 import { JSCallback, FFIType, type Pointer } from "bun:ffi";
 import type { ServerWebSocket } from "bun";
+import { startPath } from "../start-path.ts";
 import { openNative, cstr, takeString, type Native } from "../ffi.ts";
 import type { InitMessage, ShellEvent } from "../types.ts";
 
@@ -73,7 +74,7 @@ self.onmessage = (e: MessageEvent) => {
 
   const url = init.url!;
   native.shell_set_app_origin(cstr(new URL(url).origin));
-  native.shell_window_navigate(init.windowId, cstr(url));
+  void startPath(init.identifier).then((path) => native.shell_window_navigate(init.windowId, cstr(new URL(path, url).href)));
   // The Vite plugin reads this line to connect.
   console.log(`SVELTE_DESKTOP_DEV_READY ${JSON.stringify({ rpc: `ws://127.0.0.1:${server.port}/?t=${token}` })}`);
 };

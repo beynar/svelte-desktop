@@ -10,6 +10,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { IconSpec } from "./build/icons.ts";
 import type { UpdateConfig, WindowOptions } from "./types.ts";
+import { isCustomProtocolScheme } from "./protocol-schemes.ts";
 
 export interface FileTypeConfig {
   name: string;
@@ -54,7 +55,9 @@ export interface BuildConfig {
   target?: "macos" | "linux" | "windows";
   /** Linux/Windows target architecture. Default: x64. */
   targetArch?: "x64" | "arm64";
-  /** Bun `--aot`: machine code at build time, a few MB smaller (needs a Bun that has it: canary today). */
+  /** Bun `--aot`: machine code at build time — a few MB smaller, and the app's own process about a
+   *  third lighter (measured: 66 → 46 MB idle, 107 → 50 MB after a burst of renders). Needs a Bun
+   *  that has it (canary today: `bun`). Default false. */
   aot?: boolean;
   /** Bun `--trim`: drop the Bun APIs the app never calls, the Bun command line first (~45 MB).
    *  Default: on when the Bun compiling has it (canary today); `false` turns it off. */
@@ -69,6 +72,14 @@ export interface BuildConfig {
   outDir?: string;
   /** Minimum macOS. Default 12.0 */
   minimumSystemVersion?: string;
+}
+
+/** One language's texts for what the system shows (desktop.config `locales`). */
+export interface LocaleStrings {
+  /** The app's name in that language (Finder, Dock, menu bar). Default: appName. */
+  name?: string;
+  /** The permission reasons, by permission (`camera`, `microphone`…): see `permissions`. */
+  permissions?: Partial<Record<string, string>>;
 }
 
 export interface DesktopConfig {
@@ -96,6 +107,8 @@ export interface DesktopConfig {
   };
   /** Deep-link URL schemes (CFBundleURLTypes). */
   schemes?: string[];
+  /** Resource schemes handled by host.protocol in the Bun Worker (macOS). Not http/https/file. */
+  protocols?: string[];
   /** Document types the app opens (CFBundleDocumentTypes) → `openFiles` events. */
   fileTypes?: FileTypeConfig[];
   /** @deprecated use `permissions` (same shape). */
@@ -104,6 +117,19 @@ export interface DesktopConfig {
    *  from the desktop — hands its arguments to the running one (`openUrls` / `openFiles`, `secondInstance`).
    *  Linux and Windows (macOS does this natively). */
   singleInstance?: boolean;
+  /** Server code's network like the system's: its certificates (a company's TLS-inspecting proxy
+   *  installs its own) and the proxy set in its settings. Both on by default; pages always use the
+   *  system's (WebKit). */
+  network?: import("./system-network.ts").NetworkConfig;
+  /** A command for the user's terminal, like VS Code's `code`: `notes file.md ~/Projects` opens them
+   *  in the app. host.command.install() puts it on their PATH (macOS, Linux). Letters, digits, - and _. */
+  command?: string;
+  /** The language of the texts in this config (appName, permission reasons). Default "en". */
+  language?: string;
+  /** The app's other languages, each with its translations: `{ fr: { name: 'Notes', permissions:
+   *  { camera: 'Scanner des documents' } } }`. macOS then shows the app in the user's language among
+   *  these — its name, the permission prompts, and the shell's standard menus (Edit, Window…). */
+  locales?: Record<string, LocaleStrings>;
   /** LSUIElement: no Dock icon, no app menu. */
   trayOnly?: boolean;
   /** Default true. false: closing the last window hides it and the app keeps running — like most
@@ -123,7 +149,9 @@ export interface DesktopConfig {
    *  `{ camera: 'Scan documents', screenRecording: 'Share your screen' }`. Generates the Info.plist
    *  usage strings and hardened-runtime entitlements (macOS);
    *  `host.permissions` checks, requests and guides them at run time. Some (camera, microphone,
-   *  location, contacts…) must be declared here: the OS kills an app that asks without a reason. */
+   *  location, contacts…) must be declared here: the OS kills an app that asks without a reason.
+   *  What a page can ask for (camera, microphone, location, speech) has a default reason, so the
+   *  web APIs work as is (getUserMedia, geolocation, SpeechRecognition) — `false` turns one off. */
   permissions?: PermissionsConfig;
   /** Local notifications (`host.notifications`). */
   notifications?: NotificationsConfig;
@@ -177,11 +205,19 @@ export type PermissionName =
   | "speech" | "appleEvents" | "notifications" | "screenRecording" | "accessibility" | "inputMonitoring"
   | "fullDiskAccess" | "desktopFolder" | "documentsFolder" | "downloadsFolder";
 
-export type PermissionsConfig = Partial<Record<PermissionName, string>> & {
+export type PermissionsConfig = Partial<Record<PermissionName, string | false>> & {
   /** @deprecated moved to `bridge.allow`. */
   pages?: string[];
   /** Raw NS…UsageDescription keys pass through to Info.plist. */
-  [usageKey: string]: string | string[] | undefined;
+  [usageKey: string]: string | string[] | false | undefined;
+};
+
+/** What a page can ask for, with a reason by default: the web APIs work without a config. */
+const PAGE_PERMISSIONS: Partial<Record<PermissionName, (app: string) => string>> = {
+  camera: (app) => `${app} uses the camera when you take a photo or a video.`,
+  microphone: (app) => `${app} uses the microphone when you record audio.`,
+  location: (app) => `${app} uses your location when a page asks for it.`,
+  speech: (app) => `${app} uses speech recognition for dictation.`,
 };
 
 export function defineConfig(config: DesktopConfig): DesktopConfig {
@@ -206,6 +242,13 @@ export const USAGE_KEYS: Record<string, string> = {
   documentsFolder: "NSDocumentsFolderUsageDescription",
   downloadsFolder: "NSDownloadsFolderUsageDescription",
 };
+
+/** The config's OS permissions as Info.plist usage keys (NSMicrophoneUsageDescription → reason). */
+export function usageDescriptions(osPermissions: Record<string, string>): Record<string, string> {
+  const keys: Record<string, string> = {};
+  for (const [k, v] of Object.entries(osPermissions)) if (USAGE_KEYS[k] || /UsageDescription$/.test(k)) keys[USAGE_KEYS[k] ?? k] = v;
+  return keys;
+}
 
 export interface ResolvedConfig extends Omit<DesktopConfig, "window" | "native"> {
   root: string;
@@ -255,12 +298,18 @@ export function resolveConfig(root: string, config: Partial<DesktopConfig>, conf
   const identifier = config.identifier ?? `dev.svelte-desktop.${String(appName).toLowerCase().replace(/[^a-z0-9]+/g, "")}`;
   if (!/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(identifier))
     throw new Error(`svelte-desktop: identifier "${identifier}" must be reverse-DNS (e.g. com.example.app)`);
+  for (const scheme of config.protocols ?? []) {
+    if (!isCustomProtocolScheme(scheme))
+      throw new Error(`svelte-desktop: invalid or WebKit-reserved protocol "${scheme}"`);
+  }
   const nativeDir = config.native === false ? null : resolve(root, config.native ?? "native");
   // `SVELTE_DESKTOP_TARGET=windows vite build` builds another target without editing the config.
   const envTarget = process.env.SVELTE_DESKTOP_TARGET as BuildConfig["target"] | undefined;
   const envArch = process.env.SVELTE_DESKTOP_TARGET_ARCH as BuildConfig["targetArch"] | undefined;
   const build = envTarget || envArch ? { ...config.build, ...(envTarget && { target: envTarget }), ...(envArch && { targetArch: envArch }) } : config.build;
-  const osPermissions: Record<string, string> = { ...config.usageDescriptions };
+  const osPermissions: Record<string, string> = {};
+  for (const [k, reason] of Object.entries(PAGE_PERMISSIONS)) if (config.permissions?.[k] !== false) osPermissions[k] = reason(appName);
+  Object.assign(osPermissions, config.usageDescriptions);
   for (const [k, v] of Object.entries(config.permissions ?? {})) if (k !== "pages" && typeof v === "string") osPermissions[k] = v;
   const bridgeAllow = config.bridge?.allow ?? config.permissions?.pages;
   return {

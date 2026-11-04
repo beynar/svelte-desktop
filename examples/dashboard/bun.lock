@@ -6,7 +6,9 @@
       "name": "dashboard-desktop-example",
       "dependencies": {
         "@svelte-desktop/shell": "file:../../packages/shell",
-        "entasis": "^0.13.6",
+        "@xterm/addon-fit": "^0.11.0",
+        "@xterm/xterm": "^6.0.0",
+        "entasis": "0.15.1",
       },
       "devDependencies": {
         "@sveltejs/adapter-bun": "1.0.0-next.2",
@@ -122,7 +124,7 @@
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
-    "@svelte-desktop/shell": ["@svelte-desktop/shell@file:../../packages/shell", { "peerDependencies": { "@sveltejs/adapter-bun": "1.0.0-next.2", "@sveltejs/kit": "^3.0.0-next.0", "svelte": "^5.56.0" }, "bin": { "svelte-desktop": "./bin/svelte-desktop.ts" } }],
+    "@svelte-desktop/shell": ["@svelte-desktop/shell@file:../../packages/shell", { "dependencies": { "@atlaskit/pragmatic-drag-and-drop": "^4.0.0" }, "peerDependencies": { "@sveltejs/adapter-bun": "1.0.0-next.2", "@sveltejs/kit": "^3.0.0-next.0", "svelte": "^5.56.0" }, "bin": { "svelte-desktop": "./bin/svelte-desktop.ts" } }],
 
     "@sveltejs/acorn-typescript": ["@sveltejs/acorn-typescript@1.0.13", "", { "peerDependencies": { "acorn": "^8.9.0" } }, "sha512-wgKggnhZVL9Bfx1OaKKTrYY9BFRk6C8UAkQNUcIv1+llzYrIqy+RZm5HPKzn0NpEBvTVhTqB4kQyllZywsRBRQ=="],
 
@@ -186,6 +188,10 @@
 
     "@ungap/structured-clone": ["@ungap/structured-clone@1.4.0", "", {}, "sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ=="],
 
+    "@xterm/addon-fit": ["@xterm/addon-fit@0.11.0", "", {}, "sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g=="],
+
+    "@xterm/xterm": ["@xterm/xterm@6.0.0", "", {}, "sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg=="],
+
     "acorn": ["acorn@8.19.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-oJlA3XiRm7Cyk6qFD2Jn8ak9B7jSy0qy00ADO3+8dpT0LSjFihQYv4C02LFCSYJV3Q37xYwwRy5m+IpIiUzqWw=="],
 
     "ansi-styles": ["ansi-styles@4.3.0", "", { "dependencies": { "color-convert": "^2.0.1" } }, "sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg=="],
@@ -240,7 +246,7 @@
 
     "enhanced-resolve": ["enhanced-resolve@5.26.0", "", { "dependencies": { "graceful-fs": "^4.2.4", "tapable": "^2.3.3" } }, "sha512-9vhedylFonb2YGogzUKX6+Ja72gOJbN1QHAqdrvqLwhdl/QWbKopzoUC9EbQNVsAns/bx/4uyqalrQAoy1IByw=="],
 
-    "entasis": ["entasis@0.13.6", "", { "dependencies": { "@atlaskit/pragmatic-drag-and-drop": "^4.0.0", "@atlaskit/pragmatic-drag-and-drop-auto-scroll": "^3.2.1", "@blossom-carousel/core": "^1.1.8", "@date-fns/tz": "^1.5.0", "@floating-ui/dom": "^1.8.0", "@maskito/core": "^5.6.0", "@maskito/kit": "^5.6.0", "@pierre/diffs": "^1.5.2", "@pierre/trees": "1.0.0-beta.6", "@tanstack/highlight": "1.1.0", "@tanstack/svelte-virtual": "3.13.47", "@tanstack/table-core": "9.3.1", "cn": "0.5.0", "colorizr": "^5.1.1", "esm-env": "^1.2.2", "file-selector": "^5.0.1", "lightgallery": "^3.0.0", "melt": "^0.44.0", "runed": "^0.37.1", "svelte-streamdown": "^5.0.0", "svelte-themes": "^2.0.10", "valibot": "^1.5.0" }, "peerDependencies": { "@lexical/history": "^0.50.0", "@lexical/link": "^0.50.0", "@lexical/list": "^0.50.0", "@lexical/markdown": "^0.50.0", "@lexical/rich-text": "^0.50.0", "@lexical/selection": "^0.50.0", "@lexical/utils": "^0.50.0", "@sveltejs/kit": "^2.43.5 || ^3.0.0", "@tanstack/charts": "^0.18.0 || ^1.0.0", "cobe": "^2.0.1", "d3-array": "^3.2.4", "d3-force": "^3.0.0", "d3-hierarchy": "^3.1.2", "d3-sankey": "^0.12.3", "d3-scale": "^4.0.2", "d3-shape": "^3.2.0", "lexical": "^0.50.0", "svelte": "^5.32.0", "tailwindcss": "^4.0.0" }, "optionalPeers": ["@lexical/history", "@lexical/link", "@lexical/list", "@lexical/markdown", "@lexical/rich-text", "@lexical/selection", "@lexical/utils", "@tanstack/charts", "cobe", "d3-array", "d3-force", "d3-hierarchy", "d3-sankey", "d3-scale", "d3-shape", "lexical", "tailwindcss"] }, "sha512-lEdnotQkkk1XE9Y/zw0b/B/VybyXv5pWj2W7hJ5usu/jALkunKpP2FQXXRn77rnzNd/nbBuRJpqJs50pfLinGQ=="],
+    "entasis": ["entasis@0.15.1", "", { "dependencies": { "@atlaskit/pragmatic-drag-and-drop": "^4.0.0", "@atlaskit/pragmatic-drag-and-drop-auto-scroll": "^3.2.1", "@blossom-carousel/core": "^1.1.8", "@date-fns/tz": "^1.5.0", "@floating-ui/dom": "^1.8.0", "@maskito/core": "^5.6.0", "@maskito/kit": "^5.6.0", "@pierre/diffs": ">=1.5.2 <1.6.3", "@pierre/trees": "1.0.0-beta.6", "@tanstack/highlight": "1.1.0", "@tanstack/svelte-virtual": "3.13.47", "@tanstack/table-core": "9.3.1", "cn": "0.5.0", "colorizr": "^5.1.1", "esm-env": "^1.2.2", "file-selector": "^5.0.1", "lightgallery": "^3.0.0", "melt": "^0.44.0", "runed": "^0.37.1", "svelte-streamdown": "^5.0.0", "svelte-themes": "^2.0.10", "valibot": "^1.5.0" }, "peerDependencies": { "@sveltejs/kit": "^2.43.5 || ^3.0.0", "@tanstack/charts": "^0.18.0 || ^1.0.0", "cobe": "^2.0.1", "d3-array": "^3.2.4", "d3-force": "^3.0.0", "d3-hierarchy": "^3.1.2", "d3-sankey": "^0.12.3", "d3-scale": "^4.0.2", "d3-shape": "^3.2.0", "edytor": "^7.0.4", "svelte": "^5.32.0", "tailwindcss": "^4.0.0" }, "optionalPeers": ["@tanstack/charts", "cobe", "d3-array", "d3-force", "d3-hierarchy", "d3-sankey", "d3-scale", "d3-shape", "edytor", "tailwindcss"] }, "sha512-z+qK/IJN4U/CRIgPYH9v/ort2ZvS9uCkBYf9Rb8p9cNhgbb7kJdqucdEZIh68TAxEqyaUx453h89urQOQVGsLg=="],
 
     "esm-env": ["esm-env@1.2.2", "", {}, "sha512-Epxrv+Nr/CaL4ZcFGPJIYLWFom+YeV1DqMLHJoEd9SYRxNbaFruBwfEX/kkHUJf55j2+TUbmDcmuilbP1TmXHA=="],
 

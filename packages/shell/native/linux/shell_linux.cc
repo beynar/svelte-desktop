@@ -382,7 +382,8 @@ static int create_window(const json &o) {
   apply_geometry(w);
   if (!flag("resizable", true)) gtk_window_set_resizable(win, FALSE);
   if (!flag("decorations", true)) gtk_window_set_decorated(win, FALSE);
-  if (flag("alwaysOnTop", false)) gtk_window_set_keep_above(win, TRUE);
+  w->alwaysOnTop = flag("alwaysOnTop", false);
+  if (w->alwaysOnTop) gtk_window_set_keep_above(win, TRUE);
   json saved;
   if (!str("autosaveName").empty()) {
     w->autosave = autosave_file(str("autosaveName"));

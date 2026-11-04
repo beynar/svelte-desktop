@@ -13,6 +13,9 @@
 #include <vector>
 
 #include "platform_internal.h"
+#include "platform_app_windows.h"
+#include "platform_web_policy.h"
+#include "platform_web_content.h"
 #include "shell.h"
 #include "webview/api.h"
 
@@ -104,7 +107,7 @@ static void reveal(Window *w) {
   double duration = a[@"duration"] ? [a[@"duration"] doubleValue] / 1000.0 : 0.18;
   if (!a || duration <= 0) {
     [win setAlphaValue:1.0];
-    [win makeKeyAndOrderFront:nil];
+    platform_window_present(win);
     return;
   }
   // From where it starts — offset (CSS points, y down; default 10 above), scaled around its
@@ -116,7 +119,7 @@ static void reveal(Window *w) {
   NSRect from = NSMakeRect(NSMidX(to) - to.size.width * scale / 2 + dx, NSMidY(to) - to.size.height * scale / 2 - dy, to.size.width * scale, to.size.height * scale);
   [win setFrame:from display:NO];
   [win setAlphaValue:a[@"opacity"] ? MIN(1, MAX(0, [a[@"opacity"] doubleValue])) : 0];
-  [win makeKeyAndOrderFront:nil];
+  platform_window_present(win);
   [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
     ctx.duration = duration;
     ctx.timingFunction = timing_function(a[@"easing"]);
@@ -133,6 +136,10 @@ static bool same_origin(NSURL *url) {
 }
 
 @implementation ShellNavDelegate
+- (void)webView:(WKWebView *)view didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge
+    completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
+  platform_web_auth(view, challenge, completionHandler);
+}
 - (void)webView:(WKWebView *)webView
     decidePolicyForNavigationAction:(WKNavigationAction *)action
                     decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
@@ -145,8 +152,9 @@ static bool same_origin(NSURL *url) {
   bool newWindow = action.targetFrame == nil;
   bool subframe = action.targetFrame && !action.targetFrame.isMainFrame;
   bool internal = [scheme isEqualToString:@"about"] || [scheme isEqualToString:@"data"] ||
-                  [scheme isEqualToString:@"blob"] || same_origin(url) || !g_app_origin;
+                  [scheme isEqualToString:@"blob"] || platform_web_content_is_scheme(scheme) || same_origin(url) || !g_app_origin;
   if (subframe || (internal && !newWindow)) {
+    if (platform_web_content_decide_navigation(webView, action, decisionHandler)) return;
     decisionHandler(WKNavigationActionPolicyAllow);
     return;
   }
@@ -170,17 +178,28 @@ static bool same_origin(NSURL *url) {
   platform_webview_download_started(self.windowId, d);
 }
 
-// Electrobun #550-style "frozen after sleep / web process died": reload instead of a dead view.
+// Recovery after a web process dies defaults to reload; apps can opt into manual recovery.
 // A new document is coming (reload, full navigation): the old page can't take responses any more
 // until the new one reports ready (notifications target / claim queue, platform_core.mm).
 - (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation {
   platform_page_unloaded(self.windowId);
+  platform_lifecycle_emit(webView, @"navigationStarted", nil, YES, navigation);
+}
+
+- (void)webView:(WKWebView *)wv didFinishNavigation:(WKNavigation *)nav {
+  platform_lifecycle_emit(wv, @"loaded", nil, NO, nav);
+}
+- (void)webView:(WKWebView *)wv didFailProvisionalNavigation:(WKNavigation *)nav withError:(NSError *)error {
+  platform_lifecycle_emit(wv, @"failed", error, YES, nav);
+}
+- (void)webView:(WKWebView *)wv didFailNavigation:(WKNavigation *)nav withError:(NSError *)error {
+  platform_lifecycle_emit(wv, @"failed", error, NO, nav);
 }
 
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
   platform_page_unloaded(self.windowId);
   emit(@{@"type" : @"webcontent-terminated", @"window" : @(self.windowId)});
-  [webView reload];
+  platform_lifecycle_emit(webView, @"terminated", nil, NO);
 }
 @end
 
@@ -209,6 +228,10 @@ static void install_close_veto_hook(NSWindow *win) {
                     if (w && w->veto) {
                       platform_emit(@"willClose", @{@"windowId" : @(platform_public_window_id(w->id))});
                       return NO;
+                    }
+                    if (w && !g_keep_alive && platform_window_last_family(sender)) {
+                      platform_app_request_quit(@"lastWindowClosed");
+                      return NO; // keep the document alive until every guard answers
                     }
                     // quitOnLastWindowClosed: false — the last visible window hides instead (macOS apps
                     // stay alive; a Dock or notification click shows it again, its page still loaded).
@@ -261,10 +284,11 @@ static void observe_window(Window *w) {
       platform_detach_webview(wid);
       g_windows.erase(wid);
       g_order.erase(std::remove(g_order.begin(), g_order.end(), wid), g_order.end());
-      // webview/webview tears down the view and stops the loop after the last window.
+      // The vendor stays alive; only our coordinator may terminate the app.
     }
     emit(@{@"type" : @"closed", @"window" : @(wid)});
     platform_emit(@"closed", @{@"windowId" : publicId});
+    if (g_windows.empty() && !g_keep_alive) platform_app_request_quit(@"lastWindowClosed");
   });
 }
 
@@ -300,8 +324,17 @@ static void install_title_bar_scroll_monitor() {
 }
 
 static int create_window(NSDictionary *o) {
+  if (!platform_window_options_valid(o)) return -6;
+  if (!platform_webview_options_valid(o)) return -5;
   bool debug = [o[@"debug"] boolValue];
-  webview_t wv = webview_create(debug ? 1 : 0, nullptr);
+  platform_session_window_creation(o[@"session"]);
+  platform_window_creation_options(o);
+  webview_t wv = nullptr;
+  @try { wv = webview_create(debug ? 1 : 0, nullptr); }
+  @finally {
+    platform_window_creation_options(nil);
+    platform_session_window_creation(nil);
+  }
   if (!wv) return -1;
 
   Window *w = new Window{g_next_id++, wv, nil, nil, nil, false, false, nil, {}};
@@ -339,6 +372,11 @@ static int create_window(NSDictionary *o) {
   if (o[@"movable"] && ![o[@"movable"] boolValue]) win.movable = NO;
   if ([o[@"alwaysOnTop"] boolValue]) win.level = NSFloatingWindowLevel;
   if (NSString *tab = o[@"tabbingIdentifier"]) win.tabbingIdentifier = tab;
+  if (NSString *vibrancy = [o[@"vibrancy"] isKindOfClass:NSString.class] ? o[@"vibrancy"] : nil) {
+    if (NSString *err = platform_window_set_vibrancy(win, w->id, vibrancy, o[@"vibrancyState"])) NSLog(@"[shell] window vibrancy: %@", err);
+  }
+  if (o[@"aspectRatio"] && [o[@"aspectRatio"] doubleValue] > 0) win.contentAspectRatio = NSMakeSize([o[@"aspectRatio"] doubleValue], 1);
+  if (o[@"backgroundThrottling"] && ![o[@"backgroundThrottling"] boolValue]) platform_webview_set_throttling(w->webview, NO);
   if ([o[@"transparent"] boolValue]) {
     win.opaque = NO;
     win.backgroundColor = NSColor.clearColor;
@@ -363,9 +401,14 @@ static int create_window(NSDictionary *o) {
   w->nav.windowId = w->id;
   w->webview.navigationDelegate = w->nav;
   platform_attach_webview(w->id, w->webview);
+  platform_lifecycle_configure(w->webview, @{@"windowId":@(platform_public_window_id(w->id))}, o[@"recovery"], w->id);
   platform_webview_configure(w->id, w->webview);
   if (NSString *style = o[@"titleBarStyle"]) platform_apply_title_bar_style(win, w->webview, style);
+  if (NSDictionary *at = [o[@"trafficLightPosition"] isKindOfClass:NSDictionary.class] ? o[@"trafficLightPosition"] : nil)
+    platform_window_set_traffic_lights(win, w->webview, [NSValue valueWithPoint:NSMakePoint([at[@"x"] doubleValue], [at[@"y"] doubleValue])]);
   install_close_veto_hook(win);
+  platform_window_configure_relationship(win, o);
+  platform_window_observe(w->id, win);
   observe_window(w);
 
   int wid = w->id;
@@ -376,7 +419,7 @@ static int create_window(NSDictionary *o) {
     });
   }
 
-  if (NSString *url = o[@"url"]) webview_navigate(wv, url.UTF8String);
+  if (NSString *url = o[@"url"]) platform_webview_load(w->webview, platform_webview_request(w->webview, [NSURL URLWithString:url]));
   else if (NSString *html = o[@"html"]) webview_set_html(wv, html.UTF8String);
   return w->id;
 }
@@ -389,12 +432,18 @@ extern "C" void webview_sd_keep_running_without_windows(int keep); // vendor/web
 int shell_window_create(const char *opts_json) {
   if (![NSThread isMainThread]) return -2;
   NSDictionary *o = parse_json(opts_json) ?: @{};
+  // The shell's termination coordinator owns the last-window policy, including
+  // windows closed without going through performClose:.
+  webview_sd_keep_running_without_windows(1);
   if (!g_main_opts) {
+    platform_web_content_set_schemes([o[@"protocols"] isKindOfClass:NSArray.class] ? o[@"protocols"] : @[]);
     g_main_opts = o;
+    platform_app_observe_launch(); // AppKit finishes launching inside the first window's creation
     // Dev: the app's icon in the Dock instead of bun's. Again once the run loop starts:
     // finishLaunching gives a bare executable the generic icon.
     if (NSString *icon = o[@"appIcon"])
       if (NSImage *image = [[NSImage alloc] initWithContentsOfFile:icon]) {
+        platform_set_default_dock_icon(image);
         NSApp.applicationIconImage = image;
         dispatch_async(dispatch_get_main_queue(), ^{ NSApp.applicationIconImage = image; });
       }
@@ -404,6 +453,7 @@ int shell_window_create(const char *opts_json) {
     }
   }
   if (!g_app_name) g_app_name = o[@"appName"];
+  if ([o[@"usageDescriptions"] isKindOfClass:NSDictionary.class]) platform_set_usage_descriptions(o[@"usageDescriptions"]);
   if (!g_app_identifier) g_app_identifier = o[@"identifier"];
   int id = create_window(o);
   if (id > 0) {
@@ -511,7 +561,7 @@ static void install_signal_sources() {
     NSString *name = @(names[i]);
     dispatch_source_set_event_handler(sources[i], ^{
       emit(@{@"type" : @"signal", @"signal" : name});
-      shell_quit();
+      platform_app_request_quit(@"signal");
     });
     dispatch_resume(sources[i]);
   }
@@ -527,13 +577,7 @@ int shell_run(void) {
 }
 
 int shell_quit(void) {
-  on_main(^{
-    [NSApp stop:nil];
-    // stop: only takes effect after the next event is processed.
-    NSEvent *ev = [NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint modifierFlags:0
-                                    timestamp:0 windowNumber:0 context:nil subtype:0 data1:0 data2:0];
-    [NSApp postEvent:ev atStart:YES];
-  });
+  on_main(^{ platform_app_request_quit(@"api"); });
   return 0;
 }
 
@@ -554,7 +598,7 @@ int shell_quit(void) {
 int shell_window_navigate(int id, const char *url) {
   if (!url) return -3;
   std::string s(url);
-  WITH_WINDOW(id, webview_navigate(w->wv, s.c_str()));
+  WITH_WINDOW(id, platform_webview_load(w->webview, platform_webview_request(w->webview, [NSURL URLWithString:[NSString stringWithUTF8String:s.c_str()]])));
 }
 int shell_window_eval(int id, const char *js) {
   if (!js) return -3;
@@ -596,7 +640,7 @@ int shell_set_app_origin(const char *origin) {
 }
 - (void)quit:(id)sender {
   emit(@{@"type" : @"quit-requested"});
-  shell_quit();
+  platform_app_request_quit(@"menu");
 }
 - (void)reload:(id)sender {
   NSWindow *key = NSApp.keyWindow;
@@ -627,7 +671,7 @@ static void apply_accelerator(NSMenuItem *item, NSString *acc) {
 
 static NSMenuItem *build_item(NSDictionary *spec) {
   if ([spec[@"type"] isEqual:@"separator"]) return [NSMenuItem separatorItem];
-  NSString *label = spec[@"label"] ?: @"";
+  NSString *label = platform_l10n(spec[@"label"] ?: @""); // the shell's own labels, in the app's language
   NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:label action:nil keyEquivalent:@""];
   NSString *role = spec[@"role"];
   static NSDictionary<NSString *, NSString *> *selectors = @{

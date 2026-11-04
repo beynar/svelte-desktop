@@ -1,7 +1,8 @@
 // power.* — thermal state, global idle time, battery, sleep assertions.
 // Events: thermalStateChanged, systemSleep, systemWake, screenLocked,
 // screenUnlocked (all {}), plus displaySleep/displayWake (NSWorkspace screens
-// sleep) and screensaverStarted/screensaverStopped.
+// sleep), screensaverStarted/screensaverStopped and memoryPressure {level:
+// 'warning' | 'critical'} (the system running short of memory).
 #include "platform_internal.h"
 
 #import <IOKit/ps/IOPSKeys.h>
@@ -107,6 +108,7 @@ static void unblock_sleep(PlatformCall *call) {
       NSWorkspaceDidWakeNotification : @"systemWake",
       NSWorkspaceScreensDidSleepNotification : @"displaySleep",
       NSWorkspaceScreensDidWakeNotification : @"displayWake",
+      NSWorkspaceWillPowerOffNotification : @"shutdown",
       NSProcessInfoThermalStateDidChangeNotification : @"thermalStateChanged",
       @"com.apple.screenIsLocked" : @"screenLocked",
       @"com.apple.screenIsUnlocked" : @"screenUnlocked",
@@ -120,9 +122,31 @@ static void unblock_sleep(PlatformCall *call) {
 @end
 
 static SDPowerObserver *g_observer;
+static dispatch_source_t g_memory;
+
+// Plugged in or on battery: powerSourceChanged { onBattery } when it flips (IOPS notifies on any
+// battery change, the percentage too).
+static int g_on_battery = -1;
+static void power_source_changed(void *) {
+  CFTypeRef blob = IOPSCopyPowerSourcesInfo();
+  if (!blob) return;
+  BOOL onBattery = [(__bridge NSString *)IOPSGetProvidingPowerSourceType(blob) isEqualToString:@kIOPSBatteryPowerValue];
+  CFRelease(blob);
+  if (g_on_battery == onBattery) return;
+  BOOL first = g_on_battery < 0;
+  g_on_battery = onBattery;
+  if (!first) platform_emit(@"powerSourceChanged", @{@"onBattery" : @(onBattery)});
+}
 
 void platform_register_power(void) {
   g_assertions = [NSMutableSet set];
+  g_memory = dispatch_source_create(DISPATCH_SOURCE_TYPE_MEMORYPRESSURE, 0, DISPATCH_MEMORYPRESSURE_WARN | DISPATCH_MEMORYPRESSURE_CRITICAL, dispatch_get_main_queue());
+  dispatch_source_set_event_handler(g_memory, ^{
+    unsigned long level = dispatch_source_get_data(g_memory);
+    if (level & (DISPATCH_MEMORYPRESSURE_WARN | DISPATCH_MEMORYPRESSURE_CRITICAL))
+      platform_emit(@"memoryPressure", @{@"level" : (level & DISPATCH_MEMORYPRESSURE_CRITICAL) ? @"critical" : @"warning"});
+  });
+  dispatch_resume(g_memory);
   platform_register_many(@"power", @[ @"getThermalState", @"thermalState" ], ^(PlatformCall *call) {
     [call ok:@{@"state" : thermal_name(NSProcessInfo.processInfo.thermalState)}];
   });
@@ -134,11 +158,16 @@ void platform_register_power(void) {
   platform_register(@"power", @"blockSleep", ^(PlatformCall *call) { block_sleep(call); });
   platform_register(@"power", @"unblockSleep", ^(PlatformCall *call) { unblock_sleep(call); });
 
+  power_source_changed(nullptr);
+  if (CFRunLoopSourceRef src = IOPSNotificationCreateRunLoopSource(power_source_changed, nullptr)) {
+    CFRunLoopAddSource(CFRunLoopGetMain(), src, kCFRunLoopDefaultMode);
+    CFRelease(src);
+  }
   g_observer = [SDPowerObserver new];
   NSNotificationCenter *ws = NSWorkspace.sharedWorkspace.notificationCenter;
   for (NSString *n in @[
          NSWorkspaceWillSleepNotification, NSWorkspaceDidWakeNotification, NSWorkspaceScreensDidSleepNotification,
-         NSWorkspaceScreensDidWakeNotification
+         NSWorkspaceScreensDidWakeNotification, NSWorkspaceWillPowerOffNotification
        ])
     [ws addObserver:g_observer selector:@selector(forward:) name:n object:nil];
   [NSNotificationCenter.defaultCenter addObserver:g_observer

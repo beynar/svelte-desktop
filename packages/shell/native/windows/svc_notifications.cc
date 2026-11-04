@@ -1237,6 +1237,7 @@ void register_notifications() {
   });
   reg("notifications", "claim", [](CallPtr c) { c->ok(notif::take_claims()); });
   reg("notifications", "responses", [](CallPtr c) { c->ok(notif::ring()); });
+  reg("notifications", "getBadge", [](CallPtr c) { c->ok(g_badge > 0 ? json(g_badge) : json(nullptr)); });
   reg("notifications", "setBadge", [](CallPtr c) {
     int count = 0;
     if (c->has("count")) {

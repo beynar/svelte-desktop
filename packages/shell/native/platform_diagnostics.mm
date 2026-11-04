@@ -57,7 +57,7 @@ void platform_register_diagnostics(void) {
       NSString *service = [key substringToIndex:dot.location], *op = [key substringFromIndex:dot.location + 1];
       NSString *status = @"implemented";
       if (!bundled && ([service isEqual:@"notifications"] || [key isEqual:@"deepLink.register"] ||
-                       [key isEqual:@"deepLink.registerScheme"]))
+                       [key isEqual:@"deepLink.registerScheme"] || [key isEqual:@"app.setLoginItem"]))
         status = @"unavailable";
       (services[service] ?: (services[service] = [NSMutableDictionary dictionary]))[op] = status;
     }

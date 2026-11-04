@@ -1,6 +1,7 @@
 // view.* — extra web views embedded in a window (Electron's BrowserView).
-//   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, debug?} → {id}
-//   setBounds {id, x, y, width, height} · navigate {id, url|route} · show · hide · reload
+//   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, hidden?, debug?} → {id}
+//   (`hidden`: it loads out of sight, until `show`)
+//   setBounds {id, x, y, width, height} · navigate {id, url|route} · show {seeThrough?} · hide · reload
 //   executeJavaScript {id, code} → JSON · list · destroy
 // Bounds are CSS px from the window content's top-left. `autoresize`:
 // "width" | "height" | "both" | "none" (default) — follow window resizes.
@@ -9,6 +10,9 @@
 // Any origin may load (it's a browser view); the platform bridge still only
 // answers the app origin's main frame, so third-party content can't call native.
 #include "platform_internal.h"
+#include "platform_web_policy.h"
+#include "platform_web_content.h"
+#import <objc/runtime.h>
 
 @interface SDView : NSObject <WKNavigationDelegate>
 @property(nonatomic, copy) NSString *ident;
@@ -16,6 +20,9 @@
 @property(nonatomic) int windowNative;
 @property(nonatomic, strong) WKWebView *webview;
 @property(nonatomic, copy) NSString *autoresize;
+/// Created `hidden`: it loads over the page, see-through and letting the pointer through (still
+/// drawing: behind the page or out of the window, WebKit stops), until `show`.
+@property(nonatomic) BOOL seeThrough;
 @end
 
 static NSMutableDictionary<NSString *, SDView *> *g_views;
@@ -48,7 +55,13 @@ static NSURL *url_from(PlatformCall *c) {
   return u ? [NSURL URLWithString:u] : nil;
 }
 
+// An app page loaded in a view says so (X-Desktop-View: its id): the server renders it as a
+// view (<WindowTabs> draws the page alone), not the window's chrome for hydration to remove.
 @implementation SDView
+- (void)webView:(WKWebView *)view didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge
+    completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler {
+  platform_web_auth(view, challenge, completionHandler);
+}
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)ctx {
   platform_emit(@"viewTitle", @{@"id" : self.ident, @"title" : self.webview.title ?: @""});
 }
@@ -60,22 +73,46 @@ static NSURL *url_from(PlatformCall *c) {
     if ([scheme hasPrefix:@"http"] || [scheme isEqual:@"mailto"]) [NSWorkspace.sharedWorkspace openURL:action.request.URL];
     return;
   }
-  BOOL ok = [scheme isEqual:@"http"] || [scheme isEqual:@"https"] || [scheme isEqual:@"about"] || [scheme isEqual:@"data"] || [scheme isEqual:@"blob"];
-  decisionHandler(ok ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
-  if (ok && action.targetFrame.isMainFrame) platform_emit(@"viewNavigated", @{@"id" : self.ident, @"url" : action.request.URL.absoluteString ?: @""});
+  BOOL ok = [scheme isEqual:@"http"] || [scheme isEqual:@"https"] || [scheme isEqual:@"about"] || [scheme isEqual:@"data"] || [scheme isEqual:@"blob"] || platform_web_content_is_scheme(scheme);
+  void (^decide)(WKNavigationActionPolicy) = ^(WKNavigationActionPolicy policy) {
+    decisionHandler(policy);
+    if (policy == WKNavigationActionPolicyAllow && action.targetFrame.isMainFrame)
+      platform_emit(@"viewNavigated", @{@"id" : self.ident, @"url" : action.request.URL.absoluteString ?: @""});
+  };
+  if (ok && platform_web_content_decide_navigation(wv, action, decide)) return;
+  decide(ok ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
 }
 - (void)webView:(WKWebView *)wv didFinishNavigation:(WKNavigation *)nav {
+  platform_lifecycle_emit(wv, @"loaded", nil, NO, nav);
   platform_emit(@"viewLoaded", @{@"id" : self.ident, @"url" : wv.URL.absoluteString ?: @""});
 }
 - (void)webView:(WKWebView *)wv didFailProvisionalNavigation:(WKNavigation *)nav withError:(NSError *)error {
+  platform_lifecycle_emit(wv, @"failed", error, YES, nav);
   platform_emit(@"viewFailed", @{@"id" : self.ident, @"error" : error.localizedDescription ?: @""});
 }
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)wv {
-  [wv reload];
+  platform_page_unloaded(self.nativeId);
+  platform_lifecycle_emit(wv, @"terminated", nil, NO);
+}
+- (void)webView:(WKWebView *)wv didStartProvisionalNavigation:(WKNavigation *)nav {
+  platform_page_unloaded(self.nativeId);
+  platform_lifecycle_emit(wv, @"navigationStarted", nil, YES, nav);
+}
+- (void)webView:(WKWebView *)wv didFailNavigation:(WKNavigation *)nav withError:(NSError *)error {
+  platform_lifecycle_emit(wv, @"failed", error, NO, nav);
+  platform_emit(@"viewFailed", @{@"id":self.ident, @"error":error.localizedDescription ?: @""});
 }
 @end
 
+// Capture before removal: AppKit can retain a removed responder's web view until focus changes.
+static NSWindow *window_focusing_view(SDView *v) {
+  NSWindow *win = v.webview.window;
+  NSResponder *focus = win.firstResponder;
+  return [focus isKindOfClass:NSView.class] && [(NSView *)focus isDescendantOf:v.webview] ? win : nil;
+}
+
 static void destroy_view(SDView *v) {
+  NSWindow *focusWindow = window_focusing_view(v);
   @try {
     [v.webview removeObserver:v forKeyPath:@"title"];
   } @catch (NSException *) {
@@ -83,6 +120,7 @@ static void destroy_view(SDView *v) {
   platform_detach_webview(v.nativeId);
   [v.webview stopLoading];
   [v.webview removeFromSuperview];
+  if (focusWindow) [focusWindow makeFirstResponder:platform_webview(v.windowNative)];
   [g_views removeObjectForKey:v.ident];
 }
 
@@ -99,9 +137,21 @@ static void reg(NSString *op, ViewOp body) {
   });
 }
 
+// A view loading out of sight (alpha 0) lets the pointer through to the page under it.
+static IMP g_hit_test;
+static NSView *see_through_hit_test(NSView *self, SEL cmd, NSPoint point) {
+  if (self.alphaValue == 0) return nil;
+  return ((NSView * (*)(id, SEL, NSPoint)) g_hit_test)(self, cmd, point);
+}
+
 void platform_register_view(void) {
   g_views = [NSMutableDictionary dictionary];
+  Method m = class_getInstanceMethod(WKWebView.class, @selector(hitTest:));
+  g_hit_test = method_getImplementation(m);
+  if (!class_addMethod(WKWebView.class, @selector(hitTest:), (IMP)see_through_hit_test, method_getTypeEncoding(m)))
+    method_setImplementation(m, (IMP)see_through_hit_test);
   platform_register(@"view", @"create", ^(PlatformCall *c) {
+    if (!platform_webview_options_valid(c.args)) return [c fail:@"invalid_args" message:@"view.create: unknown session or invalid recovery policy"];
     int win = platform_resolve_window(c);
     NSView *host = host_for(win);
     if (!host) return [c fail:@"invalid_args" message:@"view.create: no such window"];
@@ -118,6 +168,7 @@ void platform_register_view(void) {
     v.windowNative = win;
     v.autoresize = [c string:@"autoresize"] ?: @"none";
     WKWebViewConfiguration *cfg = [WKWebViewConfiguration new];
+    platform_webview_prepare_configuration(cfg, [c string:@"session"]);
     // The page knows it's a view (an isolated tab), not a window: window.__desktopView = its id.
     NSString *mark = [NSString stringWithFormat:@"window.__desktopView=%@;",
                                                 [[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:ident options:NSJSONWritingFragmentsAllowed error:nil]
@@ -125,15 +176,23 @@ void platform_register_view(void) {
     [cfg.userContentController addUserScript:[[WKUserScript alloc] initWithSource:mark injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
     v.webview = [[WKWebView alloc] initWithFrame:to_frame(host, b) configuration:cfg];
     v.webview.autoresizingMask = mask_for(v.autoresize, host.isFlipped);
-    if ([c boolean:@"transparent" or:NO]) [v.webview setValue:@NO forKey:@"drawsBackground"];
+    if ([c boolean:@"transparent" or:NO]) {
+      // See-through: where its page paints nothing, the window's page under it shows.
+      [v.webview setValue:@NO forKey:@"drawsBackground"];
+      if (@available(macOS 12.0, *)) v.webview.underPageBackgroundColor = NSColor.clearColor;
+    }
     if (@available(macOS 13.3, *)) v.webview.inspectable = [c boolean:@"debug" or:NO];
+    if (![c boolean:@"backgroundThrottling" or:YES]) platform_webview_set_throttling(v.webview, NO); // keeps running at full speed hidden
     v.webview.navigationDelegate = v;
     [v.webview addObserver:v forKeyPath:@"title" options:0 context:nil];
     platform_attach_webview(v.nativeId, v.webview);
+    platform_lifecycle_configure(v.webview, @{@"viewId":ident, @"windowId":@(platform_public_window_id(win))}, [c string:@"recovery"], win);
     platform_webview_configure(v.nativeId, v.webview);
+    v.seeThrough = [c boolean:@"hidden" or:NO];
+    if (v.seeThrough) v.webview.alphaValue = 0;
     [host addSubview:v.webview positioned:NSWindowAbove relativeTo:nil];
     g_views[ident] = v;
-    [v.webview loadRequest:[NSURLRequest requestWithURL:url]];
+    platform_webview_load(v.webview, platform_webview_request(v.webview, url));
     [c ok:@{@"id" : ident, @"windowId" : @(platform_public_window_id(win))}];
   });
   reg(@"setBounds", ^(PlatformCall *c, SDView *v) {
@@ -151,30 +210,35 @@ void platform_register_view(void) {
   reg(@"navigate", ^(PlatformCall *c, SDView *v) {
     NSURL *url = url_from(c);
     if (!url) return [c fail:@"invalid_args" message:@"view.navigate: `url` or `route` is required"];
-    [v.webview loadRequest:[NSURLRequest requestWithURL:url]];
+    platform_webview_load(v.webview, platform_webview_request(v.webview, url));
     [c ok:nil];
   });
   // A hidden view leaves the window (kept alive): left in place, even hidden, it keeps the
   // keyboard and stops the page's own drag and drop.
   reg(@"show", ^(PlatformCall *c, SDView *v) {
+    // `seeThrough`: in the window, drawing, but see-through and letting the pointer through
+    // (a view about to be shown, getting its page ready).
+    BOOL veiled = [c boolean:@"seeThrough" or:NO];
     if (!v.webview.superview) [host_for(v.windowNative) addSubview:v.webview positioned:NSWindowAbove relativeTo:nil];
+    v.webview.alphaValue = veiled ? 0 : 1;
+    v.seeThrough = veiled;
     [c ok:nil];
   });
   reg(@"hide", ^(PlatformCall *c, SDView *v) {
-    NSWindow *win = v.webview.window;
-    NSResponder *focus = win.firstResponder;
-    BOOL had = [focus isKindOfClass:NSView.class] && [(NSView *)focus isDescendantOf:v.webview];
+    NSWindow *focusWindow = window_focusing_view(v);
     [v.webview removeFromSuperview];
-    if (had) [win makeFirstResponder:platform_webview(v.windowNative)];
+    v.webview.alphaValue = 1;
+    v.seeThrough = NO;
+    if (focusWindow) [focusWindow makeFirstResponder:platform_webview(v.windowNative)];
     [c ok:nil];
   });
   reg(@"reload", ^(PlatformCall *c, SDView *v) {
-    [v.webview reload];
+    platform_webview_reload(v.webview);
     [c ok:nil];
   });
   reg(@"getInfo", ^(PlatformCall *c, SDView *v) {
     [c ok:@{@"id" : v.ident, @"url" : v.webview.URL.absoluteString ?: NSNull.null, @"title" : v.webview.title ?: @"",
-            @"loading" : @(v.webview.isLoading), @"hidden" : @(!v.webview.superview)}];
+            @"loading" : @(v.webview.isLoading), @"hidden" : @(!v.webview.superview || v.seeThrough)}];
   });
   reg(@"executeJavaScript", ^(PlatformCall *c, SDView *v) {
     NSString *code = [c string:@"code"];

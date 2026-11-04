@@ -6,6 +6,7 @@
 import * as stores from "../platform/stores.svelte.ts";
 import * as platform from "../platform/index.ts";
 import { native } from "../native.ts";
+import { ai } from "../ai.ts";
 
 /** A store, falling back to the platform service of the same name for anything it doesn't wrap. */
 function withService<S extends object, V extends object>(store: S, service: V | undefined): S & V {
@@ -71,10 +72,18 @@ export function buildHost(server?: Record<string, unknown>) {
     shell: platform.shell,
     secureStorage: platform.secureStorage,
     popover: platform.popover,
-    webview: platform.webview,
+    webview: withService(stores.webview, platform.webview),
+    protocol: platform.protocol,
+    downloads: platform.downloads,
+    files: platform.files,
+    /** OAuth sign-in in the system browser, back to the app (loopback or URL scheme). */
+    oauth: platform.oauth,
     view: platform.view,
+    sessions: platform.sessions,
     /** The app's own native commands (Rust, Go, Swift, C plugins), typed by the build. */
     native,
+    /** The system's on-device language model (Apple's, macOS 26 with Apple Intelligence on). */
+    ai,
     // functions
     on: platform.onPlatform,
     broadcast: platform.broadcast,
@@ -88,7 +97,11 @@ export function buildHost(server?: Record<string, unknown>) {
   };
   // Copy descriptors, not values: server getters (paths…) stay lazy, so building the
   // server (prerendering) without the native layer doesn't throw.
-  if (server) Object.defineProperties(host, Object.getOwnPropertyDescriptors(server));
+  if (server) {
+    const descriptors = Object.getOwnPropertyDescriptors(server);
+    if (server.diagnostics) descriptors.diagnostics = { value: withService(host.diagnostics, server.diagnostics as object), enumerable: true };
+    Object.defineProperties(host, descriptors);
+  }
   return host;
 }
 

@@ -3,6 +3,10 @@
 // globalThis before the app's server code runs — so it bundles into the server
 // build like any small module and simply throws when not running in the shell.
 import type { DesktopApi } from "./api.ts";
+import { basename } from "node:path";
+import { collectSupport, type CollectOptions } from "./diagnostics/collect.ts";
+import { callPlatform } from "./platform/bus.ts";
+import { services } from "./services/host.ts";
 import { addonPath } from "./resolve-lib.ts";
 export type * from "./api.ts";
 export type { CrashInfo, CrashReport } from "./crash.ts";
@@ -71,3 +75,31 @@ export function loadAddon<T = any>(name: string): T {
   process.dlopen(module, addonPath(name));
   return module.exports;
 }
+
+/** The user's login-shell environment and the commands on its PATH (an app opened from the
+ *  Finder doesn't get the PATH their terminal builds). */
+export { shellEnv, which } from "./shell-env.ts";
+/** The app's command in the user's terminal (desktop.config `command`). */
+export { command } from "./command.ts";
+export type { CommandStatus } from "./command.ts";
+export type { ShellEnvOptions } from "./shell-env.ts";
+
+/** Persistent duplex children; server code owns their lifetime and page-facing commands. */
+export { services };
+export type * from "./services/types.ts";
+export type { CollectOptions } from "./diagnostics/collect.ts";
+
+/** Opt-in local support archive. The application owns consent, upload and deletion. */
+export const diagnostics = {
+  collect(options: CollectOptions = {}) {
+    return collectSupport({
+      appName: desktop.appName,
+      logsDir: desktop.paths.logs,
+      cacheDir: desktop.paths.cache,
+      executable: basename(process.execPath).replace(/\.exe$/i, ''),
+      crashInfo: () => desktop.crashInfo(),
+      appInfo: () => callPlatform('app', 'getInfo'),
+    }, options);
+  },
+};
+

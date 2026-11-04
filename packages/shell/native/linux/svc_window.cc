@@ -226,6 +226,8 @@ void register_window() {
     gtk_window_set_geometry_hints(GTK_WINDOW(w->window), nullptr, mask ? &g : nullptr, (GdkWindowHints)mask);
     c->ok();
   });
+  op("getMinSize", [](CallPtr c, Window *w) { c->ok(json{{"width", w->minW}, {"height", w->minH}}); });
+  op("getMaxSize", [](CallPtr c, Window *w) { c->ok(json{{"width", w->maxW}, {"height", w->maxH}}); });
   op("getScaleFactor", [](CallPtr c, Window *w) { c->ok(gtk_widget_get_scale_factor(w->window)); });
   op("getCursorPoint", [](CallPtr c, Window *w) {
     int mx, my;
@@ -341,6 +343,7 @@ void register_window() {
     w->veto = c->flag("enabled", true);
     c->ok(json{{"armed", w->veto}});
   });
+  op("hasCloseVeto", [](CallPtr c, Window *w) { c->ok(w->veto); });
   auto attention = [](CallPtr c, Window *w) {
     gtk_window_set_urgency_hint(GTK_WINDOW(w->window), c->flag("enabled", true));
     c->ok();
@@ -350,13 +353,17 @@ void register_window() {
 
   // ── z-order + chrome ──────────────────────────────────────────────────
   op("setAlwaysOnTop", [](CallPtr c, Window *w) {
-    gtk_window_set_keep_above(GTK_WINDOW(w->window), c->flag("enabled", true));
+    w->alwaysOnTop = c->flag("enabled", true);
+    gtk_window_set_keep_above(GTK_WINDOW(w->window), w->alwaysOnTop);
     c->ok();
   });
+  op("isAlwaysOnTop", [](CallPtr c, Window *w) { c->ok(w->alwaysOnTop); });
   op("setAlwaysOnBottom", [](CallPtr c, Window *w) {
-    gtk_window_set_keep_below(GTK_WINDOW(w->window), c->flag("enabled", true));
+    w->alwaysOnBottom = c->flag("enabled", true);
+    gtk_window_set_keep_below(GTK_WINDOW(w->window), w->alwaysOnBottom);
     c->ok();
   });
+  op("isAlwaysOnBottom", [](CallPtr c, Window *w) { c->ok(w->alwaysOnBottom); });
   op("setResizable", [](CallPtr c, Window *w) {
     gtk_window_set_resizable(GTK_WINDOW(w->window), c->flag("enabled", true));
     c->ok();
@@ -382,18 +389,22 @@ void register_window() {
     gtk_window_set_decorated(GTK_WINDOW(w->window), c->flag("enabled", true));
     c->ok();
   });
+  op("hasDecorations", [](CallPtr c, Window *w) { c->ok((bool)gtk_window_get_decorated(GTK_WINDOW(w->window))); });
   op("setSkipTaskbar", [](CallPtr c, Window *w) {
     gtk_window_set_skip_taskbar_hint(GTK_WINDOW(w->window), c->flag("enabled", true));
     c->ok();
   });
   op("setVisibleOnAllWorkspaces", [](CallPtr c, Window *w) {
-    c->flag("enabled", true) ? gtk_window_stick(GTK_WINDOW(w->window)) : gtk_window_unstick(GTK_WINDOW(w->window));
+    w->onAllWorkspaces = c->flag("enabled", true);
+    w->onAllWorkspaces ? gtk_window_stick(GTK_WINDOW(w->window)) : gtk_window_unstick(GTK_WINDOW(w->window));
     c->ok();
   });
+  op("isVisibleOnAllWorkspaces", [](CallPtr c, Window *w) { c->ok(w->onAllWorkspaces); });
   op("setFocusable", [](CallPtr c, Window *w) {
     gtk_window_set_accept_focus(GTK_WINDOW(w->window), c->flag("enabled", true));
     c->ok();
   });
+  op("isFocusable", [](CallPtr c, Window *w) { c->ok((bool)gtk_window_get_accept_focus(GTK_WINDOW(w->window))); });
 
   // ── appearance + input ────────────────────────────────────────────────
   op("setOpacity", [](CallPtr c, Window *w) {

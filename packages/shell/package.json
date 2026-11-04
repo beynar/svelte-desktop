@@ -7,6 +7,7 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./server": "./src/server.ts",
+		"./websocket": "./src/websocket.ts",
 		"./client": "./src/client.ts",
 		"./worker": "./src/worker.ts",
 		"./worker-env": "./src/worker-env.ts",
@@ -31,7 +32,10 @@
 		"./vite": "./src/vite.ts",
 		"./config": "./src/config.ts",
 		"./test": "./src/test.ts",
-		"./globals": "./src/host/global.d.ts"
+		"./globals": "./src/host/global.d.ts",
+		"./tailwind": "./src/tailwind.js",
+		"./ai": "./src/ai.ts",
+		"./ai-sdk": "./src/ai-sdk.ts"
 	},
 	"peerDependencies": {
 		"@sveltejs/adapter-bun": "1.0.0-next.2",

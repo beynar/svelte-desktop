@@ -259,26 +259,41 @@ interface State {
 	retained: { type: string; event: unknown }[];
 	seen: Set<number>;
 	bound: boolean;
+	observers: Map<string, Set<Listener>>;
 }
 const S: State = ((globalThis as Record<symbol, State | undefined>)[Symbol.for('svelte-desktop.notifications')] ??= {
 	listeners: new Map(),
 	retained: [],
 	seen: new Set(),
 	bound: false,
+	observers: new Map(),
 });
 
 function emitLocal(types: string[], event: unknown): boolean {
 	let delivered = false;
-	for (const type of types)
+	const call = (fn: Listener) => {
+		try {
+			(fn as (e: unknown) => void)(event);
+		} catch (err) {
+			console.error(err);
+		}
+	};
+	for (const type of types) {
+		S.observers.get(type)?.forEach(call);
 		for (const fn of S.listeners.get(type) ?? []) {
 			delivered = true;
-			try {
-				(fn as (e: unknown) => void)(event);
-			} catch (err) {
-				console.error(err);
-			}
+			call(fn);
 		}
+	}
 	return delivered;
+}
+
+/** The shell's own listener (the web's Notification). The app hasn't heard a response because of it:
+ *  a click that launched the app still waits for the app's first listener. */
+export function observeNotificationEvent(type: string, fn: (e: NotificationEvent) => void): void {
+	let set = S.observers.get(type);
+	if (!set) S.observers.set(type, (set = new Set()));
+	set.add(fn as Listener);
 }
 
 /** Deliver to listeners; keep it for the first listener when there is none yet. true = heard now. */
@@ -414,6 +429,9 @@ function bind() {
 
 const SW_URL = '/__desktop/push-sw.js';
 const SW_SCOPE = '/__desktop/push/';
+
+let webBadge: number | null = null;
+let skippedSaid = false;
 
 const web = {
 	supported: () => isPage && typeof Notification !== 'undefined',
@@ -580,8 +598,12 @@ export const notifications = {
 			actions: o.actions?.map(({ url: _url, label, ...a }) => ({ ...a, title: a.title ?? label })),
 		};
 		for (const k of Object.keys(args)) if (args[k] === undefined) delete args[k];
-		const r = await callPlatform<{ id?: string; tag?: string; scheduled?: boolean }>('notifications', 'show', args);
-		return { id: r?.id ?? r?.tag ?? id, scheduled: !!r?.scheduled };
+		const r = await callPlatform<{ id?: string; tag?: string; scheduled?: boolean; skipped?: boolean }>('notifications', 'show', args);
+		if (r?.skipped && !skippedSaid) {
+			skippedSaid = true;
+			console.info('[desktop] notifications: not shown — macOS shows the notifications of the built app, not of `vite dev`');
+		}
+		return { id: r?.id ?? r?.tag ?? id, scheduled: !!r?.scheduled, ...(r?.skipped && { skipped: true }) };
 	},
 	/** Alias of show() with a required date. */
 	schedule<D = unknown>(o: NotificationOptions<D> & ({ at: Date | number | string } | { delay: number })) {
@@ -606,9 +628,12 @@ export const notifications = {
 	/** App icon badge (Dock, Linux docks, Windows taskbar). null/0 clears it. */
 	setBadge: (count: number | null) => {
 		if (native()) return callPlatform<null>('notifications', 'setBadge', { count });
+		webBadge = count || null; // browsers have no way to read it back
 		const nav = isPage ? (navigator as Navigator & { setAppBadge?(n?: number): Promise<void>; clearAppBadge?(): Promise<void> }) : null;
 		return (count ? nav?.setAppBadge?.(count) : nav?.clearAppBadge?.())?.then(() => null) ?? Promise.resolve(null);
 	},
+	/** The badge setBadge set; null without one. */
+	getBadge: () => (native() ? callPlatform<number | null>('notifications', 'getBadge') : Promise.resolve(webBadge)),
 	/** Banners while the app is frontmost, for notifications without `foreground` and pushes. */
 	setForeground: (show: boolean) => (native() ? callPlatform<null>('notifications', 'setForeground', { show }) : Promise.resolve(null)),
 	/** Notifications can be shown here (a bundled app, a notification server, a browser with the API). */

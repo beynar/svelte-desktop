@@ -47,6 +47,8 @@ export function toMenuItems(items, prefix = 'mi') {
 			if (it === '-' || it === 'separator' || it?.separator === true)
 				return { type: 'separator' };
 			const spec = {};
+			for (const field of ['type', 'group', 'visible', 'tooltip', 'enabled', 'accelerator'])
+				if (it[field] != null) spec[field] = it[field];
 			if (it.label != null) spec.label = it.label;
 			const icon = toIcon(it.icon);
 			if (icon) spec.icon = icon;

@@ -9,9 +9,13 @@ import { startGate } from "./gate.ts";
 import { createDesktopRuntime, type DesktopRuntime } from "./desktop-api.ts";
 import { connectTestChannel } from "./test-channel.ts";
 import { redirectConsole } from "./logging.ts";
+import { startPath } from "./start-path.ts";
+import "./platform/protocol.ts";
 import { initPlatform, deliverPlatformEvent } from "./platform/bus.ts";
+import { appLifecycle } from "./platform/app-lifecycle.ts";
 import { createUpdater, type UpdateInfo } from "./updater/index.ts";
 import type { InitMessage, ShellEvent } from "./types.ts";
+import type { WebSocketHandlers } from "./websocket.ts";
 
 declare var self: Worker;
 
@@ -20,14 +24,16 @@ export interface WorkerOptions {
   handler: KitHandler;
   /** adapter-bun's static `routes` (client assets, prerendered pages) — immutable build output. */
   routes?: Record<string, any>;
+  /** src/websocket.ts: WebSockets on the app's server. */
+  websocket?: WebSocketHandlers<any>;
 }
 
 const UPDATE_PATH = "/__desktop/update/";
 
-export function startWorker({ handler, routes = {} }: WorkerOptions) {
+export function startWorker({ handler, routes = {}, websocket }: WorkerOptions) {
   self.addEventListener("message", async (e: MessageEvent) => {
     const msg = e.data;
-    if (msg?.type === "init") await init(msg as InitMessage, handler, routes);
+    if (msg?.type === "init") await init(msg as InitMessage, handler, routes, websocket);
     if (msg?.type === "shutdown") await shutdown();
   });
 }
@@ -39,8 +45,12 @@ let runtime: DesktopRuntime;
 
 const debug = !!Bun.env.SVELTE_DESKTOP_DEBUG;
 
+// Debug logs (possibly app.log) never carry a sign-in: OAuth parameters in URLs are masked.
+const SECRET_PARAMS = /([?&#](?:code|state|access_token|id_token|refresh_token|code_verifier|token)=)[^&#"\s]*/gi;
+const redact = (s: string) => s.replace(SECRET_PARAMS, "$1…");
+
 function dispatch(event: ShellEvent) {
-  if (debug) console.log(`[shell] event ${JSON.stringify(event)}`);
+  if (debug) console.log(`[shell] event ${event.type === "platform" && event.name === "protocolRequest" ? "protocolRequest" : redact(JSON.stringify(event))}`);
   // Platform API traffic: pages get platform events straight from native;
   // here they feed the Worker's bus (server code's `@svelte-desktop/shell/platform`).
   if (event.type === "platformResult") return deliverPlatformEvent("platformResult", event);
@@ -49,7 +59,25 @@ function dispatch(event: ShellEvent) {
 }
 
 
-async function init(msg: InitMessage, handler: KitHandler, routes: Record<string, any>) {
+// The memory a burst of renders took (the launch, views opening) goes back once the server is
+// quiet: a full collection a few seconds after the last response (a slow one counts until it ends).
+const QUIET_MS = 5000;
+let quietTimer: ReturnType<typeof setTimeout> | undefined;
+let activeHandlers = 0;
+async function handleRequest(handler: KitHandler, req: Request, srv: Server<any>) {
+  clearTimeout(quietTimer);
+  activeHandlers++;
+  try {
+    return await handler(req, srv);
+  } finally {
+    if (--activeHandlers === 0) {
+      quietTimer = setTimeout(() => Bun.gc(true), QUIET_MS);
+      quietTimer.unref?.();
+    }
+  }
+}
+
+async function init(msg: InitMessage, handler: KitHandler, routes: Record<string, any>, websocket?: WebSocketHandlers<any>) {
   if (msg.logFile) redirectConsole(msg.logFile, "worker");
   native = openNative(msg.lib);
   sink = new JSCallback(
@@ -72,9 +100,11 @@ async function init(msg: InitMessage, handler: KitHandler, routes: Record<string
   const updates = msg.update ? setupUpdater(msg) : null;
 
   const gate = startGate({
-    handler,
+    handler: (req, srv) => handleRequest(handler, req, srv),
     routes,
     secret: msg.secret,
+    appName: msg.appName,
+    websocket,
     debug,
     extra: (req, url, origin) => {
       if (!url.pathname.startsWith(UPDATE_PATH) || req.method !== "POST") return;
@@ -88,11 +118,14 @@ async function init(msg: InitMessage, handler: KitHandler, routes: Record<string
   native.shell_set_app_origin(cstr(origin));
 
   runtime = createDesktopRuntime({ appName: msg.appName, identifier: msg.identifier, origin, quit: () => void native.shell_quit(), trackCrashes: true });
+  // AppKit's affirmative termination reply exits directly. Finish legacy server
+  // cleanup while its asynchronous willQuit phase still holds that reply.
+  if (process.platform === "darwin") appLifecycle.onWillQuit(() => runQuitCleanup());
   installDesktopApi(runtime.api);
   connectTestChannel({ origin, appName: msg.appName });
 
   if (debug) console.log(`[shell] serving ${origin}`);
-  native.shell_window_navigate(msg.windowId, cstr(gate.authUrl("/")));
+  native.shell_window_navigate(msg.windowId, cstr(gate.authUrl(await startPath(msg.identifier))));
 }
 
 // ---------------------------------------------------------------------------
@@ -153,8 +186,13 @@ async function updateRoute(updates: Updates | null, op: string) {
   }
 }
 
+let quitCleanup: Promise<void> | undefined;
+function runQuitCleanup() {
+  return quitCleanup ??= runtime?.runBeforeQuit() ?? Promise.resolve();
+}
+
 async function shutdown() {
-  await runtime?.runBeforeQuit();
+  await runQuitCleanup();
   // The window is gone, so nobody can read a response: force-close sockets
   // (the page's event WebSocket would otherwise hold stop() until the timeout).
   await server?.stop(true);

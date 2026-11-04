@@ -156,6 +156,7 @@ struct Window {
   std::string label;
   bool shown = false;     // revealed (or never auto-revealed)
   bool veto = false;      // close veto armed
+  bool alwaysOnBottom = false;
   double minW = 0, minH = 0, maxW = 0, maxH = 0; // DIP, content size
   bool fullscreen = false;
   RECT savedRect{};

@@ -2,6 +2,8 @@
 // TCC permissions (check / request / open the Settings pane).
 // Events: keyboardLayoutChanged {} (kTISNotifySelectedKeyboardInputSourceChanged).
 #include "platform_internal.h"
+#import <ServiceManagement/ServiceManagement.h>
+#import <LocalAuthentication/LocalAuthentication.h>
 #import <IOKit/hidsystem/IOHIDLib.h>
 
 #import <AVFoundation/AVFoundation.h>
@@ -145,6 +147,13 @@ static void request_permission(PlatformCall *call) {
 static void open_settings(PlatformCall *call) {
   NSString *pane = [call string:@"pane"];
   if (!pane) return [call fail:@"invalid_args" message:@"system.openSettings: missing `pane`"];
+  if ([pane isEqual:@"loginItems"]) {
+    if (@available(macOS 13.0, *)) {
+      [SMAppService openSystemSettingsLoginItems];
+      return [call ok:@{@"opened" : @YES}];
+    }
+    return [call ok:@{@"opened" : @NO}];
+  }
   NSString *privacy = @"x-apple.systempreferences:com.apple.preference.security";
   NSDictionary *urls = @{
     @"privacy-accessibility" : [privacy stringByAppendingString:@"?Privacy_Accessibility"],
@@ -177,7 +186,25 @@ static void open_settings(PlatformCall *call) {
 
 static SDSystemObserver *g_observer;
 
+static NSString *biometry_name(LAContext *ctx) {
+  switch (ctx.biometryType) {
+    case LABiometryTypeTouchID: return @"touchID";
+    case LABiometryTypeFaceID: return @"faceID";
+    default:
+      if (@available(macOS 14.0, *))
+        if (ctx.biometryType == LABiometryTypeOpticID) return @"opticID";
+      return @"none";
+  }
+}
+
 void platform_register_system(void) {
+  // Touch ID: whether it can be asked, and which biometry (the prompt is secureStorage.authenticate).
+  platform_register(@"system", @"biometrics", ^(PlatformCall *call) {
+    LAContext *ctx = [LAContext new];
+    NSError *err = nil;
+    BOOL available = [ctx canEvaluatePolicy:LAPolicyDeviceOwnerAuthenticationWithBiometrics error:&err];
+    [call ok:@{@"available" : @(available), @"type" : biometry_name(ctx), @"enrolled" : @(available || err.code != LAErrorBiometryNotEnrolled)}];
+  });
   platform_register(@"system", @"info", ^(PlatformCall *call) {
     [call ok:@{
       @"os" : @"macos",
@@ -187,6 +214,26 @@ void platform_register_system(void) {
     }];
   });
   platform_register(@"system", @"getKeyboardLayout", ^(PlatformCall *call) { [call ok:keyboard_layout()]; });
+  // The installed font families (what a page's CSS can name), with their styles on request: the web's
+  // Local Font Access API isn't in WebKit.
+  platform_register(@"system", @"fonts", ^(PlatformCall *call) {
+    NSFontManager *fm = NSFontManager.sharedFontManager;
+    NSArray<NSString *> *families = [fm.availableFontFamilies sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
+    if (![call boolean:@"styles" or:NO]) return [call ok:families];
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:families.count];
+    for (NSString *family in families) {
+      NSMutableArray *styles = [NSMutableArray new];
+      // Each member: [PostScript name, style name, weight (0–15, 5 regular, 9 bold), traits].
+      for (NSArray *m in [fm availableMembersOfFontFamily:family]) {
+        if (m.count < 4) continue;
+        NSInteger w = [m[2] integerValue];
+        int css = w <= 1 ? 100 : w == 2 ? 200 : w == 3 ? 300 : w <= 5 ? 400 : w == 6 ? 500 : w <= 8 ? 600 : w <= 10 ? 700 : w == 11 ? 800 : 900;
+        [styles addObject:@{@"name" : m[1], @"postscriptName" : m[0], @"weight" : @(css), @"italic" : @(([m[3] unsignedIntegerValue] & NSItalicFontMask) != 0)}];
+      }
+      [out addObject:@{@"family" : family, @"styles" : styles}];
+    }
+    [call ok:out];
+  });
   platform_register(@"system", @"getAccentColor", ^(PlatformCall *call) {
     NSColor *rgb = [NSColor.controlAccentColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
     if (!rgb) return [call fail:@"unavailable" message:@"system.getAccentColor: accent color has no sRGB form"];

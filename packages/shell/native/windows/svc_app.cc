@@ -11,6 +11,7 @@
 #include <shlwapi.h>
 
 #include <cmath>
+#include <map>
 
 
 namespace sd::win {
@@ -199,6 +200,28 @@ static HICON badge_icon() {
 
 static std::wstring run_key() { return L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"; }
 
+// What the app set, for the getters: the taskbar has no way to read these back.
+static std::string g_dock_badge;
+static json g_dock_progress = json{{"status", "none"}};
+
+// What the Run value passes, to tell a launch at login from the others.
+static const wchar_t LOGIN_FLAG[] = L"--launched-at-login";
+
+// Not available (`vite dev`) is a state, not an error: settings pages work the same in dev.
+static json login_item() {
+  bool pkg = packaged(), registered = false, turned_off = false, launched = false;
+  if (pkg) {
+    std::wstring name = wide(app_name());
+    registered = RegGetValueW(HKEY_CURRENT_USER, run_key().c_str(), name.c_str(), RRF_RT_REG_SZ, nullptr, nullptr, nullptr) == ERROR_SUCCESS;
+    // Task Manager and Settings turn startup apps off here (an odd first byte), and only they turn them on.
+    BYTE approved[12];
+    DWORD size = sizeof approved;
+    turned_off = RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run", name.c_str(), RRF_RT_REG_BINARY, nullptr, approved, &size) == ERROR_SUCCESS && size > 0 && (approved[0] & 1);
+    for (auto &a : command_line_args()) launched = launched || a == LOGIN_FLAG;
+  }
+  return json{{"available", pkg}, {"enabled", registered && !turned_off}, {"requiresApproval", registered && turned_off}, {"launchedAtLogin", launched}};
+}
+
 // ---------------------------------------------------------------------------
 
 static std::string diag_arch() { return arch_name() == "arm64" ? "aarch64" : "x86_64"; }
@@ -327,13 +350,17 @@ void register_app() {
     std::string text = c->str("text");
     std::wstring desc = wide(text);
     tb->SetOverlayIcon(w->hwnd, text.empty() ? nullptr : badge_icon(), desc.c_str());
+    g_dock_badge = text;
     c->ok(true);
   });
+  reg("app", "getDockBadge", [](CallPtr c) { c->ok(g_dock_badge.empty() ? json(nullptr) : json(g_dock_badge)); });
+  reg("app", "getDockProgress", [](CallPtr c) { c->ok(g_dock_progress); });
   reg("app", "setDockProgress", [](CallPtr c) {
     Window *w = find_window(primary_window());
     ITaskbarList3 *tb = taskbar();
     if (!w || !tb) return c->fail("unavailable", "app.setDockProgress: no taskbar button");
     std::string status = c->str("status", "normal");
+    g_dock_progress = status == "none" ? json{{"status", "none"}} : json{{"status", status}, {"completed", c->num("completed", 0)}, {"total", c->num("total", 1)}};
     TBPFLAG flag = status == "none" ? TBPF_NOPROGRESS
                    : status == "indeterminate" ? TBPF_INDETERMINATE
                    : status == "paused" ? TBPF_PAUSED
@@ -347,22 +374,23 @@ void register_app() {
     }
     c->ok();
   });
+  reg("app", "getLoginItem", [](CallPtr c) { c->ok(login_item()); });
+  reg("app", "getActivationPolicy", [](CallPtr c) { c->ok("regular"); });
   reg("app", "setLoginItem", [](CallPtr c) {
-    if (!packaged()) return c->fail("unavailable", "app.setLoginItem needs the packaged app (not `bun`)");
+    if (!packaged()) return c->ok(login_item());
     bool want = c->flag("enabled", true);
     HKEY key = nullptr;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, run_key().c_str(), 0, nullptr, 0, KEY_READ | KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS)
       return c->fail("denied", "app.setLoginItem: cannot open the Run key");
     std::wstring name = wide(app_name());
     if (want) {
-      std::wstring value = L"\"" + exe_path() + L"\"";
+      std::wstring value = L"\"" + exe_path() + L"\" " + LOGIN_FLAG;
       RegSetValueExW(key, name.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE *>(value.c_str()), (DWORD)((value.size() + 1) * sizeof(wchar_t)));
     } else {
       RegDeleteValueW(key, name.c_str());
     }
-    bool enabled = RegQueryValueExW(key, name.c_str(), nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS;
     RegCloseKey(key);
-    c->ok(json{{"enabled", enabled}});
+    c->ok(login_item());
   });
   reg("app", "requestSingleInstanceLock", [](CallPtr c) { request_single_instance(c); });
   reg("app", "getBundleType", [](CallPtr c) { c->ok(json{{"type", packaged() ? "app" : "binary"}}); });
@@ -412,7 +440,7 @@ void register_deep_link() {
   reg_many("deepLink", {"register", "registerScheme"}, [](CallPtr c) {
     std::string scheme = lower(c->str("scheme"));
     if (scheme.empty() || url_scheme(scheme + ":") != scheme) return c->fail("invalid_args", "deepLink.register: `scheme` must be a URL scheme");
-    if (!packaged()) return c->fail("unavailable", "deepLink.register needs the packaged app (not `bun`)");
+    if (!packaged()) return c->ok(json{{"scheme", scheme}, {"registered", false}});
     std::wstring base = L"Software\\Classes\\" + wide(scheme);
     auto set = [](const std::wstring &key, const wchar_t *name, const std::wstring &value) {
       HKEY k = nullptr;
@@ -424,7 +452,16 @@ void register_deep_link() {
     bool ok = set(base, nullptr, L"URL:" + wide(scheme)) && set(base, L"URL Protocol", L"") &&
               set(base + L"\\shell\\open\\command", nullptr, L"\"" + exe_path() + L"\" \"%1\"");
     if (!ok) return c->fail("denied", "deepLink.register: cannot write HKCU\\Software\\Classes");
-    c->ok(json{{"scheme", scheme}});
+    c->ok(json{{"scheme", scheme}, {"registered", true}});
+  });
+  // Whether this app opens the scheme's URLs. Not an error in `vite dev`: it doesn't.
+  reg("deepLink", "isDefault", [](CallPtr c) {
+    std::string scheme = lower(c->str("scheme"));
+    if (scheme.empty() || url_scheme(scheme + ":") != scheme) return c->fail("invalid_args", "deepLink.isDefault: `scheme` must be a URL scheme");
+    wchar_t command[4096];
+    DWORD n = 4096;
+    bool mine = packaged() && SUCCEEDED(AssocQueryStringW(ASSOCF_IS_PROTOCOL, ASSOCSTR_COMMAND, wide(scheme).c_str(), L"open", command, &n)) && StrStrIW(command, exe_path().c_str());
+    c->ok(mine);
   });
 }
 
@@ -460,7 +497,8 @@ void register_system() {
     static const std::map<std::string, const wchar_t *> kPages = {
         {"privacy-camera", L"ms-settings:privacy-webcam"}, {"privacy-microphone", L"ms-settings:privacy-microphone"},
         {"privacy-location", L"ms-settings:privacy-location"}, {"notifications", L"ms-settings:notifications"},
-        {"privacy-screenCapture", L"ms-settings:privacy-graphicsCaptureProgrammatic"}, {"privacy", L"ms-settings:privacy"}};
+        {"privacy-screenCapture", L"ms-settings:privacy-graphicsCaptureProgrammatic"}, {"privacy", L"ms-settings:privacy"},
+        {"loginItems", L"ms-settings:startupapps"}};
     auto it = kPages.find(c->str("pane"));
     const wchar_t *page = it == kPages.end() ? L"ms-settings:privacy" : it->second;
     bool opened = (INT_PTR)ShellExecuteW(nullptr, L"open", page, nullptr, nullptr, SW_SHOWNORMAL) > 32;
@@ -470,6 +508,33 @@ void register_system() {
     c->ok(json{{"os", "windows"}, {"family", "windows"}, {"arch", diag_arch()}, {"keyboardLayout", keyboard_layout()}});
   });
   reg("system", "getKeyboardLayout", [](CallPtr c) { c->ok(json{{"name", keyboard_layout()}}); });
+  // The installed font families, with their styles on request (GDI's enumeration).
+  reg("system", "fonts", [](CallPtr c) {
+    bool styles = c->flag("styles", false);
+    std::map<std::string, json> families;
+    LOGFONTW lf{};
+    lf.lfCharSet = DEFAULT_CHARSET;
+    HDC dc = GetDC(nullptr);
+    EnumFontFamiliesExW(
+        dc, &lf,
+        [](const LOGFONTW *f, const TEXTMETRICW *, DWORD, LPARAM param) -> int {
+          auto &out = *reinterpret_cast<std::map<std::string, json> *>(param);
+          if (f->lfFaceName[0] == L'@') return 1;  // vertical variants
+          auto *ex = reinterpret_cast<const ENUMLOGFONTEXW *>(f);
+          auto &fam = out[utf8(f->lfFaceName)];
+          if (fam.is_null()) fam = json::array();
+          std::string style = utf8(reinterpret_cast<const wchar_t *>(ex->elfStyle));
+          for (auto &s : fam)
+            if (s["name"] == style) return 1;  // one entry per style, not per script
+          fam.push_back(json{{"name", style}, {"postscriptName", ""}, {"weight", f->lfWeight ? (int)f->lfWeight : 400}, {"italic", f->lfItalic != 0}});
+          return 1;
+        },
+        reinterpret_cast<LPARAM>(&families), 0);
+    ReleaseDC(nullptr, dc);
+    json out = json::array();
+    for (auto &[name, st] : families) out.push_back(styles ? json{{"family", name}, {"styles", st}} : json(name));
+    c->ok(out);
+  });
   reg("system", "getAccentColor", [](CallPtr c) {
     DWORD argb = 0;
     BOOL opaque = FALSE;
@@ -514,7 +579,7 @@ void register_diagnostics() {
       if (dot == std::string::npos) continue;
       std::string service = key.substr(0, dot), op = key.substr(dot + 1);
       std::string status = "implemented";
-      if (!packaged() && (service == "deepLink" || key == "app.setLoginItem")) status = "unavailable";
+      if (!packaged() && ((service == "deepLink" && op != "isDefault") || key == "app.setLoginItem")) status = "unavailable";
       services[service][op] = status;
     }
     c->ok(json{{"platform", "windows"}, {"arch", diag_arch()}, {"services", services}});

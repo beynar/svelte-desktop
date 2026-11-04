@@ -7,11 +7,14 @@
 // `route` tabs are app routes: activating one navigates to its path, and navigating changes the
 // active tab's path (each tab remembers where it was). Otherwise a tab is plain state.
 // `isolated` tabs live in their own web view (their own process): a third-party page (`url`) or
-// an app route kept apart from the page.
+// an app route kept apart from the page. The window's address is the active tab's, a kept-alive
+// one's too (page.url, the sidebar): its page isn't rendered in the window, its view shows it.
 import { getContext, setContext } from 'svelte';
+import { SvelteSet } from 'svelte/reactivity';
 import { callPlatform, onPlatform, platformReady } from '../platform/bus';
 import { readAppFile, writeAppFile } from '../platform/app-files';
 import type { WindowAnimation } from '../platform/index';
+import { contentBox, dropView, prepareView, retargetView, whenSettled } from './isolated.ts';
 
 /** A tab: yours, of any shape — an `id`, the fields the bar knows, and your own. */
 export interface TabLike {
@@ -71,6 +74,13 @@ export interface TabsOptions<T extends TabLike = TabLike> {
 	detachable?: boolean | ((tab: T) => boolean);
 	/** How a window a tab was dragged into comes in (macOS): `true` (default), `false`, or your own. */
 	windowAnimation?: boolean | WindowAnimation;
+	/** Keep a view ready for the next kept-alive tab (one web process, ~40 MB): it opens without
+	 *  starting a process or the app — any kept-alive route, by SvelteKit's router. */
+	prewarm?: boolean;
+	/** Views running at once (kept-alive tabs, other sites): beyond, the least recently shown one is
+	 *  suspended — its page loads again when shown. The system short of memory suspends every
+	 *  hidden one. Default: no limit. */
+	maxViews?: number;
 	/** A tab is closing (×, ⌘W, a middle click): return false to keep it. */
 	onclose?: (tab: T) => boolean | void;
 	/** Another tab became the active one: 'user' (a click, a key, a link, your code) or
@@ -93,6 +103,8 @@ let seq = 0;
 let groups = 0;
 const newId = () => `t${Date.now().toString(36)}${(seq++).toString(36)}`;
 const here = () => location.pathname + location.search + location.hash;
+/** The page's address, reactive: set as history changes, before SvelteKit renders the page. */
+const address = $state({ path: isPage ? here() : '/' });
 const ADOPTED = 'tabs:adopted';
 /** A tab handed to the window it was dragged out into (shared storage: the same origin). */
 const handoffKey = (group: string, label: string) => `sd-tabs:${group}:${label}`;
@@ -101,12 +113,35 @@ const handoffKey = (group: string, label: string) => `sd-tabs:${group}:${label}`
  *  page alone there. */
 export const embedded = isPage && '__desktopView' in globalThis;
 
+/** Rendering for a kept-alive tab's view: in its page, or on the server for a request it made
+ *  (X-Desktop-View) — so the server renders what the view shows. */
+export function forView(): boolean {
+	return embedded || (!isPage && !!(globalThis as { __desktopViewRequest?: () => string | undefined }).__desktopViewRequest?.());
+}
+
 /** A navigation, with SvelteKit's client router when it's there (the desktop plugin exposes it). */
-function navigate(path: string, replace = false) {
-	const goto = (globalThis as { __desktopGoto?: (url: string, opts?: object) => unknown }).__desktopGoto;
-	if (goto) void goto(path, { replaceState: replace });
-	else if (replace) location.replace(path);
+function navigate(path: string) {
+	const goto = (globalThis as { __desktopGoto?: (url: string) => unknown }).__desktopGoto;
+	if (goto) void goto(path);
 	else location.assign(path);
+}
+
+/** A tab of the page at `path`: the page SvelteKit has already (the window was at a kept-alive
+ *  tab's address), the address alone; else a navigation. */
+function goTo(path: string) {
+	const page = (globalThis as { __desktopPageUrl?: () => string | undefined }).__desktopPageUrl?.();
+	if (page === path) showAddress(path);
+	else navigate(path);
+}
+
+/** The window at a kept-alive tab's address without navigating there — no load, no page code (its
+ *  view runs the page); page.url, your sidebar follow. Without the desktop plugin: a navigation. */
+function showAddress(path: string) {
+	const set = (globalThis as { __desktopAddress?: (url: string) => void }).__desktopAddress;
+	if (!set) return navigate(path);
+	set(path);
+	address.path = here();
+	dispatchEvent(new Event('desktop:urlchange'));
 }
 
 /** A SvelteKit route id ('/terminal/[id]', '/docs/[...rest]', '/(app)/[[lang]]/home') as a
@@ -123,6 +158,18 @@ export function routeMatcher(id: string): RegExp {
 }
 const pathOnly = (path: string) => path.replace(/[?#].*$/, '');
 
+/** SvelteKit's preload levels, from its link options. */
+const PRELOAD = { off: 0, tap: 1, hover: 2 } as const;
+/** How eagerly SvelteKit preloads a link: the nearest data-sveltekit-preload-data / -code on it or
+ *  an ancestor, the stronger of the two ('' is 'hover'; 'viewport' and 'eager' count as 'hover'). */
+function preloadLevel(a: Element): number {
+	const level = (name: string) => {
+		const value = a.closest(`[data-sveltekit-preload-${name}]`)?.getAttribute(`data-sveltekit-preload-${name}`);
+		return value == null || value === 'false' || value === 'off' ? PRELOAD.off : value === 'tap' ? PRELOAD.tap : PRELOAD.hover;
+	};
+	return Math.max(level('data'), level('code'));
+}
+
 /** One `desktop:urlchange` event per client-side navigation (pushState, replaceState, back/forward). */
 function watchUrl(fn: () => void): () => void {
 	const g = globalThis as { __sdHistoryPatched?: boolean };
@@ -132,10 +179,11 @@ function watchUrl(fn: () => void): () => void {
 			const original = history[m].bind(history);
 			history[m] = (...args: Parameters<History['pushState']>) => {
 				original(...args);
+				address.path = here();
 				queueMicrotask(() => dispatchEvent(new Event('desktop:urlchange')));
 			};
 		}
-		addEventListener('popstate', () => dispatchEvent(new Event('desktop:urlchange')));
+		addEventListener('popstate', () => ((address.path = here()), dispatchEvent(new Event('desktop:urlchange'))));
 	}
 	addEventListener('desktop:urlchange', fn);
 	return () => removeEventListener('desktop:urlchange', fn);
@@ -154,6 +202,22 @@ export class TabGroup<T extends TabLike = TabLike> {
 	/** This page is an isolated tab's own web view: the group stays local (no menu, nothing
 	 *  saved) and <TabBar> renders nothing — drop your chrome too and show the page alone. */
 	readonly embedded = embedded;
+	/** The tab on screen: the active one once its content is there — the page at its path, its
+	 *  own view drawn — until then the one before (never a blank between two tabs). */
+	shown = $state<string | null>(null);
+	/** The last tab of the page shown (where a link followed from a kept-alive tab goes). */
+	#lastPage: string | null = null;
+	/** Tabs in their own view whose view is suspended (closed to free memory): it loads again when
+	 *  the tab is shown. */
+	readonly suspended = new SvelteSet<string>();
+	/** Tabs in their own view, least recently shown first (which to suspend). */
+	#recent: string[] = [];
+	/** The view kept ready for the next kept-alive tab (`prewarm`): its tab's id, the page it's at. */
+	#spare: { tab: string; path: string } | null = null;
+	/** The next spare, made a moment after the last one was taken. */
+	#warmTimer: ReturnType<typeof setTimeout> | undefined;
+	/** A view made ahead for a kept-alive route about to open (a hovered link): its tab's id. */
+	#ahead: { path: string; tab: string; timer: ReturnType<typeof setTimeout> } | null = null;
 	/** Recently closed, newest last (⇧⌘T). */
 	#closed: Array<{ tab: T; index: number }> = [];
 	#connections = 0;
@@ -175,6 +239,7 @@ export class TabGroup<T extends TabLike = TabLike> {
 		// A route group starts on the page it's on.
 		if (!this.items.length && o.route && isPage) this.items = [{ id: newId(), path: here() } as T];
 		if (!this.active) this.activeId = this.items[0]?.id ?? null;
+		if (this.active) this.#show(this.active);
 	}
 
 	get options(): TabsOptions<T> {
@@ -215,6 +280,20 @@ export class TabGroup<T extends TabLike = TabLike> {
 		return tab.isolated ?? (tab.url !== undefined || (tab.path !== undefined && this.keepsAlive(tab.path)));
 	}
 
+	/** Whether the page is on screen (not a tab's own view). */
+	get pageShown(): boolean {
+		const tab = this.get(this.shown ?? '');
+		return !tab || !this.isIsolated(tab);
+	}
+
+	/** Whether the page renders: not at the address of a tab in its own view (a kept-alive route,
+	 *  an isolated tab) — its view runs that page. */
+	get pageRendered(): boolean {
+		if (!this.options.route) return true;
+		const path = address.path;
+		return !this.keepsAlive(path) && !this.items.some((t) => t.path === path && (t.id === this.activeId || t.id === this.shown) && this.isIsolated(t));
+	}
+
 	/** Whether a path is one of the `keepAlive` routes. */
 	keepsAlive(path: string): boolean {
 		const routes = this.options.keepAlive;
@@ -245,22 +324,51 @@ export class TabGroup<T extends TabLike = TabLike> {
 	}
 
 	/** Open a tab — a path or a URL, or a tab — right after the active one by default. An existing
-	 *  id, or a kept-alive route already open, is activated instead. */
-	open(target: string | TabInit<T>, opts: { activate?: boolean; background?: boolean; index?: number } = {}): T {
+	 *  id is activated instead, and so is a kept-alive route already open unless `reuse: false`
+	 *  (another one: ⌘-click, a middle click, target="_blank"). */
+	open(target: string | TabInit<T>, opts: { activate?: boolean; background?: boolean; index?: number; reuse?: boolean } = {}): T {
 		const init = (typeof target === 'string' ? (/^[a-z][a-z0-9+.-]*:/i.test(target) ? { url: target } : { path: target }) : target) as TabInit<T>;
 		if (opts.background) opts = { ...opts, activate: false };
-		const existing = init.id ? this.get(init.id) : init.path !== undefined && this.keepsAlive(init.path) ? this.items.find((t) => t.path !== undefined && pathOnly(t.path) === pathOnly(init.path!)) : undefined;
+		const kept = opts.reuse !== false && init.path !== undefined && this.keepsAlive(init.path);
+		const existing = init.id ? this.get(init.id) : kept ? this.items.find((t) => t.path !== undefined && pathOnly(t.path) === pathOnly(init.path!)) : undefined;
 		if (existing) {
 			if (opts.activate !== false) this.activate(existing.id);
 			return existing;
 		}
-		const tab = { ...init, id: init.id ?? newId() } as T;
+		const tab = { ...init, id: init.id ?? this.#takeAhead(init.path) ?? this.#takeSpare(init.path) ?? newId() } as T;
 		const items = this.items;
 		const after = items.findIndex((t) => t.id === this.activeId);
 		const index = Math.max(items.filter((t) => t.pinned).length, Math.min(opts.index ?? (after >= 0 ? after + 1 : items.length), items.length));
 		this.items = [...items.slice(0, index), tab, ...items.slice(index)];
 		if (opts.activate !== false || !this.activeId) this.activate(tab.id);
+		if (this.isIsolated(tab)) this.#used(tab.id);
 		return this.get(tab.id) ?? tab;
+	}
+
+	/** Make the view of a kept-alive route ahead (a link to it hovered): opened within a while,
+	 *  its tab shows at once. Not when a click would go to its open tab. */
+	prepare(path: string): void {
+		if (!isPage || !platformReady() || embedded || !this.keepsAlive(path) || this.#ahead?.path === path || this.#spare?.path === path) return;
+		if (this.items.some((t) => t.path === path && this.isIsolated(t))) return;
+		this.#dropAhead();
+		const tab = newId();
+		this.#ahead = { path, tab, timer: setTimeout(() => this.#dropAhead(), 5_000) };
+		prepareView(`${this.id}-${tab}`, path, contentBox());
+	}
+
+	#takeAhead(path: string | undefined): string | undefined {
+		const a = this.#ahead;
+		if (!a || a.path !== path) return;
+		clearTimeout(a.timer);
+		this.#ahead = null;
+		return a.tab;
+	}
+
+	#dropAhead(): void {
+		if (!this.#ahead) return;
+		clearTimeout(this.#ahead.timer);
+		dropView(`${this.id}-${this.#ahead.tab}`);
+		this.#ahead = null;
 	}
 
 	/** A new tab from `newTab()`, at the end (a link opened from a tab goes next to it). */
@@ -274,9 +382,82 @@ export class TabGroup<T extends TabLike = TabLike> {
 		if (!tab) return;
 		const changed = this.activeId !== id;
 		this.activeId = id;
-		// An isolated tab shows its own web view: the page stays where it is.
-		if (this.options.route && !this.isIsolated(tab) && tab.path !== undefined && isPage && tab.path !== here()) navigate(tab.path);
+		// A tab of the page is shown once the page is at its path; an isolated tab once its view
+		// is drawn (see reveal).
+		if (!this.isIsolated(tab)) {
+			if (this.options.route && tab.path !== undefined && isPage && tab.path !== here()) goTo(tab.path);
+			else this.#show(tab);
+		}
 		if (changed) this.options.onactivate?.(tab, reason);
+	}
+
+	/** An isolated tab's view is on screen (drawn, in front): it's the one shown, and the window's
+	 *  address follows it. */
+	reveal(id: string): void {
+		const tab = this.get(id);
+		if (!tab || this.activeId !== id) return;
+		this.#show(tab);
+		if (this.options.route && tab.path !== undefined && isPage && tab.path !== here()) showAddress(tab.path);
+	}
+
+	#show(tab: T): void {
+		this.shown = tab.id;
+		if (!this.isIsolated(tab)) this.#lastPage = tab.id;
+		else this.#used(tab.id);
+	}
+
+	/** A tab in its own view was opened or shown: running again, and within `maxViews`. */
+	#used(id: string): void {
+		this.suspended.delete(id);
+		this.#recent = [...this.#recent.filter((r) => r !== id && this.get(r)), id];
+		this.#limit();
+	}
+
+	/** Within `maxViews`: the least recently shown views beyond it suspended (never the one on
+	 *  screen or the active one). */
+	#limit(): void {
+		const max = this.options.maxViews;
+		if (max === undefined) return;
+		const running = this.#recent.filter((r) => !this.suspended.has(r));
+		for (const r of running.slice(0, Math.max(0, running.length - max))) if (r !== this.activeId && r !== this.shown) this.suspended.add(r);
+	}
+
+	/** Free memory: every view not on screen suspended, nothing made ahead. */
+	#relieve(): void {
+		for (const t of this.items) if (this.isIsolated(t) && t.id !== this.activeId && t.id !== this.shown) this.suspended.add(t.id);
+		clearTimeout(this.#warmTimer);
+		this.#dropAhead();
+		this.#dropSpare();
+	}
+
+	/** Keep a view ready for the next kept-alive tab (`prewarm`): at a kept-alive route not open
+	 *  (taken as is), else at the app's root (taken to the tab's route). */
+	#warm(): void {
+		const o = this.options;
+		if (!this.#connections || !o.prewarm || !o.keepAlive?.length || this.#spare || !isPage || embedded || !platformReady()) return;
+		const fixed = o.keepAlive
+			.filter((id) => !id.includes('['))
+			.map((id) => '/' + id.split('/').filter((p) => p && !/^\(.+\)$/.test(p)).join('/'))
+			.find((path) => !this.items.some((t) => t.path !== undefined && pathOnly(t.path) === path));
+		const tab = newId();
+		this.#spare = { tab, path: fixed ?? '/' };
+		prepareView(`${this.id}-${tab}`, this.#spare.path, contentBox());
+	}
+
+	#takeSpare(path: string | undefined): string | undefined {
+		const spare = this.#spare;
+		if (!spare || path === undefined || !this.keepsAlive(path)) return;
+		this.#spare = null;
+		retargetView(`${this.id}-${spare.tab}`, path);
+		clearTimeout(this.#warmTimer);
+		this.#warmTimer = setTimeout(() => this.#warm(), 1000); // the next one, once this tab is up
+		return spare.tab;
+	}
+
+	#dropSpare(): void {
+		if (!this.#spare) return;
+		dropView(`${this.id}-${this.#spare.tab}`);
+		this.#spare = null;
 	}
 
 	/** Close a tab (the active one by default), unless `onclose` keeps it. The main window's bar
@@ -302,6 +483,7 @@ export class TabGroup<T extends TabLike = TabLike> {
 		}
 		const rest = items.filter((t) => t.id !== id);
 		this.items = rest;
+		this.suspended.delete(id);
 		if (this.activeId === id) {
 			const next = rest[index] ?? rest[index - 1];
 			this.activeId = null;
@@ -440,12 +622,15 @@ export class TabGroup<T extends TabLike = TabLike> {
 		const o = this.options;
 		const persist = o.restore ?? o.primary;
 		let restored = false;
+		let connected = true;
+		let warm = true; // false once memory ran short: no spare made again
 
 		// Which window this is: the main window restores and saves its tabs; a window a tab was
 		// dragged into starts from that tab. Without the shell (a browser), it's the main one.
 		void (platformReady() ? callPlatform<WindowInfo>('window', 'getInfo') : Promise.resolve(null))
 			.then(
 				(info) => {
+					if (!connected) return;
 					this.window = info?.label ?? 'main';
 					this.#windowId = info?.windowId;
 					this.#focused = info?.focused ?? null;
@@ -455,18 +640,26 @@ export class TabGroup<T extends TabLike = TabLike> {
 			)
 			.catch(() => {})
 			.finally(() => {
+				if (!connected) return;
 				restored = true;
+				void whenSettled().then(() => void (connected && warm && this.#warm())); // after the window's page
 				if (o.route) this.#syncTitle(); // the restored / handed-over tab is this page
 			});
 
 		cleanups.push(
 			$effect.root(() => {
 				let timer: ReturnType<typeof setTimeout> | undefined;
+				let save: (() => void) | undefined;
 				$effect(() => {
-					const state = JSON.stringify({ items: this.items, activeId: this.activeId });
+					// `start`: where the window opens next time (the shell reads it): the active tab's
+					// page, or the last page shown under a tab in its own view (its view comes over it).
+					const active = this.active;
+					const page = active && !this.isIsolated(active) ? active : this.get(this.#lastPage ?? '');
+					const state = JSON.stringify({ items: this.items, activeId: this.activeId, start: page?.path ?? '/' });
 					if (!restored || !persist || this.window !== 'main') return;
 					clearTimeout(timer);
-					timer = setTimeout(() => void writeAppFile('userData', `tabs-${this.id}.json`, state).catch(() => {}), 300);
+					save = () => void writeAppFile('userData', `tabs-${this.id}.json`, state).catch(() => {});
+					timer = setTimeout(() => (save?.(), (save = undefined)), 300);
 				});
 				// The window title follows the active tab.
 				$effect(() => {
@@ -474,6 +667,8 @@ export class TabGroup<T extends TabLike = TabLike> {
 					const title = active && this.titleOf(active);
 					if (o.primary && title && platformReady()) void callPlatform('window', 'setTitle', { title }).catch(() => {});
 				});
+				// Disconnected: a save still waiting goes out now.
+				return () => (clearTimeout(timer), save?.());
 			}),
 		);
 
@@ -484,16 +679,21 @@ export class TabGroup<T extends TabLike = TabLike> {
 			cleanups.push(
 				watchUrl(() => {
 					const tab = this.active;
-					if (!tab || this.isIsolated(tab) || tab.path === here()) return;
-					// A kept-alive route reached by goto / back: it opens in its own tab, this one
-					// stays where it was.
-					if (this.keepsAlive(here()) && tab.path !== undefined) {
-						const to = here();
-						navigate(tab.path, true);
-						this.open(to);
-						return;
+					const to = here();
+					if (!tab || (this.isIsolated(tab) && tab.path === to)) return;
+					// A kept-alive route reached by goto / back: its own tab (the open one or a new
+					// one) — the tab you were on stays where it was.
+					if (this.keepsAlive(to)) return void this.open(to);
+					// Away from a kept-alive tab (a link, back): to a tab of the page — the one at
+					// that address, else the last one shown, else a new one.
+					if (this.isIsolated(tab)) {
+						const page = this.items.find((t) => !this.isIsolated(t) && t.path === to) ?? this.get(this.#lastPage ?? '');
+						if (!page) return void this.open(to);
+						if (page.path !== to) this.update(page.id, { path: to, title: undefined } as Partial<Omit<T, 'id'>>);
+						return this.activate(page.id);
 					}
-					this.update(tab.id, { path: here(), title: undefined } as Partial<Omit<T, 'id'>>);
+					if (tab.path !== to) this.update(tab.id, { path: to, title: undefined } as Partial<Omit<T, 'id'>>);
+					this.#show(tab);
 				}),
 			);
 
@@ -505,8 +705,20 @@ export class TabGroup<T extends TabLike = TabLike> {
 			cleanups.push(() => observer.disconnect());
 		}
 
+		// The system short of memory: views not on screen are suspended.
+		cleanups.push(onPlatform('memoryPressure', () => ((warm = false), this.#relieve())));
+		// Disconnected: nothing left behind (the spare, a view made ahead, a tab on its way out).
+		cleanups.push(() => {
+			clearTimeout(this.#warmTimer);
+			this.#dropAhead();
+			this.#dropSpare();
+			this.#outgoing?.off();
+			this.#outgoing = null;
+		});
+
 		if (o.primary) cleanups.push(this.#primary());
 		return () => {
+			connected = false;
 			for (const c of cleanups) c();
 		};
 	}
@@ -524,8 +736,16 @@ export class TabGroup<T extends TabLike = TabLike> {
 		if (!saved?.items?.length) return;
 		this.items = saved.items;
 		this.activeId = saved.activeId && this.get(saved.activeId) ? saved.activeId : saved.items[0]!.id;
+		// Tabs in their own view, the active one most recent: within `maxViews` from the start.
+		const own = this.items.filter((t) => this.isIsolated(t)).map((t) => t.id);
+		this.#recent = [...own.filter((id) => id !== this.activeId), ...own.filter((id) => id === this.activeId)];
+		this.#limit();
 		const active = this.active;
-		if (this.options.route && active && !this.isIsolated(active) && active.path !== undefined && active.path !== here()) navigate(active.path);
+		if (active && !this.isIsolated(active)) return this.activate(active.id);
+		// The window opened at the page under it (`start`): that page's tab stays on screen until
+		// the active tab's view is drawn.
+		const page = this.items.find((t) => !this.isIsolated(t) && t.path === here());
+		if (page) this.#show(page);
 	}
 
 	/** The tab this window was opened for, with its title, data and state. */
@@ -537,6 +757,7 @@ export class TabGroup<T extends TabLike = TabLike> {
 		const tab = JSON.parse(text) as T;
 		this.items = [{ ...tab, path: here() }];
 		this.activeId = tab.id;
+		this.#show(this.get(tab.id)!);
 	}
 
 	/** The window's tab bar: a Tab menu, shortcuts, links opened in new tabs. */
@@ -609,14 +830,43 @@ export class TabGroup<T extends TabLike = TabLike> {
 				const path = a.pathname + a.search + a.hash;
 				const background = e.type === 'auxclick' || e.metaKey || e.ctrlKey;
 				const blank = a.target === '_blank';
-				if (!background && !blank && !(this.keepsAlive(path) && !(this.active && this.isIsolated(this.active) && this.active.path === path))) return;
+				// The page SvelteKit has, the window at a kept-alive tab's address: the address alone
+				// (SvelteKit would see no change).
+				if (!background && !blank && !a.target && path !== here() && path === (globalThis as { __desktopPageUrl?: () => string }).__desktopPageUrl?.()) {
+					e.preventDefault();
+					return showAddress(path);
+				}
+				if (!background && !blank && !this.keepsAlive(path)) return;
 				if (a.target && !blank) return;
 				e.preventDefault();
-				this.open(path, { background });
+				this.open(path, { background, reuse: !background && !blank });
 			};
 			addEventListener('click', links, true);
 			addEventListener('auxclick', links, true);
 			cleanups.push(() => (removeEventListener('click', links, true), removeEventListener('auxclick', links, true)));
+			// A link to a kept-alive route makes its view ahead when SvelteKit would preload it
+			// (data-sveltekit-preload-data / -code): 'hover' once the pointer rests on it, 'tap' when
+			// pressed, never with 'false' / 'off' or neither attribute.
+			let resting: ReturnType<typeof setTimeout> | undefined;
+			const ahead = (e: PointerEvent) => {
+				clearTimeout(resting);
+				const a = e.target instanceof Element ? e.target.closest('a[href]') : null;
+				if (!(a instanceof HTMLAnchorElement) || a.origin !== location.origin || a.hasAttribute('download')) return;
+				const path = a.pathname + a.search + a.hash;
+				const level = preloadLevel(a);
+				if (e.type === 'pointerdown' ? level >= PRELOAD.tap : level >= PRELOAD.hover) resting = setTimeout(() => this.prepare(path), e.type === 'pointerdown' ? 0 : 50);
+			};
+			const away = () => clearTimeout(resting);
+			addEventListener('pointerover', ahead, true);
+			addEventListener('pointerdown', ahead, true);
+			addEventListener('pointerout', away, true);
+			cleanups.push(() => {
+				away();
+				removeEventListener('pointerover', ahead, true);
+				removeEventListener('pointerdown', ahead, true);
+				removeEventListener('pointerout', away, true);
+				this.#dropAhead();
+			});
 		}
 		return () => {
 			for (const c of cleanups) c();

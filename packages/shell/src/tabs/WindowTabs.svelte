@@ -16,7 +16,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { WindowAnimation } from '../platform/index';
-	import { TabGroup, embedded as inView, setTabs, type TabLike, type TabRender } from './tabs.svelte.ts';
+	import { TabGroup, forView, setTabs, type TabLike, type TabRender } from './tabs.svelte.ts';
 	import TabBar from './TabBar.svelte';
 	import TabContent from './TabContent.svelte';
 
@@ -36,6 +36,12 @@
 		detachable?: boolean | ((tab: Tab) => boolean);
 		/** How the window a tab is dragged into comes in (macOS). Default true. */
 		windowAnimation?: boolean | WindowAnimation;
+		/** Keep a view ready for the next kept-alive tab (one web process, ~40 MB): it opens without
+		 *  starting a process or the app. Default false. */
+		prewarm?: boolean;
+		/** Views running at once (kept-alive tabs, other sites): beyond, the least recently shown is
+		 *  suspended, its page loading again when shown. Default: no limit. */
+		maxViews?: number;
 		/** A tab is closing: return false to keep it. */
 		beforeClose?: (event: { tab: Tab; index: number }) => boolean | void;
 		/** The active tab changed. */
@@ -59,6 +65,8 @@
 		restore = true,
 		detachable = true,
 		windowAnimation,
+		prewarm = false,
+		maxViews,
 		beforeClose,
 		onValueChange,
 		value = $bindable(),
@@ -78,6 +86,8 @@
 			keepAlive,
 			detachable,
 			windowAnimation,
+			prewarm,
+			maxViews,
 			newTab: newTab === undefined ? undefined : () => ({ path: newTab }),
 			onclose: (t) => beforeClose?.({ tab: t, index: group.items.findIndex((x: Tab) => x.id === t.id) }),
 			onactivate: (t, reason) => onValueChange?.({ value: t.id, tab: t, index: group.items.findIndex((x: Tab) => x.id === t.id), reason }),
@@ -97,12 +107,22 @@
 			},
 		},
 	);
+	// In a kept-alive tab's view (and when the server renders for one): the page alone.
+	const inView = forView();
 	// What `layout` gets: the bar and the content, to put where they go.
 	const parts = () => ({ bar, content, api: group }) as unknown as Parameters<NonNullable<typeof layout>>[0];
 	setTabs(group);
-	api = group;
+	// In the browser only: a bound prop written while the server renders makes Svelte render the
+	// whole page again — and the discarded pass never runs its onDestroy (what components
+	// registered there stays, request after request).
+	if (typeof window !== 'undefined') api = group;
 	$effect(() => group.connect());
 </script>
+
+<svelte:head>
+	<!-- Server-rendered as a view: it can be shown before hydration (see host/client.ts). -->
+	{#if inView}<meta name="desktop-view" content="" />{/if}
+</svelte:head>
 
 {#snippet bar(props: BarProps = {})}
 	<TabBar {...props} {tab} />

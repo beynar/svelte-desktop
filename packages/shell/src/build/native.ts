@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import type { ResolvedConfig } from "../config.ts";
 import type { Arch } from "./package.ts";
+import { isLanguageProject } from "./native-langs.ts";
 
 const include = resolve(import.meta.dir, "../../native/include");
 
@@ -13,14 +14,15 @@ const PLATFORM_DIRS = ["macos", "linux", "windows"] as const;
 export type PluginPlatform = (typeof PLATFORM_DIRS)[number];
 
 /** Plugin sources under native/ for one platform: everything except addons/ (Node-API
- *  addons), sidecars/ (executables), rust/ and go/ (their own plugins, native-langs.ts),
- *  built separately, and the other platforms' folders (native/<platform>/). */
+ *  addons), sidecars/ (executables), python/ (Python commands, python.ts), Rust crates and Go modules (folders with Cargo.toml /
+ *  go.mod: their own plugins, native-langs.ts), built separately, and the other platforms'
+ *  folders (native/<platform>/). */
 export function pluginSources(dir: string, platform: PluginPlatform): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (["addons", "sidecars", "rust", "go"].includes(entry.name)) continue; // built separately
+      if (["addons", "sidecars", "target", "node_modules", "python", "__pycache__"].includes(entry.name) || entry.name.startsWith(".") || isLanguageProject(p)) continue; // built separately
       if ((PLATFORM_DIRS as readonly string[]).includes(entry.name) && entry.name !== platform) continue;
       out.push(...pluginSources(p, platform));
     } else if (/\.(swift|m|mm|c|cc|cpp)$/.test(entry.name)) out.push(p);

@@ -15,11 +15,51 @@
 // printFinished, closeRequested (popover pages calling window.close()), openFiles.
 // Every web-view event carries {windowId} (public id) or {popoverId}.
 #import <AVFoundation/AVFoundation.h>
+#import <Quartz/Quartz.h>
+#import <CoreLocation/CoreLocation.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <initializer_list>
+#include <signal.h>
+#include <unistd.h>
 
 #include "platform_internal.h"
+#include "platform_web_content.h"
+#include "platform_web_policy.h"
+
+// These APIs are private: guard the class and every selector before use.
+@interface WKProcessPool (SDMemoryPolicy)
+- (instancetype)_initWithConfiguration:(id)configuration __attribute__((objc_method_family(init)));
+@end
+
+void platform_webview_prepare_configuration(WKWebViewConfiguration *configuration, NSString *session) {
+  platform_session_prepare(configuration, session);
+  platform_web_content_prepare(configuration);
+  static WKProcessPool *pool;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    Class policyClass = NSClassFromString(@"_WKProcessPoolConfiguration");
+    id policy = [policyClass new];
+    SEL prewarm = NSSelectorFromString(@"setPrewarmsProcessesAutomatically:");
+    SEL cache = NSSelectorFromString(@"setUsesWebProcessCache:");
+    if (![policy respondsToSelector:prewarm] || ![policy respondsToSelector:cache] ||
+        ![WKProcessPool instancesRespondToSelector:@selector(_initWithConfiguration:)]) {
+      NSLog(@"[shell] WebKit memory policy unavailable; using WebKit defaults");
+      return;
+    }
+    // Explicit NO also prevents the heuristic from enabling prewarming after a process swap.
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(policy, prewarm, NO);
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(policy, cache, NO);
+    pool = [[WKProcessPool alloc] _initWithConfiguration:policy];
+  });
+  if (pool) configuration.processPool = pool;
+}
+
+// The vendored main-window factory is C++, so its hook passes an untyped Objective-C pointer.
+extern "C" void webview_sd_configure_webkit(void *configuration) {
+  platform_webview_prepare_configuration((__bridge WKWebViewConfiguration *)configuration);
+}
 
 @class SDWebViewState;
 static void emit_for(SDWebViewState *s, NSString *name, NSDictionary *data);
@@ -70,6 +110,7 @@ static void run_outside_gcd(dispatch_block_t block) {
 @property(nonatomic, copy, nullable) NSString *popoverId;
 @property(nonatomic, weak) WKWebView *webview;
 @property(nonatomic, strong) SDUIDelegate *ui;
+@property(nonatomic, strong, nullable) WKFrameInfo *permissionFrame; // test channel: real WebKit frame metadata
 @property(nonatomic, strong, nullable) id originalUIDelegate; // webview/webview's, kept alive
 @property(nonatomic) BOOL fileDrop;
 @property(nonatomic) BOOL dragging; // a file drag is over the view (enter emitted)
@@ -104,13 +145,14 @@ static void close_requested(SDWebViewState *s) {
 }
 
 // Starts a print operation; returns an error message when it could not start.
-static NSString *print_view(SDWebViewState *s, BOOL silent, NSString *pdfPath, void (^done)(BOOL ok));
+static NSString *print_view(SDWebViewState *s, BOOL silent, NSString *pdfPath, NSPrintInfo *info, NSArray *ranges, void (^done)(BOOL ok));
 
 @implementation SDWebViewState
 - (BOOL)debug {
   return [[self.webview.configuration.preferences valueForKey:@"developerExtrasEnabled"] boolValue];
 }
 - (NSDictionary *)source {
+  if (platform_lifecycle_target(self.webview).count) return platform_lifecycle_target(self.webview);
   if (self.popoverId) return @{@"popoverId" : self.popoverId};
   return @{@"windowId" : @(platform_public_window_id(self.nativeId))};
 }
@@ -119,10 +161,11 @@ static NSString *print_view(SDWebViewState *s, BOOL silent, NSString *pdfPath, v
   NSDictionary *m = message.body;
   NSString *t = m[@"t"];
   if ([t isEqual:@"ready"]) {
+    if (getenv("SVELTE_DESKTOP_TEST")) self.permissionFrame = message.frameInfo;
     NSString *app = platform_app_origin();
     if (app && [origin_string(message.frameInfo.securityOrigin) isEqualToString:app]) g_page_ready = YES;
   } else if ([t isEqual:@"print"]) {
-    if (NSString *e = print_view(self, NO, nil, nil)) NSLog(@"[shell] window.print(): %@", e);
+    if (NSString *e = print_view(self, NO, nil, nil, nil, nil)) NSLog(@"[shell] window.print(): %@", e);
   } else if ([t isEqual:@"close"]) {
     close_requested(self);
   } else if ([t isEqual:@"contextmenu"]) {
@@ -205,18 +248,91 @@ static void media_step(NSArray<AVMediaType> *media, NSUInteger i, void (^decide)
   }
 }
 
+// Usage descriptions declared in the config: a dev run has no Info.plist of the app's own (the
+// process is bun; macOS asks on behalf of the app that started it, the terminal).
+static NSDictionary *g_usage;
+void platform_set_usage_descriptions(NSDictionary *usage) { g_usage = [usage copy]; }
+
+/// The app declared why it uses this (Info.plist, or the config in dev): without it macOS kills
+/// the process on first use.
+static BOOL has_usage(NSString *key) {
+  return [NSBundle.mainBundle.infoDictionary[key] length] || [g_usage[key] length];
+}
+
+// Location for navigator.geolocation: WebKit reads it through CoreLocation once the app is
+// authorized — asked the first time a page wants it.
+@interface SDLocationAuth : NSObject <CLLocationManagerDelegate>
+@property(nonatomic, strong) CLLocationManager *manager;
+@property(nonatomic, strong) NSMutableArray<void (^)(BOOL)> *waiting;
+@end
+@implementation SDLocationAuth
+- (void)locationManagerDidChangeAuthorization:(CLLocationManager *)manager API_AVAILABLE(macos(11.0)) {
+  CLAuthorizationStatus status = manager.authorizationStatus;
+  if (status == kCLAuthorizationStatusNotDetermined) return;
+  BOOL ok = status == kCLAuthorizationStatusAuthorizedAlways || status == (CLAuthorizationStatus)4; // when in use
+  NSArray *waiting = [self.waiting copy];
+  [self.waiting removeAllObjects];
+  for (void (^done)(BOOL) in waiting) done(ok);
+}
+@end
+
+static void location_authorized(void (^done)(BOOL)) {
+  static SDLocationAuth *auth;
+  if (@available(macOS 11.0, *)) {
+    if (!auth) {
+      auth = [SDLocationAuth new];
+      auth.waiting = [NSMutableArray array];
+      auth.manager = [CLLocationManager new];
+      auth.manager.delegate = auth;
+    }
+    CLAuthorizationStatus status = auth.manager.authorizationStatus;
+    if (status != kCLAuthorizationStatusNotDetermined) return done(status == kCLAuthorizationStatusAuthorizedAlways || status == (CLAuthorizationStatus)4);
+    [auth.waiting addObject:done];
+    [auth.manager requestWhenInUseAuthorization];
+    // No answer (a dev run: bun has no bundle for macOS to ask on behalf of): the page gets a
+    // denial instead of waiting forever.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(60 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      if (![auth.waiting containsObject:done]) return;
+      [auth.waiting removeObject:done];
+      NSLog(@"[shell] geolocation: no answer from macOS (a dev run can't ask: try the built app)");
+      done(NO);
+    });
+  } else done(NO);
+}
+
 @implementation SDUIDelegate
 - (WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
       forNavigationAction:(WKNavigationAction *)navigationAction windowFeatures:(WKWindowFeatures *)windowFeatures {
   return nil; // window.open → the navigation policy (shell_macos.mm) already sends it to the browser
 }
 
+// The input's `accept` (MIME types — image/* too — and .extensions) as the panel's file types.
+// WebKit keeps them on the parameters without a public accessor: read when there, else any file.
+static NSArray<UTType *> *accepted_types(WKOpenPanelParameters *parameters) {
+  NSMutableArray<UTType *> *types = [NSMutableArray array];
+  NSDictionary<NSString *, UTType *> *families = @{@"image" : UTTypeImage, @"video" : UTTypeMovie, @"audio" : UTTypeAudio, @"text" : UTTypeText};
+  if ([parameters respondsToSelector:NSSelectorFromString(@"_acceptedMIMETypes")])
+    for (NSString *mime in [parameters valueForKey:@"_acceptedMIMETypes"]) {
+      if (![mime isKindOfClass:NSString.class]) continue;
+      UTType *t = [mime hasSuffix:@"/*"] ? families[[mime substringToIndex:mime.length - 2]] : [UTType typeWithMIMEType:mime];
+      if (t) [types addObject:t];
+    }
+  if ([parameters respondsToSelector:NSSelectorFromString(@"_acceptedFileExtensions")])
+    for (NSString *ext in [parameters valueForKey:@"_acceptedFileExtensions"]) {
+      if (![ext isKindOfClass:NSString.class]) continue;
+      if (UTType *t = [UTType typeWithFilenameExtension:[ext hasPrefix:@"."] ? [ext substringFromIndex:1] : ext]) [types addObject:t];
+    }
+  return types;
+}
+
 - (void)webView:(WKWebView *)webView runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters
     initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSArray<NSURL *> *))completionHandler {
   NSOpenPanel *panel = [NSOpenPanel openPanel];
-  panel.canChooseFiles = YES;
+  panel.canChooseFiles = !parameters.allowsDirectories;
   panel.canChooseDirectories = parameters.allowsDirectories;
   panel.allowsMultipleSelection = parameters.allowsMultipleSelection;
+  NSArray<UTType *> *types = parameters.allowsDirectories ? @[] : accepted_types(parameters);
+  if (types.count) panel.allowedContentTypes = types;
   void (^done)(NSModalResponse) = ^(NSModalResponse r) { completionHandler(r == NSModalResponseOK ? panel.URLs : nil); };
   NSWindow *win = platform_window(self.state.nativeId);
   if (win && !win.attachedSheet) [panel beginSheetModalForWindow:win completionHandler:done];
@@ -255,26 +371,64 @@ static void media_step(NSArray<AVMediaType> *media, NSUInteger i, void (^decide)
   });
 }
 
-// getUserMedia: only the app origin, only with the Info.plist usage string, and
-// never past a macOS denial. Undetermined → the system prompt (TCC) first.
+// Per-origin policy precedes TCC and usage checks. The callback never blocks the UI thread.
 - (void)webView:(WKWebView *)webView requestMediaCapturePermissionForOrigin:(WKSecurityOrigin *)origin
     initiatedByFrame:(WKFrameInfo *)frame type:(WKMediaCaptureType)type
     decisionHandler:(void (^)(WKPermissionDecision))decisionHandler API_AVAILABLE(macos(12.0)) {
-  NSString *app = platform_app_origin();
-  if (!app || ![origin_string(origin) isEqualToString:app]) return decisionHandler(WKPermissionDecisionDeny);
   NSMutableArray<AVMediaType> *media = [NSMutableArray array];
   if (type == WKMediaCaptureTypeCamera || type == WKMediaCaptureTypeCameraAndMicrophone) [media addObject:AVMediaTypeVideo];
   if (type == WKMediaCaptureTypeMicrophone || type == WKMediaCaptureTypeCameraAndMicrophone) [media addObject:AVMediaTypeAudio];
-  NSDictionary *info = NSBundle.mainBundle.infoDictionary;
-  for (AVMediaType m in media) {
-    NSString *key = [m isEqual:AVMediaTypeVideo] ? @"NSCameraUsageDescription" : @"NSMicrophoneUsageDescription";
-    if (![info[key] length]) {
-      // Without the usage string TCC kills the process on first capture.
-      NSLog(@"[shell] getUserMedia denied: Info.plist has no %@ (set usageDescriptions in the desktop config)", key);
-      return decisionHandler(WKPermissionDecisionDeny);
+  void (^authorize)(BOOL) = ^(BOOL prompt) {
+    for (AVMediaType m in media) {
+      if (!has_usage([m isEqual:AVMediaTypeVideo] ? @"NSCameraUsageDescription" : @"NSMicrophoneUsageDescription"))
+        return decisionHandler(WKPermissionDecisionDeny);
     }
-  }
-  media_step(media, 0, decisionHandler);
+    media_step(media, 0, ^(WKPermissionDecision d) {
+      decisionHandler(d == WKPermissionDecisionGrant && prompt ? WKPermissionDecisionPrompt : d);
+    });
+  };
+  NSString *first = [media.firstObject isEqual:AVMediaTypeVideo] ? @"camera" : @"microphone";
+  platform_web_permission(webView, origin, frame, first, ^(NSString *decision) {
+    if ([decision isEqual:@"deny"]) return decisionHandler(WKPermissionDecisionDeny);
+    if (media.count < 2) return authorize([decision isEqual:@"prompt"]);
+    platform_web_permission(webView, origin, frame, @"microphone", ^(NSString *second) {
+      if ([second isEqual:@"deny"]) return decisionHandler(WKPermissionDecisionDeny);
+      authorize([decision isEqual:@"prompt"] || [second isEqual:@"prompt"]);
+    });
+  });
+}
+
+// WebKit invokes these private SPI callbacks only on engines that support them. They do
+// not confer USB/HID/serial support. Older boolean forms can prompt TCC, not WebKit UI.
+- (void)_webView:(WKWebView *)webView requestGeolocationPermissionForOrigin:(WKSecurityOrigin *)origin initiatedByFrame:(WKFrameInfo *)frame
+         decisionHandler:(void (^)(WKPermissionDecision))decisionHandler API_AVAILABLE(macos(12.0)) {
+  platform_web_permission(webView, origin, frame, @"location", ^(NSString *decision) {
+    if ([decision isEqual:@"deny"] || !has_usage(@"NSLocationUsageDescription")) return decisionHandler(WKPermissionDecisionDeny);
+    location_authorized(^(BOOL ok) { decisionHandler(!ok ? WKPermissionDecisionDeny : [decision isEqual:@"prompt"] ? WKPermissionDecisionPrompt : WKPermissionDecisionGrant); });
+  });
+}
+- (void)_webView:(WKWebView *)webView requestGeolocationPermissionForFrame:(WKFrameInfo *)frame decisionHandler:(void (^)(BOOL))decisionHandler {
+  platform_web_permission(webView, frame.securityOrigin, frame, @"location", ^(NSString *decision) {
+    if ([decision isEqual:@"deny"] || !has_usage(@"NSLocationUsageDescription")) return decisionHandler(NO);
+    location_authorized(decisionHandler);
+  });
+}
+- (void)_webView:(WKWebView *)webView requestSpeechRecognitionPermissionForOrigin:(WKSecurityOrigin *)origin decisionHandler:(void (^)(BOOL))decisionHandler {
+  platform_web_permission(webView, origin, nil, @"speech", ^(NSString *decision) {
+    if ([decision isEqual:@"deny"]) return decisionHandler(NO);
+    platform_web_permission(webView, origin, nil, @"microphone", ^(NSString *mic) {
+      decisionHandler(![mic isEqual:@"deny"] && has_usage(@"NSSpeechRecognitionUsageDescription") && has_usage(@"NSMicrophoneUsageDescription"));
+    });
+  });
+}
+- (void)_webView:(WKWebView *)webView requestDisplayCapturePermissionForOrigin:(WKSecurityOrigin *)origin initiatedByFrame:(WKFrameInfo *)frame
+     withSystemAudio:(BOOL)withSystemAudio decisionHandler:(void (^)(NSInteger))decisionHandler {
+  platform_web_permission(webView, origin, frame, @"screenRecording", ^(NSString *decision) {
+    if ([decision isEqual:@"deny"]) return decisionHandler(0);
+    if (CGPreflightScreenCaptureAccess()) return decisionHandler(1);
+    CGRequestScreenCaptureAccess();
+    decisionHandler(0);
+  });
 }
 
 - (void)webViewDidClose:(WKWebView *)webView {
@@ -498,21 +652,23 @@ static void apply_context_menu_policy(SDWebViewState *s, NSMenu *menu) {
 @end
 
 static NSMutableSet<SDPrintRunner *> *g_print_runners;
+#include "webview_print.h"
 
-static NSString *print_view(SDWebViewState *s, BOOL silent, NSString *pdfPath, void (^done)(BOOL ok)) {
+static NSString *print_view(SDWebViewState *s, BOOL silent, NSString *pdfPath, NSPrintInfo *info, NSArray *ranges, void (^done)(BOOL ok)) {
   WKWebView *wv = s.webview;
   NSWindow *win = wv.window;
   if (!wv || !win) return @"the web view is not in a window";
   if (win.attachedSheet) return @"the window already shows a sheet (another print or dialog)";
-  NSPrintInfo *info = [NSPrintInfo.sharedPrintInfo copy];
-  info.horizontalPagination = NSPrintingPaginationModeFit;
-  info.verticalPagination = NSPrintingPaginationModeAutomatic;
-  info.verticallyCentered = NO;
+  if (!info) { NSString *error = nil; info = print_info(@{}, pdfPath != nil, &error); }
+  if (!info) return @"invalid print configuration";
+  NSString *output = pdfPath ? [pdfPath.stringByDeletingLastPathComponent stringByAppendingPathComponent:
+      [NSString stringWithFormat:@".sd-print-%@.pdf", NSUUID.UUID.UUIDString]] : nil;
   if (pdfPath) {
     info.jobDisposition = NSPrintSaveJob;
-    info.dictionary[NSPrintJobSavingURL] = [NSURL fileURLWithPath:pdfPath];
+    info.dictionary[NSPrintJobSavingURL] = [NSURL fileURLWithPath:output];
   }
   NSPrintOperation *op = [wv printOperationWithPrintInfo:info];
+  if (!op) return @"WebKit could not create a print operation";
   op.showsPrintPanel = !silent;
   op.showsProgressPanel = !silent;
   op.view.frame = wv.bounds; // WebKit's print view starts at 0×0 → blank output otherwise
@@ -523,6 +679,11 @@ static NSString *print_view(SDWebViewState *s, BOOL silent, NSString *pdfPath, v
   SDWebViewState *__weak weak = s;
   SDPrintRunner *__weak weakRunner = runner;
   runner.done = ^(BOOL ok) {
+    if (pdfPath) {
+      if (ok) ok = select_pdf_pages(output, ranges);
+      if (ok) ok = rename(output.fileSystemRepresentation, pdfPath.fileSystemRepresentation) == 0;
+      [NSFileManager.defaultManager removeItemAtPath:output error:nil];
+    }
     if (SDPrintRunner *r = weakRunner) [g_print_runners removeObject:r];
     if (SDWebViewState *st = weak) emit_for(st, @"printFinished", pdfPath ? @{@"success" : @(ok), @"path" : pdfPath} : @{@"success" : @(ok)});
     if (done) done(ok);
@@ -534,133 +695,7 @@ static NSString *print_view(SDWebViewState *s, BOOL silent, NSString *pdfPath, v
 // ---------------------------------------------------------------------------
 // Downloads (WKDownload, macOS 11.3+)
 
-@interface SDDownload : NSObject
-@property(nonatomic, copy) NSString *ident;
-@property(nonatomic, copy) NSString *url;
-@property(nonatomic, copy, nullable) NSString *path;
-@property(nonatomic, copy, nullable) NSString *explicitPath;
-@property(nonatomic, copy) NSDictionary *source;
-@property(nonatomic, strong) WKDownload *download;
-@property(nonatomic, strong, nullable) NSTimer *timer;
-@property(nonatomic) int64_t lastBytes;
-@property(nonatomic) int64_t expected; // Content-Length, -1 unknown
-@property(nonatomic) BOOL canceled;
-@end
-@implementation SDDownload
-@end
-
-@interface SDDownloadDelegate : NSObject <WKDownloadDelegate>
-@end
-
-static NSMutableDictionary<NSString *, SDDownload *> *g_downloads;
-static int g_download_seq = 1;
-static SDDownloadDelegate *g_download_delegate;
-
-static SDDownload *record_for(WKDownload *download) {
-  for (SDDownload *d in g_downloads.allValues)
-    if (d.download == download) return d;
-  return nil;
-}
-
-static NSString *download_dir(void) {
-  return g_download_dir ?: NSSearchPathForDirectoriesInDomains(NSDownloadsDirectory, NSUserDomainMask, YES).firstObject
-                                ?: [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"];
-}
-
-static NSString *unique_path(NSString *dir, NSString *name) {
-  NSFileManager *fm = NSFileManager.defaultManager;
-  NSString *base = name.stringByDeletingPathExtension, *ext = name.pathExtension;
-  NSString *candidate = [dir stringByAppendingPathComponent:name];
-  for (int i = 1; [fm fileExistsAtPath:candidate] && i < 10000; i++) {
-    NSString *n = [NSString stringWithFormat:@"%@ (%d)", base, i];
-    candidate = [dir stringByAppendingPathComponent:ext.length ? [n stringByAppendingPathExtension:ext] : n];
-  }
-  return candidate;
-}
-
-static NSDictionary *with_source(SDDownload *d, NSDictionary *extra) {
-  NSMutableDictionary *m = [NSMutableDictionary dictionaryWithDictionary:d.source];
-  m[@"id"] = d.ident;
-  m[@"url"] = d.url;
-  if (d.path) m[@"path"] = d.path;
-  [m addEntriesFromDictionary:extra];
-  return m;
-}
-
-static void finish_download(SDDownload *d) {
-  [d.timer invalidate];
-  d.timer = nil;
-  [g_downloads removeObjectForKey:d.ident];
-}
-
-@implementation SDDownloadDelegate
-- (void)download:(WKDownload *)download decideDestinationUsingResponse:(NSURLResponse *)response
-    suggestedFilename:(NSString *)suggestedFilename completionHandler:(void (^)(NSURL *))completionHandler {
-  SDDownload *d = record_for(download);
-  if (!d) return completionHandler(nil);
-  NSFileManager *fm = NSFileManager.defaultManager;
-  NSString *path;
-  if (d.explicitPath) {
-    path = d.explicitPath.stringByExpandingTildeInPath;
-    [fm createDirectoryAtPath:path.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
-    [fm removeItemAtPath:path error:nil]; // explicit destination: replace
-  } else {
-    NSString *name = [[suggestedFilename.lastPathComponent stringByReplacingOccurrencesOfString:@":" withString:@"-"]
-        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (!name.length || [name hasPrefix:@"."]) name = [@"download" stringByAppendingString:name ?: @""];
-    NSString *dir = download_dir();
-    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    path = unique_path(dir, name);
-  }
-  d.path = path;
-  int64_t total = response.expectedContentLength;
-  d.expected = total >= 0 ? total : -1;
-  platform_emit(@"downloadStarted", with_source(d, @{@"suggestedFilename" : suggestedFilename ?: @"",
-                                                     @"totalBytes" : @(total >= 0 ? total : -1),
-                                                     @"mimeType" : response.MIMEType ?: NSNull.null}));
-  SDDownload *__weak weak = d;
-  d.timer = [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *timer) {
-    SDDownload *x = weak;
-    if (!x) return [timer invalidate];
-    NSProgress *p = x.download.progress;
-    if (p.completedUnitCount == x.lastBytes) return;
-    x.lastBytes = p.completedUnitCount;
-    int64_t totalBytes = p.totalUnitCount > 0 ? p.totalUnitCount : x.expected;
-    platform_emit(@"downloadProgress", with_source(x, @{@"receivedBytes" : @(p.completedUnitCount),
-                                                        @"totalBytes" : @(totalBytes),
-                                                        @"fraction" : @(totalBytes > 0 ? (double)p.completedUnitCount / totalBytes : -1)}));
-  }];
-  completionHandler([NSURL fileURLWithPath:path]);
-}
-- (void)downloadDidFinish:(WKDownload *)download {
-  SDDownload *d = record_for(download);
-  if (!d) return;
-  NSNumber *size = [NSFileManager.defaultManager attributesOfItemAtPath:d.path error:nil][NSFileSize] ?: @(d.download.progress.completedUnitCount);
-  platform_emit(@"downloadFinished", with_source(d, @{@"bytes" : size}));
-  finish_download(d);
-}
-- (void)download:(WKDownload *)download didFailWithError:(NSError *)error resumeData:(NSData *)resumeData {
-  SDDownload *d = record_for(download);
-  if (!d || d.canceled) return;
-  BOOL canceled = [error.domain isEqual:NSURLErrorDomain] && error.code == NSURLErrorCancelled;
-  platform_emit(@"downloadFailed", with_source(d, @{@"error" : error.localizedDescription ?: @"download failed", @"canceled" : @(canceled)}));
-  finish_download(d);
-}
-@end
-
-static SDDownload *adopt_download(WKDownload *download, NSDictionary *source, NSString *explicitPath) {
-  if (!g_downloads) g_downloads = [NSMutableDictionary dictionary];
-  if (!g_download_delegate) g_download_delegate = [SDDownloadDelegate new];
-  SDDownload *d = [SDDownload new];
-  d.ident = [NSString stringWithFormat:@"dl-%d", g_download_seq++];
-  d.url = download.originalRequest.URL.absoluteString ?: @"";
-  d.source = source ?: @{};
-  d.download = download;
-  d.explicitPath = explicitPath;
-  g_downloads[d.ident] = d;
-  download.delegate = g_download_delegate;
-  return d;
-}
+#include "webview_downloads.h"
 
 void platform_webview_download_started(int nativeId, WKDownload *download) {
   SDWebViewState *s = [states() objectForKey:@(nativeId)];
@@ -715,6 +750,8 @@ static void set_context_mode(SDWebViewState *s, NSString *mode, NSArray *items) 
 }
 
 void platform_webview_configure(int nativeId, WKWebView *webview) {
+  platform_session_track(nativeId, webview);
+  platform_web_content_attach(webview);
   install_class_patches();
   SDWebViewState *s = [SDWebViewState new];
   s.nativeId = nativeId;
@@ -748,9 +785,16 @@ void platform_webview_configure(int nativeId, WKWebView *webview) {
 // ---------------------------------------------------------------------------
 // Ops
 
-// Target view: args.popoverId, or args.windowId (public id), or the calling
-// page (window or popover), or the primary window.
+// Target: viewId, popoverId, windowId (public), the calling page, or primary.
 static SDWebViewState *resolve(PlatformCall *c) {
+  if (c.args[@"viewId"]) {
+    NSString *vid = [c string:@"viewId"];
+    if (!vid.length) { [c fail:@"invalid_args" message:@"webview: viewId must be a non-empty string"]; return nil; }
+    for (SDWebViewState *s in states().objectEnumerator)
+      if ([platform_lifecycle_target(s.webview)[@"viewId"] isEqual:vid] && s.webview) return s;
+    [c fail:@"invalid_args" message:@"webview: unknown viewId"];
+    return nil;
+  }
   if (NSString *pid = [c string:@"popoverId"]) {
     for (SDWebViewState *s in states().objectEnumerator)
       if ([s.popoverId isEqual:pid] && s.webview) return s;
@@ -810,8 +854,11 @@ static void execute_js(SDWebViewState *s, NSString *code, PlatformCall *c) {
   // Awaits promises and returns a JSON value. Indirect eval keeps script
   // semantics (value of the last statement); a page CSP without 'unsafe-eval'
   // blocks it, then we fall back to evaluateJavaScript (no promise awaiting).
+  NSString *worldName = [c has:@"world"] ? [c string:@"world"] : @"page";
+  if (!worldName.length) return [c fail:@"invalid_args" message:@"world must be nonempty"];
+  WKContentWorld *world = [worldName isEqual:@"page"] ? WKContentWorld.pageWorld : [WKContentWorld worldWithName:worldName];
   NSString *body = @"const v = await (0, eval)(__code); return v === undefined ? 'null' : (JSON.stringify(v) ?? 'null');";
-  [wv callAsyncJavaScript:body arguments:@{@"__code" : code} inFrame:nil inContentWorld:WKContentWorld.pageWorld
+  [wv callAsyncJavaScript:body arguments:@{@"__code" : code} inFrame:nil inContentWorld:world
         completionHandler:^(id result, NSError *error) {
           if (!error) {
             NSData *data = [result isKindOfClass:NSString.class] ? [result dataUsingEncoding:NSUTF8StringEncoding] : nil;
@@ -821,14 +868,129 @@ static void execute_js(SDWebViewState *s, NSString *code, PlatformCall *c) {
           NSString *msg = js_error(error);
           if (![msg containsString:@"EvalError"] && ![msg containsString:@"unsafe-eval"])
             return [c fail:@"internal" message:[@"webview.executeJavaScript: " stringByAppendingString:msg]];
-          [wv evaluateJavaScript:code completionHandler:^(id r2, NSError *e2) {
+          [wv evaluateJavaScript:code inFrame:nil inContentWorld:world completionHandler:^(id r2, NSError *e2) {
             if (e2) return [c fail:@"internal" message:[@"webview.executeJavaScript: " stringByAppendingString:js_error(e2)]];
             [c ok:json_safe(r2)];
           }];
         }];
 }
 
+// Background throttling: WebKit slows a hidden or occluded page's timers and may suspend its
+// process (energy). Off, the page runs at full speed out of sight — a player, a chat, a timer.
+static NSMutableSet<NSValue *> *g_full_speed; // web views running at full speed out of sight
+static id<NSObject> g_activity;                  // keeps App Nap off while there's one
+
+static BOOL is_full_speed(WKWebView *wv) { return [g_full_speed containsObject:[NSValue valueWithNonretainedObject:wv]]; }
+
+void platform_webview_set_throttling(WKWebView *wv, BOOL enabled) {
+  WKPreferences *prefs = wv.configuration.preferences;
+  if (@available(macOS 14.0, *)) prefs.inactiveSchedulingPolicy = enabled ? WKInactiveSchedulingPolicySuspend : WKInactiveSchedulingPolicyNone;
+  for (NSString *name in @[ @"_setHiddenPageDOMTimerThrottlingEnabled:", @"_setPageVisibilityBasedProcessSuppressionEnabled:", @"_setDOMTimersThrottlingEnabled:",
+                            @"_setHiddenPageDOMTimerThrottlingAutoIncreases:", @"_setAppNapEnabled:" ]) {
+    SEL sel = NSSelectorFromString(name);
+    if ([prefs respondsToSelector:sel]) ((void (*)(id, SEL, BOOL))objc_msgSend)(prefs, sel, enabled);
+  }
+  // Covered by other windows: still a visible page.
+  SEL occlusion = NSSelectorFromString(@"_setWindowOcclusionDetectionEnabled:");
+  if ([wv respondsToSelector:occlusion]) ((void (*)(id, SEL, BOOL))objc_msgSend)(wv, occlusion, enabled);
+  // App Nap would slow the whole app (and the page's process with it) once the window is hidden.
+  g_full_speed = g_full_speed ?: [NSMutableSet set];
+  NSValue *key = [NSValue valueWithNonretainedObject:wv];
+  if (enabled) [g_full_speed removeObject:key];
+  else [g_full_speed addObject:key];
+  if (g_full_speed.count && !g_activity)
+    g_activity = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep reason:@"a page runs at full speed out of sight"];
+  else if (!g_full_speed.count && g_activity) {
+    [NSProcessInfo.processInfo endActivity:g_activity];
+    g_activity = nil;
+  }
+}
+
+// Website data: the kinds a page or a site stores, by name.
+static NSSet<NSString *> *data_types(id names, NSString **bad) {
+  NSDictionary *map = @{
+    @"cookies" : @[ WKWebsiteDataTypeCookies ],
+    @"localStorage" : @[ WKWebsiteDataTypeLocalStorage ],
+    @"sessionStorage" : @[ WKWebsiteDataTypeSessionStorage ],
+    @"indexedDB" : @[ WKWebsiteDataTypeIndexedDBDatabases ],
+    @"cache" : @[ WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache, WKWebsiteDataTypeOfflineWebApplicationCache ],
+    @"serviceWorkers" : @[ WKWebsiteDataTypeServiceWorkerRegistrations ],
+  };
+  NSMutableSet *types = [NSMutableSet set];
+  for (id n in [names isKindOfClass:NSArray.class] ? names : @[ @"all" ]) {
+    if ([n isEqual:@"all"]) return WKWebsiteDataStore.allWebsiteDataTypes;
+    if (!map[n]) {
+      if (bad) *bad = [n description];
+      return nil;
+    }
+    [types addObjectsFromArray:map[n]];
+  }
+  return types;
+}
+
 void platform_register_webview(void) {
+  platform_register_web_content();
+  platform_register_web_policy();
+  reg(@"_permissionPolicyForTesting", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
+    if (!getenv("SVELTE_DESKTOP_TEST")) return [c fail:@"denied" message:@"Only available to the test channel"];
+    NSString *permission = [c string:@"permission"];
+    if (!permission || ![@[@"camera", @"microphone", @"location", @"speech", @"screenRecording"] containsObject:permission])
+      return [c fail:@"invalid_args" message:@"Expected a web permission"];
+    WKFrameInfo *frame = s.permissionFrame;
+    if (!frame) return [c fail:@"unavailable" message:@"The page has not reported its frame yet"];
+    if ([c boolean:@"mediaDelegate" or:NO]) {
+      if (![@[@"camera", @"microphone"] containsObject:permission]) return [c fail:@"invalid_args" message:@"Expected camera or microphone"];
+      [s.ui webView:wv requestMediaCapturePermissionForOrigin:frame.securityOrigin initiatedByFrame:frame
+        type:[permission isEqual:@"camera"] ? WKMediaCaptureTypeCamera : WKMediaCaptureTypeMicrophone
+        decisionHandler:^(WKPermissionDecision decision) {
+          [c ok:decision == WKPermissionDecisionDeny ? @"deny" : decision == WKPermissionDecisionGrant ? @"allow" : @"prompt"];
+        }];
+      return;
+    }
+    platform_web_permission(wv, frame.securityOrigin, frame, permission, ^(NSString *decision) { [c ok:decision]; });
+  });
+  reg(@"setRecovery", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
+    NSString *policy = [c string:@"recovery"];
+    if (![@[@"reload", @"manual"] containsObject:policy]) return [c fail:@"invalid_args" message:@"recovery must be reload or manual"];
+    platform_lifecycle_configure(wv, platform_lifecycle_target(wv), policy);
+    [c ok:nil];
+  });
+  // Test-channel-only crash injection. WebKit exposes no public termination API.
+  reg(@"_terminateForTesting", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
+    if (!getenv("SVELTE_DESKTOP_TEST")) return [c fail:@"denied" message:@"Only available to the test channel"];
+    // A real crash exercises the public termination callback; graceful termination SPI can stall.
+    SEL process = NSSelectorFromString(@"_webProcessIdentifier");
+    if (![wv respondsToSelector:process]) return [c fail:@"unsupported" message:@"WebKit process identifier SPI unavailable"];
+    pid_t pid = ((pid_t (*)(id, SEL))objc_msgSend)(wv, process);
+    if (pid <= 1 || pid == getpid()) return [c fail:@"unavailable" message:@"The web view has no running content process"];
+    if (kill(pid, SIGKILL) != 0) return [c fail:@"unavailable" message:@"Could not terminate the view's content process"];
+    [c ok:nil];
+  });
+  // Clear what sites stored (cookies, storage, caches): other sites' (tabs on other sites), and with
+  // `app: true` the app's own too — except its cookies, which hold the session with the app's server.
+  platform_register(@"webview", @"clearData", ^(PlatformCall *c) {
+    NSString *bad = nil;
+    NSSet *types = data_types(c.args[@"types"], &bad);
+    if (!types) return [c fail:@"invalid_args" message:[NSString stringWithFormat:@"webview.clearData: unknown type `%@` (cookies, localStorage, sessionStorage, indexedDB, cache, serviceWorkers, all)", bad]];
+    BOOL app = [c boolean:@"app" or:NO];
+    NSString *appHost = [NSURL URLWithString:platform_app_origin() ?: @""].host;
+    WKWebsiteDataStore *store = WKWebsiteDataStore.defaultDataStore;
+    [store fetchDataRecordsOfTypes:types completionHandler:^(NSArray<WKWebsiteDataRecord *> *records) {
+      NSMutableArray *sites = [NSMutableArray array], *own = [NSMutableArray array], *names = [NSMutableArray array];
+      for (WKWebsiteDataRecord *r in records) {
+        BOOL mine = [r.displayName isEqual:appHost] || [r.displayName isEqual:@"localhost"] || [r.displayName isEqual:@"127.0.0.1"];
+        [(mine ? own : sites) addObject:r];
+        if (!mine || app) [names addObject:r.displayName];
+      }
+      NSMutableSet *ownTypes = [types mutableCopy];
+      [ownTypes removeObject:WKWebsiteDataTypeCookies];
+      [store removeDataOfTypes:types forDataRecords:sites completionHandler:^{
+        void (^done)(void) = ^{ [c ok:@{@"cleared" : names}]; };
+        if (app && own.count && ownTypes.count) [store removeDataOfTypes:ownTypes forDataRecords:own completionHandler:done];
+        else done();
+      }];
+    }];
+  });
   install_class_patches();
 
   // -- zoom
@@ -926,34 +1088,51 @@ void platform_register_webview(void) {
     if (!url || ![@[ @"http", @"https", @"blob", @"data" ] containsObject:scheme ?: @""])
       return [c fail:@"invalid_args" message:@"webview.download: `url` must be an http(s), blob: or data: URL"];
     NSString *path = [c string:@"path"];
+    if (path && !path.stringByExpandingTildeInPath.isAbsolutePath) return [c fail:@"invalid_args" message:@"download path must be absolute"];
     NSDictionary *source = s.source;
     [wv startDownloadUsingRequest:[NSURLRequest requestWithURL:url] completionHandler:^(WKDownload *download) {
       SDDownload *d = adopt_download(download, source, path);
       [c ok:@{@"id" : d.ident, @"url" : d.url}];
     }];
   });
-  platform_register(@"webview", @"cancelDownload", ^(PlatformCall *c) {
+  register_download_controls();
+  reg(@"resumeDownload", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
     SDDownload *d = g_downloads[[c string:@"id"] ?: @""];
-    if (!d) return [c fail:@"invalid_args" message:@"webview.cancelDownload: unknown download `id`"];
-    // WKDownload's cancel doesn't reach didFailWithError: report it here, drop the partial file.
-    d.canceled = YES;
-    [d.download cancel:^(NSData *resumeData) {
+    if (!d) return [c fail:@"invalid_args" message:@"unknown download id"];
+    if (d.download || [d.state isEqual:@"requested"] || !download_can_resume(d)) return [c fail:@"unavailable" message:@"download is active or cannot safely resume (requires resume data and a known total length)"];
+    if (d.store && d.store != wv.configuration.websiteDataStore) return [c fail:@"invalid_args" message:@"resume in the original web session"];
+    if (download_path_busy(d.path, d)) return [c fail:@"unavailable" message:@"download destination is in use by another transfer"];
+    d.state = @"requested"; d.resumed = YES;
+    NSData *data = d.resumeData;
+    NSString *path = d.path, *prefix = platform_download_prefix(d.path, d.ident);
+    int64_t checkpointBytes = d.checkpointBytes;
+    download_changed(d);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+      NSError *error = nil;
+      BOOL restored = platform_download_rewind(path, prefix, checkpointBytes, &error);
       dispatch_async(dispatch_get_main_queue(), ^{
-        if (d.path) [NSFileManager.defaultManager removeItemAtPath:d.path error:nil];
-        platform_emit(@"downloadFailed", with_source(d, @{@"error" : @"canceled", @"canceled" : @YES}));
-        finish_download(d);
+        if (!restored || !wv.window) {
+          d.state = @"interrupted"; d.error = error.localizedDescription ?: @"the download's view is no longer in a window";
+          download_changed(d); [c fail:@"unavailable" message:d.error]; return;
+        }
+        d.lastBytes = checkpointBytes;
+        @try {
+          [wv resumeDownloadFromResumeData:data completionHandler:^(WKDownload *download) {
+            d.download = download; d.store = wv.configuration.websiteDataStore; d.source = s.source;
+            download.delegate = g_download_delegate;
+            d.error = nil; track_download(d);
+            [c ok:download_snapshot(d)];
+          }];
+        } @catch (NSException *exception) {
+          d.state = @"interrupted"; d.error = [NSString stringWithFormat:@"WebKit resume failed (%@)", exception.name];
+          download_changed(d); [c fail:@"unavailable" message:d.error];
+        }
       });
-    }];
-    [c ok:nil];
-  });
-  platform_register(@"webview", @"listDownloads", ^(PlatformCall *c) {
-    NSMutableArray *out = [NSMutableArray array];
-    for (SDDownload *d in g_downloads.allValues)
-      [out addObject:with_source(d, @{@"receivedBytes" : @(d.download.progress.completedUnitCount), @"totalBytes" : @(d.download.progress.totalUnitCount)})];
-    [c ok:out];
+    });
   });
 
   // -- print
+  platform_register(@"webview", @"getPrinters", ^(PlatformCall *c) { [c ok:NSPrinter.printerNames ?: @[]]; });
   reg(@"print", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
     BOOL silent = [c boolean:@"silent" or:NO];
     NSString *pdf = [c string:@"pdfPath"].stringByExpandingTildeInPath;
@@ -964,7 +1143,10 @@ void platform_register_webview(void) {
       if (ok) [c ok:pdf ? @{@"success" : @YES, @"path" : pdf} : @{@"success" : @YES}];
       else [c fail:@"unavailable" message:@"webview.print: the print job failed or was canceled"];
     };
-    NSString *e = print_view(s, silent, pdf, silent ? done : (void (^)(BOOL))nil);
+    NSString *validation = nil;
+    NSPrintInfo *info = print_info(c.args, pdf != nil, &validation);
+    if (!info) return [c fail:@"invalid_args" message:validation];
+    NSString *e = print_view(s, silent, pdf, info, c.args[@"pageRanges"], silent ? done : (void (^)(BOOL))nil);
     if (e) return [c fail:@"unavailable" message:[@"webview.print: " stringByAppendingString:e]];
     if (!silent) [c ok:@{@"started" : @YES}];
   });
@@ -974,7 +1156,10 @@ void platform_register_webview(void) {
     if (!path) return [c fail:@"invalid_args" message:@"webview.printToPDF: `path` is required"];
     SDWebViewState *s = resolve(c);
     if (!s) return;
-    NSString *e = print_view(s, YES, path, ^(BOOL ok) {
+    NSString *validation = nil;
+    NSPrintInfo *info = print_info(c.args, YES, &validation);
+    if (!info) return [c fail:@"invalid_args" message:validation];
+    NSString *e = print_view(s, YES, path, info, c.args[@"pageRanges"], ^(BOOL ok) {
       if (ok) [c ok:@{@"path" : path}];
       else [c fail:@"unavailable" message:@"webview.printToPDF: the print job failed"];
     });
@@ -998,12 +1183,11 @@ void platform_register_webview(void) {
 
   // -- navigation & misc (Electron webContents parity)
   reg(@"reload", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
-    if ([c boolean:@"ignoreCache" or:NO]) [wv reloadFromOrigin];
-    else [wv reload];
+    platform_webview_reload(wv, [c boolean:@"ignoreCache" or:NO]);
     [c ok:nil];
   });
   reg(@"stop", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
-    [wv stopLoading];
+    platform_webview_stop(wv);
     [c ok:nil];
   });
   reg(@"goBack", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) { [c ok:@{@"navigated" : @([wv goBack] != nil)}]; });
@@ -1014,7 +1198,8 @@ void platform_register_webview(void) {
       @"url" : wv.URL.absoluteString ?: NSNull.null, @"title" : wv.title ?: @"", @"loading" : @(wv.loading),
       @"canGoBack" : @(wv.canGoBack), @"canGoForward" : @(wv.canGoForward), @"zoom" : @(wv.pageZoom),
       @"userAgent" : wv.customUserAgent.length ? wv.customUserAgent : NSNull.null, @"debug" : @(s.debug),
-      @"fileDrop" : @(s.fileDrop), @"contextMenu" : s.contextMode
+      @"fileDrop" : @(s.fileDrop), @"contextMenu" : s.contextMode, @"backgroundThrottling" : @(!is_full_speed(wv)),
+      @"recovery" : platform_lifecycle_recovery(wv)
     }];
     if (@available(macOS 13.3, *)) d[@"inspectable"] = @(wv.inspectable);
     [c ok:d];
@@ -1039,6 +1224,34 @@ void platform_register_webview(void) {
     NSString *code = [c string:@"code"];
     if (!code) return [c fail:@"invalid_args" message:@"webview.executeJavaScript: `code` is required"];
     execute_js(s, code, c);
+  });
+  reg(@"setBackgroundThrottling", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
+    platform_webview_set_throttling(wv, [c boolean:@"enabled" or:YES]);
+    [c ok:nil];
+  });
+  // Media: the page's sound muted (it keeps playing), everything paused, and what's going on.
+  reg(@"setAudioMuted", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
+    SEL sel = NSSelectorFromString(@"_setPageMuted:");
+    if (![wv respondsToSelector:sel]) return [c fail:@"unsupported" message:@"webview.setAudioMuted: not in this WebKit"];
+    // WKMediaMutedState: 1 = audio muted (capture devices untouched).
+    ((void (*)(id, SEL, NSUInteger))objc_msgSend)(wv, sel, [c boolean:@"muted" or:YES] ? 1 : 0);
+    [c ok:nil];
+  });
+  reg(@"pauseMedia", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
+    [wv pauseAllMediaPlaybackWithCompletionHandler:^{ [c ok:nil]; }];
+  });
+  reg(@"getMediaState", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
+    SEL muted = NSSelectorFromString(@"_mediaMutedState"), audible = NSSelectorFromString(@"_isPlayingAudio");
+    BOOL isMuted = [wv respondsToSelector:muted] && (((NSUInteger (*)(id, SEL))objc_msgSend)(wv, muted) & 1);
+    BOOL isAudible = [wv respondsToSelector:audible] && ((BOOL (*)(id, SEL))objc_msgSend)(wv, audible);
+    NSString *(^capture)(WKMediaCaptureState) = ^(WKMediaCaptureState st) { return st == WKMediaCaptureStateActive ? @"active" : st == WKMediaCaptureStateMuted ? @"muted" : @"none"; };
+    NSDictionary *devices = @{@"camera" : capture(wv.cameraCaptureState), @"microphone" : capture(wv.microphoneCaptureState)};
+    [wv requestMediaPlaybackStateWithCompletionHandler:^(WKMediaPlaybackState st) {
+      NSString *playback = st == WKMediaPlaybackStatePlaying ? @"playing" : st == WKMediaPlaybackStatePaused ? @"paused" : st == WKMediaPlaybackStateSuspended ? @"suspended" : @"none";
+      NSMutableDictionary *out = [devices mutableCopy];
+      [out addEntriesFromDictionary:@{@"muted" : @(isMuted), @"audible" : @(isAudible && !isMuted), @"playback" : playback}];
+      [c ok:out];
+    }];
   });
   reg(@"capturePage", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
     WKSnapshotConfiguration *cfg = [WKSnapshotConfiguration new];

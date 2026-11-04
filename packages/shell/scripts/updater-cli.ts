@@ -10,6 +10,12 @@
  *        --artifact <os-arch>=<archive> [--artifact ...] [--base-url <url>]
  *        (--key <file> | --key-env VAR) [--notes <text> | --notes-file <file>]
  *        [--minimum-version <x.y.z>] [--released-at <iso>] [--out update.json]
+ *   bun scripts/updater-cli.ts merge <manifest.json>... (--key <file> | --key-env VAR) --out update.json
+ *        [--notes <text> | --notes-file <file>] [--minimum-version <x.y.z>]
+ *        one release built on several machines (one manifest each, signed or not) → one signed update.json
+ *   bun scripts/updater-cli.ts fetch-previous <update.json URL> --platform <os-arch> [--platform ...]
+ *        [--dir .desktop/dist/release] [--public-key <base64>]
+ *        the published release's archives into <dir>/<version>/, so the next build makes delta patches
  */
 import { chmod } from "node:fs/promises";
 import { basename } from "node:path";
@@ -163,7 +169,81 @@ async function makeManifest(args: string[]): Promise<void> {
 	if (values.out) console.error(`wrote signed manifest ${values.out}`);
 }
 
+async function merge(args: string[]): Promise<void> {
+	const { values, positionals } = parseArgs({
+		args,
+		allowPositionals: true,
+		options: {
+			key: { type: "string" },
+			"key-env": { type: "string" },
+			out: { type: "string" },
+			notes: { type: "string" },
+			"notes-file": { type: "string" },
+			"minimum-version": { type: "string" },
+		},
+	});
+	if (!positionals.length) throw new CliError("merge: pass the manifests of every platform (release/update.json or update.unsigned.json)");
+	const key = await loadPrivateKey(values);
+	const parts = await Promise.all(positionals.map(async (f) => ({ file: f, m: (await Bun.file(f).json()) as UpdateManifest & { signature?: string } })));
+	const first = parts[0]!.m;
+	for (const { file, m } of parts)
+		if (m.name !== first.name || m.version !== first.version || m.channel !== first.channel)
+			throw new CliError(`merge: ${file} is ${m.name} ${m.version} (${m.channel}), ${parts[0]!.file} is ${first.name} ${first.version} (${first.channel})`);
+	const notes = values["notes-file"] ? await Bun.file(values["notes-file"]).text() : (values.notes ?? parts.find((p) => p.m.notes)?.m.notes);
+	const minimumVersion = values["minimum-version"] ?? parts.find((p) => p.m.minimumVersion)?.m.minimumVersion;
+	const patches: Record<string, unknown> = Object.assign({}, ...parts.map((p) => (p.m.patches as Record<string, unknown> | undefined) ?? {}));
+	const merged = {
+		name: first.name,
+		version: first.version,
+		channel: first.channel,
+		releasedAt: parts.map((p) => p.m.releasedAt).sort().at(-1)!,
+		...(notes !== undefined ? { notes } : {}),
+		...(minimumVersion ? { minimumVersion } : {}),
+		artifacts: Object.assign({}, ...parts.map((p) => p.m.artifacts)),
+		...(Object.keys(patches).length ? { patches } : {}),
+	};
+	validateManifest(merged, { unsigned: true });
+	await writeJson(values.out, await signManifest(merged, key));
+	console.error(`merged ${parts.length} manifest(s) → ${values.out ?? "stdout"} (${merged.name} ${merged.version}, ${merged.channel}): ${Object.keys(merged.artifacts).join(", ")}`);
+}
+
+async function fetchPrevious(args: string[]): Promise<void> {
+	const { values, positionals } = parseArgs({
+		args,
+		allowPositionals: true,
+		options: { platform: { type: "string", multiple: true }, dir: { type: "string", default: ".desktop/dist/release" }, "public-key": { type: "string", multiple: true } },
+	});
+	const url = positionals[0];
+	if (!url) throw new CliError("fetch-previous: missing <update.json URL>");
+	if (!values.platform?.length) throw new CliError(`fetch-previous: --platform <os-arch> is required (${PLATFORM_KEYS.join(", ")})`);
+	const res = await fetch(url, { headers: { "cache-control": "no-cache" } });
+	// Nothing published yet (the first release): nothing to make a patch from.
+	if (res.status === 404 || res.status === 403) return void console.error(`no published release at ${url} (${res.status}): first release, no delta patch`);
+	if (!res.ok) throw new CliError(`fetch-previous: ${url} answered ${res.status}`);
+	const text = await res.text();
+	const m = values["public-key"]?.length ? await parseSignedManifest(text, values["public-key"]) : (JSON.parse(text) as UpdateManifest);
+	const seen = new Set<string>();
+	for (const platform of values.platform) {
+		const artifact = m.artifacts[platform as PlatformKey];
+		if (!artifact) {
+			console.error(`${m.version} has no ${platform} archive: no delta patch for it`);
+			continue;
+		}
+		const from = new URL(artifact.url, url).href;
+		if (seen.has(from)) continue;
+		seen.add(from);
+		const out = `${values.dir}/${m.version}/${decodeURIComponent(basename(new URL(from).pathname))}`;
+		const r = await fetch(from);
+		if (!r.ok) throw new CliError(`fetch-previous: ${from} answered ${r.status}`);
+		await Bun.write(out, r);
+		if ((await sha256File(out)) !== artifact.sha256 || Bun.file(out).size !== artifact.size) throw new CliError(`fetch-previous: ${out} doesn't match the manifest (sha256 or size)`);
+		console.error(`${platform}: ${m.version} → ${out}`);
+	}
+}
+
 const commands: Record<string, (args: string[]) => Promise<void>> = {
+	merge,
+	"fetch-previous": fetchPrevious,
 	keygen,
 	sign,
 	verify: verifyCmd,

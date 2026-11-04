@@ -18,15 +18,6 @@ static BOOL has_bundle(void) {
   return NSBundle.mainBundle.bundleIdentifier.length > 0;
 }
 
-static BOOL require_bundle(PlatformCall *call) {
-  if (has_bundle()) return YES;
-  [call fail:@"unavailable"
-       message:[NSString stringWithFormat:@"%@.%@: notifications need a bundled app (NSBundle.mainBundle has no "
-                                          @"bundleIdentifier when running from `bun`); run the packaged .app",
-                                          call.service, call.op]];
-  return NO;
-}
-
 static UNUserNotificationCenter *center(void) {
   return UNUserNotificationCenter.currentNotificationCenter;
 }
@@ -48,7 +39,7 @@ static void request_authorization(void (^done)(NSString *status, NSError *error)
 
 /// Shared with system.checkPermission / requestPermission ('notifications').
 void platform_notifications_permission(PlatformCall *call, BOOL request) {
-  if (!require_bundle(call)) return;
+  if (!has_bundle()) return [call ok:@{@"status" : @"unavailable"}];
   if (request) {
     request_authorization(^(NSString *status, NSError *error) {
       // A real error means the request never ran (unsigned app, ...).
@@ -300,9 +291,10 @@ static void post(PlatformCall *call, NSString *ident, UNMutableNotificationConte
 static void show(PlatformCall *call) {
   NSString *title = [call string:@"title"];
   if (!title) return [call fail:@"invalid_args" message:@"notifications.show: `title` must be a string"];
-  if (!require_bundle(call)) return;
   NSString *ident = [call string:@"id"] ?: [call string:@"tag"];
   if (!ident.length) ident = NSUUID.UUID.UUIDString;
+  // macOS shows the notifications of bundled apps only; from `bun` (`vite dev`) nothing to do.
+  if (!has_bundle()) return [call ok:@{@"id" : ident, @"tag" : ident, @"scheduled" : @NO, @"skipped" : @YES}];
   NSString *repeat = [call string:@"repeat"];
   if (repeat && ![kRepeats containsObject:repeat])
     return [call fail:@"invalid_args" message:@"notifications.show: `repeat` must be minute|hour|day|week|month|year"];
@@ -391,7 +383,7 @@ static NSMutableDictionary *describe(UNNotificationRequest *req) {
 static void dismiss(PlatformCall *call) {
   NSString *ident = [call string:@"id"] ?: [call string:@"tag"];
   if (!ident) return [call fail:@"invalid_args" message:@"notifications.dismiss: `id` must be a string"];
-  if (!require_bundle(call)) return;
+  if (!has_bundle()) return [call ok:nil];
   [center() removeDeliveredNotificationsWithIdentifiers:@[ ident ]];
   [center() removePendingNotificationRequestsWithIdentifiers:@[ ident ]];
   [call ok:nil];
@@ -471,7 +463,8 @@ static void install_app_delegate_hooks(void) {
 }
 
 static void push_register(PlatformCall *call) {
-  if (!require_bundle(call)) return;
+  if (!has_bundle())
+    return [call fail:@"unavailable" message:@"push.register: a push token needs a bundled app; run the packaged .app"];
   NSString *env = aps_environment();
   if (!env)
     return [call fail:@"unavailable"
@@ -500,13 +493,13 @@ void platform_register_notifications(void) {
   platform_register_many(@"notifications", @[ @"show", @"notify" ], ^(PlatformCall *call) { show(call); });
   platform_register_many(@"notifications", @[ @"dismiss", @"close" ], ^(PlatformCall *call) { dismiss(call); });
   platform_register(@"notifications", @"dismissAll", ^(PlatformCall *call) {
-    if (!require_bundle(call)) return;
+    if (!has_bundle()) return [call ok:nil];
     [center() removeAllDeliveredNotifications];
     [center() removeAllPendingNotificationRequests];
     [call ok:nil];
   });
   platform_register(@"notifications", @"delivered", ^(PlatformCall *call) {
-    if (!require_bundle(call)) return;
+    if (!has_bundle()) return [call ok:@[]];
     [center() getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> *list) {
       NSMutableArray *out = [NSMutableArray array];
       for (UNNotification *n in list) {
@@ -518,7 +511,7 @@ void platform_register_notifications(void) {
     }];
   });
   platform_register(@"notifications", @"pending", ^(PlatformCall *call) {
-    if (!require_bundle(call)) return;
+    if (!has_bundle()) return [call ok:@[]];
     [center() getPendingNotificationRequestsWithCompletionHandler:^(NSArray<UNNotificationRequest *> *list) {
       NSMutableArray *out = [NSMutableArray array];
       for (UNNotificationRequest *req in list) {
@@ -547,6 +540,10 @@ void platform_register_notifications(void) {
     NSApp.dockTile.badgeLabel = n > 0 ? [NSString stringWithFormat:@"%lld", (long long)n] : nil;
     [call ok:nil];
   });
+  platform_register(@"notifications", @"getBadge", ^(PlatformCall *call) {
+    NSString *label = NSApp.dockTile.badgeLabel;
+    [call ok:label.longLongValue > 0 ? @(label.longLongValue) : nil];
+  });
   platform_register(@"notifications", @"setForeground", ^(PlatformCall *call) {
     g_foreground = [call boolean:@"show" or:YES];
     [call ok:nil];
@@ -562,7 +559,7 @@ void platform_register_notifications(void) {
   const char *test = getenv("SVELTE_DESKTOP_TEST");
   if (test && !strncmp(test, "ws://127.0.0.1:", 15))
     platform_register(@"notifications", @"simulateResponse", ^(PlatformCall *call) {
-      if (!require_bundle(call)) return;
+      if (!has_bundle()) return [call fail:@"unavailable" message:@"notifications.simulateResponse: needs a bundled app"];
       NSString *ident = [call string:@"id"] ?: @"";
       [center() getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> *list) {
         on_main(^{

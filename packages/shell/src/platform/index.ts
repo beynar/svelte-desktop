@@ -5,6 +5,19 @@
  * the op is not implementable on this OS through the current backend.
  */
 import { callPlatform, onPlatform, NativeApiError } from './bus';
+import { webContent } from './web-content';
+export type { ContentRule, UserScript, NavigationRequest, NavigationPolicy } from './web-content';
+export { protocol, type ProtocolHandler } from './protocol';
+import { webPolicy } from './web-policy';
+export type { WebPermission, WebPermissionDecision, WebPermissionRequest, WebPermissionRecord, ClientIdentity, AuthChallenge, AuthChallengeAnswer, PermissionHandler, AuthChallengeHandler } from './web-policy';
+import { appLifecycle } from './app-lifecycle';
+import { windowTransitions } from './windows-events';
+export type { WindowTransition, WindowFullscreenTransition, WindowTransitionEvents } from './windows-events';
+import { input } from './input';
+import { clipboardData } from './clipboard-data';
+export type { InputModifier, InputShortcut, InputPolicy, BeforeInputEvent } from './input';
+export type { ClipboardData, ClipboardRead } from './clipboard-data';
+export type { QuitRequest, QuitDecision, QuitReason } from './app-lifecycle';
 
 export {
 	NativeApiError, initPlatform, initPlatformForTests, onPlatform, oncePlatform,
@@ -13,8 +26,15 @@ export {
 	Channel, PlatformTransport, mockPlatform,
 } from './bus';
 export type { PlatformErrorCode, PlatformInitOptions } from './bus';
+export { oauth, OAuthError, type AuthorizeOptions, type AuthorizeResult, type ExchangeOptions } from './oauth';
 export { LogicalPosition, PhysicalPosition, LogicalSize, PhysicalSize } from './dpi';
 export type { Position, Size } from './dpi';
+export { downloads } from './downloads';
+export type { DownloadState, DownloadRecord, DownloadRequest, DownloadDecision } from './downloads';
+export { files } from './files';
+export type { BookmarkAccess } from './files';
+export { sessions } from './sessions';
+export type { SessionInfo, SessionCookie, CookieFilter, CookieSetOptions, CookieChangedEvent, SessionProxy, SessionProxyInfo, SessionCapabilities } from './sessions';
 
 // ── app ─────────────────────────────────────────────────────────────
 
@@ -55,7 +75,41 @@ export type AboutPanelOptions = {
 	credits?: string;
 };
 
+/** One of the app's processes (app.metrics). */
+export type ProcessMetrics = {
+	pid: number;
+	/** main: the shell (UI thread and the server's Worker). webview: a WebKit content process (a
+	 *  window's page, a kept-alive tab, a popover). python: the Python process. helper: the app's
+	 *  own executable again (a service, a job). child: another process it started (a sidecar…). */
+	type: 'main' | 'webview' | 'python' | 'helper' | 'child';
+	name: string;
+	/** The window whose page this content process draws (webview). */
+	windowId?: number;
+	/** Bytes. footprint: the memory macOS counts for it (Activity Monitor's Memory). */
+	memory: { footprint: number; resident: number };
+	/** time: CPU seconds used so far. percent: of one core since the previous call (null the first time). */
+	cpu: { time: number; percent: number | null };
+};
+export type AppMetrics = { processes: ProcessMetrics[]; memory: { footprint: number } };
+
+/** Launch at login (app.getLoginItem, app.setLoginItem). */
+export type LoginItem = {
+	/** Whether this build can set it: false in `vite dev`, where the other fields are false too. */
+	available: boolean;
+	/** The app launches at login. */
+	enabled: boolean;
+	/** The user turned it off in the system's settings, and only they can turn it on again:
+	 *  system.openSettings('loginItems'). macOS and Windows. */
+	requiresApproval: boolean;
+	/** This launch came from the login item: start out of the way (no window, the menu bar). */
+	launchedAtLogin: boolean;
+};
+
 export const app = {
+	/** Memory and CPU of the app's processes: the shell, each web view's content process, the
+	 *  Python process, services, jobs and sidecars (macOS). Call it twice for CPU percentages. */
+	metrics: () => callPlatform<AppMetrics>('app', 'metrics'),
+	...appLifecycle,
 	whenReady: () => callPlatform<true>('app', 'whenReady'),
 	getInfo: () => callPlatform<AppInfo>('app', 'getInfo'),
 	getName: () => callPlatform<string>('app', 'getName'),
@@ -78,16 +132,23 @@ export const app = {
 	/** macOS Dock tile badge text; null clears it. */
 	setDockBadge: (text: string | null) =>
 		callPlatform<boolean>('app', 'setDockBadge', { text }),
+	getDockBadge: () => callPlatform<string | null>('app', 'getDockBadge'),
 	/** macOS Dock icon: an image path or native icon name; null restores the bundle's. */
 	setDockIcon: (icon: IconSource | null) => callPlatform<null>('app', 'setDockIcon', { icon }),
+	/** What setDockIcon set; null with the bundle's. */
+	getDockIcon: () => callPlatform<IconSource | null>('app', 'getDockIcon'),
 	/** Bounce the Dock icon (macOS). */
 	bounceDock: (type: DockBounceType) => callPlatform<boolean>('app', 'bounceDock', { type }),
-	/** Launch at login; resolves to the effective state. */
-	setLoginItem: (enabled: boolean) =>
-		callPlatform<{ enabled: boolean }>('app', 'setLoginItem', { enabled }),
+	/** Launch at login: whether it's on, and whether this launch came from it. */
+	getLoginItem: () => callPlatform<LoginItem>('app', 'getLoginItem'),
+	/** Turns launch at login on or off; resolves to the state after. Does nothing where it's not
+	 *  available (`vite dev`). */
+	setLoginItem: (enabled: boolean) => callPlatform<LoginItem>('app', 'setLoginItem', { enabled }),
 	/** macOS activation policy — 'accessory' hides the Dock icon. */
 	setActivationPolicy: (policy: ActivationPolicy) =>
 		callPlatform<boolean>('app', 'setActivationPolicy', { policy }),
+	/** 'regular' on Linux and Windows, which have no other. */
+	getActivationPolicy: () => callPlatform<ActivationPolicy>('app', 'getActivationPolicy'),
 	/** Acquire the single-instance lock; `acquired:false` means another
 	 *  instance holds it (second instances should quit). */
 	requestSingleInstanceLock: () =>
@@ -95,6 +156,7 @@ export const app = {
 	/** macOS Dock progress bar; `{status:'none'}` clears it. */
 	setDockProgress: (progress: DockProgress) =>
 		callPlatform<null>('app', 'setDockProgress', progress),
+	getDockProgress: () => callPlatform<DockProgress>('app', 'getDockProgress'),
 	/** Whether we're running inside an .app bundle or as a bare binary. */
 	getBundleType: () => callPlatform<{ type: BundleType }>('app', 'getBundleType'),
 	/** PNG (base64) of the bundle's default window icon — null for bare binaries. */
@@ -105,7 +167,6 @@ export const app = {
 		callPlatform<null>('app', 'aboutPanel', options),
 	onReopen: (cb: () => void) => onPlatform('reopened', cb),
 	onOpenUrls: (cb: (data: { urls: string[] }) => void) => onPlatform('openUrls', cb),
-	onWillQuit: (cb: () => void) => onPlatform('willQuit', cb),
 	onWillRestart: (cb: () => void) => onPlatform('willRestart', cb),
 	/** Fires when a second instance tries to launch while we hold the lock. */
 	onSecondInstance: (cb: (data: { argv: string[]; cwd: string }) => void) =>
@@ -171,6 +232,35 @@ export type PopoverPosition =
 
 export type TitleBarStyle = 'default' | 'transparent' | 'hidden' | 'hiddenInset';
 
+/** Liquid Glass behind the page (macOS 26; see windows.setGlass). */
+export type GlassOptions = {
+	/** 'regular' (default): frosted, readable over anything. 'clear': more transparent. */
+	style?: 'regular' | 'clear';
+	/** A tint over the glass: '#rgb', '#rrggbb' or '#rrggbbaa' (the alpha is its strength). */
+	tint?: string;
+	/** Rounds the glass's corners, in points. Default 0 (the window's own corners still apply). */
+	cornerRadius?: number;
+};
+
+/** A macOS vibrancy material: what shows where the page paints no background (see windows.setVibrancy). */
+export type VibrancyMaterial =
+	| 'sidebar'
+	| 'titlebar'
+	| 'header'
+	| 'content'
+	| 'window'
+	| 'underWindow'
+	| 'underPage'
+	| 'menu'
+	| 'popover'
+	| 'sheet'
+	| 'hud'
+	| 'tooltip'
+	| 'fullscreenUI'
+	| 'selection';
+/** 'followsWindow' (default): dimmed while the window isn't active, as the system does. */
+export type VibrancyState = 'followsWindow' | 'active' | 'inactive';
+
 /** Per-window NSAppearance — narrower than the app-level AppearancePreference. */
 export type WindowTheme = 'light' | 'dark' | 'system';
 
@@ -192,6 +282,13 @@ export type WindowAnimation = {
 };
 
 export type WindowCreateOptions = {
+	/** macOS: a child follows its parent; modal children are native sheets. */
+	parentId?: number;
+	modal?: boolean;
+	type?: 'normal' | 'panel';
+	focusable?: boolean;
+	session?: string;
+	recovery?: WebviewRecovery;
 	/** Unique per app — a duplicate label rejects `invalid_args`. */
 	label?: string;
 	/** The app route to open (default '/'), signed in like the main window. */
@@ -228,13 +325,30 @@ export type WindowCreateOptions = {
 	opacity?: number;
 	/** Titlebar blends into content (macOS). */
 	titlebarTransparent?: boolean;
+	/** Vibrancy behind the page (macOS): it shows where the page paints no background. */
+	vibrancy?: VibrancyMaterial;
+	vibrancyState?: VibrancyState;
+	/** The traffic lights at your own place (macOS, title bar hidden or hiddenInset): the close button's
+	 *  top-left, in points from the window's top-left — for a taller custom title bar. */
+	trafficLightPosition?: { x: number; y: number };
+	/** Width / height kept while resizing (16/9, 1 for a square). */
+	aspectRatio?: number;
+	/** false: the page runs at full speed when hidden or covered (timers, audio, sockets). Default true. */
+	backgroundThrottling?: boolean;
 	/** Native tab group name — same id groups windows as tabs (macOS). */
 	tabbingIdentifier?: string;
 };
 
 /** One row of windows.list()/get(). `windowId` 0 is the primary window. */
 export interface WindowInfo {
+	/** macOS relationship and class policy (absent on other backends). */
+	parentId?: number | null;
+	modal?: boolean;
+	type?: 'normal' | 'panel';
+	focusable?: boolean;
 	windowId: number;
+	/** Whether AppKit has presented this modal child as a sheet. */
+	sheetAttached?: boolean;
 	label: string;
 	focused: boolean;
 	/** On screen (not hidden or minimized away). */
@@ -271,6 +385,7 @@ export type WindowControlsArea = ControlsRect & {
 const wid = (windowId?: number) => (windowId === undefined ? {} : { windowId });
 
 export const windows = {
+	...windowTransitions,
 	// ── multi-window ──────────────────────────────────────────────
 	/** Open another window on an app route (`path`). Labels are unique
 	 *  (duplicate → `invalid_args`). */
@@ -291,6 +406,9 @@ export const windows = {
 		),
 	getSize: (windowId?: number) =>
 		callPlatform<{ width: number; height: number }>('window', 'getSize', wid(windowId)),
+	/** The page's area, without the title bar. */
+	getContentSize: (windowId?: number) =>
+		callPlatform<{ width: number; height: number }>('window', 'getContentSize', wid(windowId)),
 	setSize: (width: number, height: number, windowId?: number) =>
 		callPlatform<null>('window', 'setSize', { width, height, ...wid(windowId) }),
 	getTitle: (windowId?: number) => callPlatform<string>('window', 'getTitle', wid(windowId)),
@@ -317,13 +435,16 @@ export const windows = {
 	isFocused: (windowId?: number) => callPlatform<boolean>('window', 'isFocused', wid(windowId)),
 	/** Focus a window (makeKeyAndOrderFront + app activate); absent → the
 	 *  dispatching view's window. */
-	focus: (windowId?: number) => callPlatform<null>('window', 'focus', wid(windowId)),
+	/** Bring the window to the front and make the app active, as far as macOS allows (another app may
+	 *  keep the front): `activated` says whether the app is active now. */
+	focus: (windowId?: number) => callPlatform<{ activated: boolean } | null>('window', 'focus', wid(windowId)),
 	/** Bounce/flash the platform attention affordance (Dock bounce on macOS). */
 	requestAttention: (windowId?: number) =>
 		callPlatform<null>('window', 'requestAttention', wid(windowId)),
 	/** Associates a file with the window (macOS titlebar document icon). */
 	setRepresentedFilename: (path: string | null, windowId?: number) =>
 		callPlatform<null>('window', 'setRepresentedFilename', { path, ...wid(windowId) }),
+	getRepresentedFilename: (windowId?: number) => callPlatform<string | null>('window', 'getRepresentedFilename', wid(windowId)),
 	/** windowId absent → the dispatching view's window (existing semantics). */
 	close: (windowId?: number) => callPlatform<null>('window', 'close', wid(windowId)),
 	showCharacterPalette: (windowId?: number) =>
@@ -344,6 +465,7 @@ export const windows = {
 	 */
 	setCloseVeto: (enabled: boolean, windowId?: number) =>
 		callPlatform<{ armed: boolean }>('window', 'setCloseVeto', { enabled, ...wid(windowId) }),
+	hasCloseVeto: (windowId?: number) => callPlatform<boolean>('window', 'hasCloseVeto', wid(windowId)),
 
 	// ── geometry + visibility ───────────────────────────────────────
 	center: (windowId?: number) => callPlatform<null>('window', 'center', wid(windowId)),
@@ -382,6 +504,7 @@ export const windows = {
 		callPlatform<null>('window', 'setAlwaysOnTop', { enabled, ...wid(windowId) }),
 	setAlwaysOnBottom: (enabled: boolean, windowId?: number) =>
 		callPlatform<null>('window', 'setAlwaysOnBottom', { enabled, ...wid(windowId) }),
+	isAlwaysOnBottom: (windowId?: number) => callPlatform<boolean>('window', 'isAlwaysOnBottom', wid(windowId)),
 	blur: (windowId?: number) => callPlatform<null>('window', 'blur', wid(windowId)),
 	isHovered: (windowId?: number) =>
 		callPlatform<{ hovered: boolean }>('window', 'isHovered', wid(windowId)),
@@ -409,6 +532,10 @@ export const windows = {
 		callPlatform<{ maximizable: boolean }>('window', 'isMaximizable', wid(windowId)),
 	setTitleBarStyle: (style: TitleBarStyle, windowId?: number) =>
 		callPlatform<null>('window', 'setTitleBarStyle', { style, ...wid(windowId) }),
+	hasDecorations: (windowId?: number) => callPlatform<boolean>('window', 'hasDecorations', wid(windowId)),
+	/** frameless: the window has no system title bar at all (decorations off). */
+	getTitleBarStyle: (windowId?: number) =>
+		callPlatform<{ style: TitleBarStyle; frameless: boolean }>('window', 'getTitleBarStyle', wid(windowId)),
 	setDecorations: (enabled: boolean, windowId?: number) =>
 		callPlatform<null>('window', 'setDecorations', { enabled, ...wid(windowId) }),
 	setHasShadow: (enabled: boolean, windowId?: number) =>
@@ -417,6 +544,34 @@ export const windows = {
 		callPlatform<null>('window', 'invalidateShadow', wid(windowId)),
 
 	// ── appearance + behavior ───────────────────────────────────────
+	/** Vibrancy behind the page (macOS), or `null` to remove it. It shows where the page paints no
+	 *  background — `body { background: transparent }`, a transparent sidebar — and costs the page
+	 *  nothing (the system draws it), unlike a CSS backdrop-filter. */
+	setVibrancy: (material: VibrancyMaterial | null, options: { state?: VibrancyState } = {}, windowId?: number) =>
+		callPlatform<null>('window', 'setVibrancy', { material, ...options, ...wid(windowId) }),
+	/** The window's vibrancy, null without (macOS). */
+	getVibrancy: (windowId?: number) =>
+		callPlatform<{ material: VibrancyMaterial; state: VibrancyState } | null>('window', 'getVibrancy', wid(windowId)),
+	/** Liquid Glass behind the page (macOS 26), or `null` to remove it. Like vibrancy, it shows
+	 *  where the page paints no background; the window becomes non-opaque so the glass shows
+	 *  what's behind it. Replaces vibrancy (one effect at a time). Resolves `{ glass: false }`
+	 *  before macOS 26, where the `underWindow` vibrancy material is used instead. */
+	setGlass: (glass: GlassOptions | null, windowId?: number) =>
+		callPlatform<{ glass: boolean } | null>('window', 'setGlass', { glass, ...wid(windowId) }),
+	/** The window's Liquid Glass, null without (macOS 26; before it, setGlass sets vibrancy). */
+	getGlass: (windowId?: number) => callPlatform<GlassOptions | null>('window', 'getGlass', wid(windowId)),
+	/** The traffic lights at `{ x, y }` (macOS): the close button's top-left, in points from the
+	 *  window's top-left. `null`: back to the system's place. `--desktop-titlebar-height` follows. */
+	setTrafficLightPosition: (position: { x: number; y: number } | null, windowId?: number) =>
+		callPlatform<null>('window', 'setTrafficLightPosition', { position, ...wid(windowId) }),
+	/** What setTrafficLightPosition set; null at the system's place. */
+	getTrafficLightPosition: (windowId?: number) =>
+		callPlatform<{ x: number; y: number } | null>('window', 'getTrafficLightPosition', wid(windowId)),
+	/** Keep width / height while resizing (16/9, 1 for a square), or `null` to free it. */
+	setAspectRatio: (ratio: number | null, windowId?: number) =>
+		callPlatform<null>('window', 'setAspectRatio', { ratio: ratio ?? 0, ...wid(windowId) }),
+	/** Width over height, null when free (macOS). */
+	getAspectRatio: (windowId?: number) => callPlatform<number | null>('window', 'getAspectRatio', wid(windowId)),
 	setOpacity: (opacity: number, windowId?: number) =>
 		callPlatform<null>('window', 'setOpacity', { opacity, ...wid(windowId) }),
 	getOpacity: (windowId?: number) =>
@@ -425,6 +580,7 @@ export const windows = {
 		callPlatform<null>('window', 'setMovable', { enabled, ...wid(windowId) }),
 	setMovableByWindowBackground: (enabled: boolean, windowId?: number) =>
 		callPlatform<null>('window', 'setMovableByWindowBackground', { enabled, ...wid(windowId) }),
+	isMovableByWindowBackground: (windowId?: number) => callPlatform<boolean>('window', 'isMovableByWindowBackground', wid(windowId)),
 	setIgnoresMouseEvents: (enabled: boolean, windowId?: number) =>
 		callPlatform<null>('window', 'setIgnoresMouseEvents', { enabled, ...wid(windowId) }),
 	ignoresMouseEvents: (windowId?: number) =>
@@ -440,6 +596,7 @@ export const windows = {
 		),
 	setVisibleOnAllWorkspaces: (enabled: boolean, windowId?: number) =>
 		callPlatform<null>('window', 'setVisibleOnAllWorkspaces', { enabled, ...wid(windowId) }),
+	isVisibleOnAllWorkspaces: (windowId?: number) => callPlatform<boolean>('window', 'isVisibleOnAllWorkspaces', wid(windowId)),
 	/** macOS document-edited dot in the close button. */
 	setDocumentEdited: (edited: boolean, windowId?: number) =>
 		callPlatform<null>('window', 'setDocumentEdited', { edited, ...wid(windowId) }),
@@ -450,15 +607,18 @@ export const windows = {
 		windows.setDocumentEdited(edited, windowId),
 	/** Whether the window can take keyboard focus — unsupported on some backends. */
 	setFocusable: (enabled: boolean, windowId?: number) =>
-		callPlatform<never>('window', 'setFocusable', { enabled, ...wid(windowId) }),
+		callPlatform<null>('window', 'setFocusable', { enabled, ...wid(windowId) }),
 	setCursorHidden: (hidden: boolean, windowId?: number) =>
 		callPlatform<null>('window', 'setCursorHidden', { hidden, ...wid(windowId) }),
+	isCursorHidden: (windowId?: number) => callPlatform<boolean>('window', 'isCursorHidden', wid(windowId)),
 	/** Screen coordinates — warps the OS cursor. */
 	setCursorPosition: (x: number, y: number, windowId?: number) =>
 		callPlatform<null>('window', 'setCursorPosition', { x, y, ...wid(windowId) }),
 	/** Per-window NSAppearance override. */
 	setTheme: (theme: WindowTheme, windowId?: number) =>
 		callPlatform<null>('window', 'setTheme', { theme, ...wid(windowId) }),
+	/** The window's own theme ('system' follows the app's). macOS and Windows. */
+	getTheme: (windowId?: number) => callPlatform<WindowTheme>('window', 'getTheme', wid(windowId)),
 
 	// ── size + position queries ─────────────────────────────────────
 	innerSize: (windowId?: number) =>
@@ -522,6 +682,7 @@ export const screen = {
 // ── clipboard ───────────────────────────────────────────────────────
 
 export const clipboard = {
+	...clipboardData,
 	readText: () => callPlatform<string | null>('clipboard', 'readText'),
 	writeText: (text: string) => callPlatform<null>('clipboard', 'writeText', { text }),
 	clear: () => callPlatform<null>('clipboard', 'clear'),
@@ -554,7 +715,29 @@ export const shell = {
 	trashItem: (path: string) => callPlatform<null>('shell', 'trashItem', { path }),
 	/** Play the system alert sound. */
 	beep: () => callPlatform<null>('shell', 'beep'),
+	/** The system share menu (macOS: AirDrop, Mail, Messages, Notes…) for text, a URL and files,
+	 *  anchored on `anchor` (a rect in the page's CSS pixels, e.g. a button's getBoundingClientRect())
+	 *  or at the pointer. Resolves to the service chosen, or `null` when dismissed. */
+	share: (items: ShareItems, windowId?: number) =>
+		callPlatform<{ service: string | null }>('shell', 'share', { ...items, anchor: items.anchor && rectOf(items.anchor), ...wid(windowId) }),
+	/** Drag files out of the page to the Finder or another app (macOS). Call it in a `dragstart`
+	 *  handler after `event.preventDefault()`, or on `mousedown`, while the button is down. Resolves
+	 *  once dropped (or abandoned). */
+	startDrag: (options: { files: string[]; icon?: string }, windowId?: number) =>
+		callPlatform<{ dropped: boolean }>('shell', 'startDrag', { ...options, ...wid(windowId) }),
+	/** Quick Look (macOS): the system's preview panel — the Finder's space bar — on files: images,
+	 *  PDFs, videos, documents… Several paths: the arrows go through them. */
+	previewFile: (paths: string | string[]) => callPlatform<null>('shell', 'previewFile', { paths }),
 };
+
+export type ShareItems = {
+	text?: string;
+	url?: string;
+	/** Absolute paths. */
+	files?: string[];
+	anchor?: { x: number; y: number; width: number; height: number };
+};
+const rectOf = (r: { x: number; y: number; width: number; height: number }) => ({ x: r.x, y: r.y, width: r.width, height: r.height });
 
 // ── dialog ──────────────────────────────────────────────────────────
 // All three are genuinely async — the promise resolves when the user answers.
@@ -576,6 +759,8 @@ export type DialogFilter = {
 };
 
 export type OpenDialogOptions = {
+	/** macOS: bookmarks aligned with paths; useful for App Sandbox persistence. */
+	securityScoped?: boolean;
 	files?: boolean;
 	directories?: boolean;
 	multiple?: boolean;
@@ -597,9 +782,23 @@ export const dialog = {
 			typeof options === 'string' ? { message: options } : options,
 		),
 	showOpenDialog: (options: OpenDialogOptions = {}) =>
-		callPlatform<{ canceled: boolean; paths: string[] }>('dialog', 'showOpenDialog', options),
+		callPlatform<{ canceled: boolean; paths: string[]; bookmarks?: string[] }>('dialog', 'showOpenDialog', options),
 	showSaveDialog: (options: SaveDialogOptions = {}) =>
 		callPlatform<{ canceled: boolean; path: string | null }>('dialog', 'showSaveDialog', options),
+	/** A route of the app in a sheet on the window (macOS): its page alone, shown once loaded.
+	 *  Resolves with what that page passes to `dialog.close(result)`; undefined when canceled
+	 *  (Escape, ⌘.). Pass data to it in the route (`/sheets/new?folder=…`).
+	 *  `style`: 'sheet' (default) the system's sheet — on macOS 26 centered, the window dimmed;
+	 *  'attached' slides down from under the title bar (or `top` px down the window's content),
+	 *  the window left as it is, not clickable meanwhile; 'window' a small dialog window with a
+	 *  title bar (`title`, else the page's), centered on the window — its close button cancels. */
+	sheet: <T = unknown>(
+		route: string,
+		options: { width?: number; height?: number; style?: 'sheet' | 'attached' | 'window'; top?: number; title?: string } = {},
+	) =>
+		callPlatform<{ result: T | null }>('dialog', 'sheet', { route, ...options }).then((r) => r?.result ?? undefined),
+	/** In a sheet's page: close it — `dialog.sheet` resolves with `result`. */
+	close: (result?: unknown) => callPlatform<null>('dialog', 'close', { result: result ?? null }),
 };
 
 // ── theme ───────────────────────────────────────────────────────────
@@ -658,10 +857,22 @@ export type SettingsPane =
 	| 'privacy-fullDiskAccess'
 	| 'privacy-camera'
 	| 'privacy-microphone'
-	| 'notifications';
+	| 'notifications'
+	| 'loginItems';
+
+/** An installed font family and its styles (system.fonts({ styles: true })). */
+export type FontFamily = { family: string; styles: Array<{ name: string; postscriptName: string; weight: number; italic: boolean }> };
 
 export const system = {
 	info: () => callPlatform<SystemInfo>('system', 'info'),
+	/** The installed font families, sorted — the names a page's CSS can use (WebKit has no Local
+	 *  Font Access API). With `{ styles: true }`, each family's styles: name, CSS weight, italic. */
+	fonts: ((options: { styles?: boolean } = {}) => callPlatform('system', 'fonts', options)) as {
+		(options?: { styles?: false }): Promise<string[]>;
+		(options: { styles: true }): Promise<FontFamily[]>;
+	},
+	/** Whether Touch ID (or another biometry) can be asked, and which (the prompt: secureStorage.authenticate). */
+	biometrics: () => callPlatform<{ available: boolean; type: 'touchID' | 'faceID' | 'opticID' | 'none'; enrolled: boolean }>('system', 'biometrics'),
 	getKeyboardLayout: () => callPlatform<{ name: string }>('system', 'getKeyboardLayout'),
 	/** OS accent color (0–1 float channels, sRGB). */
 	getAccentColor: () => callPlatform<AccentColor>('system', 'getAccentColor'),
@@ -735,6 +946,12 @@ export const power = {
 	onScreenLocked: (cb: () => void) => onPlatform('screenLocked', cb),
 	onScreenUnlocked: (cb: () => void) => onPlatform('screenUnlocked', cb),
 	onThermalStateChange: (cb: () => void) => onPlatform('thermalStateChanged', cb),
+	/** The system runs short of memory (macOS): free what you can. */
+	onMemoryPressure: (cb: (e: { level: 'warning' | 'critical' }) => void) => onPlatform('memoryPressure', cb),
+	/** Plugged in or unplugged (macOS): `{ onBattery }`. */
+	onPowerSourceChange: (cb: (e: { onBattery: boolean }) => void) => onPlatform('powerSourceChanged', cb),
+	/** The Mac is shutting down, restarting or logging out (macOS): save what must be saved, now. */
+	onShutdown: (cb: () => void) => onPlatform('shutdown', cb),
 };
 
 // ── secureStorage ───────────────────────────────────────────────────
@@ -749,12 +966,13 @@ export const secureStorage = {
 		callPlatform<string | null>('secureStorage', 'getPassword', { service, account }),
 	deletePassword: (service: string, account: string) =>
 		callPlatform<null>('secureStorage', 'deletePassword', { service, account }),
-	/** Biometric/passcode prompt (macOS LAContext) gating secret access. */
-	authenticate: (reason?: string) =>
+	/** Touch ID prompt, the account password as a fallback unless `biometricsOnly` (macOS LAContext):
+	 *  to confirm a sensitive action or gate a secret. `reason` completes "<App> is trying to …". */
+	authenticate: (reason?: string, options: { biometricsOnly?: boolean } = {}) =>
 		callPlatform<{ authenticated: boolean; reason?: string }>(
 			'secureStorage',
 			'authenticate',
-			{ reason },
+			{ reason, ...options },
 		),
 };
 
@@ -772,9 +990,12 @@ export type {
 // ── deepLink ────────────────────────────────────────────────────────
 
 export const deepLink = {
-	/** Register a custom URL scheme at runtime (packaged apps should also
-	 *  declare it in the bundle manifest). */
-	register: (scheme: string) => callPlatform<{ scheme: string }>('deepLink', 'register', { scheme }),
+	/** Make this app the handler of a custom URL scheme. macOS also needs it declared in the bundle
+	 *  (desktop.config `schemes`). Does nothing in `vite dev`: registered false. */
+	register: (scheme: string) => callPlatform<{ scheme: string; registered: boolean }>('deepLink', 'register', { scheme }),
+	/** Whether this app opens the scheme's URLs: the user or another app can take a scheme over.
+	 *  False in `vite dev`. */
+	isDefault: (scheme: string) => callPlatform<boolean>('deepLink', 'isDefault', { scheme }),
 	onOpen: (cb: (data: { urls: string[] }) => void) => onPlatform('openUrls', cb),
 };
 
@@ -838,7 +1059,12 @@ export type MenuItemIcon = { native: NativeIconName } | { path: string };
 export type IconSource = NativeIconName | MenuItemIcon | (string & {});
 
 export interface MenuItemSpec {
-	type?: 'action' | 'separator' | 'submenu';
+	type?: 'action' | 'separator' | 'submenu' | 'checkbox' | 'radio';
+	/** Radio groups are exclusive within their immediate parent menu (macOS). */
+	group?: string;
+	enabled?: boolean;
+	visible?: boolean;
+	tooltip?: string;
 	/** For action items — reported back in the `menuAction` event. */
 	id?: string;
 	label?: string;
@@ -853,6 +1079,8 @@ export interface MenuItemSpec {
 }
 
 export interface MenuSpec {
+	/** Lifecycle event identity; defaults to name. */
+	id?: string;
 	name: string;
 	items: MenuItemSpec[];
 }
@@ -860,6 +1088,8 @@ export interface MenuSpec {
 // `type` (not interface) — assignable to callPlatform's args record.
 export type MenuItemUpdate = {
 	id: string;
+	visible?: boolean;
+	tooltip?: string;
 	text?: string;
 	enabled?: boolean;
 	checked?: boolean;
@@ -869,7 +1099,11 @@ export type MenuItemUpdate = {
 /** Runtime state of a single menu item (from menu.get / menu.items). */
 export interface MenuItemState {
 	id?: string;
-	/** `{"separator":true}` items carry no other fields. */
+	type?: MenuItemSpec['type'];
+	group?: string;
+	visible?: boolean;
+	tooltip?: string;
+	/** Separators report visibility but have no action or checked state. */
 	separator?: boolean;
 	text?: string;
 	enabled?: boolean;
@@ -884,6 +1118,8 @@ export interface MenuItemInfo extends MenuItemState {
 
 export const menu = {
 	setAppMenu: (menus: MenuSpec[]) => callPlatform<null>('menu', 'setAppMenu', { menus }),
+	/** What the app set with setAppMenu and insert; null with the default menus. */
+	getAppMenu: () => callPlatform<MenuSpec[] | null>('menu', 'getAppMenu'),
 	/** Insert one top-level entry into the menu bar without replacing the
 	 *  existing menus. With `items` the entry drops a submenu (same spec as
 	 *  setAppMenu items — ids fire `menuAction`); without `items` it is a
@@ -901,15 +1137,21 @@ export const menu = {
 	/** Drop a top-level bar entry by name — inserted or gpui-built. */
 	remove: (name: string) =>
 		callPlatform<{ removed: boolean; name: string }>('menu', 'remove', { name }),
-	setDockMenu: (items: MenuItemSpec[]) =>
-		callPlatform<null>('menu', 'setDockMenu', { items }),
+	setDockMenu: (items: MenuItemSpec[], id = 'dock') =>
+		callPlatform<null>('menu', 'setDockMenu', { items, id }),
+	/** What setDockMenu set; null without one. */
+	getDockMenu: () => callPlatform<MenuItemSpec[] | null>('menu', 'getDockMenu'),
 	addRecentDocument: (path: string) =>
 		callPlatform<null>('menu', 'addRecentDocument', { path }),
 	/** Show a context menu at the given top-left-origin screen position (or the
 	 * cursor). Always resolves `{dismissed:true}` — AppKit can't distinguish a
 	 * pick from a dismissal; the `menuAction` event is the selection signal. */
-	popup: (options: { items: MenuItemSpec[]; x?: number; y?: number }) =>
+	popup: (options: { items: MenuItemSpec[]; id?: string; x?: number; y?: number }) =>
 		callPlatform<{ dismissed: boolean }>('menu', 'popup', options),
+	closePopup: (id = 'context') => callPlatform<null>('menu', 'closePopup', { id }),
+	/** Observational macOS lifecycle callbacks; do not synchronously delay menu opening. */
+	onWillShow: (id: string, cb: () => void) => onPlatform<{ id: string }>('menuWillShow', (event) => { if (event.id === id) cb(); }),
+	onDidClose: (id: string, cb: () => void) => onPlatform<{ id: string }>('menuDidClose', (event) => { if (event.id === id) cb(); }),
 	/** Patch fields of an existing item (created via setAppMenu/setDockMenu). */
 	update: (update: MenuItemUpdate) => callPlatform<null>('menu', 'update', update),
 	/** Current state of one item — null when the id is unknown. */
@@ -1156,6 +1398,8 @@ export type PopoverAnchor =
 export type PanelPosition = 'tray' | 'trayLeft' | 'trayRight' | 'center' | 'cursor' | { x: number; y: number };
 
 export type PopoverCreateOptions = {
+	session?: string;
+	recovery?: WebviewRecovery;
 	id?: string;
 	/** App route, e.g. '/quick' — or a full `url`. */
 	route?: string;
@@ -1251,13 +1495,19 @@ export function onBroadcast<T = unknown>(
 // The app's own native commands: `native` from '@svelte-desktop/shell/native' (also host.native).
 
 // ── webview ─────────────────────────────────────────────────────────
-// Features of the page's own web view (windows and popovers). Every op
-// targets, in order: `popoverId`, `windowId` (0 = primary), the calling page,
-// the primary window. Web-view events carry `windowId` or `popoverId`.
+// Features of windows, popovers and embedded views. Every op targets, in order:
+// `viewId`, `popoverId`, `windowId` (0 = primary), the calling page, the primary
+// window. Events carry the corresponding target.
 // See WEBVIEW.md.
 
-export type WebviewTarget = { windowId?: number; popoverId?: string };
-type WebviewSource = { windowId?: number; popoverId?: string };
+export type WebviewTarget = { windowId?: number; popoverId?: string; viewId?: string };
+export type WebviewSource = WebviewTarget;
+export type WebviewRecovery = 'reload' | 'manual';
+export type WebviewLifecycleEvent = WebviewTarget & { url: string; navigationId: string | null } & (
+	| { type: 'navigationStarted' | 'loaded' }
+	| { type: 'failed'; domain: string; code: number; message: string; provisional: boolean }
+	| { type: 'terminated'; recovery: WebviewRecovery; reason: 'unknown' }
+);
 
 export type ContextMenuMode = 'default' | 'none' | 'custom';
 export type ContextMenuOptions = WebviewTarget & {
@@ -1280,6 +1530,14 @@ export type FindOptions = WebviewTarget & {
 };
 
 export type PrintOptions = WebviewTarget & {
+	printer?: string;
+	copies?: number;
+	/** One-based inclusive ranges; physical printing accepts one contiguous range. */
+	pageRanges?: { from: number; to: number }[];
+	/** Dimensions in points (72 points per inch), before orientation. */
+	paperSize?: { width: number; height: number };
+	orientation?: 'portrait' | 'landscape';
+	margins?: { top: number; right: number; bottom: number; left: number };
 	/** No panel: straight to the default printer (or to `pdfPath`). */
 	silent?: boolean;
 	/** Paginated PDF through the print system instead of a printer (implies silent). */
@@ -1308,6 +1566,10 @@ export interface WebviewInfo extends WebviewSource {
 	fileDrop: boolean;
 	contextMenu: ContextMenuMode;
 	inspectable?: boolean;
+	/** setBackgroundThrottling's state (macOS). */
+	backgroundThrottling?: boolean;
+	/** setRecovery's state (macOS). */
+	recovery?: WebviewRecovery;
 }
 
 export type FileDropEvent = WebviewSource & { paths: string[]; x: number; y: number };
@@ -1411,7 +1673,41 @@ export const permissions = {
 	onChange: (cb: (e: { name: string; status: PermissionStatus }) => void) => onPlatform('permissionChanged', cb),
 };
 
+export type MediaState = {
+	/** Sound coming out now (not muted). */
+	audible: boolean;
+	muted: boolean;
+	playback: 'none' | 'playing' | 'paused' | 'suspended';
+	camera: 'none' | 'active' | 'muted';
+	microphone: 'none' | 'active' | 'muted';
+};
+export type WebsiteDataType = 'cookies' | 'localStorage' | 'sessionStorage' | 'indexedDB' | 'cache' | 'serviceWorkers' | 'all';
+
 export const webview = {
+	...webContent,
+	...input,
+	...webPolicy,
+	/** Events for windows, popovers and embedded views. Unsubscribe with the returned function. */
+	onLifecycle: (cb: (event: WebviewLifecycleEvent) => void) => onPlatform('webviewLifecycle', cb),
+	/** Default reload; manual leaves a terminated page stopped until explicitly reloaded. */
+	setRecovery: (recovery: WebviewRecovery, target: WebviewTarget = {}) =>
+		callPlatform<null>('webview', 'setRecovery', { ...target, recovery }),
+	/** Clear what sites stored (macOS). Other sites' data (tabs on other sites), and with `app: true`
+	 *  the app's own too — except its cookies, which hold its session with the app's server. Default
+	 *  types: all. Resolves to the sites cleared. */
+	clearData: (options: { types?: WebsiteDataType[]; app?: boolean } = {}) =>
+		callPlatform<{ cleared: string[] }>('webview', 'clearData', options),
+	/** false: the page runs at full speed when hidden or covered (timers, audio, sockets), at an energy
+	 *  cost. WebKit throttles by default (macOS). */
+	setBackgroundThrottling: (enabled: boolean, target: WebviewTarget = {}) =>
+		callPlatform<null>('webview', 'setBackgroundThrottling', { ...target, enabled }),
+	/** The page's sound muted (it keeps playing), or back (macOS). */
+	setAudioMuted: (muted: boolean, target: WebviewTarget = {}) => callPlatform<null>('webview', 'setAudioMuted', { ...target, muted }),
+	/** Pause every audio and video of the page (macOS). */
+	pauseMedia: (target: WebviewTarget = {}) => callPlatform<null>('webview', 'pauseMedia', target),
+	/** What the page plays and captures (macOS). */
+	getMediaState: (target: WebviewTarget = {}) =>
+		callPlatform<MediaState>('webview', 'getMediaState', target),
 	setZoom: (zoom: number, target: WebviewTarget = {}) =>
 		callPlatform<{ zoom: number }>('webview', 'setZoom', { ...target, zoom }),
 	getZoom: (target: WebviewTarget = {}) => callPlatform<{ zoom: number }>('webview', 'getZoom', target),
@@ -1434,12 +1730,13 @@ export const webview = {
 		callPlatform<{ id: string; url: string }>('webview', 'download', { ...options, url }),
 	cancelDownload: (id: string) => callPlatform<null>('webview', 'cancelDownload', { id }),
 	listDownloads: () =>
-		callPlatform<Array<DownloadBase & { receivedBytes: number; totalBytes: number }>>('webview', 'listDownloads'),
+		callPlatform<import('./downloads').DownloadRecord[]>('webview', 'listDownloads'),
 	/** Interactive: resolves {started} once the print sheet is up (printFinished follows).
 	 *  silent / pdfPath: resolves when the job is done. */
 	print: (options: PrintOptions = {}) =>
 		callPlatform<{ started?: true; success?: boolean; path?: string }>('webview', 'print', options),
-	printToPDF: (path: string, target: WebviewTarget = {}) =>
+	getPrinters: () => callPlatform<string[]>('webview', 'getPrinters'),
+	printToPDF: (path: string, target: Omit<PrintOptions, 'pdfPath' | 'silent'> = {}) =>
 		callPlatform<{ path: string }>('webview', 'printToPDF', { ...target, path }),
 	/** Answer the open alert/confirm/prompt (automation). accept defaults to true. */
 	respondToDialog: (options: WebviewTarget & { accept?: boolean; text?: string } = {}) =>
@@ -1459,8 +1756,8 @@ export const webview = {
 	/** Safari Web Inspector access (macOS 13.3+, else `unsupported`). */
 	setInspectable: (enabled: boolean, target: WebviewTarget = {}) =>
 		callPlatform<{ inspectable: boolean }>('webview', 'setInspectable', { ...target, enabled }),
-	/** Evaluate in the page's world; promises are awaited, the result comes back as JSON. */
-	executeJavaScript: <T = unknown>(code: string, target: WebviewTarget = {}) =>
+	/** Evaluate in the selected content world (default page); await promises and return JSON. */
+	executeJavaScript: <T = unknown>(code: string, target: WebviewTarget & { world?: string } = {}) =>
 		callPlatform<T>('webview', 'executeJavaScript', { ...target, code }),
 	/** Snapshot of the page, base64 PNG (or JPEG); width/height in pixels. */
 	capturePage: (options: CaptureOptions = {}) =>
@@ -1496,6 +1793,8 @@ export type ViewBounds = { x: number; y: number; width: number; height: number }
 
 export const view = {
 	create: (options: {
+		session?: string;
+		recovery?: WebviewRecovery;
 		id?: string;
 		windowId?: number;
 		url?: string;
@@ -1504,12 +1803,17 @@ export const view = {
 		/** Follow window resizes: 'width' | 'height' | 'both' | 'none' (default). */
 		autoresize?: 'width' | 'height' | 'both' | 'none';
 		transparent?: boolean;
+		/** Load out of sight, until `show` (no blank view while its page loads). */
+		hidden?: boolean;
+		/** false: keeps running at full speed while hidden (macOS). Default true. */
+		backgroundThrottling?: boolean;
 		debug?: boolean;
 	}) => callPlatform<{ id: string; windowId: number }>('view', 'create', options),
 	setBounds: (id: string, bounds: ViewBounds) => callPlatform<null>('view', 'setBounds', { id, ...bounds }),
 	getBounds: (id: string) => callPlatform<ViewBounds>('view', 'getBounds', { id }),
 	navigate: (id: string, target: { url?: string; route?: string }) => callPlatform<null>('view', 'navigate', { id, ...target }),
-	show: (id: string) => callPlatform<null>('view', 'show', { id }),
+	/** `seeThrough`: in the window, drawing, but see-through and letting the pointer through (macOS). */
+	show: (id: string, options: { seeThrough?: boolean } = {}) => callPlatform<null>('view', 'show', { id, ...options }),
 	hide: (id: string) => callPlatform<null>('view', 'hide', { id }),
 	reload: (id: string) => callPlatform<null>('view', 'reload', { id }),
 	getInfo: (id: string) =>

@@ -16,6 +16,7 @@
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 
+#include <map>
 #include <set>
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -126,6 +127,7 @@ static json item_state(const json &it) {
 }
 
 static void register_menu() {
+  reg("menu", "getAppMenu", [](CallPtr c) { c->ok(g_app_menus); });
   reg_many("menu", {"setAppMenu", "setApplicationMenu"}, [](CallPtr c) {
     json menus = c->args.contains("menus") ? c->args["menus"] : json(nullptr);
     if (!menus.is_null() && !menus.is_array()) return c->fail("invalid_args", "menu.setAppMenu: `menus` is an array of {name, items} (or null)");
@@ -498,6 +500,33 @@ static void register_system() {
                {"session", is_x11() ? "x11" : "wayland"}});
   });
   reg("system", "getKeyboardLayout", [](CallPtr c) { c->ok(keyboard_layout()); });
+  // The installed font families, with their styles on request (fontconfig's fc-list).
+  reg("system", "fonts", [](CallPtr c) {
+    bool styles = c->flag("styles", false);
+    FILE *p = popen("fc-list --format='%{family[0]}|%{style[0]}|%{weight}|%{slant}|%{postscriptname}\\n' 2>/dev/null", "r");
+    if (!p) return c->fail("unavailable", "system.fonts: fc-list (fontconfig) is not available");
+    std::map<std::string, json> families;
+    char line[1024];
+    while (fgets(line, sizeof line, p)) {
+      std::string l(line);
+      while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back();
+      std::vector<std::string> f;
+      size_t start = 0;
+      for (size_t i; (i = l.find('|', start)) != std::string::npos; start = i + 1) f.push_back(l.substr(start, i - start));
+      f.push_back(l.substr(start));
+      if (f.size() < 5 || f[0].empty()) continue;
+      auto &fam = families[f[0]];
+      if (fam.is_null()) fam = json::array();
+      // fontconfig weights: 0 thin, 40 extralight, 50 light, 80 regular, 100 medium, 180 semibold, 200 bold, 205 extrabold, 210 black.
+      int w = atoi(f[2].c_str());
+      int css = w <= 0 ? 100 : w <= 40 ? 200 : w <= 50 ? 300 : w <= 80 ? 400 : w <= 100 ? 500 : w <= 180 ? 600 : w <= 200 ? 700 : w <= 205 ? 800 : 900;
+      fam.push_back(json{{"name", f[1]}, {"postscriptName", f[4]}, {"weight", css}, {"italic", atoi(f[3].c_str()) > 0}});
+    }
+    pclose(p);
+    json out = json::array();
+    for (auto &[name, st] : families) out.push_back(styles ? json{{"family", name}, {"styles", st}} : json(name));
+    c->ok(out);
+  });
   reg("system", "getAccentColor", [](CallPtr c) {
     Window *w = find_window(primary_window());
     GtkWidget *probe = w ? w->window : gtk_window_new(GTK_WINDOW_TOPLEVEL);

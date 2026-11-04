@@ -47,6 +47,7 @@ interface BusState {
 	readyCallbacks: (() => void)[];
 	channels: Map<number, Channel<unknown>>;
 	nextChannelId: number;
+	watched: Set<string>;
 }
 const S: BusState = ((globalThis as Record<symbol, BusState | undefined>)[Symbol.for('svelte-desktop.bus')] ??= {
 	backend: null,
@@ -58,6 +59,7 @@ const S: BusState = ((globalThis as Record<symbol, BusState | undefined>)[Symbol
 	readyCallbacks: [],
 	channels: new Map(),
 	nextChannelId: 1,
+	watched: new Set(),
 });
 /** Op S.allowlist from initPlatform's opts — null means everything passes. */
 const { pending, listeners, anyListeners, readyCallbacks } = S;
@@ -175,7 +177,23 @@ function dispatchLocal(name: string, data: unknown) {
 	}
 }
 
+/** Where a watched setter announces itself, to every context (see watchPlatformOp). */
+export const STATE_CHANNEL = 'desktop:state';
+
+/** Once `service.op` succeeds, in any context, STATE_CHANNEL says so to all of them: the stores
+ *  mirror native state, which a page, another window or the server can change. */
+export function watchPlatformOp(key: string) {
+	S.watched.add(key);
+}
+
 export function callPlatform<T = unknown>(service: string, op: string, args: Record<string, unknown> = {}): Promise<T> {
+	const result = sendPlatform<T>(service, op, args);
+	const key = `${service}.${op}`;
+	if (S.watched.has(key)) void result.then(() => sendPlatform('events', 'emit', { channel: STATE_CHANNEL, data: { op: key } })).catch(() => {});
+	return result;
+}
+
+function sendPlatform<T = unknown>(service: string, op: string, args: Record<string, unknown>): Promise<T> {
 	if (!S.backend) {
 		return Promise.reject(
 			new NativeApiError('unavailable', 'platform layer is not initialized — call initPlatform(renderer)'),

@@ -50,10 +50,6 @@ static void with_button_rect(void (^done)(NSDictionary *_Nullable), int attempts
 }
 
 @implementation SDTrayTarget
-- (void)itemAction:(NSMenuItem *)sender {
-  id rep = sender.representedObject;
-  if ([rep isKindOfClass:NSString.class]) platform_emit(@"menuAction", @{@"id" : rep});
-}
 - (void)trayClick:(id)sender {
   platform_popover_tray_click(); // a bound popover toggles natively, no JS round trip
   with_button_rect(^(NSDictionary *r) { platform_emit(@"trayClick", r ?: @{}); }, 60);
@@ -62,10 +58,6 @@ static void with_button_rect(void (^done)(NSDictionary *_Nullable), int attempts
 
 // ---------------------------------------------------------------------------
 // Icons
-
-static NSString *lower(id v) {
-  return [v isKindOfClass:NSString.class] ? [v lowercaseString] : nil;
-}
 
 // NATIVE_ICON_NAMES (index.ts) -> AppKit NSImageName values, as the GPUI build
 // mapped them. Names AppKit no longer ships fall back to SF Symbols.
@@ -249,113 +241,6 @@ static void refresh_image(void) {
 // ---------------------------------------------------------------------------
 // Menu (MenuItemSpec)
 
-static NSString *const kRoleTitles[][2] = {
-    {@"copy", @"Copy"}, {@"cut", @"Cut"}, {@"paste", @"Paste"}, {@"selectall", @"Select All"}, {@"undo", @"Undo"},
-    {@"redo", @"Redo"}, {@"delete", @"Delete"}, {@"minimize", @"Minimize"}, {@"zoom", @"Zoom"}, {@"close", @"Close"},
-    {@"quit", @"Quit"}, {@"hide", @"Hide"}, {@"hideothers", @"Hide Others"}, {@"showall", @"Show All"},
-    {@"about", @"About"}, {@"front", @"Bring All to Front"}, {@"togglefullscreen", @"Toggle Full Screen"},
-    {@"pasteandmatchstyle", @"Paste and Match Style"}, {@"reload", @"Reload"},
-};
-
-// Returns nil on success, or an error message.
-static NSString *apply_role(NSMenuItem *item, NSString *role) {
-  NSString *r = role.lowercaseString;
-  SEL action = NULL;
-  id tgt = nil;
-  NSDictionary<NSString *, NSString *> *chain = @{
-    @"copy" : @"copy:", @"paste" : @"paste:", @"cut" : @"cut:", @"selectall" : @"selectAll:", @"undo" : @"undo:",
-    @"redo" : @"redo:", @"pasteandmatchstyle" : @"pasteAsPlainText:", @"pasteasplaintext" : @"pasteAsPlainText:",
-    @"delete" : @"delete:", @"minimize" : @"performMiniaturize:", @"zoom" : @"performZoom:", @"maximize" : @"performZoom:",
-    @"close" : @"performClose:", @"closewindow" : @"performClose:", @"togglefullscreen" : @"toggleFullScreen:",
-    @"fullscreen" : @"toggleFullScreen:", @"startspeaking" : @"startSpeaking:", @"stopspeaking" : @"stopSpeaking:",
-    @"about" : @"orderFrontStandardAboutPanel:", @"reload" : @"reload:",
-  };
-  NSDictionary<NSString *, NSString *> *app = @{
-    @"quit" : @"terminate:", @"hide" : @"hide:", @"hideothers" : @"hideOtherApplications:",
-    @"hideotherapplications" : @"hideOtherApplications:", @"showall" : @"unhideAllApplications:",
-    @"unhideall" : @"unhideAllApplications:", @"front" : @"arrangeInFront:",
-  };
-  if (chain[r]) action = NSSelectorFromString(chain[r]);
-  else if (app[r]) action = NSSelectorFromString(app[r]), tgt = NSApp;
-  else if ([r isEqual:@"services"]) {
-    if (!item.submenu) item.submenu = [[NSMenu alloc] initWithTitle:@"Services"];
-    NSApp.servicesMenu = item.submenu;
-    if (!item.title.length) item.title = @"Services";
-    return nil;
-  } else return [NSString stringWithFormat:@"tray.set: unknown menu item role `%@`", role];
-  item.action = action;
-  item.target = tgt;
-  item.representedObject = nil;
-  if (!item.title.length) {
-    for (auto &pair : kRoleTitles)
-      if ([pair[0] isEqual:r]) item.title = [r isEqual:@"quit"] || [r isEqual:@"hide"] || [r isEqual:@"about"]
-                                               ? [NSString stringWithFormat:@"%@ %@", pair[1], platform_app_name()]
-                                               : pair[1];
-  }
-  return nil;
-}
-
-static NSMenu *build_menu(NSArray *items, NSString **error);
-
-static NSMenuItem *build_item(id spec, NSString **error) {
-  if (![spec isKindOfClass:NSDictionary.class]) {
-    *error = @"tray.set: menu items must be objects";
-    return nil;
-  }
-  NSString *type = lower(spec[@"type"]) ?: @"action";
-  NSString *role = [spec[@"role"] isKindOfClass:NSString.class] ? spec[@"role"] : nil;
-  if (spec[@"role"] && spec[@"role"] != NSNull.null && !role) {
-    *error = @"tray.set: menu `role` must be a string";
-    return nil;
-  }
-  if ([type isEqual:@"separator"] || [type isEqual:@"divider"] || [role.lowercaseString isEqual:@"separator"])
-    return [NSMenuItem separatorItem];
-  id label = spec[@"label"] ?: spec[@"title"] ?: spec[@"name"];
-  NSString *title = [label isKindOfClass:NSString.class] ? label : @"";
-  NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
-  id children = spec[@"submenu"];
-  if ([children isKindOfClass:NSArray.class] && [children count]) {
-    NSMenu *sub = build_menu(children, error);
-    if (!sub) return nil;
-    sub.title = title;
-    item.submenu = sub;
-  } else if ([type isEqual:@"submenu"]) {
-    *error = @"tray.set: type `submenu` needs a non-empty `submenu` array";
-    return nil;
-  } else {
-    id ident = spec[@"id"];
-    item.target = target();
-    item.action = @selector(itemAction:);
-    item.representedObject = [ident isKindOfClass:NSString.class] ? ident : title; // label fallback, as before
-  }
-  if ([spec[@"checked"] isKindOfClass:NSNumber.class] && [spec[@"checked"] boolValue]) item.state = NSControlStateValueOn;
-  if ([spec[@"disabled"] isKindOfClass:NSNumber.class] && [spec[@"disabled"] boolValue]) item.enabled = NO;
-  if (role) {
-    if (NSString *e = apply_role(item, role)) {
-      *error = e;
-      return nil;
-    }
-  }
-  id icon = spec[@"icon"];
-  if (icon && icon != NSNull.null) {
-    NSImage *img = icon_from_spec(icon, @"tray.set menu icon", error);
-    if (!img) return nil;
-    item.image = fit(img, 16);
-  }
-  return item;
-}
-
-static NSMenu *build_menu(NSArray *items, NSString **error) {
-  NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
-  menu.autoenablesItems = NO;
-  for (id spec in items) {
-    NSMenuItem *item = build_item(spec, error);
-    if (!item) return nil;
-    [menu addItem:item];
-  }
-  return menu;
-}
-
 // ---------------------------------------------------------------------------
 // Ops
 
@@ -406,7 +291,7 @@ static void tray_set(PlatformCall *call) {
   if (menuArg && menuArg != NSNull.null) {
     id items = [menuArg isKindOfClass:NSDictionary.class] ? menuArg[@"items"] : menuArg;
     if (![items isKindOfClass:NSArray.class]) return [call fail:@"invalid_args" message:@"tray.set: `menu` needs an `items` array"];
-    menu = build_menu(items, &error);
+    menu = platform_build_menu(items, @"tray", &error);
     if (!menu) return [call fail:@"invalid_args" message:error];
   }
 

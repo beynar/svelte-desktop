@@ -42,10 +42,8 @@ static void register_scheme(PlatformCall *call) {
               message:[NSString stringWithFormat:@"deepLink.register: `%@` is not a valid URL scheme", scheme ?: @""]];
   scheme = scheme.lowercaseString;
   NSBundle *bundle = NSBundle.mainBundle;
-  if (!bundle.bundleIdentifier.length)
-    return [call fail:@"unavailable"
-              message:@"deepLink.register: URL schemes need a bundled app (no bundleIdentifier when running from "
-                      @"`bun`); declare the scheme in Info.plist CFBundleURLTypes and run the packaged .app"];
+  // From `bun` (`vite dev`) no app can be set as the handler: nothing to do, not an error.
+  if (!bundle.bundleIdentifier.length) return [call ok:@{@"scheme" : scheme, @"registered" : @NO}];
   if (!declared_in_info_plist(scheme))
     return [call fail:@"unavailable"
               message:[NSString stringWithFormat:@"deepLink.register: Info.plist CFBundleURLTypes does not declare "
@@ -57,7 +55,7 @@ static void register_scheme(PlatformCall *call) {
                                      toOpenURLsWithScheme:scheme
                                         completionHandler:^(NSError *error) {
                                           on_main(^{
-                                            if (!error) return [call ok:@{@"scheme" : scheme}];
+                                            if (!error) return [call ok:@{@"scheme" : scheme, @"registered" : @YES}];
                                             [call fail:@"unavailable"
                                                  message:[NSString stringWithFormat:@"deepLink.register `%@` failed: %@", scheme,
                                                                                     error.localizedDescription]];
@@ -67,4 +65,15 @@ static void register_scheme(PlatformCall *call) {
 
 void platform_register_deep_link(void) {
   platform_register_many(@"deepLink", @[ @"register", @"registerScheme" ], ^(PlatformCall *call) { register_scheme(call); });
+  // Whether this app opens the scheme's URLs. Not an error from `bun` (`vite dev`): it doesn't.
+  platform_register(@"deepLink", @"isDefault", ^(PlatformCall *call) {
+    NSString *scheme = [call string:@"scheme"];
+    if (!valid_scheme(scheme))
+      return [call fail:@"invalid_args"
+                message:[NSString stringWithFormat:@"deepLink.isDefault: `%@` is not a valid URL scheme", scheme ?: @""]];
+    NSString *mine = NSBundle.mainBundle.bundleIdentifier;
+    NSURL *url = [NSURL URLWithString:[scheme.lowercaseString stringByAppendingString:@"://"]];
+    NSURL *handler = [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:url];
+    [call ok:@(mine.length && handler && [[NSBundle bundleWithURL:handler].bundleIdentifier isEqual:mine])];
+  });
 }

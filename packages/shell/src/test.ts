@@ -117,7 +117,8 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
     }
   }
 
-  const env = { ...process.env, ...options.env, SVELTE_DESKTOP_TEST: `ws://127.0.0.1:${server.port}` };
+  // MIMALLOC_PURGE_DELAY: what LaunchServices gives the built app (its Info.plist), launched here directly.
+  const env = { MIMALLOC_PURGE_DELAY: "0", ...process.env, ...options.env, SVELTE_DESKTOP_TEST: `ws://127.0.0.1:${server.port}` };
   if (options.connect) {
     const timer = setTimeout(() => resolveHello({ origin: "" }), timeout);
     await options.connect(env.SVELTE_DESKTOP_TEST);
@@ -185,9 +186,11 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
     timeout,
     stdout: () => stdout,
     async stop(platform) {
-      await platform("app", "quit").catch(() => {});
+      // A dead bridge cannot acknowledge quit. Bound cleanup by process exit instead.
+      void platform("app", "quit").catch(() => {});
       const exited = await Promise.race([proc.exited.then(() => true), Bun.sleep(5000).then(() => false)]);
       if (!exited) proc.kill("SIGKILL");
+      await proc.exited;
       server.stop(true);
     },
   });

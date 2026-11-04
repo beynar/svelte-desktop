@@ -9,6 +9,7 @@
 #pragma once
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#include "platform_sessions.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -59,6 +60,13 @@ int platform_public_window_id(int native_id);
 int platform_resolve_window(PlatformCall *call);
 NSWindow *_Nullable platform_window(int native_id);
 WKWebView *_Nullable platform_webview(int native_id);
+/// Traffic lights at {x, y} from the window's top-left (an NSValue point), or nil for AppKit's (platform_window.mm).
+void platform_window_set_traffic_lights(NSWindow *w, WKWebView *_Nullable wv, NSValue *_Nullable at);
+/// Background throttling of a web view's page (platform_webview.mm): on by default in WebKit.
+void platform_webview_set_throttling(WKWebView *wv, BOOL enabled);
+/// Window vibrancy (platform_window.mm): a material name, or nil to remove it. Returns an error message.
+NSString *_Nullable platform_window_set_vibrancy(NSWindow *w, int nativeId, NSString *_Nullable material, NSString *_Nullable state);
+NSString *_Nullable platform_window_set_glass(NSWindow *w, int nativeId, NSDictionary *_Nullable opts, BOOL *_Nullable glass);
 NSArray<NSNumber *> *platform_window_ids(void); // native ids, creation order
 NSString *_Nullable platform_window_label(int native_id);
 /// Create a window on the app origin (multi-window). opts as shell_window_create
@@ -69,6 +77,8 @@ int platform_show_main_window(void);
 NSString *_Nullable platform_app_origin(void);
 /// App identity from Info.plist, falling back to the shell options.
 NSString *platform_app_name(void);
+/// The shell's own English menu labels in the app's language for this user (platform_l10n.mm).
+NSString *platform_l10n(NSString *english);
 NSString *platform_app_identifier(void);
 NSString *platform_app_version(void);
 
@@ -79,6 +89,8 @@ BOOL platform_close_veto(int native_id);
 
 // Module registration (each platform_*.mm defines one) ----------------------
 void platform_register_app(void);
+void platform_app_observe_launch(void);
+void platform_register_metrics(void);
 void platform_register_window(void);
 void platform_register_screen(void);
 void platform_register_clipboard(void);
@@ -161,6 +173,10 @@ void platform_popover_bind_tray(NSString *_Nullable popoverId);
 BOOL platform_popover_tray_click(void);
 /// Page-ready from the bridge for a web view that is not a window (popover ids).
 void platform_popover_page_ready(int nativeId);
+/// Usage descriptions from the app's config (dev mode: no Info.plist of the app's own).
+void platform_set_usage_descriptions(NSDictionary *usage);
+/// The Dock icon `app.setDockIcon(null)` restores (dev mode: the app's icon, not bun's).
+void platform_set_default_dock_icon(NSImage *image);
 /// Navigation delegate with the shell's policy (shell_macos.mm).
 id<WKNavigationDelegate> shell_make_nav_delegate(int nativeId);
 void platform_register_popover(void);
@@ -168,6 +184,8 @@ NS_ASSUME_NONNULL_END
 
 // Web view features (platform_webview.mm) -------------------------------------
 NS_ASSUME_NONNULL_BEGIN
+/// Set the process policy before WKWebView initialization. All constructors must call this.
+void platform_webview_prepare_configuration(WKWebViewConfiguration *configuration, NSString *_Nullable session = nil);
 /// Called once for every web view the shell creates (windows and popovers),
 /// right after creation: UI delegate, drop handling, downloads, menus…
 void platform_webview_configure(int nativeId, WKWebView *webview);

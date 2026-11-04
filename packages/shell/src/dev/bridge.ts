@@ -25,6 +25,7 @@ export function connectDevShell(rpcUrl: string, app: { appName: string; identifi
       void import("../test-channel.ts").then((m) => m.connectTestChannel({ origin: app.origin, appName: app.appName }));
       resolve({ runtime, close: () => ws.close() });
     };
+    ws.onclose = () => { void runtime.runBeforeQuit().catch((error) => console.error("[desktop] dev shutdown", error)); };
     ws.onerror = () => reject(new Error(`svelte-desktop: cannot reach the dev shell at ${rpcUrl}`));
     ws.onmessage = (e) => {
       const m = JSON.parse(String(e.data));

@@ -5,11 +5,12 @@
 import { $ } from "bun";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { USAGE_KEYS, sidecarEntries, type ResolvedConfig } from "../config.ts";
+import { USAGE_KEYS, sidecarEntries, usageDescriptions, type ResolvedConfig } from "../config.ts";
 import { appIcons } from "./icons.ts";
 import { compileStaged, sizeFlags } from "./bun-compile.ts";
 import { buildLanguagePlugins } from "./native-langs.ts";
 import { typeNativePlugins } from "./native-types.ts";
+import { bundlePython, machOFiles } from "./python.ts";
 import { buildAddons, buildNativePlugin } from "./native.ts";
 
 const shellRoot = resolve(import.meta.dir, "../..");
@@ -124,8 +125,17 @@ export function infoPlist(c: ResolvedConfig, exe: string, icon: "none" | "icns" 
       CFBundleTypeExtensions: t.extensions,
       ...(t.utis?.length ? { LSItemContentTypes: t.utis } : {}),
     }));
-  for (const [k, v] of Object.entries(c.osPermissions)) if (USAGE_KEYS[k] || /UsageDescription$/.test(k)) keys[USAGE_KEYS[k] ?? k] = v;
+  Object.assign(keys, usageDescriptions(c.osPermissions));
+  // The languages it comes in (locales): the system picks the user's among them, for the strings
+  // below (localizedStrings) and the shell's own menus.
+  if (c.locales && Object.keys(c.locales).length) {
+    keys.CFBundleDevelopmentRegion = c.language ?? "en";
+    keys.CFBundleLocalizations = [...new Set([c.language ?? "en", ...Object.keys(c.locales)])];
+  }
   Object.assign(keys, c.plist);
+  // Bun's allocator gives freed memory back at once instead of a while later (measured: −4 MB idle,
+  // −12 MB after a burst of renders). LaunchServices sets it before Bun starts.
+  keys.LSEnvironment = { MIMALLOC_PURGE_DELAY: "0", ...(c.plist?.LSEnvironment as Record<string, string> | undefined) };
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">${plistValue(keys)}</plist>
@@ -207,6 +217,8 @@ async function signApp(app: string, exe: string, c: ResolvedConfig, work: string
   const fw = join(app, "Contents/Frameworks");
   const inside = (d: string) => (existsSync(join(fw, d)) ? readdirSync(join(fw, d)).map((f) => join(fw, d, f)) : []);
   const nested = [
+    // The Python runtime: its executable, libraries and extension modules.
+    ...machOFiles(join(app, "Contents/Resources/python")),
     ...inside("addons"),
     ...inside("plugins"),
     ...readdirSync(fw).filter((f) => f !== "addons" && f !== "plugins").map((f) => join(fw, f)),
@@ -231,6 +243,22 @@ async function notarize(path: string, profile: string) {
   if (res.status !== "Accepted")
     throw new Error(`notarization ${res.status ?? "failed"} for ${basename(path)} (id ${res.id ?? "?"}): xcrun notarytool log ${res.id} --keychain-profile ${profile}`);
   await $`xcrun stapler staple ${path}`.quiet();
+}
+
+/** Contents/Resources/<lang>.lproj/InfoPlist.strings: the app's name and permission reasons in
+ *  each of its languages (desktop.config `locales`), the config's own language included. */
+export function localizedStrings(c: ResolvedConfig): Record<string, string> {
+  if (!c.locales || !Object.keys(c.locales).length) return {};
+  const quote = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
+  const file = (strings: Record<string, string>) => Object.entries(strings).map(([k, v]) => `${quote(k)} = ${quote(v)};`).join("\n") + "\n";
+  const out: Record<string, string> = { [c.language ?? "en"]: file({ CFBundleName: c.appName, CFBundleDisplayName: c.appName, ...usageDescriptions(c.osPermissions) }) };
+  for (const [lang, t] of Object.entries(c.locales)) {
+    const name = t.name ?? c.appName;
+    // Reasons not translated keep the config's: the key must be there in every language.
+    const reasons = { ...c.osPermissions, ...Object.fromEntries(Object.entries(t.permissions ?? {}).filter((e): e is [string, string] => typeof e[1] === "string")) };
+    out[lang] = file({ CFBundleName: name, CFBundleDisplayName: name, ...usageDescriptions(reasons) });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -289,10 +317,24 @@ async function packageMac(c: ResolvedConfig, stage: string): Promise<PackageResu
     const plugin = await buildNativePlugin(c, { arches, outDir: join(work, "native") });
     if (plugin) await $`cp ${plugin} ${join(app, "Contents/Frameworks/libapp-native.dylib")}`;
     const langs = await buildLanguagePlugins(c, { os: "macos", arches, outDir: join(work, "plugins"), release: true });
-    await typeNativePlugins(c.root, [...(plugin ? [plugin] : []), ...langs]);
     if (langs.length) {
       mkdirSync(join(app, "Contents/Frameworks/plugins"), { recursive: true });
       for (const l of langs) copyFileSync(l, join(app, "Contents/Frameworks/plugins", basename(l)));
+    }
+    // Python commands: the runtime, dependencies and sources in Resources/python, the bridge in plugins/.
+    const python = await bundlePython(c, { os: "macos", arches, resources: join(app, "Contents/Resources"), pluginsDir: join(app, "Contents/Frameworks/plugins"), work });
+    if (python) log(`python  ${((Number((await $`du -sk ${join(app, "Contents/Resources/python")}`.text()).split("\t")[0]) || 0) / 1024).toFixed(1)} MB (runtime, dependencies, sources)`);
+    await typeNativePlugins(c.root, [...(plugin ? [plugin] : []), ...langs, ...(python ? [python.describeLib] : [])]);
+  }
+  // host.ai's native side: in plugins/ with the app's (signed with them), not typed into native.d.ts.
+  {
+    const { ensureAiPlugin, AI_LIB } = await import("./ai.ts");
+    const slices = (await Promise.all(arches.map((a) => ensureAiPlugin(a, (m) => console.log(`  \x1b[33m!\x1b[0m ${m}`))))).filter((l): l is string => !!l);
+    if (slices.length === arches.length) {
+      mkdirSync(join(app, "Contents/Frameworks/plugins"), { recursive: true });
+      const dest = join(app, "Contents/Frameworks/plugins", AI_LIB);
+      if (slices.length > 1) await $`lipo -create ${slices} -output ${dest}`.quiet();
+      else copyFileSync(slices[0]!, dest);
     }
   }
   const addons = await buildAddons(c, { arches, outDir: join(work, "addons") });
@@ -313,6 +355,15 @@ async function packageMac(c: ResolvedConfig, stage: string): Promise<PackageResu
     icon = (await compileIconCatalog(icons.iconComposer, join(app, "Contents/Resources"), work)) ? "catalog" : "icns";
   }
   await Bun.write(join(app, "Contents/Info.plist"), infoPlist(c, exe, icon));
+  for (const [lang, strings] of Object.entries(localizedStrings(c))) await Bun.write(join(app, "Contents/Resources", `${lang}.lproj`, "InfoPlist.strings"), strings);
+  // desktop.config `command`: the launcher host.command.install() links to.
+  if (c.command) {
+    if (!/^[A-Za-z0-9_-]+$/.test(c.command)) throw new Error(`command: "${c.command}" may only hold letters, digits, - and _`);
+    const { macLauncher } = await import("../command.ts");
+    const launcher = join(app, "Contents/Resources/bin", c.command);
+    await Bun.write(launcher, macLauncher(c.appName));
+    await $`chmod 755 ${launcher}`;
+  }
   await Bun.write(join(app, "Contents/PkgInfo"), "APPL????");
   log(`${basename(app)}  executable ${mb(join(app, "Contents/MacOS", exe))} (${arches.join("+")})`);
 

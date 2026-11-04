@@ -1,0 +1,6 @@
+# The Python commands' dependencies: they ship with the app (uv installs them).
+[project]
+name = "dashboard-python"
+version = "0.0.0"
+requires-python = ">=3.10"
+dependencies = ["numpy>=2"]

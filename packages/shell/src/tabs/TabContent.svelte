@@ -18,19 +18,19 @@
 	let { class: className = '', children }: Props = $props();
 	const tabs = useTabs();
 	const isolated = $derived(tabs.items.filter((t) => tabs.isIsolated(t)));
-	const page = $derived(!tabs.active || !tabs.isIsolated(tabs.active));
 </script>
 
-<div data-sd-tabcontent class={className} hidden={!page}>
-	{@render children()}
+<!-- The page, unless a view is on screen; not rendered at a kept-alive route (its view runs it). -->
+<div data-sd-tabcontent class={className} hidden={!tabs.pageShown}>
+	{#if tabs.pageRendered}{@render children()}{/if}
 </div>
 {#each isolated as t (t.id)}
-	{@const active = t.id === tabs.activeId}
+	{@const shown = t.id === tabs.shown}
 	<div
 		data-sd-tabview
 		class={className}
-		hidden={!active}
-		use:isolatedView={{ tabs, tab: t, active }}
+		hidden={!shown}
+		use:isolatedView={{ tabs, tab: t, active: t.id === tabs.activeId, shown, suspended: tabs.suspended.has(t.id) }}
 	></div>
 {/each}
 

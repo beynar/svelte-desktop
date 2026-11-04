@@ -219,16 +219,38 @@ bool claim_single_instance() { return acquire_single_instance() != 0; }
 
 // ---------------------------------------------------------------------------
 
+// What the autostart entry passes, to tell a launch at login from the others.
+static const char *const LOGIN_FLAG = "--launched-at-login";
+
+static std::string autostart_file() { return std::string(g_get_user_config_dir()) + "/autostart/" + app_identifier() + ".desktop"; }
+
+// Off when the user turned it off in their desktop's settings, which keep the file.
+static bool autostart_enabled() {
+  GKeyFile *f = g_key_file_new();
+  bool on = g_key_file_load_from_file(f, autostart_file().c_str(), G_KEY_FILE_NONE, nullptr) &&
+            !g_key_file_get_boolean(f, "Desktop Entry", "Hidden", nullptr) &&
+            (!g_key_file_has_key(f, "Desktop Entry", "X-GNOME-Autostart-enabled", nullptr) ||
+             g_key_file_get_boolean(f, "Desktop Entry", "X-GNOME-Autostart-enabled", nullptr));
+  g_key_file_free(f);
+  return on;
+}
+
+// Not available (`vite dev`) is a state, not an error: settings pages work the same in dev.
+static json login_item() {
+  bool launched = false;
+  for (auto &a : own_argv()) launched = launched || a == LOGIN_FLAG;
+  return json{{"available", packaged()}, {"enabled", packaged() && autostart_enabled()}, {"requiresApproval", false}, {"launchedAtLogin", packaged() && launched}};
+}
+
 static void set_login_item(CallPtr c) {
-  if (!packaged()) return c->fail("unavailable", "app.setLoginItem needs the packaged app (an app directory or AppImage)");
-  std::string dir = std::string(g_get_user_config_dir()) + "/autostart";
-  std::string file = dir + "/" + app_identifier() + ".desktop";
+  if (!packaged()) return c->ok(login_item());
+  std::string file = autostart_file();
   bool want = c->flag("enabled", true);
   if (want) {
-    g_mkdir_with_parents(dir.c_str(), 0700);
+    g_mkdir_with_parents((std::string(g_get_user_config_dir()) + "/autostart").c_str(), 0700);
     gchar *quoted = g_shell_quote(launch_target().c_str());
     std::ostringstream s;
-    s << "[Desktop Entry]\nType=Application\nName=" << app_name() << "\nExec=" << quoted << "\nX-GNOME-Autostart-enabled=true\n";
+    s << "[Desktop Entry]\nType=Application\nName=" << app_name() << "\nExec=" << quoted << " " << LOGIN_FLAG << "\nX-GNOME-Autostart-enabled=true\n";
     g_free(quoted);
     GError *err = nullptr;
     if (!g_file_set_contents(file.c_str(), s.str().c_str(), -1, &err)) {
@@ -239,7 +261,64 @@ static void set_login_item(CallPtr c) {
   } else {
     unlink(file.c_str());
   }
-  c->ok(json{{"enabled", g_file_test(file.c_str(), G_FILE_TEST_EXISTS) == TRUE}});
+  c->ok(login_item());
+}
+
+// `notes`, `notes:` or `notes://` → `notes`; empty when it isn't a URL scheme.
+static std::string url_scheme_name(std::string s) {
+  if (s.size() > 3 && s.compare(s.size() - 3, 3, "://") == 0) s.resize(s.size() - 3);
+  else if (!s.empty() && s.back() == ':') s.pop_back();
+  gchar *low = g_ascii_strdown(s.c_str(), -1);
+  s = low;
+  g_free(low);
+  gchar *parsed = g_uri_parse_scheme((s + ":").c_str());
+  bool valid = parsed != nullptr;
+  g_free(parsed);
+  return valid ? s : "";
+}
+
+// deepLink.register: the scheme in the app's entry under the user's applications, and the app as its
+// default in mimeapps.list (what `xdg-mime default` writes). The packaged entry isn't installed: an
+// AppImage or a tar.gz runs from anywhere, so this entry points at where it runs now.
+static void register_scheme(CallPtr c) {
+  std::string scheme = url_scheme_name(c->str("scheme"));
+  if (scheme.empty()) return c->fail("invalid_args", "deepLink.register: `" + c->str("scheme") + "` is not a valid URL scheme");
+  if (!packaged()) return c->ok(json{{"scheme", scheme}, {"registered", false}});
+  const char *group = "Desktop Entry";
+  std::string id = app_identifier() + ".desktop", type = "x-scheme-handler/" + scheme;
+  std::string dir = std::string(g_get_user_data_dir()) + "/applications", file = dir + "/" + id;
+  GKeyFile *entry = g_key_file_new();
+  if (!g_key_file_load_from_file(entry, file.c_str(), G_KEY_FILE_KEEP_TRANSLATIONS, nullptr) &&
+      !g_key_file_load_from_file(entry, (exe_dir() + "/share/applications/" + id).c_str(), G_KEY_FILE_KEEP_TRANSLATIONS, nullptr)) {
+    g_key_file_set_string(entry, group, "Type", "Application");
+    g_key_file_set_string(entry, group, "Name", app_name().c_str());
+  }
+  gchar *quoted = g_shell_quote(launch_target().c_str());
+  g_key_file_set_string(entry, group, "Exec", (std::string(quoted) + " %U").c_str());
+  g_free(quoted);
+  gchar *current = g_key_file_get_string(entry, group, "MimeType", nullptr);
+  std::string types = current ? current : "";
+  g_free(current);
+  if (types.find(type + ";") == std::string::npos) types += type + ";";
+  g_key_file_set_string(entry, group, "MimeType", types.c_str());
+
+  std::string config = g_get_user_config_dir(), list = config + "/mimeapps.list";
+  GKeyFile *defaults = g_key_file_new();
+  g_key_file_load_from_file(defaults, list.c_str(), G_KEY_FILE_KEEP_COMMENTS, nullptr);
+  g_key_file_set_string(defaults, "Default Applications", type.c_str(), id.c_str());
+
+  g_mkdir_with_parents(dir.c_str(), 0700);
+  g_mkdir_with_parents(config.c_str(), 0700);
+  GError *err = nullptr;
+  bool ok = g_key_file_save_to_file(entry, file.c_str(), &err) && g_key_file_save_to_file(defaults, list.c_str(), &err);
+  g_key_file_free(entry);
+  g_key_file_free(defaults);
+  if (!ok) {
+    std::string m = err ? err->message : "write failed";
+    g_clear_error(&err);
+    return c->fail("denied", "deepLink.register: " + m);
+  }
+  c->ok(json{{"scheme", scheme}, {"registered", true}});
 }
 
 static std::string icon_file() {
@@ -258,6 +337,17 @@ void register_app() {
   reg("app", "getOpenedFiles", opened);
   reg("webview", "getOpenedFiles", opened);
   reg("deepLink", "getInitialUrls", [](CallPtr c) { c->ok(g_initial_urls); });
+  reg_many("deepLink", {"register", "registerScheme"}, register_scheme);
+  // Whether this app opens the scheme's URLs. Not an error in `vite dev`: it doesn't.
+  reg("deepLink", "isDefault", [](CallPtr c) {
+    std::string scheme = url_scheme_name(c->str("scheme"));
+    if (scheme.empty()) return c->fail("invalid_args", "deepLink.isDefault: `" + c->str("scheme") + "` is not a valid URL scheme");
+    GAppInfo *handler = g_app_info_get_default_for_uri_scheme(scheme.c_str());
+    const char *id = handler ? g_app_info_get_id(handler) : nullptr;
+    bool mine = packaged() && id && app_identifier() + ".desktop" == id;
+    if (handler) g_object_unref(handler);
+    c->ok(mine);
+  });
   reg("app", "getInfo", [](CallPtr c) {
     bool pkg = packaged();
     c->ok(json{{"name", app_name()},
@@ -323,6 +413,8 @@ void register_app() {
     c->ok();
   });
   reg("app", "requestSingleInstanceLock", request_single_instance);
+  reg("app", "getLoginItem", [](CallPtr c) { c->ok(login_item()); });
+  reg("app", "getActivationPolicy", [](CallPtr c) { c->ok("regular"); });
   reg("app", "setLoginItem", set_login_item);
   reg("app", "getBundleType", [](CallPtr c) { c->ok(json{{"type", packaged() ? "app" : "binary"}}); });
   reg("app", "defaultWindowIcon", [](CallPtr c) {

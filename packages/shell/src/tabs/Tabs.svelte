@@ -111,7 +111,8 @@
 	// What `layout` gets: the bar and the content, to put where they go.
 	const parts = () => ({ bar, content, api: group }) as unknown as Parameters<NonNullable<typeof layout>>[0];
 	setTabs(group);
-	api = group;
+	// In the browser only: written while the server renders, it renders the page twice (see WindowTabs).
+	if (typeof window !== 'undefined') api = group;
 	$effect(() => group.connect());
 </script>
 

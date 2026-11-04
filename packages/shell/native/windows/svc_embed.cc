@@ -1,6 +1,7 @@
 // view.* — extra WebView2 controllers embedded in a window (Electron's BrowserView),
 // same ops and events as native/platform_view.mm and native/linux/svc_view.cc:
-//   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, debug?} → {id, windowId}
+//   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, hidden?, debug?} → {id, windowId}
+//   (`hidden`: it loads out of sight, until `show`)
 //   (the view's page has window.__desktopView = its id)
 //   setBounds · getBounds · navigate {url|route} · show · hide · reload · getInfo
 //   executeJavaScript {code} → JSON · list · destroy
@@ -142,7 +143,7 @@ static void register_view_ops() {
     e->right = std::max(0.0, cw - e->x - e->w);
     e->bottom = std::max(0.0, ch - e->y - e->h);
     ensure_class();
-    e->child = CreateWindowExW(0, kEmbedClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, w->hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+    e->child = CreateWindowExW(0, kEmbedClass, L"", WS_CHILD | (c->flag("hidden", false) ? 0 : WS_VISIBLE) | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, w->hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!e->child) {
       delete e;
       return c->fail("internal", "view.create: cannot create the child window");

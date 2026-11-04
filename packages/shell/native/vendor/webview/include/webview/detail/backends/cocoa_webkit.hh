@@ -57,6 +57,11 @@
 
 #include <objc/objc-runtime.h>
 
+// svelte-desktop's optional policy hook runs before WKWebView copies its configuration.
+extern "C" void webview_sd_configure_webkit(void *) __attribute__((weak_import));
+// Optional +1 window factory; the engine retains its normal owning lifecycle.
+extern "C" void *webview_sd_create_window(void) __attribute__((weak_import));
+
 namespace webview {
 namespace detail {
 
@@ -448,6 +453,9 @@ private:
     objc::autoreleasepool arp;
 
     auto config{objc::autorelease(WKWebViewConfiguration_new())};
+    if (webview_sd_configure_webkit) {
+      webview_sd_configure_webkit(static_cast<void *>(config));
+    }
 
     m_manager = WKWebViewConfiguration_get_userContentController(config);
 
@@ -574,7 +582,7 @@ private:
   void window_init_proceed() {
     objc::autoreleasepool arp;
 
-    m_window = objc::retain(NSWindow_withContentRect(
+    m_window = webview_sd_create_window ? static_cast<id>(webview_sd_create_window()) : objc::retain(NSWindow_withContentRect(
         NSRectMake(0, 0, 0, 0), NSWindowStyleMaskTitled, NSBackingStoreBuffered,
         false));
     m_window_delegate = create_window_delegate();

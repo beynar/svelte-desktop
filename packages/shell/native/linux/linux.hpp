@@ -39,6 +39,7 @@ struct Window {
   GdkWindowState state = (GdkWindowState)0;
   bool focused = false;
   int minW = 0, minH = 0, maxW = 0, maxH = 0;
+  bool alwaysOnTop = false, alwaysOnBottom = false, onAllWorkspaces = false; // GTK has setters only
   bool ignoreMouse = false;
   GtkWidget *box = nullptr;      // vertical: app menu bar + overlay
   GtkWidget *overlay = nullptr;  // the page, plus view.* web views on top

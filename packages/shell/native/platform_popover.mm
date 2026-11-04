@@ -8,8 +8,8 @@
 //
 // Every popover owns one WKWebView created at popover.create and kept warm in an
 // invisible staging window, so the first show paints immediately (WKWebView
-// does not render while detached/hidden). Same data store as the windows, so
-// the app session cookie applies; the page bridge (window.__shell) is attached
+// does not render while detached/hidden). The selected session's store carries
+// the app authentication cookie; the page bridge (window.__shell) is attached
 // and `window.__shellPopover = {id}` is injected so the page knows where it is.
 //
 // Ops: create, show, hide, toggle, setSize, setPosition, isShown, get, list, eval, reload, destroy;
@@ -152,7 +152,8 @@ static SDPopover *build(PlatformCall *c, NSString *ident, NSString **error) {
   NSString *edge = [c string:@"edge"] ?: @"bottom";
   p.edge = [edge isEqual:@"top"] ? NSMaxYEdge : [edge isEqual:@"left"] ? NSMinXEdge : [edge isEqual:@"right"] ? NSMaxXEdge : NSMinYEdge;
 
-  WKWebViewConfiguration *config = [WKWebViewConfiguration new]; // default data store: shares the session cookie
+  WKWebViewConfiguration *config = [WKWebViewConfiguration new];
+  platform_webview_prepare_configuration(config, [c string:@"session"]);
   if ([c boolean:@"debug" or:NO]) [config.preferences setValue:@YES forKey:@"developerExtrasEnabled"];
   NSString *script = [NSString stringWithFormat:kPopoverScript,
                                                 [[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:ident options:NSJSONWritingFragmentsAllowed error:nil]
@@ -171,6 +172,7 @@ static SDPopover *build(PlatformCall *c, NSString *ident, NSString **error) {
   p.nav = shell_make_nav_delegate(p.nativeId);
   p.webview.navigationDelegate = p.nav;
   platform_attach_webview(p.nativeId, p.webview);
+  platform_lifecycle_configure(p.webview, @{@"popoverId":ident}, [c string:@"recovery"]);
   platform_webview_configure(p.nativeId, p.webview);
 
   p.container = [[NSView alloc] initWithFrame:frame];
@@ -224,7 +226,7 @@ static SDPopover *build(PlatformCall *c, NSString *ident, NSString **error) {
   // WebKit content process per popover. preload:false loads on first show.
   if ([c boolean:@"preload" or:YES]) {
     p.loaded = YES;
-    [p.webview loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:url]]];
+    platform_webview_load(p.webview, [NSURLRequest requestWithURL:[NSURL URLWithString:url]]);
   }
   return p;
 }
@@ -352,7 +354,7 @@ static NSString *show_now(SDPopover *p, NSDictionary *args, int caller);
 static NSString *show(SDPopover *p, NSDictionary *args, int caller) {
   if (p.loaded) return show_now(p, args, caller);
   p.loaded = YES;
-  [p.webview loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:p.url]]];
+  platform_webview_load(p.webview, [NSURLRequest requestWithURL:[NSURL URLWithString:p.url]]);
   __block BOOL done = NO;
   SDPopover *__weak weak = p;
   p.pendingShow = ^{
@@ -468,6 +470,7 @@ void platform_register_popover(void) {
   g_popovers = [NSMutableDictionary dictionary];
   install_escape_monitor();
   platform_register(@"popover", @"create", ^(PlatformCall *c) {
+    if (!platform_webview_options_valid(c.args)) return [c fail:@"invalid_args" message:@"popover.create: unknown session or invalid recovery policy"];
     NSString *ident = [c string:@"id"] ?: [NSString stringWithFormat:@"popover-%d", g_next_native];
     if (SDPopover *old = g_popovers[ident]) destroy(old); // re-create replaces
     NSString *error = nil;
@@ -528,7 +531,7 @@ void platform_register_popover(void) {
     [c ok:nil];
   });
   reg(@"reload", ^(PlatformCall *c, SDPopover *p) {
-    [p.webview reload];
+    platform_webview_reload(p.webview);
     [c ok:nil];
   });
   reg(@"destroy", ^(PlatformCall *c, SDPopover *p) {

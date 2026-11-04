@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { appDirs } from "./os.ts";
 import { endCrashTracking, startCrashTracking, type CrashInfo } from "./crash.ts";
 import { bindJobs, jobs, stopAllJobs } from "./jobs/host.ts";
+import { stopAllServices } from "./services/host.ts";
 import type { DesktopApi } from "./api.ts";
 import { callPlatform, onPlatform } from "./platform/bus.ts";
 import type { MenuItemSpec, ShellEvent } from "./types.ts";
@@ -158,6 +159,7 @@ export function createDesktopRuntime(deps: DesktopApiDeps): DesktopRuntime {
         }
       }
       stopAllJobs();
+      await stopAllServices();
       if (deps.trackCrashes) endCrashTracking(paths.data);
     },
   };
