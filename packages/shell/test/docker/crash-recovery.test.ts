@@ -24,7 +24,7 @@ const running = () => {
 const killAll = () => Bun.spawnSync(['pkill', '-9', '-f', executable()]);
 const starts = () => (existsSync(`${dir}/starts`) ? readFileSync(`${dir}/starts`, 'utf8').trim().split('\n').length : 0);
 // The main window's: each view has its own count, and killing the web processes kills them all.
-const webEvents = () => (existsSync(`${dir}/web`) ? readFileSync(`${dir}/web`, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.window === 1) : []);
+const webEvents = () => (existsSync(`${dir}/web`) ? readFileSync(`${dir}/web`, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.window === 1) : []);
 const log = () => (existsSync(logFile) ? readFileSync(logFile, 'utf8') : '');
 
 async function until(what: string, fn: () => boolean | Promise<boolean>, ms = 30_000) {

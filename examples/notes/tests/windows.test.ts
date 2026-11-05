@@ -9,11 +9,11 @@
 // (INotificationActivationCallback, CLSID derived from the identifier) is created
 // over COM from PowerShell and Activate()d with the arguments the toast XML carries.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { launch, type AppHandle } from '@kitop/shell/test';
 import { toastActivatorClsid } from '../../../packages/shell/src/build/package-windows.ts';
 
@@ -898,6 +898,8 @@ const within = <T>(ms: number, what: string, p: Promise<T>) =>
 	Promise.race([p, Bun.sleep(ms).then(() => { throw Object.assign(new Error(`${what}: no answer within ${ms} ms`), { code: 'timeout' }); })]);
 const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64');
 const near = (a: number, b: number, by = 2) => Math.abs(a - b) <= by;
+// The runner's temp folder has a short form (RUNNER~1), and the dialogs answer with the long one.
+const longPath = (p: string) => join(realpathSync.native(dirname(p)), basename(p)).toLowerCase();
 const Pdf = { pages: (b: Buffer) => (b.toString('latin1').match(/\/Type\s*\/Page\b/g) ?? []).length, box: (b: Buffer) => /\/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)/.exec(b.toString('latin1'))?.slice(1).map(Number) };
 
 describe.skipIf(!process.env.WINDOWS_E2E)('windows: beyond notifications', () => {
@@ -965,7 +967,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows: beyond notifications', () =>
 				if (pathname === '/file.txt') return new Response('downloaded body', { headers: attachment });
 				if (pathname === '/inline.txt') return new Response('not an attachment', { headers: { 'content-type': 'text/plain' } });
 				if (pathname === '/frame') return html('<iframe src="/framed"></iframe>');
-				if (pathname === '/blocked') log('a request for /blocked', req.method, Object.fromEntries(req.headers));
+				if (pathname === '/blocked') log('a request for /blocked at', Date.now(), req.method);
 				return html(`<p>${pathname}</p>`);
 			},
 		});
@@ -1264,7 +1266,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows: beyond notifications', () =>
 			const saved = await reply;
 			log('save dialog', saved);
 			expect(saved.canceled).toBe(false);
-			expect(saved.path!.toLowerCase()).toBe(target.toLowerCase());
+			expect(longPath(saved.path!)).toBe(longPath(target));
 		} finally {
 			await win('close-if-any', { title }).catch(() => {});
 			await reply.catch(() => {});
@@ -1275,7 +1277,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows: beyond notifications', () =>
 		try {
 			await Bun.sleep(1000);
 			await win('file-dialog', { title, path: target });
-			expect((await opened).paths.map((p) => p.toLowerCase())).toEqual([target.toLowerCase()]);
+			expect((await opened).paths.map(longPath)).toEqual([longPath(target)]);
 		} finally {
 			await win('close-if-any', { title }).catch(() => {});
 			await opened.catch(() => {});
@@ -1763,8 +1765,10 @@ Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64Strin
 			let request = asked('/blocked');
 			await op('view', 'navigate', { id: 'e2e-nav', url: `${ext}/blocked` });
 			const blocked = await request;
+			log('asked about /blocked at', Date.now());
 			expect(blocked).toMatchObject({ isMainFrame: true, viewId: 'e2e-nav' });
 			await op('webview', 'navigationDecision', { requestId: blocked.requestId, allow: false });
+			log('refused /blocked at', Date.now());
 			await Bun.sleep(800);
 			expect(await inView('e2e-nav', 'location.pathname')).toBe('/start');
 			expect(hits.get('/blocked') ?? 0).toBe(0);
