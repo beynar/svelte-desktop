@@ -38,7 +38,7 @@ import {
 } from './index';
 import { windowState as windowStateSvc } from './windowState';
 import { store as storeSvc } from './store';
-import { onPlatform, oncePlatform, onPlatformReady, platformReady, watchPlatformOp, STATE_CHANNEL, NativeApiError } from './bus';
+import { onAccessibilityMedia, onPlatform, oncePlatform, onPlatformReady, platformReady, watchPlatformOp, STATE_CHANNEL, NativeApiError } from './bus';
 import type {
 	AccessibilityInfo, AccentColor, AppearancePreference, AvailableUpdate,
 	BatteryInfo, CaptureSource, UpdateEndpoints, DockProgress,
@@ -860,8 +860,9 @@ class SystemNamespace extends PlatformNamespace {
 	info = $state<SystemInfo | null>(null);
 	/** OS accent color — pull-only (no change event exists). */
 	accentColor = $state<AccentColor | null>(null);
-	/** OS accessibility preferences — pull-only. */
+	/** OS accessibility preferences: read again when the page's engine sees one change. */
 	accessibility = $state<AccessibilityInfo | null>(null);
+	#offMedia: (() => void) | null = null;
 
 	get layout() { return this.info?.keyboardLayout ?? null; }
 	get arch() { return this.info?.arch ?? null; }
@@ -881,6 +882,7 @@ class SystemNamespace extends PlatformNamespace {
 			const { name } = await systemSvc.getKeyboardLayout().catch(() => ({ name: null }));
 			if (name && this.info) this.info = { ...this.info, keyboardLayout: name };
 		});
+		this.#offMedia ??= onAccessibilityMedia(() => void systemSvc.getAccessibility().then((a) => (this.accessibility = a), () => {}));
 		return this;
 	}
 	getKeyboardLayout = systemSvc.getKeyboardLayout;
@@ -903,7 +905,7 @@ class SystemNamespace extends PlatformNamespace {
 	}
 
 	#unsub: (() => void) | null = null;
-	dispose() { this.#unsub?.(); this.#unsub = null; }
+	dispose() { this.#unsub?.(); this.#unsub = null; this.#offMedia?.(); this.#offMedia = null; }
 }
 export const system = new SystemNamespace();
 

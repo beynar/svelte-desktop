@@ -8,9 +8,9 @@
 // `isolated` tabs live in their own web view (their own process): a third-party page (`url`) or
 // an app route kept apart from the page. The window's address is the active tab's, a kept-alive
 // one's too (page.url, the sidebar): its page isn't rendered in the window, its view shows it.
-import { getContext, setContext } from 'svelte';
+import { getContext, setContext, tick } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
-import { callPlatform, onPlatform, platformReady, STATE_CHANNEL, watchPlatformOp } from '../platform/bus';
+import { callPlatform, onPlatform, platformReady, reducesMotion, STATE_CHANNEL, watchPlatformOp } from '../platform/bus';
 import { readAppFile, writeAppFile } from '../platform/app-files';
 import type { WindowAnimation } from '../platform/index';
 import { whenStopped } from './panes-drag.ts';
@@ -90,6 +90,9 @@ export interface TabStore<T> {
 }
 
 const isPage = typeof window !== 'undefined' && typeof document !== 'undefined';
+
+/** How the window of a tab dragged out comes in: not moving when the system asks for less motion. */
+export const windowAnimation = (wanted?: boolean | WindowAnimation): boolean | WindowAnimation => (reducesMotion() ? false : (wanted ?? true));
 let seq = 0;
 const newId = () => `t${Date.now().toString(36)}${(seq++).toString(36)}`;
 const here = () => location.pathname + location.search + location.hash;
@@ -544,12 +547,85 @@ export class TabGroup<T extends TabLike = TabLike> {
 		if (p.active) this.#activate(p.active, 'user', false);
 	}
 
-	/** Where a dragged tab was let go, in panes. */
-	place(id: string, drop: Parameters<PaneLayout['apply']>[1]): void {
-		if (!this.panes?.allows(id, drop)) return;
+	/** Where a dragged tab was let go, in panes. `keyboard` false: the keyboard stays in the bar. */
+	place(id: string, drop: Parameters<PaneLayout['apply']>[1], opts: { keyboard?: boolean } = {}): boolean {
+		if (!this.panes?.allows(id, drop)) return false;
 		this.#syncDirection();
 		this.panes.apply(id, drop);
-		this.activate(id);
+		this.activate(id, 'user', opts);
+		return true;
+	}
+
+	/** A step along its bar, with the keyboard: what a drag can do, never before a pinned tab. */
+	shift(id: string, step: 1 | -1): boolean {
+		const tab = this.get(id);
+		if (!tab || tab.pinned) return false;
+		const pane = this.panes?.paneOf(id);
+		if (!pane && !this.canReorder) return false;
+		const list = pane ? pane.tabs : this.items.map((t) => t.id);
+		const to = list.indexOf(id) + step;
+		const pinned = list.filter((t) => t !== id && this.get(t)?.pinned).length;
+		if (to < pinned || to >= list.length) return false;
+		if (pane) return this.place(id, { kind: 'bar', pane: pane.id, index: to, x: 0 }, { keyboard: false });
+		this.move(id, to);
+		return true;
+	}
+
+	/** To the pane before or after its own, with the keyboard. */
+	toPane(id: string, step: 1 | -1): boolean {
+		const panes = this.panes;
+		const from = panes?.paneOf(id);
+		if (!panes || !from || this.get(id)?.pinned) return false;
+		const all = panes.panes;
+		const next = all[all.findIndex((p) => p.id === from.id) + step];
+		return !!next && this.place(id, { kind: 'center', pane: next.id }, { keyboard: false });
+	}
+
+	/** Into a new pane on this side of its own, with the keyboard. */
+	toSide(id: string, zone: PaneZone): boolean {
+		const from = this.panes?.paneOf(id);
+		return !!from && !this.get(id)?.pinned && this.place(id, { kind: 'side', pane: from.id, zone }, { keyboard: false });
+	}
+
+	/** The keyboard on a tab in its bar (the active one by default), once it's drawn. */
+	async focusTab(id?: string): Promise<void> {
+		this.pageKeyboard = true;
+		await tick();
+		if (isPage) document.getElementById(`${this.id}-tab-${id ?? this.activeId}`)?.focus();
+	}
+
+	/** The keyboard into what a tab shows: its web view, or the page. */
+	focusContent(id: string = this.activeId ?? ''): void {
+		const tab = this.get(id);
+		if (!tab || !isPage) return;
+		if (this.panes || this.isIsolated(tab)) {
+			this.pageKeyboard = false;
+			if (platformReady()) void callPlatform('view', 'focus', { id: `${this.id}-${id}` }).catch(() => {});
+			return;
+		}
+		// Not one to stay focusable: a press in the page would land on it rather than on the body.
+		const panel = document.querySelector<HTMLElement>('[data-sd-tabcontent]');
+		if (!panel) return;
+		panel.tabIndex = -1;
+		panel.focus();
+		panel.addEventListener('blur', () => panel.removeAttribute('tabindex'), { once: true });
+	}
+
+	/** Between the bar and what the active tab shows: the way back from a web view, which has the
+	 *  keyboard for itself and where Tab may never leave. */
+	toggleBar(): void {
+		const inBar = document.hasFocus() && !!document.activeElement?.closest('[data-sd-tabbar]');
+		if (inBar) return this.focusContent();
+		if (platformReady()) void callPlatform('view', 'focusPage').catch(() => {});
+		void this.focusTab();
+	}
+
+	/** A tab the keyboard is on, for the keyboard to stay in the bar when it goes. A press leaves it
+	 *  as it was: with the pointer, the keyboard goes to what's shown next. */
+	#hasKeyboard(id: string): boolean {
+		if (!isPage || !document.hasFocus()) return false;
+		const el = document.activeElement;
+		return !!el?.matches(':focus-visible') && el.closest('[role=tab]')?.id === `${this.id}-tab-${id}`;
 	}
 
 	/** The window's history entry, as last seen (`split`): its state going to the tab in focus. */
@@ -875,22 +951,24 @@ export class TabGroup<T extends TabLike = TabLike> {
 	}
 
 	/** Close a tab (the active one by default), unless `onclose` keeps it. The main window's bar
-	 *  keeps its last tab when there's no `newTab` to replace it. */
-	close(id: string = this.activeId ?? ''): void {
+	 *  keeps its last tab when there's no `newTab` to replace it. `keepFocus`: the keyboard stays in
+	 *  the bar, on the tab shown next (as it does when the tab closed had it anyway). */
+	close(id: string = this.activeId ?? '', opts: { keepFocus?: boolean } = {}): void {
 		const tab = this.get(id);
 		if (!tab || !this.isClosable(tab)) return;
 		const o = this.options;
 		if (this.items.length === 1 && this.window !== null && this.window === 'main' && !o.newTab) return;
 		if (o.onclose?.(tab) === false) return;
-		this.#remove(id, 'closed');
+		this.#remove(id, 'closed', opts.keepFocus);
 	}
 
 	/** Take a tab out, closed or moved to another window; the active one moves on. A window tabs
 	 *  were dragged into closes with its last tab; the main window's bar opens `newTab()`. */
-	#remove(id: string, how: 'closed' | 'moved'): void {
+	#remove(id: string, how: 'closed' | 'moved', keepFocus = false): void {
 		const items = this.items;
 		const index = items.findIndex((t) => t.id === id);
 		if (index < 0) return;
+		const stay = how === 'closed' && (keepFocus || this.#hasKeyboard(id));
 		if (how === 'closed') {
 			this.#closed.push({ tab: $state.snapshot(items[index]) as T, index });
 			if (this.#closed.length > 20) this.#closed.shift();
@@ -911,11 +989,14 @@ export class TabGroup<T extends TabLike = TabLike> {
 		if (this.activeId === id) {
 			const next = this.panes ? this.get(this.panes.focused.active ?? '') : (rest[index] ?? rest[index - 1]);
 			this.activeId = null;
-			if (next) this.activate(next.id, 'missing');
+			if (next) this.activate(next.id, 'missing', stay ? { keyboard: false } : {});
 		}
-		if (rest.length) return;
-		if (this.window && this.window !== 'main') void callPlatform('window', 'close').catch(() => {});
-		else this.new();
+		if (!rest.length) {
+			if (this.window && this.window !== 'main') void callPlatform('window', 'close').catch(() => {});
+			else this.new();
+		}
+		// Left on the body otherwise, with nothing to go on from.
+		if (stay) void this.focusTab();
 	}
 
 	closeOthers(id: string): void {
@@ -972,7 +1053,7 @@ export class TabGroup<T extends TabLike = TabLike> {
 				height: innerHeight,
 				...(at && { x: Math.round(at.x - 120), y: Math.round(at.y - 16) }),
 				...(await this.#style),
-				animate: this.options.windowAnimation ?? true,
+				animate: windowAnimation(this.options.windowAnimation),
 			});
 			this.#remove(id, 'moved');
 			this.options.ondetach?.(tab);
@@ -1108,6 +1189,8 @@ export class TabGroup<T extends TabLike = TabLike> {
 					const active = this.active;
 					const title = active && this.titleOf(active);
 					if (title && platformReady()) void callPlatform('window', 'setTitle', { title }).catch(() => {});
+					// In panes no route of the window's page gives it a <title>: it names the document too.
+					if (title && this.panes && isPage) document.title = title;
 				});
 				// Disconnected: a save still waiting goes out now.
 				return () => (clearTimeout(timer), save?.());
@@ -1357,6 +1440,7 @@ export class TabGroup<T extends TabLike = TabLike> {
 			else if (id === 'tabs:split-down') this.split('bottom');
 			else if (id === 'tabs:pane-next') this.focusPane(1);
 			else if (id === 'tabs:pane-previous') this.focusPane(-1);
+			else if (id === 'tabs:focus-bar') this.toggleBar();
 			else if (id.startsWith('tabs:select:')) {
 				const n = Number(id.slice('tabs:select:'.length));
 				const bar = this.#barItems;
@@ -1394,6 +1478,8 @@ export class TabGroup<T extends TabLike = TabLike> {
 							{ id: 'tabs:pane-previous', label: 'Previous Pane', accelerator: 'CmdOrCtrl+Alt+[' },
 						]
 					: []),
+				{ type: 'separator' },
+				{ id: 'tabs:focus-bar', label: 'Focus Tab Bar', accelerator: 'F6' },
 				...(this.#detachable() ? [{ type: 'separator' }, { id: 'tabs:detach', label: 'Move Tab to New Window' }] : []),
 			];
 			const insert = () =>
@@ -1422,6 +1508,7 @@ export class TabGroup<T extends TabLike = TabLike> {
 				: e.ctrlKey && k === 'tab' ? (e.shiftKey ? 'tabs:previous' : 'tabs:next')
 				: mod && k === 't' ? (e.shiftKey ? 'tabs:reopen' : 'tabs:new')
 				: mod && k === 'w' && !e.shiftKey ? 'tabs:close'
+				: k === 'f6' && !mod && !e.shiftKey && !e.altKey ? 'tabs:focus-bar'
 				: null;
 			if (id && act(id)) e.preventDefault();
 		};

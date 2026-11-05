@@ -216,6 +216,13 @@ static void op(const std::string &name, ViewOp body) {
 }
 
 void register_view() {
+  // The keyboard back to the window's own page, from a view (F6, <WindowTabs>): nothing else takes it there but a press.
+  reg("view", "focusPage", [](CallPtr c) {
+    int win = resolve_window(*c);
+    if (!find_window(win)) return c->fail("invalid_args", "view.focusPage: no such window");
+    gtk_widget_grab_focus(GTK_WIDGET(webview_for(win)));
+    c->ok();
+  });
   reg("view", "create", [](CallPtr c) {
     Window *w = find_window(resolve_window(*c));
     if (!w) return c->fail("invalid_args", "view.create: no such window");

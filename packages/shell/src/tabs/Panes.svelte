@@ -259,6 +259,12 @@
 				: e.key === 'Home' ? 0
 				: e.key === 'End' ? pair
 				: null;
+			// What a double click on it does.
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				panes.resetBoundary(p.split.id, p.index);
+				return fit();
+			}
 			if (to === null || !length) return;
 			e.preventDefault();
 			panes.resizeTo(p.split.id, p.index, to, min(length));
@@ -296,6 +302,7 @@
 		<!-- A press in a pane's bar puts it in focus; a press in its view says so natively (viewFocused). -->
 		<div
 			role="group"
+			aria-labelledby={n.active ? `${tabs.id}-tab-${n.active}` : undefined}
 			data-sd-pane={n.id}
 			data-focused={n.id === panes.focusedId || undefined}
 			data-top={e?.top || undefined}
@@ -309,7 +316,14 @@
 			}}
 		>
 			<TabBar {...bar} pane={n} {tab} />
-			<div data-sd-pane-body use:observeBody>
+			<!-- The tab's page is drawn over this, in a web view of its own: empty here. -->
+			<div
+				id={`${tabs.id}-pane-body-${n.id}`}
+				role="tabpanel"
+				aria-labelledby={n.active ? `${tabs.id}-tab-${n.active}` : undefined}
+				data-sd-pane-body
+				use:observeBody
+			>
 				{#if zoneIn(n)}<div data-sd-pane-drop={zoneIn(n)} aria-hidden="true"></div>{/if}
 			</div>
 		</div>
@@ -456,6 +470,11 @@
 	}
 	:where([data-sd-splitter]:hover, [data-sd-splitter]:focus-visible)::after {
 		background: var(--sd-pane-splitter-hover, color-mix(in srgb, Highlight 50%, transparent));
+	}
+	/* The line can be see-through or thin against the app's colors: the system's ring says it has the keyboard. */
+	:where([data-sd-splitter]:focus-visible) {
+		outline: auto;
+		outline-offset: -1px;
 	}
 	:where([data-sd-splitter][data-dragging])::after {
 		background: var(--sd-pane-splitter-active, Highlight);

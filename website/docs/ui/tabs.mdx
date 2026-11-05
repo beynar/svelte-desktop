@@ -61,9 +61,10 @@ From there, it's links:
 | `target="_blank"` / ⌘-click, middle click | A new tab on it, in front / in the background — on a `keepAlive` route too: another one, with its own view, running from the start (in the background too) |
 | A link or `goto()` to a `keepAlive` route | Its tab if it's open, else a new one: it runs in its own web view and goes on while you're elsewhere (timers, sockets, what you typed). The page you were on stays on screen until the view is drawn, then the window's address becomes the tab's: `page.url`, your sidebar's active link, follow it |
 | ⌘T / the + button | A new tab on `newTab` |
-| ⌘W / × | Close the tab (`beforeClose` can keep it); the main window keeps a tab on `newTab` |
-| Drag a tab | Reorder. A regular route tab can move to another window's bar; with at least two tabs, dragging it outside opens a new window. Kept-alive and external tabs stay in their window |
+| ⌘W / × / Delete on a tab | Close the tab (`beforeClose` can keep it); the main window keeps a tab on `newTab` |
+| Drag a tab, or ⇧← ⇧→ on it | Reorder. A regular route tab can move to another window's bar; with at least two tabs, dragging it outside opens a new window. Kept-alive and external tabs stay in their window |
 | Back / Forward | The browser's history, shared by the tabs |
+| Enter on a tab, F6 | Into what it shows; F6 goes back and forth between that and the bar. See [Accessibility](/ui/accessibility#the-keyboard-in-windowtabs) |
 
 You never create a tab by hand. A route that must keep running is declared once, in `keepAlive`, with SvelteKit's route ids (`/terminal/[id]`, `/docs/[...rest]`), and every link to it follows.
 
@@ -86,7 +87,7 @@ The main window's tabs are restored at the next launch:
 	{#snippet tab({ tab, active, close })}
 		<RouteIcon path={tab.path} />
 		<span>{tab.title}</span>
-		<button onclick={close}>✕</button>  <!-- a control in a tab doesn't activate it -->
+		<span data-sd-tab-close aria-hidden="true" onclick={close}>✕</span>  <!-- doesn't activate it; Delete closes it from the keyboard -->
 	{/snippet}
 
 	{#snippet layout({ bar, content, api })}
@@ -177,12 +178,12 @@ The panes fill the box they're given and have no look of their own, so give them
 
 | The user | What happens |
 | --- | --- |
-| Drags a tab to a side of a pane | A new pane on that side. The pane's view makes room while the tab is over it, showing where the new pane goes |
-| Drags a tab to the middle of a pane, or onto its bar | The tab joins that pane |
+| Drags a tab to a side of a pane, or ⌥← ⌥→ ⌥↑ ⌥↓ on it | A new pane on that side. The pane's view makes room while the tab is over it, showing where the new pane goes |
+| Drags a tab to the middle of a pane, or onto its bar, or ⌥PageUp ⌥PageDown on it | The tab joins that pane (with the keys: the one before or after) |
 | Drags a tab along the bottom, left or right edge of the panes | A new pane along that whole side of the window |
 | Drags a tab out of the window | An app route opens in a new window, its page starting again |
 | Presses Escape while dragging | Nothing moves |
-| Drags the line between two panes | Resizes those two, down to `minPaneSize`; Escape puts them back. With the focus on it: the arrow keys, Home and End. A double click makes the two equal |
+| Drags the line between two panes | Resizes those two, down to `minPaneSize`; Escape puts them back. With the focus on it: the arrow keys, Home and End. A double click, or Enter, makes the two equal |
 | Clicks in a pane | That pane has the focus: the window's title and address are its active tab's |
 | ⌘\\ / ⇧⌘\\ | Split right / down, on `newTab` |
 | ⌘⌥] / ⌘⌥[ | The next / previous pane |
@@ -265,10 +266,11 @@ The bar only lays out (zero-specificity styles): style it with `class` and the s
 
 | Selector | |
 | --- | --- |
-| `[role=tablist]` (`data-sd-tabbar`) | The bar; its `gap` spaces the tabs |
+| `[data-sd-tabbar]` | The bar; its `gap` spaces the tabs |
+| `[data-sd-tabs]` | The strip that lays out the tabs. `[role=tablist]` is inside it and has no box: it holds only the tabs, so the + and your snippets aren't items of the list |
 | `[role=tab]`, `[data-active]`, `[data-pinned]`, `[data-suspended]`, `[data-dragging]` | A tab and its states (`data-suspended`: its view closed to free memory) |
 | `[data-sd-tab-drop]` | The line where a dragged tab lands (`--sd-tab-drop-color`, default `Highlight`) |
-| `[data-sd-tab-title]`, `[data-sd-tab-close]` | The default content |
+| `[data-sd-tab-title]`, `[data-sd-tab-close]` | The default content. The × isn't a button: it's for the pointer, out of the accessibility tree |
 | `[data-sd-tab-new]` | The + button |
 
 The drag is native drag and drop ([pragmatic-drag-and-drop](https://atlassian.design/components/pragmatic-drag-and-drop/)): the system's drag image follows the pointer, beside it, out of the window and over other windows. The [dashboard example](https://github.com/beynar/svelte-desktop/tree/main/examples/dashboard) has the window's tabs, with a kept-alive `/activity`.

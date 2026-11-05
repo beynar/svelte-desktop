@@ -341,6 +341,14 @@ void platform_register_view(void) {
     if (v.webview.window) [v.webview.window makeFirstResponder:v.webview];
     [c ok:nil];
   });
+  // The keyboard back to the window's own page, from a view (F6, <WindowTabs>): nothing else takes it there but a press.
+  platform_register(@"view", @"focusPage", ^(PlatformCall *c) {
+    int win = platform_resolve_window(c);
+    NSWindow *w = platform_window(win);
+    if (!w) return [c fail:@"invalid_args" message:@"view.focusPage: no such window"];
+    [w makeFirstResponder:platform_webview(win)];
+    [c ok:nil];
+  });
   reg(@"reload", ^(PlatformCall *c, SDView *v) {
     platform_webview_reload(v.webview);
     [c ok:nil];

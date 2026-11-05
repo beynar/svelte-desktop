@@ -4,7 +4,7 @@
  * reject with `NativeApiError` carrying a typed `code` — `unsupported` means
  * the op is not implementable on this OS through the current backend.
  */
-import { callPlatform, onPlatform, NativeApiError } from './bus';
+import { callPlatform, onPlatform, NativeApiError, reducesMotion } from './bus';
 import { webContent } from './web-content';
 export type { ContentRule, UserScript, NavigationRequest, NavigationPolicy } from './web-content';
 export { protocol, type ProtocolHandler } from './protocol';
@@ -1442,7 +1442,8 @@ export interface PopoverInfo {
 type PopoverId = { id?: string };
 
 export const popover = {
-	create: (options: PopoverCreateOptions) => callPlatform<PopoverInfo>('popover', 'create', options),
+	// Without a word from the app, it doesn't move when the system asks for less motion.
+	create: (options: PopoverCreateOptions) => callPlatform<PopoverInfo>('popover', 'create', reducesMotion() ? { animate: false, ...options } : options),
 	show: (id?: string, options: { anchor?: PopoverAnchor; position?: PanelPosition } = {}) =>
 		callPlatform<PopoverInfo>('popover', 'show', { id, ...options }),
 	hide: (id?: string) => callPlatform<null>('popover', 'hide', { id }),

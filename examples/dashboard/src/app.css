@@ -70,7 +70,7 @@ body {
 	box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-neutral) 10%, transparent), 0 1px 2px rgb(0 0 0 / 0.06);
 }
 .app-tabs [role='tab']:focus-visible {
-	outline: 2px solid var(--color-focus);
+	outline: 2px solid var(--color-focus, -webkit-focus-ring-color);
 	outline-offset: -2px;
 }
 .app-tabs [role='tab']:not([data-active]):not(:hover) .tab-close {

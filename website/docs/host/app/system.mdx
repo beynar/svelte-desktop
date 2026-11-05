@@ -24,7 +24,7 @@ How-to: [System](/ui/platform-services#system).
 
 `AccentColor` is `{ r: number; g: number; b: number; a: number }`, with sRGB channels from 0 to 1. `AccessibilityInfo` contains four booleans: `reduceMotion`, `highContrast`, `differentiateWithoutColor` and `reduceTransparency`.
 
-Accent color and accessibility preferences are snapshots. They have no change subscription on this namespace. To refresh them, call `host.system.init()`.
+The accent color is a snapshot, with no change subscription on this namespace: to refresh it, call `host.system.init()`. `accessibility` is read again when the page's engine reports a change to reduced motion, contrast, forced colors or reduced transparency; `differentiateWithoutColor` has no such report, and waits for the next `init()`. What each system reads: [Accessibility](/ui/accessibility#system-preferences).
 
 ## Methods
 
@@ -67,7 +67,7 @@ Resolves `AccentColor`; does not update `accentColor`. Rejects with `unavailable
 
 ### `getAccessibility()`
 
-Resolves `AccessibilityInfo`; does not update `accessibility`. Linux and Windows report the fields they can't read as `false`.
+Resolves `AccessibilityInfo`; does not update `accessibility`. Linux and Windows report the fields they can't read as `false`: `false` can mean "not asked" or "can't tell". On Linux, `highContrast` is a guess from the GTK theme's name.
 
 ### `checkPermission(name)` and `requestPermission(name)`
 

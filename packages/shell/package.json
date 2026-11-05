@@ -49,5 +49,8 @@
 		"@atlaskit/pragmatic-drag-and-drop": "^4.0.0",
 		"@modelcontextprotocol/client": "^2.4.0",
 		"@modelcontextprotocol/server": "^2.4.0"
+	},
+	"devDependencies": {
+		"axe-core": "4.10.3"
 	}
 }

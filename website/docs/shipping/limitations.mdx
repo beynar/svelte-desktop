@@ -9,6 +9,7 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 
 - **Smaller builds need a canary Bun.** `build.trim` and `build.aot` are unavailable on stable Bun. See [Distribution](/shipping/distribution#macos).
 - **Ops vary by platform.** Many window and app ops are macOS-only and answer `unsupported` elsewhere. `host.capabilities.describe()` lists the operations registered in the running build; a registered operation can still reject because the OS, permission or runtime is unavailable.
+- **No screen reader has been run.** axe-core and real key presses check what the framework draws, on Linux only. See [Accessibility](/ui/accessibility).
 - **Self-update has platform and recovery gaps**: no delta patches on Windows or for AppImages, no recovery from an executable the OS can't launch at all. See [Self-update](/shipping/self-update#platform-support).
 
 | Feature | macOS | Linux | Windows |

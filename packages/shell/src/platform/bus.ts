@@ -125,6 +125,20 @@ export function platformReady(): boolean {
 	return S.backend !== null;
 }
 
+/** The system asks for less motion, as the page's engine reports it. */
+export function reducesMotion(): boolean {
+	return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** Calls back when the page's engine sees an accessibility preference change: no native event
+ *  says so on any system, but the engine follows them for CSS. */
+export function onAccessibilityMedia(changed: () => void): () => void {
+	if (typeof matchMedia !== 'function') return () => {};
+	const queries = ['(prefers-reduced-motion: reduce)', '(prefers-contrast: more)', '(forced-colors: active)', '(prefers-reduced-transparency: reduce)'].map((q) => matchMedia(q));
+	for (const q of queries) q.addEventListener('change', changed);
+	return () => queries.forEach((q) => q.removeEventListener('change', changed));
+}
+
 function handlePlatformEvent(eventType: string, data: unknown) {
 	const name = eventType.startsWith('platform:') ? eventType.slice(9) : eventType;
 	if (name === 'channelMessage') {

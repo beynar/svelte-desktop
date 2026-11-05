@@ -18,15 +18,27 @@
 	let { class: className = '', children }: Props = $props();
 	const tabs = useTabs();
 	const isolated = $derived(tabs.items.filter((t) => tabs.isIsolated(t)));
+	const labelled = $derived(tabs.shown ?? tabs.activeId);
 </script>
 
 <!-- The page, unless a view is on screen; not rendered at a kept-alive route (its view runs it). -->
-<div data-sd-tabcontent class={className} hidden={!tabs.pageShown}>
+<div
+	id={`${tabs.id}-panel`}
+	role="tabpanel"
+	aria-labelledby={labelled ? `${tabs.id}-tab-${labelled}` : undefined}
+	data-sd-tabcontent
+	class={className}
+	hidden={!tabs.pageShown}
+>
 	{#if tabs.pageRendered}{@render children()}{/if}
 </div>
 {#each isolated as t (t.id)}
 	{@const shown = t.id === tabs.shown}
+	<!-- Its page is drawn over this, in a web view of its own: empty here, whatever a screen reader finds in it. -->
 	<div
+		id={`${tabs.id}-panel-${t.id}`}
+		role="tabpanel"
+		aria-labelledby={`${tabs.id}-tab-${t.id}`}
 		data-sd-tabview
 		class={className}
 		hidden={!shown}
@@ -38,5 +50,9 @@
 	/* Hidden even with a display class (flex, grid) on it. */
 	:global(:where([data-sd-tabcontent], [data-sd-tabview])[hidden]) {
 		display: none !important;
+	}
+	/* Enter on a tab brings the keyboard here for a moment: the next Tab goes into the page. */
+	:global(:where([data-sd-tabcontent]:focus)) {
+		outline: none;
 	}
 </style>

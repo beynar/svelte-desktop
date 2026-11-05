@@ -42,7 +42,7 @@ export function dropAt(tabs: TabGroup<any>, id: string, x: number, y: number): P
 		if (bar && inside(bar.getBoundingClientRect(), x, y)) {
 			const stripEl = bar.querySelector('[data-sd-tabs]')!;
 			const strip = stripEl.getBoundingClientRect();
-			const others = [...bar.querySelectorAll<HTMLElement>('[data-sd-tabs] > [role=tab]')].filter((t) => t.id !== `${tabs.id}-tab-${id}`).map((t) => t.getBoundingClientRect());
+			const others = [...bar.querySelectorAll<HTMLElement>('[data-sd-tablist] > [role=tab]')].filter((t) => t.id !== `${tabs.id}-tab-${id}`).map((t) => t.getBoundingClientRect());
 			const rtl = panes.rtl;
 			const pinned = pane.tabs.filter((t) => t !== id && tabs.get(t)?.pinned).length;
 			// After every tab whose middle it passed, in the bar's order; never before a pinned one.
@@ -110,7 +110,7 @@ export function paneTabDrag(node: HTMLElement, params: PaneTabDragParams) {
 	};
 	const off = pointerDrag(node, {
 		threshold: THRESHOLD,
-		canStart: (e) => !p.tab.pinned && !(e.target instanceof Element && e.target.closest('button, input, textarea, select, a[href], [contenteditable]')),
+		canStart: (e) => !p.tab.pinned && !(e.target instanceof Element && e.target.closest('button, input, textarea, select, a[href], [contenteditable], [data-sd-tab-close]')),
 		onStart() {
 			p.dragging(true);
 			document.documentElement.setAttribute('data-sd-pane-dragging', '');

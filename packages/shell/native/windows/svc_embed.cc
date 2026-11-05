@@ -180,6 +180,15 @@ static void register_view_ops() {
     g_focus_when_ready.clear();
     c->ok();
   });
+  // The keyboard back to the window's own page, from a view (F6, <WindowTabs>): nothing else takes it there but a press.
+  reg("view", "focusPage", [](CallPtr c) {
+    Window *w = find_window(resolve_window(*c));
+    if (!w) return c->fail("invalid_args", "view.focusPage: no such window");
+    g_focus_when_ready.clear();
+    g_with_focus.erase(w->id);
+    if (w->view.controller) w->view.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    c->ok();
+  });
   reg("view", "create", [](CallPtr c) {
     Window *w = find_window(resolve_window(*c));
     if (!w) return c->fail("invalid_args", "view.create: no such window");

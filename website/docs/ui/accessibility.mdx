@@ -1,0 +1,128 @@
+---
+title: Accessibility
+description: What kitop guarantees, what your app owns, and what hasn't been verified.
+---
+
+kitop has no accessibility certification and makes no conformance claim (WCAG, Section 508, EN 301 549). **No screen reader has been run against it yet.** What follows says what's tested, how, and what isn't.
+
+The system web view exposes your page's HTML to the OS's accessibility tree, so most of your app's accessibility is yours, and works as it does in a browser with the same engine. kitop only answers for what it draws and what it adds.
+
+## What's checked
+
+These run on Linux (WebKitGTK), in a real window, with real key presses (`packages/shell/test/docker/a11y.test.ts`, part of the end-to-end suite). They haven't run on macOS or Windows, where the engine differs.
+
+| Checked | How |
+| --- | --- |
+| axe-core finds nothing in the tab bars, panels and lines between panes, in `examples/panes` and `examples/dashboard`, in one pane, two, and without panes | The test fails on these |
+| A tab list holds only tabs, a tab's name is its title, `aria-controls` and `aria-labelledby` point at something | The test fails on these |
+| Every keyboard action in the table below | Real keys |
+| The keyboard stays in the bar when the tab it's on closes, its pane going with it included | Real keys |
+| A focus ring shows on a tab and on the line between two panes | Computed style. Whether you can see it against your colors isn't measured |
+| `host.system.accessibility` updates, popovers and dragged-out windows stop moving under reduced motion | Unit tests with a stubbed `matchMedia`, not a system setting |
+
+Automated checks find a part of the problems. They can't tell whether something is announced sensibly. That's for a person: [the manual test plan](https://github.com/beynar/svelte-desktop/blob/main/packages/shell/test/a11y-manual-plan.md) covers VoiceOver, NVDA and Orca, and has no results yet.
+
+## The keyboard in `<WindowTabs>`
+
+With the keyboard on a tab:
+
+| Key | What it does |
+| --- | --- |
+| ← → Home End | Another tab of the bar, shown at once |
+| Delete (or the Mac's delete key) | Close the tab. The keyboard stays in the bar, on the tab shown next |
+| Enter, Space | Into what the tab shows: its web view, or the page |
+| ⇧← ⇧→ | Move the tab along its bar |
+| ⌥← ⌥→ ⌥↑ ⌥↓ | Panes: move the tab to a new pane on that side |
+| ⌥PageUp ⌥PageDown | Panes: move the tab to the pane before or after |
+
+From anywhere in the window:
+
+| Key | What it does |
+| --- | --- |
+| F6 (fn+F6 on most Mac laptops) | Between what the active tab shows and its tab in the bar. It's in the **Tab** menu, as **Focus Tab Bar** |
+| ⌘W ⌘T ⇧⌘T ⌃⇥ ⌘1–9 | As in the [Tab menu](/ui/tabs) |
+| ⌘\\ ⇧⌘\\ ⌘⌥] ⌘⌥[ | [Split, and go from pane to pane](/ui/tabs) |
+
+On the line between two panes: the arrows move it, Home and End go to its ends, Enter makes the two sides equal.
+
+What has no keyboard way:
+
+- Moving a tab to **another window's bar**. **Move Tab to New Window**, in the Tab menu, opens it in a new window; joining an existing one takes a drag.
+- The **×** on a tab. It's for the pointer and is hidden from the tree: Delete does the same. Voice control can't name it.
+
+## What you own
+
+- **Your pages**: their structure, landmarks, headings, names, focus inside them, and live regions.
+- **Colors and contrast.** kitop's styles only lay out: tabs, the × and the + inherit your text color on your background, so their contrast is yours. What kitop paints by default: the line where a dragged tab lands and the line between panes, in the system's `Highlight` (`color-mix` of it on hover). Override them with [`--sd-tab-drop-color` and `--sd-pane-splitter*`](/ui/tabs#styling). Check them against your theme.
+- **A focus ring that survives your CSS.** Without your styles, a tab shows the system's ring. Setting `outline` on `[role=tab]` replaces it.
+- **Your `tab`, `start` and `end` snippets.** A focusable control inside a `tab` snippet is a nested interactive control that a screen reader can't reliably reach: mark it `data-sd-tab-close` and `aria-hidden="true"`, on an element that isn't a button, as the default content does. Delete still closes the tab.
+- **Your layout's landmarks.** `<WindowTabs>` doesn't add a `<main>`. Without panes, put one in your layout or in your pages, not both: they'd nest. In panes, each page is its own document and needs its own.
+- **Motion in your pages.** `prefers-reduced-motion` works as in a browser. kitop stops a popover's animation and the window of a tab dragged out. `host.window.create({ animate })` and `popover.create({ animate: true })` do what you ask, whatever the system's setting. A macOS sheet's own fade and slide don't follow the setting yet.
+- **Labels.** `label`, `newTabLabel` and `resizeLabel` default to English. Translate them. Native menu items of the **Tab** menu are in English too.
+- **`<StatusItem>` needs a `tooltip`.** An icon alone may be read by its symbol's name.
+- **Window controls of a frameless window.** Traffic lights on macOS are native. On Linux and Windows, `titleBarStyle` other than `default` leaves no controls: the buttons you draw are yours.
+
+## Native views over the page
+
+A kept-alive tab, a pane's tab, a popover and a sheet are separate web views: each a document of its own in the OS's tree. In the window's page, a panel is an empty `role=tabpanel` under the native view. This is from reading the native code, not from running a screen reader.
+
+| | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| A view not on screen | Out of the window: not in the tree | `gtk_widget_hide` | Child window hidden, web view not visible |
+| Keyboard into a view | `makeFirstResponder` | `gtk_widget_grab_focus` | `MoveFocus` |
+| Back to the window's page | F6 | F6 (tested) | F6 |
+| Tab past a view's last element | Not known: no key view loop is set | Not known | [Cycles inside the view](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2movefocusrequestedeventargs) by WebView2's documentation: `MoveFocusRequested` isn't handled, and the view's windows aren't tab stops |
+| A popover on show | Key window, focus in its page (`activate`, default on) | Presented, focus in its page | Focus in its page |
+| Escape closes a popover | Yes (`closeOnEscape`, default on) | Yes | Yes |
+| Sheet | macOS only: focus in its page, `[autofocus]` honored. `style: 'sheet'` is AppKit's; the attached and dialog styles are child windows over a view blocking clicks | | |
+
+Not known without a screen reader:
+
+- Where a view comes in the reading order. On macOS it should follow the order views were added to the window, not where panes are on screen.
+- Whether a screen reader says anything for the empty `tabpanel`, or how it relates it to the view above it. Nothing links the two in the tree.
+- Whether an attached sheet is treated as modal: the page behind it may stay reachable with the VoiceOver cursor.
+- Whether focus goes back to the control that opened a popover. The code doesn't restore it; it relies on the window getting the keyboard back.
+- A view still loading, on macOS: see-through for up to three seconds, and in the tree meanwhile.
+
+On macOS, what Tab reaches in a web view may depend on **Keyboard navigation** in System Settings, as it does in Safari. F6 doesn't, and neither do the keys on a tab once it has the keyboard.
+
+## What kitop adds to pages
+
+No element in your `<body>`, and no role, label or `tabindex` on yours. Added to every page:
+
+- A `<style>` at the top of `<head>`: `overscroll-behavior` and three registered CSS properties.
+- Attributes on `<html>` (`data-desktop-*`, `data-shell-popover`) and CSS variables (`--desktop-titlebar-height`, `--desktop-controls-width`). Neither reaches the tree.
+- **Drag regions** are a mouse listener on `[data-desktop-drag]` and `--app-region: drag`. They have no role and no keyboard way: use the OS's way of moving a window (Alt+Space on Windows, the **Window** menu on macOS).
+- A press on `button`, `a`, form fields, `[role=button]`, `[role=tab]` and `[data-desktop-no-drag]` doesn't drag the window. Other roles do (`role=checkbox`, `role=menuitem`…): mark them `--app-region: no-drag`.
+
+In panes, kitop sets the window page's `document.title` to the active tab's: no route gives it one there.
+
+`<WindowTabs>` renders no bar and no panel in a popover or a kept-alive view: the page alone. `<MenuBar>` and `<Popover>` render nothing in your page, and `<PopoverContent>` a plain `<div>`: native menus are the system's.
+
+## System preferences
+
+`host.system.accessibility`, read at `init()` and again when the page's engine reports a change to reduced motion, contrast, forced colors or reduced transparency. A preference the engine doesn't report only updates on the next `init()`.
+
+| Field | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `reduceMotion` | `accessibilityDisplayShouldReduceMotion` | `gtk-enable-animations` | `SPI_GETCLIENTAREAANIMATION` |
+| `highContrast` | Increase contrast | The GTK theme's name contains `Contrast`: a guess | `HCF_HIGHCONTRASTON` |
+| `differentiateWithoutColor` | Yes | Always `false` | Always `false` |
+| `reduceTransparency` | Yes | Always `false` | `EnableTransparency` in the registry |
+
+`false` can mean "not asked" or "can't tell". For styling, prefer CSS, which the engine answers: `prefers-reduced-motion`, `prefers-contrast`, `forced-colors`, `prefers-reduced-transparency`. Which of these each engine follows hasn't been checked on each OS.
+
+Compared with the others:
+
+| | kitop | [Electron](https://www.electronjs.org/docs/latest/api/native-theme) | [Tauri](https://v2.tauri.app/reference/javascript/api/namespacewindow/) |
+| --- | --- | --- | --- |
+| Reduced motion | ✓ | `systemPreferences.getAnimationSettings()` | CSS only |
+| High contrast | ✓ (a guess on Linux) | `nativeTheme.shouldUseHighContrastColors` (macOS, Windows) | CSS only |
+| Forced colors | CSS only | `nativeTheme.inForcedColorsMode` (Windows) | CSS only |
+| Inverted colors | — | `nativeTheme.shouldUseInvertedColorScheme` (macOS, Windows) | — |
+| Reduced transparency | ✓ (not on Linux) | `nativeTheme.prefersReducedTransparency` | CSS only |
+| Differentiate without color | macOS | `nativeTheme.shouldDifferentiateWithoutColor` (macOS) | — |
+| A change event | Through the engine's media queries | `nativeTheme`'s `updated` | CSS only |
+| Whether a screen reader is running | — | `app.accessibilitySupportEnabled`, `accessibility-support-changed` (macOS, Windows) | — |
+
+There's no way to ask whether a screen reader is running. A page shouldn't change for one anyway, and macOS, Linux and Windows would each need their own check.

@@ -117,9 +117,9 @@
 			{@const icon = tab.url ? globeIcon : (icons[new URL(tab.path ?? '/', 'http://x').pathname as keyof typeof icons] ?? squaresFourIcon)}
 			{@render icon({ class: `size-3.5 shrink-0 ${active ? 'text-primary' : 'text-neutral-readable'}` })}
 			<span class="min-w-0 flex-1 truncate">{tab.title || tab.path}</span>
-			<button type="button" aria-label={`Close ${tab.title}`} class="tab-close state-layer grid size-4 shrink-0 place-items-center rounded text-xs" onclick={close}
-				>✕</button
-			>
+			<!-- For the pointer: a control inside a tab can't be reached by a screen reader. Delete closes the tab. -->
+			<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+			<span data-sd-tab-close aria-hidden="true" class="tab-close state-layer grid size-4 shrink-0 place-items-center rounded text-xs" onclick={close}>✕</span>
 		{/snippet}
 
 		{#snippet layout({ bar, content, api })}

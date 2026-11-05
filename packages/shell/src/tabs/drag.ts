@@ -108,7 +108,7 @@ export function tabDrop(node: HTMLElement, params: TabDropParams) {
 	let boxes: { strip: DOMRect; tabs: Array<{ id: string; box: DOMRect }> } | null = null;
 	const measure = () => {
 		const prefix = `${p.tabs.id}-tab-`;
-		const tabs = [...node.querySelectorAll<HTMLElement>('[data-sd-tabs] > [role=tab]')].map((el) => ({ id: el.id.slice(prefix.length), box: el.getBoundingClientRect() }));
+		const tabs = [...node.querySelectorAll<HTMLElement>('[data-sd-tablist] > [role=tab]')].map((el) => ({ id: el.id.slice(prefix.length), box: el.getBoundingClientRect() }));
 		return { strip: node.querySelector('[data-sd-tabs]')!.getBoundingClientRect(), tabs };
 	};
 	// Where a tab let go at `x` goes: after every other tab whose middle is left of it, never
