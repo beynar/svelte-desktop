@@ -24,7 +24,7 @@ test.skipIf(!!process.env.DESKTOP_TEST_DEV)('localStorage and IndexedDB are stil
 			tx.oncomplete = done;
 		});
 	})()`);
-	await Bun.sleep(1500); // what web views write to disk comes a moment after
+	await Bun.sleep(3000); // what web views write to disk comes a moment after, later under load
 	await first.close();
 
 	const second = await launch({});
