@@ -39,8 +39,14 @@ function executable() {
 	return join(dir, /^Exec=(\S+)/m.exec(readFileSync(join(dir, entry), 'utf8'))![1]!);
 }
 
-afterAll(() => {
+// pkill returns before the process is gone. Until it is, its single-instance lock sends the next launch away.
+async function killApp() {
 	Bun.spawnSync(['pkill', '-9', '-f', executable()]);
+	for (let i = 0; i < 200 && Bun.spawnSync(['pgrep', '-f', executable()]).exitCode === 0; i++) await Bun.sleep(25);
+}
+
+afterAll(async () => {
+	await killApp();
 	rmSync(statePath, { force: true });
 	rmSync(root, { recursive: true, force: true });
 });
@@ -60,7 +66,7 @@ test('healthy: counted at launch, not confirmed at once, confirmed once a page h
 test('dying before a page, twice: the previous version comes back and starts', async () => {
 	applied();
 	const first = Bun.spawn([executable()], { stdout: 'ignore', stderr: 'ignore' });
-	await Bun.sleep(150);
+	for (let i = 0; i < 1000 && state()?.attempts !== 1; i++) await Bun.sleep(5); // counted, and no page yet
 	first.kill(9);
 	await first.exited;
 	expect(state()?.attempts).toBe(1);
@@ -73,7 +79,7 @@ test('dying before a page, twice: the previous version comes back and starts', a
 	expect(readFileSync(`${root}/installed`, 'utf8')).toBe('old');
 	const processes = await new Response(Bun.spawn(['ps', '-eo', 'args'], { stdout: 'pipe' }).stdout).text();
 	expect(processes.split('\n').some((l) => l.startsWith(executable()))).toBe(true);
-	Bun.spawnSync(['pkill', '-9', '-f', executable()]);
+	await killApp();
 }, 60_000);
 
 test('a packaged app ignores what points dev at other code', async () => {

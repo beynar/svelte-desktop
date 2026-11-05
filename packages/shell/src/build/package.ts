@@ -411,8 +411,8 @@ async function packageMac(c: ResolvedConfig, stage: string): Promise<PackageResu
   return result;
 }
 
-/** Updater release (archive + delta patch + signed manifest) for an app bundle/directory; `os` prefixes the artifact name and manifest keys. */
-export async function writeRelease(c: ResolvedConfig, app: string, arches: Arch[], dist: string, os: "darwin" | "linux" | "windows" = "darwin") {
+/** Updater release (archive + delta patch + signed manifest) for an app bundle/directory; `os` prefixes the artifact name and manifest keys. `appImage` adds that file under `appimage-<arch>`. */
+export async function writeRelease(c: ResolvedConfig, app: string, arches: Arch[], dist: string, os: "darwin" | "linux" | "windows" = "darwin", appImage?: string) {
   const { createArchive } = await import("../updater/archive.ts");
   const { sha256File } = await import("../updater/download.ts");
   const { signManifest } = await import("../updater/manifest.ts");
@@ -426,6 +426,13 @@ export async function writeRelease(c: ResolvedConfig, app: string, arches: Arch[
   const keys = arches.length > 1 ? [`${os}-arm64`, `${os}-x64`] : [`${os}-${arches[0]}`];
   const url = (f: string) => (c.update!.baseUrl ? `${c.update!.baseUrl.replace(/\/$/, "")}/${c.version}/${f}` : `${c.version}/${f}`);
   artifact.url = url(file);
+  const artifacts: Record<string, typeof artifact> = Object.fromEntries(keys.map((k) => [k, artifact]));
+  if (appImage) {
+    // In a tar like every artifact: older clients refuse a manifest with a format they don't know.
+    const imageFile = file.replace(`-${os}-`, "-appimage-");
+    await createArchive([appImage], join(dir, imageFile), "tar.zst");
+    artifacts[`appimage-${arches[0]}`] = { url: url(imageFile), sha256: await sha256File(join(dir, imageFile)), size: statSync(join(dir, imageFile)).size, format: "tar.zst" };
+  }
 
   // Delta patch from the previous release in release/ (per-file rsync-style, see updater/delta.ts).
   const patches: Array<{ from: string; url: string; sha256: string; size: number }> = [];
@@ -457,7 +464,7 @@ export async function writeRelease(c: ResolvedConfig, app: string, arches: Arch[
     version: c.version,
     channel: c.update!.channel ?? "stable",
     releasedAt: new Date().toISOString(),
-    artifacts: Object.fromEntries(keys.map((k) => [k, artifact])),
+    artifacts,
     ...(patches.length ? { patches: Object.fromEntries(keys.map((k) => [k, patches])) } : {}),
   };
   const keyPath = c.update!.privateKey ?? process.env.KITOP_UPDATE_KEY;

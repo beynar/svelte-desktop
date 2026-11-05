@@ -5,6 +5,7 @@
 #   test/docker/run.sh platform   native platform suites under Xvfb   [suite...]
 #   test/docker/run.sh notes      build examples/notes for Linux and drive it with launch()
 #   test/docker/run.sh e2e        the built examples driven by launch() (test/docker/e2e.sh)
+#   test/docker/run.sh update     real updates of the Linux app folder and AppImage (test/docker/update.sh)
 #   test/docker/run.sh shell      interactive shell in the image (repo at /src)
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
@@ -19,6 +20,7 @@ case "$cmd" in
   platform) docker run --rm --init -v "$shell":/shell -w /shell "$IMAGE" test/run-platform-linux.sh "$@" ;;
   notes) mkdir -p "$here/results"; docker run --rm --init -v "$repo":/src:ro -v "$here/results":/results "$IMAGE" sh /src/packages/shell/test/docker/notes.sh "$@" ;;
   e2e) docker run --rm --init -v "$repo":/src:ro "$IMAGE" sh /src/packages/shell/test/docker/e2e.sh ;;
+  update) docker run --rm --init -v "$repo":/src:ro "$IMAGE" sh /src/packages/shell/test/docker/update.sh ;;
   shell) docker run --rm -it --init -v "$repo":/src:ro "$IMAGE" bash ;;
   *) echo "unknown command $cmd"; exit 2 ;;
 esac

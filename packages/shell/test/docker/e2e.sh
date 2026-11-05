@@ -35,3 +35,6 @@ bun test --timeout 60000 tests/panes.test.ts
 # Under vite dev, with only what's known to pass: `tests/tabs.test.ts` has two failures of its own.
 prepare dashboard
 bun test --timeout 60000 tests/tabs.test.ts -t 'popover route'
+
+# Real updates of the Linux app folder and AppImage, and their rollback (about 2 minutes).
+sh /work/packages/shell/test/docker/update.sh

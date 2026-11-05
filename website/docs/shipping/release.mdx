@@ -1,6 +1,6 @@
 ---
 title: Release with CI
-description: Build and publish installers for macOS, Windows and Linux, plus signed macOS and Windows update feeds, through GitHub Actions and R2.
+description: Build and publish installers and a signed update feed for macOS, Windows and Linux, through GitHub Actions and R2.
 ---
 
 Releasing means building the app, signing it, uploading the installers and the update archives to a [Cloudflare R2](https://developers.cloudflare.com/r2/) bucket, and publishing a signed `update.json` that installed apps pick up through [self-update](/shipping/self-update). You can do it from your Mac with a handful of commands, or from GitHub Actions for every platform at once. Both start with the same one-time setup.
@@ -18,7 +18,11 @@ https://updates.example.com/myapp/
 │   ├── 1.4.0/                           ← update archives and delta patches for 1.4.0
 │   │   ├── MyApp-1.4.0-darwin-universal.tar.zst
 │   │   ├── MyApp-1.4.0-darwin-universal.from-1.3.0.sdpatch
-│   │   └── MyApp-1.4.0-windows-x64.tar.zst
+│   │   ├── MyApp-1.4.0-windows-x64.tar.zst
+│   │   ├── MyApp-1.4.0-linux-x64.tar.zst        ← the app folder
+│   │   ├── MyApp-1.4.0-linux-x64.from-1.3.0.sdpatch
+│   │   ├── MyApp-1.4.0-appimage-x64.tar.zst     ← the AppImage
+│   │   └── … and the same for arm64
 │   └── 1.3.0/ …
 └── downloads/
     ├── 1.4.0/                           ← installers for your website, by version
@@ -186,12 +190,12 @@ aws s3 cp update.json s3://$BUCKET/$APP_SLUG/$CHANNEL/update.json --endpoint-url
 `update.json` goes last, as in [the rules](#rules) below.
 
 :::warning
-A Mac-only `update.json` replaces a feed that also lists Windows: Windows users stop seeing updates until the next release that includes Windows. Once you ship Windows too, release from CI.
+A Mac-only `update.json` replaces a feed that also lists Windows or Linux: those users stop seeing updates until the next release that includes them. Once you ship them too, release from CI.
 :::
 
 ## Releasing from CI
 
-Pushing a tag like `v1.4.0` builds the app for every platform, signs it, uploads everything to the bucket and publishes a signed `update.json` that installed macOS and Windows apps pick up. Linux installers are published for manual installation: the generated Linux update archive is not currently compatible with the installer (see [platform support](/shipping/self-update#platform-support)), so Linux is left out of the update feed.
+Pushing a tag like `v1.4.0` builds the app for every platform, signs it, uploads everything to the bucket and publishes a signed `update.json` that installed apps pick up, on every platform.
 
 ```
 git tag v1.4.0 && git push origin v1.4.0
@@ -262,7 +266,7 @@ Copy this file as is for a project at the repository root, using the default `.d
 The Windows job cross-builds C/C++ plugins and addons, but skips Rust and Go plugins. If the Windows app needs Rust or Go plugins, it needs a native Windows build job instead of this cross-build job. Swift and Objective-C plugins are macOS only. See [plugin platforms](/native/plugins/platforms).
 :::
 
-The first Windows run builds the Docker image of the toolchain, which takes a few minutes. The Linux upload step accepts either installer if the other is missing: to require `.AppImage` output, add a shell check after the build, since `appimagetool` failures are warnings in the packager.
+The first Windows run builds the Docker image of the toolchain, which takes a few minutes. The Linux upload step accepts either installer if the other is missing: to require `.AppImage` output, add a shell check after the build, since `appimagetool` failures are warnings in the packager. A release without the AppImage has no `appimage-<arch>` key, so AppImage installs don't see that update.
 
 <Expandable title="release.yml">
 
@@ -377,6 +381,9 @@ jobs:
           sudo curl -fsSL -o /usr/local/bin/appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$(uname -m).AppImage"
           sudo chmod +x /usr/local/bin/appimagetool
 
+      - name: Previous release (for delta patches)
+        run: bunx kitop release fetch-previous "$UPDATES_URL/$APP_SLUG/$CHANNEL/update.json" --platform ${{ matrix.platform }} --public-key "${{ vars.UPDATE_PUBLIC_KEY }}"
+
       - name: Build
         env:
           RELEASE_CHANNEL: ${{ env.CHANNEL }}
@@ -390,6 +397,8 @@ jobs:
           path: |
             .desktop/dist/*.tar.gz
             .desktop/dist/*.AppImage
+            .desktop/dist/release/${{ needs.check.outputs.version }}/
+            .desktop/dist/release/update.unsigned.json
 
   windows:
     needs: check
@@ -450,11 +459,11 @@ jobs:
         with:
           path: dists # one folder per job: dists/dist-macos, dists/dist-linux-x64, …
 
-      - name: One signed update.json for macOS and Windows
+      - name: One signed update.json for every platform
         env:
           UPDATE_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
         run: |
-          bunx kitop release merge dists/dist-macos/release/update.unsigned.json dists/dist-windows/release/update.unsigned.json --key-env UPDATE_PRIVATE_KEY --out update.json
+          bunx kitop release merge dists/dist-*/release/update.unsigned.json --key-env UPDATE_PRIVATE_KEY --out update.json
           bunx kitop release verify update.json --public-key "${{ vars.UPDATE_PUBLIC_KEY }}"
 
       - name: Upload the update archives
@@ -514,7 +523,7 @@ With CI. From your Mac, [the commands above](#releasing-from-your-mac-without-ci
     ```sh
     curl -s https://updates.example.com/myapp/stable/update.json | jq '{version, artifacts: (.artifacts | keys)}'
     ```
-    It must show the new version and the keys `darwin-arm64`, `darwin-x64` and `windows-x64`. Linux installers must be present under `downloads/`. An installed older macOS or Windows version offers the update the next time it calls `host.update.check()`.
+    It must show the new version and the keys `darwin-arm64`, `darwin-x64`, `windows-x64`, `linux-x64`, `linux-arm64`, `appimage-x64` and `appimage-arm64`. Linux installers must be present under `downloads/`. An installed older version offers the update the next time it calls `host.update.check()`.
   </Step>
 </Steps>
 
@@ -551,7 +560,7 @@ Users on `beta` get beta builds. Users on `stable` never see them, because a man
 - **`update.json` is uploaded last**, always.
 - **To pull a bad release,** publish a fixed one with a higher version. Re-uploading an older `update.json` does nothing: installed apps never downgrade. To mark the fix as mandatory, publish it with `minimumVersion` (`release merge --minimum-version 1.4.1`; in CI, add the flag to the `release merge` line of the workflow). This sets `mandatory: true` for older installs; your app decides how to enforce it.
 - **CI only needs the private key in the publish job**, through `UPDATE_PRIVATE_KEY`. Keep local `updater.key` files ignored and backed up in your password manager. Builds do not need the key.
-- **This workflow makes delta patches for macOS** against the previous published version. Windows always downloads the full archive. macOS clients on older versions also get the full archive.
+- **This workflow makes delta patches for macOS and the Linux app folder** against the previous published version. Windows and AppImages always download the full archive. Clients on older versions also get the full archive.
 
 ## Troubleshooting
 
@@ -562,7 +571,8 @@ Users on `beta` get beta builds. Users on `stable` never see them, because a man
 | macOS: notarization `Invalid` | The build prints the `xcrun notarytool log <id> --keychain-profile notary` command. Run it on your Mac with the same API key to see Apple's reasons. Run `bunx kitop preflight .desktop/dist/MyApp.app` locally first. |
 | macOS: `notarytool` can't find the profile `notary` | Check the credential-import step, the selected keychain and `APPLE_API_KEY_P8_BASE64`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID`. |
 | linux: `Package gtk+-3.0 was not found` | The apt step didn't run or failed: it must come before the build. |
-| linux: no `.AppImage` | The build prints `AppImage: appimagetool failed …`. The `.tar.gz` still ships; check that the appimagetool download step succeeded. |
+| linux: no `.AppImage` | The build prints `AppImage: appimagetool failed …`. The `.tar.gz` still ships and the app folder still updates, but AppImage installs see no update for this release; check that the appimagetool download step succeeded. |
+| The app says `not_writable` | It's installed somewhere this user can't write to, like `/opt`. See [Linux](/shipping/self-update#linux). |
 | windows: Docker errors | This cross-build job needs Docker. On the configured Ubuntu runner, check `docker info` and the native toolchain build output. A native Windows job uses a different toolchain setup. |
 | publish: `merge: … is 1.4.0, … is 1.3.9` | A job built from another commit. Re-run all jobs of the workflow. |
 | publish: `verify` fails | `UPDATE_PUBLIC_KEY` isn't the public half of `UPDATE_PRIVATE_KEY`. Run `cat updater.key.pub` and fix the variable. |

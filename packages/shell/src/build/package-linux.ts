@@ -2,7 +2,7 @@
 // 'linux' or the host is Linux:
 //   staged server graph → bun build --compile --target=bun-linux-<arch> →
 //   <outDir>/<appName>/ { <exe>, lib/libshell.so, lib/libapp-native.so,
-//   lib/addons/*.node, sidecars, <identifier>.png, <identifier>.desktop }
+//   lib/addons/*.node, sidecars, <identifier>.png, <identifier>.desktop, .kitop-app }
 //   → .tar.gz → AppImage (when appimagetool is available) → release/ for the updater.
 //
 // Runtime layout contract (src/os.ts bundledLibDir): libraries live in
@@ -21,6 +21,7 @@ import { $ } from "bun";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
+import { APP_FOLDER_MARKER } from "../updater/platform.ts";
 import { compileStaged, sizeFlags } from "./bun-compile.ts";
 import { appIcons } from "./icons.ts";
 import { buildLanguagePlugins } from "./native-langs.ts";
@@ -201,6 +202,7 @@ export async function packageLinux(c: ResolvedConfig, stage: string): Promise<Pa
   mkdirSync(join(app, "lib"), { recursive: true });
   copyFileSync(exeOut, join(app, exe));
   chmodSync(join(app, exe), 0o755);
+  writeFileSync(join(app, APP_FOLDER_MARKER), `${c.identifier}\n`); // an update replaces this folder as a whole
   copyFileSync(await ensureLibshell(arch, "linux"), join(app, "lib", "libshell.so"));
   const plugin = await buildLinuxPlugin(c, arch, join(work, "native"));
   if (plugin) copyFileSync(plugin, join(app, "lib", "libapp-native.so"));
@@ -249,6 +251,7 @@ export async function packageLinux(c: ResolvedConfig, stage: string): Promise<Pa
   result.artifacts!.push(tgz);
   log(`tar.gz  ${mb(tgz)}`);
 
+  let appImage: string | undefined;
   const appimagetool = Bun.which("appimagetool");
   if (appimagetool) {
     const appDir = join(work, "AppDir");
@@ -267,14 +270,15 @@ export async function packageLinux(c: ResolvedConfig, stage: string): Promise<Pa
       .quiet();
     if (r.exitCode === 0 && existsSync(image)) {
       result.artifacts!.push(image);
+      appImage = image;
       log(`AppImage  ${mb(image)} (uses the system GTK 3 / WebKitGTK 4.1)`);
     } else warn(`AppImage: appimagetool failed (${r.exitCode}): ${r.stderr.toString().trim().split("\n").slice(-3).join(" | ")}`);
   } else {
     log("AppImage  skipped (appimagetool not in PATH)");
   }
 
-  // 4. release artifacts for the updater (key linux-<arch>)
-  if (c.update) result.release = await writeRelease(c, app, [arch], dist, "linux");
+  // 4. release artifacts for the updater (keys linux-<arch> and appimage-<arch>)
+  if (c.update) result.release = await writeRelease(c, app, [arch], dist, "linux", appImage);
 
   const size = Number((await $`du -sk ${app}`.text()).split("\t")[0]) / 1024;
   console.log(`\n  \x1b[32m✓\x1b[0m ${app} (${size.toFixed(1)} MB) in ${((performance.now() - t0) / 1000).toFixed(1)}s`);

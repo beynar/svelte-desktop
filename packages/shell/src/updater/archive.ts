@@ -57,14 +57,17 @@ export async function extractArchive(
 		try {
 			const decompressed = createReadStream(archivePath).pipe(zstdDecompressStream());
 			for await (const chunk of decompressed as AsyncIterable<Uint8Array>) {
-				proc.stdin.write(chunk);
+				await proc.stdin.write(chunk); // a promise when the pipe is full: unawaited, its EPIPE goes unhandled
 				await proc.stdin.flush();
 			}
 			await proc.stdin.end();
 		} catch (err) {
-			proc.kill();
-			await proc.exited;
-			throw new UpdateError("extract_failed", `zstd decompression failed: ${(err as Error).message}`, { cause: err });
+			// tar stops at the end-of-archive marker and can be gone before the padding after it: its exit code decides, below.
+			if ((err as NodeJS.ErrnoException)?.code !== "EPIPE") {
+				proc.kill();
+				await proc.exited;
+				throw new UpdateError("extract_failed", `zstd decompression failed: ${(err as Error).message}`, { cause: err });
+			}
 		}
 	}
 	const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);

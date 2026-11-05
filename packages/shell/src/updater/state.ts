@@ -7,6 +7,8 @@ export interface Move {
 	backup: string;
 	/** Whether `dest` existed before the update (false = file added by the update). */
 	existed: boolean;
+	/** Next to `dest`: `src` goes here first, so what can fail or take time (another filesystem) is over before `dest` is touched. */
+	via?: string;
 }
 
 export type Phase =

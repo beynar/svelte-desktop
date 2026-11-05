@@ -9,7 +9,7 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 
 - **Smaller builds need a canary Bun.** `build.trim` and `build.aot` are unavailable on stable Bun. See [Distribution](/shipping/distribution#macos).
 - **Ops vary by platform.** Many window and app ops are macOS-only and answer `unsupported` elsewhere. `host.capabilities.describe()` lists the operations registered in the running build; a registered operation can still reject because the OS, permission or runtime is unavailable.
-- **Self-update has platform and recovery gaps**: no Linux support, no delta patches on Windows, no recovery from an executable the OS can't launch at all. See [Self-update](/shipping/self-update#platform-support).
+- **Self-update has platform and recovery gaps**: no delta patches on Windows or for AppImages, no recovery from an executable the OS can't launch at all. See [Self-update](/shipping/self-update#platform-support).
 
 | Feature | macOS | Linux | Windows |
 | --- | --- | --- | --- |
@@ -45,6 +45,8 @@ These are shell API limits. The page still has the web APIs its installed web en
 - Global shortcuts and screen capture need X11; on Wayland they answer `unsupported`.
 - C/C++ plugins, source addons, Rust and Go plugins need a Linux host. See [Distribution](/shipping/distribution#linux).
 - Native inline notification replies are unavailable; reply buttons become plain actions. Scheduling catches up when the app restarts rather than delivering while it is closed.
+- The build makes an app folder and an AppImage, not deb, rpm or Flatpak packages. Self-update covers those two; an install this user can't write to, in `/opt` for instance, answers `not_writable`. See [Self-update](/shipping/self-update#linux).
+- Self-update has been run through real updates and rollbacks on Ubuntu 24.04 only, under Xvfb. Other distributions and real desktop sessions haven't been covered.
 
 ## Tooling
 

@@ -2,6 +2,7 @@
  * Auto-updater: signed static manifest -> verified download -> post-exit swap
  * helper -> confirm / automatic rollback. See ./README.md.
  */
+import { lstatSync } from "node:fs";
 import { chmod, lstat, mkdir, readdir, rename, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { extractArchive } from "./archive.ts";
@@ -9,7 +10,7 @@ import { downloadVerified, hasVerifiedFile, type DownloadProgress } from "./down
 import { UpdateError } from "./errors.ts";
 import { helperCommand, psQuote, renderPs1Helper, renderShHelper, shQuote, type HelperPlan } from "./helper.ts";
 import { isSemver, parseSignedManifest, type Artifact, type PlatformKey, type UpdateManifest } from "./manifest.ts";
-import { defaultDataDir, isCompiledBinary, locateInstall, platformKeyOf, type InstallLocation } from "./platform.ts";
+import { APP_FOLDER_MARKER, defaultDataDir, isCompiledBinary, locateInstall, platformKeyOf, type InstallLocation } from "./platform.ts";
 import { readState, writeState, clearState, type Move, type UpdateState } from "./state.ts";
 
 export { UpdateError, type UpdateErrorCode } from "./errors.ts";
@@ -47,6 +48,8 @@ export interface UpdaterOptions {
 	quit?: () => unknown;
 	/** argv the helper uses to relaunch. Default: `open <App>.app` on macOS, the executable elsewhere. */
 	relaunchCommand?: string[];
+	/** Where $APPIMAGE and $APPDIR are read. Default process.env. */
+	env?: Record<string, string | undefined>;
 }
 
 export interface UpdateInfo {
@@ -132,6 +135,14 @@ async function exists(path: string): Promise<boolean> {
 	}
 }
 
+const statOf = (path: string) => {
+	try {
+		return lstatSync(path);
+	} catch {
+		return null;
+	}
+};
+
 async function rmQuiet(path: string): Promise<void> {
 	try {
 		await rm(path, { recursive: true, force: true });
@@ -165,8 +176,17 @@ export function createUpdater(options: UpdaterOptions): Updater {
 				`not running from a compiled app (process.execPath is ${process.execPath}); pass installPath to override`,
 			);
 		}
-		cachedInstall = locateInstall(options.installPath ?? process.execPath, platform);
+		cachedInstall = locateInstall(options.installPath ?? process.execPath, platform, options.env ?? process.env);
 		return cachedInstall;
+	}
+
+	/** Which artifact is ours. Not knowing the install (dev run): the plain key, apply() will refuse anyway. */
+	function installKind(): InstallLocation["kind"] | undefined {
+		try {
+			return install().kind;
+		} catch {
+			return undefined;
+		}
 	}
 
 	function quitApp(): unknown {
@@ -179,7 +199,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 	function relaunchArgv(loc: InstallLocation, args: string[] = []): string[] {
 		if (options.relaunchCommand) return [...options.relaunchCommand, ...args];
 		if (loc.kind === "app-bundle") return ["/usr/bin/open", "-n", loc.target, ...(args.length ? ["--args", ...args] : [])];
-		return [loc.target, ...args];
+		return [loc.exe ?? loc.target, ...args];
 	}
 
 	async function check(opts: { signal?: AbortSignal } = {}): Promise<UpdateInfo | null> {
@@ -208,7 +228,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 		const state = await readState(statePath);
 		if (state?.phase === "rolled-back" && state.to === manifest.version) return null;
 
-		const platformKey = platformKeyOf(platform, arch);
+		const platformKey = platformKeyOf(platform, arch, installKind());
 		const artifact = platformKey ? manifest.artifacts[platformKey] : undefined;
 		if (!platformKey || !artifact) return null;
 
@@ -242,12 +262,33 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			}
 			return [{ src: join(staged.payloadDir, apps[0]!), dest: loc.target, backup: `${loc.target}.old`, existed: true }];
 		}
+		const only = staged.entries.length === 1 ? statOf(join(staged.payloadDir, staged.entries[0]!)) : null;
+		// Whatever the installed name: the archive's folder or file takes it.
+		const swapWhole = (): Move[] => [{ src: join(staged.payloadDir, staged.entries[0]!), dest: loc.target, backup: `${loc.target}.old`, existed: true, via: `${loc.target}.new` }];
+		if (loc.kind === "app-folder") {
+			const exe = basename(loc.exe!);
+			const folder = only?.isDirectory() ? join(staged.payloadDir, staged.entries[0]!) : null;
+			if (!folder || !statOf(join(folder, exe))?.isFile() || !statOf(join(folder, APP_FOLDER_MARKER))) {
+				throw new UpdateError("layout_invalid", `archive must contain one app folder with the executable ${JSON.stringify(exe)} in it, found: ${staged.entries.join(", ") || "(nothing)"}`);
+			}
+			return swapWhole();
+		}
+		if (loc.kind === "appimage") {
+			if (!only?.isFile() || !(only.mode & 0o111)) {
+				throw new UpdateError("layout_invalid", `archive must contain one executable file (the AppImage), found: ${staged.entries.join(", ") || "(nothing)"}`);
+			}
+			return swapWhole();
+		}
 		const exe = basename(loc.target);
+		// A folder can't replace an executable: the archive is for an app folder, and this isn't one.
+		if (only?.isDirectory()) {
+			throw new UpdateError("layout_invalid", `archive holds the folder ${JSON.stringify(staged.entries[0])}, but ${loc.dir} is not an app folder from the build (no ${APP_FOLDER_MARKER}): install the new version by hand`);
+		}
 		let mapping: [string, string][];
 		if (staged.entries.includes(exe)) {
 			mapping = staged.entries.map((e) => [e, join(loc.dir, e)]);
 		} else if (staged.entries.length === 1) {
-			// Single-file archive: it is the executable, whatever the installed name (renamed exe, AppImage).
+			// Single-file archive: it is the executable, whatever the installed name.
 			mapping = [[staged.entries[0]!, loc.target]];
 		} else {
 			throw new UpdateError("layout_invalid", `archive must contain the executable ${JSON.stringify(exe)} at its top level, found: ${staged.entries.join(", ") || "(nothing)"}`);
@@ -273,18 +314,20 @@ export function createUpdater(options: UpdaterOptions): Updater {
 	}
 
 	async function download(info: UpdateInfo, opts: DownloadOptions = {}): Promise<Staged> {
+		// An install that can't be replaced fails now, not after the download.
+		if (installKind()) await assertWritable(install());
 		const stagingRoot = join(dataDir, "staging");
 		const stagingDir = join(stagingRoot, info.version);
 		await mkdir(stagingDir, { recursive: true });
 		// Drop older staged versions.
 		for (const name of await readdir(stagingRoot)) if (name !== info.version) await rmQuiet(join(stagingRoot, name));
 
-		// Delta first (app bundles): rebuild the new .app from the installed one; any
+		// Delta first (app bundles and folders): rebuild the new app from the installed one; any
 		// failure (installed copy modified, bad patch, I/O) falls back to the full archive.
 		if (info.patch) {
 			try {
 				const loc = install();
-				if (loc.kind === "app-bundle") {
+				if (loc.kind === "app-bundle" || loc.kind === "app-folder") {
 					const patchPath = join(stagingDir, "update.sdpatch");
 					if (await hasVerifiedFile(patchPath, info.patch)) {
 						opts.onProgress?.({ received: info.patch.size, total: info.patch.size, fraction: 1 });
@@ -321,27 +364,30 @@ export function createUpdater(options: UpdaterOptions): Updater {
 		return staged;
 	}
 
-	async function assertWritable(dir: string): Promise<void> {
-		if (dir.includes("/AppTranslocation/")) {
+	async function assertWritable(loc: InstallLocation): Promise<void> {
+		if (loc.dir.includes("/AppTranslocation/")) {
 			throw new UpdateError("not_writable", "the app is running translocated (quarantined, read-only); move it to /Applications first");
 		}
-		const probe = join(dir, `.update-probe-${process.pid}-${Date.now()}`);
-		try {
-			await Bun.write(probe, "");
-			await rm(probe, { force: true });
-		} catch (err) {
-			throw new UpdateError("not_writable", `install directory ${dir} is not writable by this user`, { cause: err });
+		// An app folder is renamed in its parent, then deleted once the new version is healthy: both have to be ours.
+		for (const dir of loc.kind === "app-folder" ? [loc.dir, loc.target] : [loc.dir]) {
+			const probe = join(dir, `.update-probe-${process.pid}-${Date.now()}`);
+			try {
+				await Bun.write(probe, "");
+				await rm(probe, { force: true });
+			} catch (err) {
+				throw new UpdateError("not_writable", `install directory ${dir} is not writable by this user`, { cause: err });
+			}
 		}
 	}
 
 	async function apply(staged: Staged, opts: ApplyOptions = {}): Promise<ApplyHandle> {
 		const loc = install();
+		await assertWritable(loc);
 		const moves = planMoves(staged, loc);
 		for (const m of moves) {
 			if (!(await exists(m.src))) throw new UpdateError("layout_invalid", `staged file missing: ${m.src}`);
 			m.existed = await exists(m.dest);
 		}
-		await assertWritable(loc.dir);
 		await mkdir(dataDir, { recursive: true });
 
 		const base = {
@@ -404,6 +450,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 	async function cleanupLeftovers(moves: Move[], backups: boolean): Promise<void> {
 		for (const m of moves) {
 			await rmQuiet(`${m.dest}.bad`);
+			if (m.via) await rmQuiet(m.via);
 			if (backups) await rmQuiet(m.backup);
 		}
 	}
@@ -498,5 +545,5 @@ export function createUpdater(options: UpdaterOptions): Updater {
 }
 
 export { canonicalize, signManifest, verifyManifestSignature, parseSignedManifest, validateManifest, SIGNATURE_CONTEXT } from "./manifest.ts";
-export { defaultDataDir, locateInstall, platformKeyOf } from "./platform.ts";
+export { APP_FOLDER_MARKER, defaultDataDir, locateInstall, platformKeyOf } from "./platform.ts";
 export { createArchive, extractArchive } from "./archive.ts";

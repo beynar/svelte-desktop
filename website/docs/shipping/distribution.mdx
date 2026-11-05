@@ -109,13 +109,14 @@ KITOP_TARGET=linux bunx --bun vite build
 
 | Output | |
 | --- | --- |
-| `<appName>/` | Relocatable app directory: the executable, `lib/` (`libshell.so`, plugin, addons), sidecars, `<identifier>.png`, `<identifier>.desktop` |
+| `<appName>/` | Relocatable app directory: the executable, `lib/` (`libshell.so`, plugin, addons), sidecars, `<identifier>.png`, `<identifier>.desktop`, `.kitop-app` |
 | `<exe>-<version>-linux-<arch>.tar.gz` | The directory |
 | `<exe>-<version>-linux-<arch>.AppImage` | When `appimagetool` is on the PATH |
+| `release/` | Update archives and a manifest when [`update`](/shipping/self-update) is set: the directory under `linux-<arch>`, the AppImage under `appimage-<arch>`; unsigned without a private key |
 
 GTK 3 and WebKitGTK 4.1 come from the system, like the system WebKit on macOS; libnotify, appindicator and libsecret are optional. `fileTypes` become the `.desktop` MimeType entry (plus a shared-mime-info package for custom types). C/C++ plugins and source addons need a Linux host of the target architecture; run the build there or in a matching Linux container. Prebuilt `addons` are copied. Rust and Go plugins need a host of the target OS. See [plugin platforms](/native/plugins/platforms).
 
-The generated Linux updater archive currently has a layout mismatch with the installer. Distribute the `.tar.gz` or `.AppImage` for manual installation; see [Self-update](/shipping/self-update#platform-support).
+Distribute the `.tar.gz`, the `.AppImage` or both: each updates itself as long as the user can write to where it's installed, so unpack the directory under the home directory rather than `/opt`. See [Self-update](/shipping/self-update#linux). The build doesn't make deb, rpm or Flatpak packages.
 
 ## Signing options
 

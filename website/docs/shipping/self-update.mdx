@@ -1,13 +1,9 @@
 ---
 title: Self-update
-description: Signed updates from a static host, verified downloads, macOS delta patches and a post-exit install helper.
+description: Signed updates from a static host, verified downloads, delta patches and a post-exit install helper.
 ---
 
-:::warning
-Self-update works on macOS and Windows. Linux isn't supported yet: see [Platform support](#platform-support).
-:::
-
-The updater fetches a signed `update.json` from any static host (S3, R2, GitHub Releases, a CDN), downloads a SHA-256-pinned archive or a macOS delta patch, swaps the app after it quits and relaunches it. Delta reconstruction also verifies each resulting file. See the platform and rollback limits below.
+The updater fetches a signed `update.json` from any static host (S3, R2, GitHub Releases, a CDN), downloads a SHA-256-pinned archive or a delta patch, swaps the app after it quits and relaunches it. Delta reconstruction also verifies each resulting file. See the platform and rollback limits below.
 
 <Steps>
   <Step title="Create a key pair">
@@ -64,7 +60,34 @@ The updater fetches a signed `update.json` from any static host (S3, R2, GitHub 
 | --- | --- |
 | macOS | Full `.app` replacement and delta patches; the parent install directory must be writable |
 | Windows | Full-archive file replacement through a PowerShell helper; no delta application. Confirmation and rollback work as on macOS, but haven't been run through a real failed update on Windows. |
-| Linux | The packager archives the enclosing app directory, while the installer expects executable-level entries or one replacement file. This can replace the executable or AppImage with a directory. Do not install the generated Linux feed; use manual downloads until the archive layout is fixed. |
+| Linux | The app folder from the `.tar.gz` is replaced whole, with delta patches; an AppImage is replaced as one file. Both roll back. See [Linux](#linux). |
+
+## Linux
+
+A Linux release has two artifacts per architecture, and a running copy takes the kind it is:
+
+| Install | Manifest key | It knows because | The swap |
+| --- | --- | --- | --- |
+| The app folder from the `.tar.gz` | `linux-x64`, `linux-arm64` | `.kitop-app` is next to its executable | The whole folder moves to `<folder>.old` and the new one takes its name. Nothing of the old version stays. |
+| AppImage | `appimage-x64`, `appimage-arm64` | `$APPIMAGE`, with its executable under `$APPDIR` | `<file>` is kept as `<file>.old`, and one rename replaces it. |
+
+What can fail or take time comes first: the new copy goes next to the install, which is a real copy if the updater's data is on another filesystem, and the install isn't touched until that's done. Then an AppImage is one atomic rename, so the file is always there. A folder is two renames, so there's an instant between them with no folder. If the helper dies in that instant, the backup is still at `<folder>.old`, and that's the name to put back by hand.
+
+- **Installed names stay.** A folder or AppImage the user renamed keeps its name, so `notes-1.4.0.AppImage` still has that name after updating to 1.5.0. Links and `.desktop` files keep working. The executable's name inside the folder has to stay the same from one release to the next, so changing `appName` means a manual install.
+- **The folder belongs to the app.** Nothing kept inside it survives an update. App data is elsewhere already.
+- **An executable copied out of the folder** doesn't update: it has no `.kitop-app`, so the feed's folder archive answers `layout_invalid` and nothing is touched.
+- **A release built without `appimagetool`** has no `appimage-<arch>` key. AppImage installs then see no update for that release; they don't take the folder.
+
+**Installs the user can't write to.** `/opt`, `/usr` and anything else this user doesn't own answer `not_writable` when installing, before anything is downloaded. Nothing changes and the app keeps running. For an app folder, both the folder and its parent have to be writable. `check()` still reports the update, so the app can say where to get it:
+
+```ts
+try {
+  await update.downloadAndInstall();
+} catch (error) {
+  if (error.code === 'not_writable') showDownloadLink(); // the administrator or the package manager updates this one
+  else throw error;
+}
+```
 
 ## Security
 
@@ -75,7 +98,7 @@ The updater fetches a signed `update.json` from any static host (S3, R2, GitHub 
 
 ## Delta updates
 
-With a previous release in `release/`, `vite build` also writes a `.sdpatch`: per-file operations (unchanged, rsync-style delta, new) with the size and sha256 of every resulting file. A macOS client on that version downloads the patch, rebuilds the new app from its installed copy, verifies every file and applies it like a full update; any mismatch falls back to the full archive. The packager can also produce Linux patches, but the client only applies patches to macOS app bundles. Windows packaging produces full archives only.
+With a previous release in `release/`, `vite build` also writes a `.sdpatch`: per-file operations (unchanged, rsync-style delta, new) with the size and sha256 of every resulting file. A macOS app or Linux app folder on that version downloads the patch, rebuilds the new app from its installed copy, verifies every file and applies it like a full update; any mismatch falls back to the full archive. AppImages and Windows always download the full archive.
 
 ## Install and rollback
 
@@ -83,7 +106,7 @@ The install is swapped by a helper after the app exits, and the previous copy is
 
 Applications that call `createUpdater()` directly own the timing of `rollbackIfNeeded()`, `confirm()` and the restart: see `src/updater/README.md`.
 
-The install directory must be writable by the user: `/Applications` for an admin on macOS, a per-user location on Windows (the NSIS installer is per-user) (Linux is not supported yet). A translocated (quarantined) macOS app is refused.
+The install directory must be writable by the user: `/Applications` for an admin on macOS, a per-user location on Windows (the NSIS installer is per-user), a directory the user owns on [Linux](#linux). A translocated (quarantined) macOS app is refused.
 
 :::note
 For manual control (custom download UI, publishing from CI), the lower-level `createUpdater()` from `@kitop/shell/updater` and the `updater-cli.ts` script in the shell package (`keygen`, `sign`, `verify`, `pack`, `make-manifest`) are documented in the package's `src/updater/README.md`.

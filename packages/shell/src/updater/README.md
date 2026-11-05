@@ -68,7 +68,7 @@ scripts/updater-cli.ts   keygen / sign / verify / pack / make-manifest
 }
 ```
 
-- Keys have the form `<os>-<arch>`, where os is `darwin|linux|windows` and arch is `arm64|x64`. Unknown keys are tolerated, for forward compatibility.
+- Keys have the form `<os>-<arch>`, where os is `darwin|linux|windows` and arch is `arm64|x64`, plus `appimage-<arch>` for the AppImage of a Linux release (`linux-<arch>` is its app folder). A running copy reads the key of the kind it is, and never another: an AppImage with no `appimage-<arch>` in the manifest has no update. Unknown keys are tolerated, for forward compatibility, as long as they are two words: that's why it isn't `linux-x64-appimage`, which every client would refuse along with the whole manifest.
 - A relative `url` resolves against the **configured manifest URL** (not a redirect target), so a release directory can be uploaded as-is.
 - `manifestUrl` may contain `{channel}`, for example `https://updates.example.com/myapp/{channel}/update.json`.
 - **`minimumVersion` semantics:** "everyone older than this must update". `check()` still returns the update; `info.mandatory` tells the UI not to offer "later". Since every artifact is a full archive, any version can install it, so there is no "too old to update" gating.
@@ -82,7 +82,13 @@ Archive layout:
 | Install | Archive top level | Swap |
 |---|---|---|
 | macOS `.app` | exactly one `<Name>.app/` (with `Contents/MacOS` and `Contents/Info.plist`) | `<Installed>.app` → `<Installed>.app.old`; staged `.app` moved in under the installed name |
-| Linux / Windows / bare macOS binary | the executable, plus any sibling files (e.g. a native lib) | each entry `X` replaces `<installdir>/X`; previous file kept as `X.old`. If the archive holds a single file, it replaces the running executable whatever its name (renamed exes, AppImage via `$APPIMAGE`). Otherwise an entry named like the running executable is required. |
+| Linux app folder (a folder with `.kitop-app`, from the `.tar.gz`) | exactly one folder, holding the running executable's name and `.kitop-app` | The folder → `<folder>.old`; the staged one moved in under the installed name. Nothing of the old version stays. |
+| AppImage (`$APPIMAGE`, when the executable runs from `$APPDIR`) | exactly one executable file | `<file>` hard-linked (copied if it can't be) to `<file>.old`, then replaced by one rename, under the installed name. |
+| Windows / bare Linux or macOS binary | the executable, plus any sibling files (e.g. a native lib) | each entry `X` replaces `<installdir>/X`; previous file kept as `X.old`. If the archive holds a single file, it replaces the running executable whatever its name (renamed exes). Otherwise an entry named like the running executable is required. A folder never replaces an executable: `layout_invalid`. |
+
+`.kitop-app` is written by the Linux packager and says the whole folder is the app. Without it, an archive made for a folder is refused rather than swapped: an executable copied into `~/.local/bin` must not take its neighbours with it. `$APPIMAGE` alone isn't trusted for the same reason: whatever an AppImage starts (a terminal, an IDE) inherits it, so the executable must also be under `$APPDIR`.
+
+A Linux folder or AppImage first goes to `<target>.new`, next to the install. If staging is on another filesystem that move is a copy, and it can fail or take time with the install untouched. What follows is one rename for a file and two for a folder.
 
 ### `patches`: delta updates
 
@@ -127,14 +133,14 @@ What happens:
    - macOS: `~/Library/Application Support/<app>/updates`
    - Windows: `%LOCALAPPDATA%\<app>\updates`
    - Linux: `$XDG_DATA_HOME/<app>/updates` (default `~/.local/share`)
-3. **`apply()`** locates the install from `process.execPath` (on macOS, the outermost enclosing `.app`) and checks that the install directory is writable. Then it:
+3. **`apply()`** locates the install from `process.execPath` (on macOS, the outermost enclosing `.app`; on Linux, `$APPIMAGE` or the app folder) and checks that the install directory is writable. `download()` makes the same check first, so an install that can't be replaced fails before the download. Then it:
    - writes `state.json` with `{phase:"applying"}`;
    - generates `<dataDir>/apply-helper.sh` (or `.ps1` on Windows) and starts it detached;
    - quits.
 
    The helper:
    - waits for the app's PID to exit (default timeout 120 s; on timeout it changes nothing and records `failed`);
-   - deletes stale `.old` copies;
+   - deletes stale `.old` copies; one that can't be deleted stops the update, with nothing moved;
    - renames each current file or bundle to `.old` and moves the staged one in;
    - writes `{phase:"applied", from, to, attempts:0}`;
    - relaunches if asked, deletes itself, and exits.
@@ -152,7 +158,7 @@ App code runs in a Bun Worker, and `process.exit()` inside a Bun Worker ends onl
 ### Limitations and caveats
 
 - **Crash-before-`rollbackIfNeeded()`:** rollback runs inside the new version, so a build that crashes before reaching that call never rolls back. Call it as the very first thing. A stronger design would have the helper relaunch, watch the child for N seconds, and roll back itself.
-- **Permissions:** the install directory must be writable by the user. This means `/Applications` for an admin user on macOS, `%LOCALAPPDATA%\Programs\<app>` on Windows (not `Program Files`), and a user-owned directory on Linux. Otherwise `apply()` throws `not_writable`. A translocated (quarantined) macOS app is detected and refused.
+- **Permissions:** the install directory must be writable by the user. This means `/Applications` for an admin user on macOS, `%LOCALAPPDATA%\Programs\<app>` on Windows (not `Program Files`), and on Linux a user-owned directory: for an app folder, both the folder and its parent, which is where it is renamed. Otherwise `download()` and `apply()` throw `not_writable`. A translocated (quarantined) macOS app is detected and refused.
 - **Uncompiled runs:** `apply()` and `install()` refuse to run under `bun file.ts` unless `installPath` is given; otherwise the updater would "update" the `bun` binary itself. Compiled binaries are detected by `Bun.main` starting with `/$bunfs/` (or `B:/~BUN/` on Windows).
 - **macOS relaunch** uses `open -n <App>.app`, so LaunchServices registers the new bundle.
 - **Windows:** the helper runs through `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File …`. It retries moves for about 10 s, because AV scanners and WebView2 child processes can briefly lock files. Archives are extracted with `%SystemRoot%\System32\tar.exe`, never a `tar` from `PATH`: Git/MSYS GNU tar treats `C:\…` as `host:path`.
@@ -206,5 +212,6 @@ resulting file (`delta.ts`). A client whose version matches `from` downloads the
 patch (sha256-pinned by the signed manifest), rebuilds the new `.app` from its
 installed copy, verifies every file, then applies it like a full update. Any
 mismatch — a modified install, a bad patch — falls back to the full archive.
+The same goes for a Linux app folder (`linux-<arch>`). An AppImage has no patches.
 Measured on the example app: a one-line change is a 14 KB patch against a 39 MB
 archive; creating it takes ~0.2 s, applying it ~60 ms.

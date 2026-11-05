@@ -88,6 +88,44 @@ test("sign: re-signs an edited manifest in place; --key-env works; tampering is 
 	expect(bad.stderr).toContain("signature");
 });
 
+test("Linux: make-manifest and merge carry both kinds for both architectures, next to the other platforms", async () => {
+	const publicKey = (await cli(["keygen", "--out", "kl.pem"])).stdout;
+	for (const f of ["n-linux-x64", "n-linux-arm64", "n-appimage-x64", "n-appimage-arm64"]) await Bun.write(join(root.dir, `${f}.tar.zst`), f);
+	const mm = await cli([
+		"make-manifest", "--name", "dev.test.linux", "--version", "2.0.0",
+		"--artifact", "linux-x64=n-linux-x64.tar.zst", "--artifact", "appimage-x64=n-appimage-x64.tar.zst",
+		"--key", "kl.pem", "--out", "lx64.json",
+	]);
+	expect(mm.code).toBe(0);
+	const part = { name: "dev.test.linux", version: "2.0.0", channel: "stable", releasedAt: "2026-11-05T10:00:00.000Z" };
+	const art = { sha256: "a".repeat(64), size: 1, format: "tar.zst" };
+	await Bun.write(join(root.dir, "larm.json"), JSON.stringify({ ...part, artifacts: { "linux-arm64": { ...art, url: "2.0.0/n-linux-arm64.tar.zst" }, "appimage-arm64": { ...art, url: "2.0.0/n-appimage-arm64.tar.zst" } }, patches: { "linux-arm64": [{ from: "1.0.0", url: "2.0.0/p.sdpatch", sha256: "b".repeat(64), size: 3 }] } }));
+	await Bun.write(join(root.dir, "others.json"), JSON.stringify({ ...part, artifacts: { "darwin-arm64": { ...art, url: "m.tar.zst" }, "windows-x64": { ...art, url: "w.tar.zst" } } }));
+	expect((await cli(["merge", "lx64.json", "larm.json", "others.json", "--key", "kl.pem", "--out", "all.json"])).code).toBe(0);
+	expect((await cli(["verify", "all.json", "--public-key", publicKey])).stdout).toContain("appimage-arm64");
+	const text = await Bun.file(join(root.dir, "all.json")).text();
+	const merged = await parseSignedManifest(text, [publicKey]);
+	expect(Object.keys(merged.artifacts).sort()).toEqual(["appimage-arm64", "appimage-x64", "darwin-arm64", "linux-arm64", "linux-x64", "windows-x64"]);
+
+	// What each install gets out of the same feed.
+	const site = serveStatic({ "/update.json": () => new Response(text) });
+	const updater = (platform: string, arch: string, installPath: string, env = {}) =>
+		createUpdater({ manifestUrl: `${site.base}/update.json`, publicKey, currentVersion: "1.0.0", appName: "dev.test.linux", dataDir: join(root.dir, "unused"), platform: platform as NodeJS.Platform, arch, installPath, env });
+	try {
+		const x64 = (await updater("linux", "x64", "/opt/n/n").check())!;
+		expect(x64.artifact.url).toEndWith("/n-linux-x64.tar.zst");
+		expect(x64.patch).toBeUndefined();
+		const arm = (await updater("linux", "arm64", "/opt/n/n").check())!;
+		expect(arm.artifact.url).toEndWith("/2.0.0/n-linux-arm64.tar.zst");
+		expect(arm.patch?.from).toBe("1.0.0");
+		expect((await updater("linux", "arm64", "/mnt/n", { APPIMAGE: "/a/n.AppImage", APPDIR: "/mnt" }).check())!.artifact.url).toEndWith("/n-appimage-arm64.tar.zst");
+		expect((await updater("darwin", "arm64", "/Applications/N.app/Contents/MacOS/n").check())!.artifact.url).toEndWith("/m.tar.zst");
+		expect((await updater("win32", "x64", "C:\\N\\n.exe").check())!.artifact.url).toEndWith("/w.tar.zst");
+	} finally {
+		site.stop();
+	}
+});
+
 test("make-manifest rejects bad artifact specs", async () => {
 	await cli(["keygen", "--out", "k3.pem"]);
 	await Bun.write(join(root.dir, "x.zip"), "zip");

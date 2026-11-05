@@ -1,7 +1,8 @@
 // Updater release artifacts for Linux (package-linux.ts → writeRelease(…, "linux")):
 // packages examples/notes' staged build as 0.1.0 then 0.2.0 with a signing key,
-// then verifies the signed manifest (key linux-<arch>), the artifact hashes, and
-// that the 0.1.0 → 0.2.0 delta patch rebuilds the 0.2.0 tree byte for byte.
+// then verifies the signed manifest (keys linux-<arch> and appimage-<arch>), the
+// artifact hashes, and that the 0.1.0 → 0.2.0 delta patch rebuilds the 0.2.0 tree
+// byte for byte. A real update through all of it: update.sh.
 // Run inside the Docker image after `vite build` (notes.sh), from examples/notes.
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -41,6 +42,9 @@ const art = (m.artifacts as any)[key];
 check(`artifact under ${key} (tar.zst)`, art?.format === "tar.zst" && art.url === `0.2.0/svelte-notes-0.2.0-linux-${arch}.tar.zst`.replace("svelte-notes", "SvelteNotes"), art);
 const file = join(out, "release", art.url);
 check("artifact sha256 + size match the file", createHash("sha256").update(readFileSync(file)).digest("hex") === art.sha256 && statSync(file).size === art.size);
+const image = (m.artifacts as any)[`appimage-${arch}`];
+const imageFile = image && join(out, "release", image.url);
+check(`AppImage under appimage-${arch}, sha256 + size match`, image?.format === "tar.zst" && createHash("sha256").update(readFileSync(imageFile)).digest("hex") === image.sha256 && statSync(imageFile).size === image.size, image);
 const patch = (m.patches as any)?.[key]?.[0];
 check("delta patch 0.1.0 → 0.2.0 listed", patch?.from === "0.1.0" && patch.size < art.size / 10, patch && { from: patch.from, size: patch.size, full: art.size });
 const oldDir = "/tmp/release-old", newDir = "/tmp/release-new";

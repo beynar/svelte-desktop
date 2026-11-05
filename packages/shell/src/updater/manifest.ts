@@ -13,7 +13,11 @@ import { fromBase64, sign, toBase64, verify } from "./crypto.ts";
 
 export type OS = "darwin" | "linux" | "windows";
 export type Arch = "arm64" | "x64";
-export type PlatformKey = `${OS}-${Arch}`;
+/**
+ * `appimage-<arch>` is the AppImage of `linux-<arch>`, which is the app folder: a running copy takes
+ * the kind it is (platform.ts). Clients that don't know the key tolerate it (see validateManifest).
+ */
+export type PlatformKey = `${OS}-${Arch}` | `appimage-${Arch}`;
 export type ArchiveFormat = "tar.zst" | "tar.gz";
 
 export const PLATFORM_KEYS: readonly PlatformKey[] = [
@@ -21,6 +25,8 @@ export const PLATFORM_KEYS: readonly PlatformKey[] = [
 	"darwin-x64",
 	"linux-arm64",
 	"linux-x64",
+	"appimage-arm64",
+	"appimage-x64",
 	"windows-arm64",
 	"windows-x64",
 ];

@@ -7,7 +7,8 @@
  *   bun scripts/updater-cli.ts verify <manifest.json> --public-key <base64>
  *   bun scripts/updater-cli.ts pack <path>... --out <archive.tar.zst|.tar.gz>
  *   bun scripts/updater-cli.ts make-manifest --name <app> --version <x.y.z> --channel <ch>
- *        --artifact <os-arch>=<archive> [--artifact ...] [--base-url <url>]
+ *        --artifact <os-arch>=<archive> [--artifact ...] [--base-url <url>]    (Linux: linux-<arch> is the
+ *        app folder's archive, appimage-<arch> the archive of the AppImage)
  *        (--key <file> | --key-env VAR) [--notes <text> | --notes-file <file>]
  *        [--minimum-version <x.y.z>] [--released-at <iso>] [--out update.json]
  *   bun scripts/updater-cli.ts merge <manifest.json>... (--key <file> | --key-env VAR) --out update.json

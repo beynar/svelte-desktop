@@ -150,7 +150,7 @@ describe("platform helpers", () => {
 			kind: "app-bundle", target: "/Applications/My App.app", dir: "/Applications",
 		});
 		expect(locateInstall("/opt/myapp/myapp", "linux", {})).toEqual({ kind: "executable", target: "/opt/myapp/myapp", dir: "/opt/myapp" });
-		expect(locateInstall("/tmp/.mount_x/myapp", "linux", { APPIMAGE: "/home/u/Apps/MyApp.AppImage" }).target).toBe("/home/u/Apps/MyApp.AppImage");
+		expect(locateInstall("/tmp/.mount_x/myapp", "linux", { APPIMAGE: "/home/u/Apps/MyApp.AppImage", APPDIR: "/tmp/.mount_x" })).toEqual({ kind: "appimage", target: "/home/u/Apps/MyApp.AppImage", dir: "/home/u/Apps" });
 		expect(locateInstall("C:\\Users\\u\\AppData\\Local\\Programs\\MyApp\\myapp.exe", "win32")).toEqual({
 			kind: "executable", target: "C:\\Users\\u\\AppData\\Local\\Programs\\MyApp\\myapp.exe", dir: "C:\\Users\\u\\AppData\\Local\\Programs\\MyApp",
 		});

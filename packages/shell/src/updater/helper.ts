@@ -3,7 +3,9 @@
  * place on every OS, so apply() writes a tiny script, starts it detached, and
  * quits. The script waits for our PID to disappear, swaps files (keeping the
  * previous ones as `<name>.old`), writes the state file, and optionally
- * relaunches. If any move fails it restores what it already moved.
+ * relaunches. If any move fails it restores what it already moved. On Linux an
+ * app folder or AppImage comes through `via`: after that, a folder is two
+ * renames and a file a single atomic one, with the backup hard-linked first.
  *
  * All values are embedded as quoted literals (no argument parsing in the
  * script); quoting is single-quote based for both sh and PowerShell.
@@ -44,14 +46,25 @@ export function renderShHelper(p: HelperPlan): string {
 		.reverse()
 		.map(
 			({ m, i }) =>
-				`  if ${exists(m.backup)}; then rm -rf ${q(m.dest)}; mv -f ${q(m.backup)} ${q(m.dest)}; elif [ "$DONE_${i}" = 1 ]; then rm -rf ${q(m.dest)}; fi`,
+				`  if ${exists(m.backup)}; then rm -rf ${q(m.dest)}; mv -f ${q(m.backup)} ${q(m.dest)}; elif [ "$DONE_${i}" = 1 ]; then rm -rf ${q(m.dest)}; fi${m.via ? `\n  rm -rf ${q(m.via)} ${q(`${m.backup}.tmp`)}` : ""}`,
 		)
 		.join("\n");
 	const swap = p.moves
-		.map(
-			(m, i) =>
-				`if ${exists(m.dest)}; then mv -f ${q(m.dest)} ${q(m.backup)} || fail; fi\nmv -f ${q(m.src)} ${q(m.dest)} || fail\nDONE_${i}=1`,
-		)
+		.map((m, i) => {
+			if (m.via) {
+				const copy = `{ cp -p ${q(m.dest)} ${q(`${m.backup}.tmp`)} && mv -f ${q(`${m.backup}.tmp`)} ${q(m.backup)}; }`;
+				return `rm -rf ${q(m.via)}
+mv -f ${q(m.src)} ${q(m.via)} || fail
+if [ -d ${q(m.dest)} ]; then
+  mv -f ${q(m.dest)} ${q(m.backup)} || fail
+elif ${exists(m.dest)}; then
+  ln -f ${q(m.dest)} ${q(m.backup)} 2>/dev/null || ${copy} || fail
+fi
+mv -f ${q(m.via)} ${q(m.dest)} || fail
+DONE_${i}=1`;
+			}
+			return `if ${exists(m.dest)}; then mv -f ${q(m.dest)} ${q(m.backup)} || fail; fi\nmv -f ${q(m.src)} ${q(m.dest)} || fail\nDONE_${i}=1`;
+		})
 		.join("\n");
 	return `#!/bin/sh
 # kitop updater helper (generated; safe to delete).
@@ -68,6 +81,8 @@ restore() {
 ${restore || "  :"}
 }
 fail() { restore; write_state ${q(p.failedSwapJson)}; relaunch; exit 1; }
+# Nothing moved yet. restore() must not run: it would put this stale backup in place of the install.
+stale() { log "cannot remove the old backup $1"; write_state ${q(p.failedSwapJson)}; relaunch; exit 1; }
 
 log "helper $$ waiting for pid ${p.waitPid}"
 deadline=$(( $(date +%s) + ${p.waitTimeoutSec} ))
@@ -81,7 +96,7 @@ while kill -0 ${p.waitPid} 2>/dev/null; do
 done
 
 # Drop stale backups from an older update before touching anything.
-${p.moves.map((m) => `rm -rf ${q(m.backup)}`).join("\n")}
+${p.moves.map((m) => `rm -rf ${q(m.backup)}\nif ${exists(m.backup)}; then stale ${q(m.backup)}; fi`).join("\n")}
 ${swap}
 write_state ${q(p.appliedJson)}
 log "applied"
