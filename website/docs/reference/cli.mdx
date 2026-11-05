@@ -28,12 +28,31 @@ bunx kitop init
 Adds desktop support to the SvelteKit project in the current directory:
 
 - writes `desktop.config.ts` (left alone if it exists), with `appName` and `identifier` derived from `package.json`;
-- rewrites `sveltekit(` to `desktop(` in `vite.config.ts` and removes the adapter, which the desktop plugin sets;
-- sets the scripts `dev` (`bunx --bun vite dev`), `build` (`bunx --bun vite build`) and `test:desktop` (`bun test --timeout 30000 tests/`), replacing any existing values;
+- rewrites `sveltekit(` to `desktop(` in `vite.config.ts`, keeping your options and your adapter;
+- sets the scripts `dev` (`kitop dev`), `build` (`kitop build`) and `test:desktop` (`bun test --timeout 30000 tests/`), replacing any existing values;
 - adds `.desktop` to `.gitignore`;
 - writes a first test, `tests/app.test.ts`, if there's no `tests` folder.
 
-It ends by printing the install to run if you ran it before installing: `bun add -d @kitop/shell@<version> @sveltejs/adapter-bun@1.0.0-next.2 @types/bun && bun run dev`.
+It ends by saying what to run next, and that `@sveltejs/adapter-bun` and `@types/bun` have to be installed.
+
+## dev and build
+
+```sh
+kitop dev [--mac | --windows | --linux] [vite options]
+kitop build [--mac] [--windows] [--linux] [vite options]
+```
+
+With no flag, these are the website: `vite dev` and `vite build`, with the `adapter` given to `desktop()`. With a flag, they are the desktop app for that OS, and the project's adapter plays no part. A project whose `desktop()` has no `adapter` is a desktop app only, and with no flag builds for the host.
+
+| | From macOS | From Linux | From Windows |
+| --- | --- | --- | --- |
+| `dev --mac`, `build --mac` | ✓ | — | — |
+| `dev --windows` | — | — | ✓ |
+| `dev --linux` | — | ✓ | — |
+| `build --windows` | With Docker | With Docker | ✓ |
+| `build --linux` | With Docker | ✓ | With Docker |
+
+Several flags on `build` run one after the other, and stop at the first failure. `kitop` runs on Bun; a host that only has Node can build the website with `vite build`.
 
 ## doctor
 
@@ -104,6 +123,8 @@ Publishing updates, mostly from CI (see [Release with CI](/shipping/release)):
 `--key-env VAR` reads the private key text from `VAR`; `--key` reads a file. When both are supplied, the file wins. `--notes-file` takes precedence over `--notes`. Run `bunx kitop release --help` for the updater command usage.
 
 ## Vite
+
+These are what `kitop dev` and `kitop build` run. In a project with an `adapter`, they're the website unless `KITOP_TARGET` is set.
 
 | Command | |
 | --- | --- |

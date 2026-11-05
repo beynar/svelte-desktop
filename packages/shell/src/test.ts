@@ -21,6 +21,7 @@
 // close 1006), and every later call then timed out.
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { hostTarget } from "./build/targets.ts";
 
 export interface LaunchOptions {
   /** Path to a built .app, a Linux app directory or AppImage (default: the first one in .desktop/dist under cwd). */
@@ -142,6 +143,7 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
   if (options.dev) {
     const d = typeof options.dev === "object" ? options.dev : {};
     cwd = resolve(d.cwd ?? process.cwd());
+    env.KITOP_TARGET ??= hostTarget(); // with an adapter, the project is a website otherwise
     cmd = ["bunx", "--bun", "vite", "dev", "--port", String(d.port ?? 5000 + Math.floor(Math.random() * 3000)), "--strictPort"];
   } else {
     const app = resolve(options.app ?? findApp(cwd));

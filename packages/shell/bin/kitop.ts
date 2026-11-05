@@ -2,6 +2,7 @@
 // kitop CLI
 //   create   scaffold a new desktop app (SvelteKit + config + native plugin + tests)
 //   init     add desktop support to a SvelteKit project (config, vite plugin, scripts)
+//   dev, build   the website, or with --mac, --windows, --linux the desktop app
 //   doctor   check the toolchain, the project and signing/notarization setup
 //   keygen   create the ed25519 key pair for signed updates
 //   preflight <App.app>  check a bundle against Apple's notarization requirements
@@ -13,7 +14,8 @@ import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import shell from "../package.json";
-import { removeAdapterOption, STARTER_TEST, stringifyLike } from "../src/build/init-edit.ts";
+import { STARTER_TEST, stringifyLike } from "../src/build/init-edit.ts";
+import { viteRuns } from "../src/build/targets.ts";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const root = process.cwd();
@@ -52,16 +54,15 @@ async function init() {
       src = src
         .replace(/import\s*\{\s*sveltekit\s*\}\s*from\s*['"]@sveltejs\/kit\/vite['"];?/, "import { desktop } from '@kitop/shell/vite';")
         .replace(/\bsveltekit\(/g, "desktop(");
-      // the desktop plugin sets the adapter itself
-      src = removeAdapterOption(src).replace(/import adapter from ['"][^'"]+['"];?\n?/g, "").replace(/\bdesktop\(\s*\{\s*\}\s*\)/g, "desktop()");
+      if (!/\badapter\s*:/.test(src)) warn(`${viteConfig} has no adapter: this is a desktop app only. For a website too, pass yours: desktop({ adapter: adapter() })`);
       writeFileSync(viteConfig, src);
       ok(`${viteConfig}: sveltekit(…) → desktop(…)`);
     } else warn(`add desktop() from '@kitop/shell/vite' to ${viteConfig} manually`);
   }
   const svelteConfig = ["svelte.config.js", "svelte.config.ts"].map((f) => join(root, f)).find(existsSync);
-  if (svelteConfig && /\badapter\b/.test(readFileSync(svelteConfig, "utf8"))) warn(`${svelteConfig} sets an adapter: remove it, desktop() sets its own`);
+  if (svelteConfig && /\badapter\b/.test(readFileSync(svelteConfig, "utf8"))) warn(`${svelteConfig} sets an adapter: move it to desktop({ adapter: … }) in the Vite config`);
 
-  pkg.scripts = { ...pkg.scripts, dev: "bunx --bun vite dev", build: "bunx --bun vite build", "test:desktop": "bun test --timeout 30000 tests/" };
+  pkg.scripts = { ...pkg.scripts, dev: "kitop dev", build: "kitop build", "test:desktop": "bun test --timeout 30000 tests/" };
   writeFileSync(pkgPath, stringifyLike(pkgText, pkg));
   ok("package.json scripts: dev, build, test:desktop");
 
@@ -75,7 +76,7 @@ async function init() {
   const lines = existsSync(gi) ? readFileSync(gi, "utf8") : "";
   if (!lines.split("\n").includes(".desktop")) writeFileSync(gi, `${lines.replace(/\n?$/, "\n")}.desktop\n`);
   ok(".gitignore: .desktop");
-  console.log(`\n  Next: bun add -d @kitop/shell@${shell.version} ${adapter} @types/bun && bun run dev\n`);
+  console.log(`\n  Next: bun run dev for the website, bun run dev --${{ darwin: "mac", win32: "windows" }[process.platform as string] ?? "linux"} for the desktop app.\n  It needs ${adapter} and @types/bun in devDependencies.\n`);
 }
 
 async function create(dir: string | undefined) {
@@ -268,6 +269,17 @@ function addPlugin(lang: string | undefined) {
 
 try {
   if (cmd === "init") await init();
+  else if (cmd === "dev" || cmd === "build") {
+    for (const run of viteRuns(cmd, rest)) {
+      const vite = Bun.spawn(["bunx", "--bun", "vite", cmd, ...run.args], {
+        env: { ...process.env, ...(run.target ? { KITOP_TARGET: run.target } : {}) },
+        stdio: ["inherit", "inherit", "inherit"],
+      });
+      for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => vite.kill(signal));
+      const code = await vite.exited;
+      if (code !== 0) process.exit(code);
+    }
+  }
   else if (cmd === "add") addPlugin(rest[0]);
   else if (cmd === "icon") await icon(rest);
   else if (cmd === "create") await create(rest[0]);
@@ -282,7 +294,7 @@ try {
   } else if (cmd === "keygen") await $`bun ${join(import.meta.dir, "../scripts/updater-cli.ts")} keygen ${rest}`;
   else if (cmd === "release") await $`bun ${join(import.meta.dir, "../scripts/updater-cli.ts")} ${rest}`;
   else {
-    console.log(`usage: kitop <create|init|doctor|icon|add|preflight|keygen|release> — see ${shell.homepage}/reference/cli`);
+    console.log(`usage: kitop <create|init|dev|build|doctor|icon|add|preflight|keygen|release> — see ${shell.homepage}/reference/cli`);
     process.exit(cmd ? 1 : 0);
   }
 } catch (err) {

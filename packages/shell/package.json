@@ -136,7 +136,7 @@
 		},
 		"./vite": {
 			"types": "./src/vite.ts",
-			"default": "./src/vite.ts"
+			"default": "./src/plugin.js"
 		},
 		"./config": {
 			"types": "./src/config.ts",

@@ -49,6 +49,7 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 
 ### Added
 
+- A project can be a website and a desktop app. With `desktop({ adapter: adapter() })`, `kitop dev` and `kitop build` are the website, on your adapter, and `--mac`, `--windows` or `--linux` make them the desktop app. `kitop init` now sets a project up this way. `desktop()` with no adapter stays a desktop app only.
 - The package is ready to publish: `files`, `exports` with `types` and `svelte` conditions, `engines`, `repository`, `publishConfig`, and `bun run check:package`, which fails if the package is incomplete. It stays `private` for now.
 - `kitop create` pins `@kitop/shell` to the version that ran it, and takes the required versions of SvelteKit, the adapter and Svelte from the package.
 - `kitop doctor` checks the installed versions of SvelteKit, the adapter and Svelte against the ones required.

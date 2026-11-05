@@ -56,7 +56,10 @@ export async function ensureLibshell(arch: Arch, os: LibOS = hostLibOS): Promise
     log(`native: building libshell.so (linux-${linuxArch(arch)})`);
     // On Linux natively; elsewhere in the Docker image (native/docker/build-lib.sh).
     if (process.platform === "linux" && arch === hostArch) await $`${join(shellRoot, "native", "build-linux.sh")}`.quiet();
-    else await $`${join(shellRoot, "native", "docker", "build-lib.sh")} ${arch}`.quiet();
+    else {
+      const r = await $`${join(shellRoot, "native", "docker", "build-lib.sh")} ${arch}`.nothrow().quiet();
+      if (r.exitCode !== 0) throw new Error(`libshell.so for linux-${arch}: building it from this OS takes Docker, and that failed:\n${r.stderr.toString().trim()}`);
+    }
     if (!existsSync(lib)) throw new Error(`libshell.so for linux-${arch} was not built (${lib})`);
     return lib;
   }

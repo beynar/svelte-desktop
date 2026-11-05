@@ -1,6 +1,6 @@
 # kitop
 
-Desktop apps from an unmodified SvelteKit app: one Vite plugin, one config file, Bun, the system's web view, and a single binary.
+A desktop app from your SvelteKit app, which stays a website: one Vite plugin, one config file, Bun, the system's web view, and a single binary.
 
 ```diff vite.config.ts
 -import { sveltekit } from '@sveltejs/kit/vite';
@@ -9,8 +9,15 @@ Desktop apps from an unmodified SvelteKit app: one Vite plugin, one config file,
 
  export default defineConfig({
 -  plugins: [sveltekit({ adapter: adapter() })],
-+  plugins: [desktop()],
++  plugins: [desktop({ adapter: adapter() })],
  });
+```
+
+```sh
+bun run dev                             # the website, as before
+bun run dev --mac                       # a native window, with hot reload
+bun run build                           # the website, with your adapter
+bun run build --mac --windows --linux   # the desktop apps
 ```
 
 Routes, load functions, remote functions, form actions, endpoints and hooks stay as they are, and run on Bun inside the app. `host` adds what a browser doesn't have: windows, menus, tray, notifications, files, self-update.
@@ -39,7 +46,7 @@ bun run dev      # a native window, with hot reload
 bun run build    # the app, in .desktop/dist
 ```
 
-To turn your own app into a desktop app, follow [Convert a SvelteKit app](website/docs/convert-sveltekit-app.mdx).
+To make your own app a desktop app too, follow [Convert a SvelteKit app](website/docs/convert-sveltekit-app.mdx).
 
 ## What's where
 

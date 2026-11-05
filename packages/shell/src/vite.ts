@@ -6,6 +6,7 @@
 //
 // `desktop(kitOptions)` is SvelteKit's own plugin, wired with the desktop adapter,
 // plus dev mode. App settings live in desktop.config.ts (see config.ts).
+// With `desktop({ adapter: adapter() })` the project is a website as well: see plugin.js and `kitop dev`.
 //   vite dev    → the real native window on the Vite server: HMR, Web Inspector,
 //                 native API from pages and server code, native plugin rebuilt on change
 //   vite build  → signed .app + zip + DMG (+ release/ for the updater) in .desktop/dist
@@ -32,6 +33,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { ICON_CANDIDATES, findIcon, loadConfig, sidecarEntries, usageDescriptions, type DesktopConfig, type ResolvedConfig } from "./config.ts";
 import desktopAdapter from "./adapter.js";
+import { writeHostTypes } from "./host/types-file.js";
 
 export type { DesktopConfig } from "./config.ts";
 export { defineConfig } from "./config.ts";
@@ -56,17 +58,11 @@ export interface DesktopPluginOptions {
   noWindow?: boolean;
 }
 
-/** What `sveltekit()` takes, so a config keeps its types when it moves to `desktop()`. */
-type KitOptions = Omit<NonNullable<Parameters<typeof import("@sveltejs/kit/vite").sveltekit>[0]>, "adapter">;
+/** What `sveltekit()` takes, so a config keeps its types when it moves to `desktop()`. With an `adapter`, the
+ *  project is a website too: that adapter builds it unless a desktop target is asked for (see plugin.js). */
+type KitOptions = NonNullable<Parameters<typeof import("@sveltejs/kit/vite").sveltekit>[0]>;
 
-/** SvelteKit + kitop. `kitOptions` are SvelteKit's plugin options (adapter excluded). */
-/** Types for the `host` global: a one-line src/host.d.ts, written once (keep it in git). */
-function writeHostTypes(root: string) {
-  const file = join(root, "src", "host.d.ts");
-  if (existsSync(file) || !existsSync(join(root, "src"))) return;
-  writeFileSync(file, "// The `host` global (kitop): typed for page and server code.\nimport '@kitop/shell/globals';\n");
-}
-
+/** SvelteKit + kitop, for a desktop target. `kitOptions` are SvelteKit's plugin options; the adapter is the shell's. */
 export async function desktop(kitOptions: KitOptions = {}, options: DesktopPluginOptions = {}): Promise<Plugin[]> {
   if (typeof Bun === "undefined") throw new Error("kitop runs on Bun: use `bunx --bun vite …`");
   const config = await loadConfig(process.cwd(), options.config);
