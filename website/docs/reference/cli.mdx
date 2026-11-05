@@ -44,7 +44,7 @@ Checks Bun (1.4 or newer, and whether its revision says canary), the host toolch
 | Linux | WebKitGTK 4.1 through `pkg-config`; `c++`, `appimagetool` |
 | Windows | `makensis`, `osslsigncode` |
 
-On macOS, `doctor` also checks the signing identity (`security find-identity`) and the notary profile (`xcrun notarytool`). On every host it checks the update private-key file when `update` is set. The canary check is a revision heuristic; builds inspect the compiler's supported flags directly. Reported failed checks do not set a non-zero exit status, so `doctor` is a diagnostic report, not a CI gate.
+`doctor` warns when there's no [`bridge.allow`](/host#restricting-pages). On macOS, it also checks the signing identity (`security find-identity`) and the notary profile (`xcrun notarytool`). On every host it checks the update private-key file when `update` is set. The canary check is a revision heuristic; builds inspect the compiler's supported flags directly. Reported failed checks do not set a non-zero exit status, so `doctor` is a diagnostic report, not a CI gate.
 
 ## icon
 

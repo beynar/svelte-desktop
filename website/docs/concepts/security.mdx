@@ -8,7 +8,7 @@ Your app is a local web server plus a window. Most of the protection is on by de
 ## What you should do
 
 - **Treat server code as fully privileged.** Remote functions, endpoints and hooks run with all of Bun's APIs and the whole `host` API. Nothing restricts them. Validate every argument as you would on a public server.
-- **Narrow the page bridge** with [`bridge.allow`](/reference/config#bridge) if your pages don't need every native operation. It lists the operations pages may call (`window.*`, `clipboard.readText`, `*`), enforced natively. It does not limit server code, and it does not make a page's own JavaScript trustworthy: whatever your pages are allowed to do, a script injected into them can do too. Keep dependencies and rendered HTML (`{@html}`) under control.
+- **Narrow the page bridge before you ship.** By default a page can call every native operation, so a script injected into it (an XSS) can read the keychain or open files. [`bridge.allow`](/reference/config#bridge) lists the operations pages may call (`window.*`, `clipboard.readText`, `*`), enforced natively. It does not limit server code, and it does not make a page's own JavaScript trustworthy: whatever your pages are allowed to do, a script injected into them can do too. Keep dependencies and rendered HTML (`{@html}`) under control.
 - **Don't load untrusted content into app pages.** Use a [web view](/ui/web-view) for third-party sites. The native bridge answers only the app's own origin, so external content can't call `host`.
 - **Check origins on servers you add.** A [sidecar](/native/sidecars) or other local server listening on `127.0.0.1` has no cookie gate; see [Other servers](/features/websockets#other-servers).
 

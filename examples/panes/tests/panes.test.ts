@@ -48,7 +48,8 @@ const click = (...hrefs: string[]) =>
 		}
 		return true;
 	})()`);
-const drawn = (tab: string) => until(() => inView<boolean>(tab, `!!document.querySelector('[data-alive]')`), `${tab} drawn`);
+/** On screen and running: on macOS a view's page is server-rendered, so it's there before it's hydrated. */
+const drawn = (tab: string) => until(() => inView<boolean>(tab, `!!document.querySelector('[data-alive]') && document.documentElement.hasAttribute('data-desktop-hydrated')`), `${tab} drawn`);
 const onBody = async (tab: string) => until(async () => {
 	const pane = (await panes()).find((p) => p.tabs.includes(tab))!;
 	const [a, b] = await Promise.all([bounds(tab), body(pane.id)]);

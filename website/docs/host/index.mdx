@@ -69,7 +69,7 @@ try {
 
 ## Restricting pages
 
-By default pages may call every operation. `bridge.allow` limits them, enforced natively; server code is never restricted:
+By default pages may call every operation, so a script injected into your page (an XSS) can read the keychain or open files. Before shipping, list what your pages use. `bridge.allow` is enforced natively; server code is never restricted, so sensitive work belongs there. `kitop doctor` tells you when there's no list:
 
 ```ts desktop.config.ts
 bridge: { allow: ['window.*', 'clipboard.readText', 'notifications.*', 'events.emit', 'app.getInfo', 'app.getPath'] },
