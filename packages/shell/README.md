@@ -289,12 +289,11 @@ macOS (built and `vite dev`) and Linux (Docker).
 
 ## Tabs
 
-`@svelte-desktop/shell/tabs`: two components, each configured by its props and drawn with
-snippets. `<WindowTabs>` is the window's tabs — your SvelteKit routes in the title bar: links and
-`goto()` move the active tab, `target="_blank"` / ⌘-click open one, a `keepAlive` route keeps
-running in its own web view, titles are the pages' `<title>`, a native Tab menu, ⌘1–9, restored at
-launch, dragged out into its own window or onto another window's bar. `<Tabs>` is tabs in a page,
-on your items (`bind:items`, `bind:value`, `mount`, `onAdd`, `beforeClose`, `onValueChange`).
+`@svelte-desktop/shell/tabs`: `<WindowTabs>`, configured by its props and drawn with snippets. It
+is the window's tabs — your SvelteKit routes in the title bar: links and `goto()` move the active
+tab, `target="_blank"` / ⌘-click open one, a `keepAlive` route keeps running in its own web view,
+titles are the pages' `<title>`, a native Tab menu, ⌘1–9, restored at launch, dragged out into its
+own window or onto another window's bar. Tabs inside a page are plain Svelte: nothing to import.
 
 ```svelte
 <!-- src/routes/+layout.svelte -->
@@ -311,11 +310,29 @@ on your items (`bind:items`, `bind:value`, `mount`, `onAdd`, `beforeClose`, `onV
     {@render content()}
   {/snippet}
 </WindowTabs>
+```
 
-<!-- in a page -->
-<Tabs bind:items={boards} bind:value mount="once" closable reorderable onAdd={newBoard}>
-  {#snippet children({ item })}<Board id={item.value} />{/snippet}
-</Tabs>
+## Agent tools (MCP)
+
+With a `src/mcp.ts`, written with the official SDK, the app is an MCP server: there's nothing to turn on.
+Claude Desktop, Claude Code, Codex, Cursor and other clients call its tools in the running app, on its
+state. Listing tools doesn't open it, calling one does. `await host.mcp.install()` adds it to the clients it
+finds on this machine.
+
+```ts
+// src/mcp.ts
+import { McpServer } from '@modelcontextprotocol/server';
+import { z } from 'zod';
+
+export default () => {
+  const server = new McpServer({ name: 'Notes', version: '1.0.0' });
+  server.registerTool(
+    'add_note',
+    { description: 'Adds a note and returns its id.', inputSchema: z.object({ text: z.string() }) },
+    ({ text }) => ({ content: [{ type: 'text', text: String(addNote(text)) }] }),
+  );
+  return server;
+};
 ```
 
 ## Native code

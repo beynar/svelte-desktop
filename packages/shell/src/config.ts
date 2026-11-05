@@ -177,7 +177,7 @@ export interface NotificationsConfig {
 export interface PushConfig {
   /** APNs (macOS): adds the `aps-environment` entitlement. Needs a provisioning profile that
    *  enables Push Notifications (`sign.provisioningProfile`).
-   *  `true` = 'production' for signed release builds, 'development' otherwise. */
+   *  The entitlement's environment is `environment` when set, else the one the provisioning profile grants. */
   apns?: boolean | { environment?: "development" | "production" };
   /** Your own push server (`@svelte-desktop/shell/push-server`, Web Push compatible) for macOS, Windows
    *  and Linux: the app holds one connection to it while it runs (window closed included) — no Apple or

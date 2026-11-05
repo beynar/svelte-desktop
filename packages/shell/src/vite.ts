@@ -73,7 +73,7 @@ export async function desktop(kitOptions: Record<string, unknown> = {}, options:
   const kitPath = Bun.resolveSync("@sveltejs/kit/vite", config.root);
   const { sveltekit } = await import(kitPath);
   const kit = (await sveltekit({ ...kitOptions, adapter: desktopAdapter(config) })) as Plugin[];
-  return [...kit, hydrationMarker(config.osPermissions, { foreground: config.notifications?.foreground ?? true }, { server: config.push?.server ?? null }), pushServiceWorker(), oauthDev(config.appName), websocketDev(config), websocketEntry(config), devPlugin(config, options)];
+  return [...kit, hydrationMarker(config.osPermissions, { foreground: config.notifications?.foreground ?? true }, { server: config.push?.server ?? null }), pushServiceWorker(), oauthDev(config.appName), websocketDev(config), serverEntry(config, "websocket"), serverEntry(config, "mcp"), mcpDev(config), devPlugin(config, options)];
 }
 
 // SvelteKit has no public "hydrated" signal; tests (and apps) need one. Wrap the
@@ -112,13 +112,49 @@ function hydrationMarker(permissionsConfig: Record<string, string>, notification
       return (
         // …and in the page, before the app's components load.
         `import ${hostClient};\n` +
-        code.replace("async function _start(", "async function __desktop_start(") +
-        `\nglobalThis.__desktopGoto = (url, opts) => goto(url, opts);\n` +
+        code
+          .replace("async function _start(", "async function __desktop_start(")
+          // The window's address moves through entries of its own (a pane's, a kept tab's), so Kit can be at an
+          // index it has dropped from its table. Writing the scroll there threw, in the middle of a navigation:
+          // that one never ended, and neither did any after it.
+          .replace("history_info[index].scroll = scroll_state();", "(history_info[index] ??= {}).scroll = scroll_state();")
+          // What goto() was asked: its entry doesn't say (refreshAll), nor does a navigation canceled before one.
+          .replace("export async function goto(url, opts = {}) {", "export async function goto(url, opts = {}) {\n\tglobalThis.__desktopGotoAsked = opts;")
+          // Going to the page it has, the address elsewhere (a kept-alive tab's, a pane's): it keeps
+          // \`page\`, which has the address in it, and would go there instead.
+          .replace(
+            "if (navigation_result.props.page.url.pathname !== url.pathname) {",
+            "if (url.href === current.url?.href) navigation_result.props.page.url = new URL(url);\n\tif (navigation_result.props.page.url.pathname !== url.pathname) {",
+          ) +
+        // Before SvelteKit's own, in the order they're registered: its router starts later. A traversal for
+        // nobody to see (\`split\`), and a link's click once the page had its say, before SvelteKit has it.
+        `\nif (typeof document !== 'undefined') {\n\taddEventListener('popstate', (e) => { if (globalThis.__desktopOnPopstate?.()) e.stopImmediatePropagation(); }, true);\n\tdocument.documentElement.addEventListener('click', (e) => globalThis.__desktopOnLink?.(e));\n}\n` +
+        // \`stateJson\`: a state serialized in another page's Kit (a pane's, from the window's).
+        // \`pageUrl\`: a shallow entry's page, there first (as Kit does when it comes back to one).
+        `\nglobalThis.__desktopGoto = async (url, { stateJson, pageUrl, traversal, ...opts } = {}) => {\n\tif (opts.shallow && pageUrl && current.url?.href !== pageUrl) {\n\t\tawait goto(pageUrl, { replace: true });\n\t\tif (current.url?.href !== pageUrl) return; // canceled: the entry is that page's\n\t}\n\tawait goto(url, stateJson === undefined ? opts : { ...opts, state: parse(stateJson) });\n\tif (traversal) globalThis.__desktopRestoreScroll?.();\n};\n` +
+        // Before a navigation, with `cancel` (a pane's page leaving for a keepAlive route's tab).
+        `globalThis.__desktopBeforeNavigate = (fn) => (before_navigate_callbacks.add(fn), () => before_navigate_callbacks.delete(fn));\n` +
+        // A link out of the app, opened elsewhere (a pane's page): this page isn't about to unload after all.
+        `globalThis.__desktopNavigating = () => is_navigating;\n` +
+        `globalThis.__desktopStaying = (was) => { is_navigating = was; };\n` +
+        `globalThis.__desktopAfterNavigate = (fn) => (after_navigate_callbacks.add(fn), () => after_navigate_callbacks.delete(fn));\n` +
+        // The route an address is, as Kit resolves it (matchers, static routes first); null if none.
+        `globalThis.__desktopRouteOf = async (href) => (await get_navigation_intent(new URL(href, location.href), false))?.route?.id ?? null;\n` +
+        // The state of the current entry (goto's \`state\`).
+        `globalThis.__desktopSerialized = (state) => stringify(state);\n` +
+        `globalThis.__desktopEntryState = () => { const state = get_history_metadata()?.state; return state === undefined ? undefined : parse(state); };\n` +
+        // The same for another page's goto(): serialized as Kit keeps it, and whether it's shallow (its page stays).
+        `globalThis.__desktopEntryOptions = () => { const m = get_history_metadata(); return m ? { stateJson: m.state, ...(m.pageUrl && { shallow: true, pageUrl: m.pageUrl }) } : (history.state?.desktopEntry ?? {}); };\n` +
         // A kept-alive tab's address, without navigating (no load, no page code: its view runs the
         // page): an entry Kit didn't make — it ignores it, back and forward included — and page.url.
-        `globalThis.__desktopAddress = (url) => {\n\tHistory.prototype.pushState.call(history, { desktopAddress: true }, '', url);\n\tupdate_page({ url: new URL(location.href) });\n};\n` +
+        `globalThis.__desktopAddress = (url, index, replace, entry) => {\n\tHistory.prototype[replace ? 'replaceState' : 'pushState'].call(history, { desktopAddress: true, desktopIndex: index, desktopEntry: entry }, '', url);\n\tupdate_page({ url: new URL(location.href) });\n};\n` +
+        // The address changed behind its back (an entry taken back, a pane's page having canceled it).
+        `globalThis.__desktopAddressFollows = () => {\n\tconst m = get_history_metadata();\n\tif (m) {\n\t\tcurrent_history_index = m.historyIndex;\n\t\tcurrent_navigation_index = m.navigationIndex;\n\t\trestore_snapshot(current_navigation_index);\n\t}\n\tconst url = new URL(location.href);\n\tupdate_page({ url, state: m?.state === undefined ? {} : parse(m.state), shallow: null });\n\tconst token = navigation_token;\n\tconst entry = history.state;\n\tif (m?.pageUrl) void get_navigation_intent(url, false).then((intent) => token === navigation_token && entry === history.state && update_page({ shallow: { params: intent?.params ?? null, route: intent ? { id: intent.route.id } : null, url } }));\n};\n` +
         // The page Kit has (the address may be a kept-alive tab's): back to it is the address alone.
         `globalThis.__desktopPageUrl = () => current.url && current.url.pathname + current.url.search + current.url.hash;\n` +
+        // Where the page says it is: an entry of its own made by pushState() from $app/navigation (a
+        // modal's address) has the page's URL in it. An address going elsewhere doesn't count until Kit gets there.
+        `globalThis.__desktopShownUrl = () => get_history_metadata()?.pageUrl && get_history_metadata().pageUrl === current.url?.href ? location.pathname + location.search + location.hash : globalThis.__desktopPageUrl();\n` +
         // Back / forward Kit leaves alone (to or from such an entry): page.url follows the address.
         // Before Kit's own listener, which moves its index for the entries it handles.
         `addEventListener('popstate', (event) => {\n\tconst index = get_history_metadata(event.state)?.historyIndex;\n\tif ((!index || index === current_history_index) && page.url.href !== location.href) update_page({ url: new URL(location.href) });\n});\n` +
@@ -257,23 +293,52 @@ function websocketDev(config: ResolvedConfig): Plugin {
   };
 }
 
-// src/websocket.ts in the build: one more entry of SvelteKit's server build, so it shares the server's
-// modules (one instance of what both import) and resolves $app / $env / $lib like a route does.
-// The adapter imports the built `desktop-websocket.js` (adapter.js).
-function websocketEntry(config: ResolvedConfig): Plugin {
-  const file = ["ts", "js"].map((ext) => join(config.root, "src", `websocket.${ext}`)).find((f) => existsSync(f));
+// The app's MCP server in dev (src/mcp.ts): through Vite's ssr runner too, the file as it is now on
+// each request, its list published again when it's edited.
+function mcpDev(config: ResolvedConfig): Plugin {
   return {
-    name: "svelte-desktop:websocket-entry",
+    name: "svelte-desktop:mcp",
+    apply: "serve",
+    async configureServer(vite) {
+      const file = ["ts", "js"].map((ext) => join(config.root, "src", `mcp.${ext}`)).find((f) => existsSync(f));
+      if (!file) return;
+      const { startMcpEndpoint } = await import("./mcp/app.ts");
+      // The SDK as src/mcp.ts imports it, from the app (app.ts says why).
+      const { createMcpHandler } = (await import(Bun.resolveSync("@modelcontextprotocol/server", config.root))) as typeof import("@modelcontextprotocol/server");
+      type Factory = import("@modelcontextprotocol/server").McpServerFactory;
+      const load = async (): Promise<Factory> => {
+        const runner = (vite as unknown as { environments?: { ssr?: { runner?: { import(id: string): Promise<{ default: Factory }> } } } }).environments?.ssr?.runner;
+        return (runner ? await runner.import(file) : await vite.ssrLoadModule(file)).default as Factory;
+      };
+      const served = startMcpEndpoint({ identifier: config.identifier, appName: config.appName, version: config.version ?? "0.0.0" }, createMcpHandler, load);
+      const publish = () => void served.publish();
+      if (vite.httpServer) vite.httpServer.once("listening", publish);
+      else publish();
+      // After Vite has dropped the file from its modules (its own watcher came first).
+      vite.watcher.on("change", (changed) => void (changed === file && setTimeout(publish, 50)));
+      const close = vite.close.bind(vite);
+      vite.close = async () => (served.stop(), close());
+    },
+  };
+}
+
+// src/websocket.ts and src/mcp.ts in the build: one more entry of SvelteKit's server build, so each
+// shares the server's modules (one instance of what both import) and resolves $app / $env / $lib like
+// a route does. The adapter imports the built `desktop-websocket.js`, `desktop-mcp.js` (adapter.js).
+function serverEntry(config: ResolvedConfig, name: "websocket" | "mcp"): Plugin {
+  const file = ["ts", "js"].map((ext) => join(config.root, "src", `${name}.${ext}`)).find((f) => existsSync(f));
+  return {
+    name: `svelte-desktop:${name}-entry`,
     apply: "build",
-    configEnvironment(name: string, env: { build?: { rollupOptions?: { input?: unknown } } }) {
-      if (!file || name !== "ssr") return;
+    configEnvironment(environment: string, env: { build?: { rollupOptions?: { input?: unknown } } }) {
+      if (!file || environment !== "ssr") return;
       const input = env.build?.rollupOptions?.input;
-      if (input && typeof input === "object" && !Array.isArray(input)) (input as Record<string, string>)["desktop-websocket"] = file;
+      if (input && typeof input === "object" && !Array.isArray(input)) (input as Record<string, string>)[`desktop-${name}`] = file;
     },
     options(this: { environment?: { name: string } }, opts: { input?: unknown }) {
       // Without configEnvironment's input (SvelteKit setting it later): the server build's own input.
       if (!file || this.environment?.name !== "ssr") return;
-      if (opts.input && typeof opts.input === "object" && !Array.isArray(opts.input)) (opts.input as Record<string, string>)["desktop-websocket"] ??= file;
+      if (opts.input && typeof opts.input === "object" && !Array.isArray(opts.input)) (opts.input as Record<string, string>)[`desktop-${name}`] ??= file;
     },
   } as Plugin;
 }

@@ -212,7 +212,7 @@ static void present_alert(SDWebViewState *s, NSAlert *alert, NSString *type, NSS
   emit_for(s, @"jsDialog", ev);
   // Windows: a sheet on the page's window (never blocks the run loop). Popovers
   // (and windows that already carry a sheet): app-modal.
-  NSWindow *win = platform_window(s.nativeId);
+  NSWindow *win = platform_window(s.nativeId) ?: platform_window(platform_view_owner(s.nativeId)); // a view's: its window
   if (win && !win.attachedSheet) {
     [alert beginSheetModalForWindow:win completionHandler:finish];
   } else {
@@ -334,7 +334,7 @@ static NSArray<UTType *> *accepted_types(WKOpenPanelParameters *parameters) {
   NSArray<UTType *> *types = parameters.allowsDirectories ? @[] : accepted_types(parameters);
   if (types.count) panel.allowedContentTypes = types;
   void (^done)(NSModalResponse) = ^(NSModalResponse r) { completionHandler(r == NSModalResponseOK ? panel.URLs : nil); };
-  NSWindow *win = platform_window(self.state.nativeId);
+  NSWindow *win = platform_window(self.state.nativeId) ?: platform_window(platform_view_owner(self.state.nativeId)); // a view's: its window
   if (win && !win.attachedSheet) [panel beginSheetModalForWindow:win completionHandler:done];
   else run_outside_gcd(^{ done([panel runModal]); });
 }

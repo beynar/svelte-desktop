@@ -9,10 +9,11 @@ static NSMutableSet *g_pending;
 static void keep(id o) { [(g_pending ?: (g_pending = [NSMutableSet set])) addObject:o]; }
 static void drop(id o) { [g_pending removeObject:o]; }
 
-/// The page's web view of the window the call names (or comes from), and that window.
+/// The page's web view of the window the call names (or comes from: a view's own), and that window.
 static WKWebView *page_of(PlatformCall *c, NSWindow **win) {
   int id = platform_resolve_window(c);
-  WKWebView *wv = platform_webview(id);
+  WKWebView *view = [c has:@"windowId"] ? nil : platform_view_webview(c.callerWindow);
+  WKWebView *wv = view ?: platform_webview(id);
   if (win) *win = wv.window;
   return wv;
 }

@@ -9,6 +9,7 @@ import { startGate } from "./gate.ts";
 import { createDesktopRuntime, type DesktopRuntime } from "./desktop-api.ts";
 import { connectTestChannel } from "./test-channel.ts";
 import { redirectConsole } from "./logging.ts";
+import type { McpEndpoint, McpIdentity } from "./mcp/files.ts";
 import { startPath } from "./start-path.ts";
 import "./platform/protocol.ts";
 import { initPlatform, deliverPlatformEvent } from "./platform/bus.ts";
@@ -26,14 +27,16 @@ export interface WorkerOptions {
   routes?: Record<string, any>;
   /** src/websocket.ts: WebSockets on the app's server. */
   websocket?: WebSocketHandlers<any>;
+  /** src/mcp.ts: the app's MCP server, started by the adapter's entry (only that app carries the SDK). */
+  mcp?: (identity: McpIdentity) => McpEndpoint;
 }
 
 const UPDATE_PATH = "/__desktop/update/";
 
-export function startWorker({ handler, routes = {}, websocket }: WorkerOptions) {
+export function startWorker({ handler, routes = {}, websocket, mcp }: WorkerOptions) {
   self.addEventListener("message", async (e: MessageEvent) => {
     const msg = e.data;
-    if (msg?.type === "init") await init(msg as InitMessage, handler, routes, websocket);
+    if (msg?.type === "init") await init(msg as InitMessage, handler, routes, websocket, mcp);
     if (msg?.type === "shutdown") await shutdown();
   });
 }
@@ -77,7 +80,7 @@ async function handleRequest(handler: KitHandler, req: Request, srv: Server<any>
   }
 }
 
-async function init(msg: InitMessage, handler: KitHandler, routes: Record<string, any>, websocket?: WebSocketHandlers<any>) {
+async function init(msg: InitMessage, handler: KitHandler, routes: Record<string, any>, websocket?: WebSocketHandlers<any>, mcp?: WorkerOptions["mcp"]) {
   if (msg.logFile) redirectConsole(msg.logFile, "worker");
   native = openNative(msg.lib);
   sink = new JSCallback(
@@ -123,6 +126,11 @@ async function init(msg: InitMessage, handler: KitHandler, routes: Record<string
   if (process.platform === "darwin") appLifecycle.onWillQuit(() => runQuitCleanup());
   installDesktopApi(runtime.api);
   connectTestChannel({ origin, appName: msg.appName });
+  if (mcp) {
+    const served = mcp({ identifier: msg.identifier, appName: msg.appName, version: msg.version });
+    void served.publish();
+    runtime.api.onBeforeQuit(() => served.stop());
+  }
 
   if (debug) console.log(`[shell] serving ${origin}`);
   native.shell_window_navigate(msg.windowId, cstr(gate.authUrl(await startPath(msg.identifier))));

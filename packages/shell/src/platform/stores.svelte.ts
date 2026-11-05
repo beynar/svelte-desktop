@@ -1611,6 +1611,8 @@ class WebviewNamespace extends PlatformNamespace {
 	);
 	#media = mirror('webview.setAudioMuted', () => webviewSvc.getMediaState());
 	#contentRules = mirror(['webview.setContentRules', 'webview.removeContentRules'], () => webviewSvc.listContentRules());
+	/** Read them again: something the shell doesn't see changed them (a menu's zoom role). */
+	refresh = () => this.#info.pull();
 	/** This page's web view: its settings. Each is null until known. */
 	get zoom() { return this.#info.value?.zoom ?? null; }
 	get userAgent() { return this.#info.value?.userAgent ?? null; }

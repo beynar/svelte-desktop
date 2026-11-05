@@ -58,6 +58,13 @@ int public_id(int native_id);               // 0 = primary
 /// Resolves args.windowId (public id) → native id; else the caller window, the
 /// active window, the primary window. 0 if none / unknown windowId.
 int resolve_window(const Call &c);
+int view_owner(int native_id); // the window a view is in (svc_view.cc), 0 if it isn't one
+void views_window_closed(int window); // its views go with it (svc_view.cc)
+bool view_at_app(int native_id); // its page is the app's, not another site's
+int view_last_owner(int native_id); // the window it was in, even gone since
+int view_native(const std::string &ident); // 0 if there's none
+std::string view_ident(int native_id); // its id (svc_view.cc), empty if it isn't one
+void view_reveal(int native_id); // asks the window's page to show it (viewReveal)
 /// window.create: opts as shell_window_create plus `path` and `label`.
 /// Returns native id, -4 for a duplicate label, <0 on failure.
 int create_window_from_platform(const json &opts);

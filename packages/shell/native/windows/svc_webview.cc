@@ -17,8 +17,14 @@ static View *resolve_view(CallPtr c) {
     if (!v) c->fail("invalid_args", "webview." + c->op + ": unknown popover `" + pid + "`");
     return v;
   }
+  std::string named = c->str("viewId");
+  if (!named.empty()) {
+    View *v = view_named(named);
+    if (!v) c->fail("invalid_args", "webview." + c->op + ": unknown view `" + named + "`");
+    return v;
+  }
   if (!c->has("windowId") && c->caller && !find_window(c->caller))
-    if (View *v = find_view(c->caller)) return v; // a popover page
+    if (View *v = find_view(c->caller)) return v; // a popover page, a view's
   Window *w = find_window(resolve_window(*c));
   if (!w) {
     c->fail("invalid_args", "webview." + c->op + ": no such window");
@@ -185,7 +191,10 @@ void register_webview() {
               {"contextMenu", v->contextMenu || v->debug ? "default" : "none"}};
     std::string popover = popover_id_of(v->id);
     if (!popover.empty()) d["popoverId"] = popover;
-    else d["windowId"] = backend_public_window_id(v->id);
+    else if (int owner = view_owner(v->id)) {
+      d["windowId"] = backend_public_window_id(owner); // a view's page: its window
+      d["viewId"] = v->browserView;
+    } else d["windowId"] = backend_public_window_id(v->id);
     if (src) CoTaskMemFree(src);
     if (title) CoTaskMemFree(title);
     c->ok(d);

@@ -19,8 +19,9 @@ namespace sd {
 namespace notif {
 
 int target_window(int preferred) {
-  auto ok = [](int id) { return id && lx::find_window(id) && page_loaded(id); };
+  auto ok = [](int id) { return id && (lx::find_window(id) || lx::view_at_app(id)) && page_loaded(id); }; // a view's page too
   if (ok(preferred)) return preferred;
+  if (int owner = lx::view_last_owner(preferred); ok(owner)) return owner; // a view gone since (suspended): its window
   for (int id : lx::window_ids())
     if (ok(id) && gtk_window_is_active(GTK_WINDOW(lx::find_window(id)->window))) return id;
   for (int id : lx::window_ids())
@@ -31,8 +32,10 @@ int target_window(int preferred) {
 static std::string g_activation_token; // xdg-activation token of the action being handled
 
 void bring_to_front(int native_id) {
-  lx::Window *w = lx::find_window(native_id);
+  int owner = lx::view_owner(native_id);
+  lx::Window *w = lx::find_window(owner ? owner : native_id);
   if (!w) return;
+  if (owner) lx::view_reveal(native_id); // its tab comes on screen
   GtkWindow *gw = GTK_WINDOW(w->window);
   if (!g_activation_token.empty()) gtk_window_set_startup_id(gw, g_activation_token.c_str()); // Wayland focus
   gtk_window_deiconify(gw);
@@ -338,7 +341,10 @@ void register_notifications() {
     notif::Show s;
     std::string err;
     if (!notif::parse_show(c->args, s, &err)) return c->fail("invalid_args", err);
-    int window = find_window(c->caller) ? c->caller : 0;
+    int window = find_window(c->caller) || view_owner(c->caller) ? c->caller : 0;
+    // A kept-alive tab's page: its window's router takes the click (its tab follows the address).
+    if (c->flag("toWindow", false))
+      if (int owner = view_owner(c->caller)) window = owner;
     double now = notif::now_ms();
     if (s.hasAt && s.at > now + 1000) {
       json args = c->args;
@@ -401,7 +407,11 @@ void register_notifications() {
     for (auto &e : store().items) out.push_back(notif::pending_json(e));
     c->ok(out);
   });
-  reg("notifications", "claim", [](CallPtr c) { c->ok(notif::take_claims()); });
+  reg("notifications", "claim", [](CallPtr c) {
+    // Windows only: popover and embedded pages start too, they don't own app navigation.
+    if (c->caller && !find_window(c->caller)) return c->ok(json::array());
+    c->ok(notif::take_claims());
+  });
   reg("notifications", "responses", [](CallPtr c) { c->ok(notif::ring()); });
   reg("notifications", "setBadge", [](CallPtr c) {
     long long count = 0;

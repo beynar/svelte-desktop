@@ -84,22 +84,11 @@ Archive layout:
 | macOS `.app` | exactly one `<Name>.app/` (with `Contents/MacOS` and `Contents/Info.plist`) | `<Installed>.app` → `<Installed>.app.old`; staged `.app` moved in under the installed name |
 | Linux / Windows / bare macOS binary | the executable, plus any sibling files (e.g. a native lib) | each entry `X` replaces `<installdir>/X`; previous file kept as `X.old`. If the archive holds a single file, it replaces the running executable whatever its name (renamed exes, AppImage via `$APPIMAGE`). Otherwise an entry named like the running executable is required. |
 
-### Extension point: `patches` (reserved)
+### `patches`: delta updates
 
-`patches` is reserved for Electrobun-style binary deltas: a chain of bsdiff patches from older versions to this one. It is **not interpreted** by this client, but it **is signed**. A future client could use a shape like:
+`patches` lists, per platform, the delta patches that can take an installed older version to this one. It is signed with the rest of the manifest, and the client applies it: when an entry's `from` equals the running version, it downloads the `.sdpatch` (pinned by the entry's `sha256`), rebuilds the new app from the installed copy and falls back to the full archive on any mismatch. The shape and the process are described in [Delta updates](#delta-updates) below.
 
-```jsonc
-"patches": { "darwin-arm64": [ { "from": "1.3.0", "url": "…", "sha256": "…", "size": 123, "resultSha256": "<sha256 of the reconstructed tar>" } ] }
-```
-
-The future client would:
-1. select the patch chain starting at `currentVersion`;
-2. download each patch with `downloadVerified()`;
-3. apply them to a tarball of the current install;
-4. check `resultSha256`;
-5. fall back to the full artifact on any mismatch.
-
-Everything after "verified archive on disk" (extract → `apply()`) stays unchanged. Old clients ignore the field.
+Clients that predate delta updates ignore the field.
 
 ## Client flow
 

@@ -41,6 +41,9 @@ struct Embedded {
 };
 
 static std::map<std::string, Embedded *> g_embedded;
+static std::map<int, int> g_owners; // the window of every view there was, this run
+static std::string g_focus_when_ready; // the view asked for the keyboard before it was ready
+static std::map<int, std::string> g_with_focus; // by native window: the view that last had the keyboard, until its page does
 static int g_next_embed = 2000;
 static const wchar_t *kEmbedClass = L"SvelteDesktopEmbeddedView";
 
@@ -102,12 +105,61 @@ static std::string url_from(const CallPtr &c) {
   return origin + (route[0] == '/' ? route : "/" + route);
 }
 
+View *view_named(const std::string &ident) {
+  auto it = g_embedded.find(ident);
+  return it == g_embedded.end() ? nullptr : &it->second->view;
+}
+
+bool view_at_app(int native_id) {
+  if (!view_owner(native_id)) return false;
+  View *v = find_view(native_id);
+  if (!v || !v->webview) return false;
+  LPWSTR source = nullptr;
+  v->webview->get_Source(&source);
+  const std::string at = take_string(source), origin = app_origin();
+  return !origin.empty() && (at == origin || at.rfind(origin + "/", 0) == 0);
+}
+
+int view_last_owner(int native_id) {
+  auto it = g_owners.find(native_id);
+  return it == g_owners.end() ? 0 : it->second;
+}
+
+int view_owner(int native_id) {
+  for (auto &[ident, e] : g_embedded)
+    if (e->view.id == native_id) return e->window;
+  return 0;
+}
+
+View *view_with_focus(int window) {
+  auto it = g_with_focus.find(window);
+  if (it == g_with_focus.end()) return nullptr;
+  auto e = g_embedded.find(it->second);
+  return e == g_embedded.end() || !IsWindowVisible(e->second->child) ? nullptr : &e->second->view;
+}
+
+void view_page_focused(int window) { g_with_focus.erase(window); }
+
+void view_reveal(int native_id) {
+  for (auto &[ident, e] : g_embedded)
+    if (e->view.id == native_id) return emit("viewReveal", json{{"id", ident}});
+}
+
 static void destroy_embedded(Embedded *e) {
+  if (g_focus_when_ready == e->ident) g_focus_when_ready.clear();
+  if (auto it = g_with_focus.find(e->window); it != g_with_focus.end() && it->second == e->ident) g_with_focus.erase(it);
   if (e->view.webview) e->view.webview->remove_DocumentTitleChanged(e->view.tokens[7]);
   view_destroy(&e->view);
   if (e->child && IsWindow(e->child)) DestroyWindow(e->child);
   g_embedded.erase(e->ident);
   delete e;
+}
+
+void views_window_closed(int window) {
+  for (auto it = g_embedded.begin(); it != g_embedded.end();) {
+    Embedded *e = (it++)->second;
+    if (e->window == window) destroy_embedded(e);
+  }
 }
 
 using EmbedOp = std::function<void(CallPtr, Embedded *)>;
@@ -124,6 +176,10 @@ static void op(const std::string &name, EmbedOp body) {
 }
 
 static void register_view_ops() {
+  reg("view", "forgetFocus", [](CallPtr c) {
+    g_focus_when_ready.clear();
+    c->ok();
+  });
   reg("view", "create", [](CallPtr c) {
     Window *w = find_window(resolve_window(*c));
     if (!w) return c->fail("invalid_args", "view.create: no such window");
@@ -151,12 +207,13 @@ static void register_view_ops() {
     SetWindowLongPtrW(e->child, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(e));
     g_embedded[ident] = e;
     e->view.id = g_next_embed++;
+    g_owners[e->view.id] = e->window;
     e->view.host = e->child;
-    e->view.debug = c->flag("debug", false);
+    e->view.debug = c->flag("debug", c->flag("tab", false) && w->view.debug); // a tab's page is its window's
     e->view.contextMenu = e->view.debug;
     e->view.transparent = c->flag("transparent", false);
     e->view.browserView = ident;
-    e->view.extraScript = "if(window.top===window)window.__desktopView=" + json(ident).dump() + ";"; // the page knows it's a view
+    e->view.extraScript = "if(window.top===window){window.__desktopView=" + json(ident).dump() + ";" + (c->flag("pane", false) ? "window.__desktopPaneView=true;" : std::string()) + (c->flag("tab", false) ? "window.__desktopTabView=true;" : "") + "}"; // the page knows it's a view
     views()[e->view.id] = &e->view;
     place(e);
     view_create(&e->view);
@@ -170,6 +227,32 @@ static void register_view_ops() {
           });
       e->view.webview->add_DocumentTitleChanged(onTitle, &e->view.tokens[7]);
       onTitle->Release();
+      // The URL also moves within a document (a site's own router), which nothing else tells.
+      auto *onSource = new Cb<ICoreWebView2SourceChangedEventHandler, ICoreWebView2 *, ICoreWebView2SourceChangedEventArgs *>(
+          IID_ICoreWebView2SourceChangedEventHandler, [ident = e->ident](ICoreWebView2 *sender, ICoreWebView2SourceChangedEventArgs *) -> HRESULT {
+            LPWSTR source = nullptr;
+            sender->get_Source(&source);
+            emit("viewUrl", json{{"id", ident}, {"url", take_string(source)}});
+            return S_OK;
+          });
+      EventRegistrationToken sourceToken{};
+      e->view.webview->add_SourceChanged(onSource, &sourceToken);
+      onSource->Release();
+      // Its page has the keyboard: it has the user's attention (panes follow it).
+      auto *onFocus = new Cb<ICoreWebView2FocusChangedEventHandler, ICoreWebView2Controller *, IUnknown *>(
+          IID_ICoreWebView2FocusChangedEventHandler, [ident = e->ident, window = e->window](ICoreWebView2Controller *, IUnknown *) -> HRESULT {
+            g_focus_when_ready.clear();
+            g_with_focus[window] = ident;
+            emit("viewFocused", json{{"id", ident}});
+            return S_OK;
+          });
+      EventRegistrationToken focusToken{};
+      e->view.controller->add_GotFocus(onFocus, &focusToken);
+      onFocus->Release();
+      if (g_focus_when_ready == e->ident) {
+        g_focus_when_ready.clear();
+        e->view.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+      }
     });
     view_navigate(&e->view, url);
     c->ok(json{{"id", ident}, {"windowId", backend_public_window_id(w->id)}});
@@ -190,6 +273,13 @@ static void register_view_ops() {
     std::string url = url_from(c);
     if (url.empty()) return c->fail("invalid_args", "view.navigate: `url` or `route` is required");
     view_navigate(&e->view, url);
+    c->ok();
+  });
+  op("focus", [](CallPtr c, Embedded *e) {
+    // Not ready yet: when it is, if nothing else was given the keyboard since.
+    g_focus_when_ready.clear();
+    if (e->view.controller) e->view.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    else g_focus_when_ready = e->ident;
     c->ok();
   });
   op("show", [](CallPtr c, Embedded *e) {

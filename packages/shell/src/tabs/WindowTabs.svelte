@@ -19,6 +19,8 @@
 	import { TabGroup, forView, setTabs, type TabLike, type TabRender } from './tabs.svelte.ts';
 	import TabBar from './TabBar.svelte';
 	import TabContent from './TabContent.svelte';
+	import Panes from './Panes.svelte';
+	import { connectPaneView } from './panes-drag.ts';
 
 	type Tab = TabLike;
 	type BarProps = { class?: string; label?: string; newTabLabel?: string; start?: Snippet; end?: Snippet };
@@ -30,6 +32,14 @@
 		newTab?: string;
 		/** Routes that keep running when their tab isn't shown, as SvelteKit route ids. */
 		keepAlive?: string[];
+		/** Split the window into panes: a tab dragged to a side of a pane makes a new one, each pane with
+		 *  its own bar, every tab in its own web view (its own process). `content` draws the panes,
+		 *  bars included. Set once, at start. Default false. */
+		split?: boolean;
+		/** The smallest a pane gets when resized (px). Default 180. */
+		minPaneSize?: number;
+		/** Accessible name of the line between two panes. Default 'Resize panes'. */
+		resizeLabel?: string;
 		/** Restore the tabs at the next launch. Default true. */
 		restore?: boolean;
 		/** Drag a tab out of the window (its own window, another window's bar). Default true. */
@@ -51,9 +61,9 @@
 		/** The tabs, for your code (bindable): items, active, open(path | url), close, activate… */
 		api?: TabGroup<Tab>;
 		/** Each tab (default: its title and a close button). */
-		tab?: Snippet<[TabRender<Tab>]>;
+		tab?: Snippet<[TabRender]>;
 		/** Where the bar and the content go (default: the bar above the content). */
-		layout?: Snippet<[{ bar: Snippet<[BarProps?]>; content: Snippet<[{ class?: string }?]>; api: TabGroup<Tab> }]>;
+		layout?: Snippet<[{ bar: Snippet<[BarProps?]>; content: Snippet<[{ class?: string; bar?: BarProps }?]>; api: TabGroup<Tab> }]>;
 		/** The page alone, in a kept-alive tab's own web view (default: just the page). */
 		embedded?: Snippet<[{ page: Snippet }]>;
 	}
@@ -62,6 +72,9 @@
 		page,
 		newTab,
 		keepAlive,
+		split = false,
+		minPaneSize = 180,
+		resizeLabel,
 		restore = true,
 		detachable = true,
 		windowAnimation,
@@ -79,9 +92,7 @@
 	let items = $state<Tab[]>([]);
 	const group: TabGroup<Tab> = new TabGroup<Tab>(
 		() => ({
-			id: 'app',
-			route: true,
-			primary: true,
+			split,
 			restore,
 			keepAlive,
 			detachable,
@@ -117,6 +128,8 @@
 	// registered there stays, request after request).
 	if (typeof window !== 'undefined') api = group;
 	$effect(() => group.connect());
+	// A pane's page: its window hears where its router goes and which tabs it asks for.
+	$effect(() => (inView && split ? connectPaneView(keepAlive) : undefined));
 </script>
 
 <svelte:head>
@@ -125,11 +138,15 @@
 </svelte:head>
 
 {#snippet bar(props: BarProps = {})}
-	<TabBar {...props} {tab} />
+	{#if !split}<TabBar {...props} {tab} />{/if}
 {/snippet}
 
-{#snippet content(props: { class?: string } = {})}
-	<TabContent class={props.class}>{@render page()}</TabContent>
+{#snippet content(props: { class?: string; bar?: BarProps } = {})}
+	{#if split}
+		<Panes class={props.class} bar={props.bar} {tab} {minPaneSize} {resizeLabel} />
+	{:else}
+		<TabContent class={props.class}>{@render page()}</TabContent>
+	{/if}
 {/snippet}
 
 {#if inView}

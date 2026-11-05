@@ -5,7 +5,7 @@ import { launch, type AppHandle } from '@svelte-desktop/shell/test';
 
 let app: AppHandle;
 beforeAll(async () => {
-	app = await launch(process.env.DESKTOP_TEST_DEV ? { dev: true } : {});
+	app = await launch(process.env.DESKTOP_TEST_DEV ? { dev: true, env: { VITE_TABS_SPLIT: '0' } } : {});
 	await app.waitFor('[data-theme-toggle]', { timeout: 30_000 });
 });
 afterAll(() => app?.close());

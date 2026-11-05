@@ -1,0 +1,111 @@
+:root {
+	color-scheme: light dark;
+	--canvas: light-dark(#f4f4f5, #17171a);
+	--surface: light-dark(#ffffff, #1f1f23);
+	--line: light-dark(#e4e4e7, #2e2e33);
+	--text: light-dark(#18181b, #ececf1);
+	--muted: light-dark(#71717a, #9a9aa3);
+	--accent: #5f62ef;
+	--sd-pane-gap: 6px;
+	--sd-pane-drop: color-mix(in srgb, var(--accent) 35%, transparent);
+	--sd-tab-drop-color: var(--accent);
+	font: 13px/1.5 -apple-system, system-ui, sans-serif;
+	color: var(--text);
+	background: var(--canvas);
+}
+html,
+body {
+	height: 100%;
+	margin: 0;
+	background: var(--canvas);
+}
+.shell {
+	display: flex;
+	height: 100vh;
+}
+.sidebar {
+	flex: none;
+	width: 200px;
+	padding: calc(var(--desktop-titlebar-height, 0px) + 12px) 8px 12px;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	--app-region: drag;
+}
+.sidebar h2 {
+	margin: 12px 8px 4px;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--muted);
+}
+.sidebar a,
+.sidebar button {
+	all: unset;
+	display: block;
+	padding: 4px 8px;
+	border-radius: 6px;
+	cursor: default;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.sidebar a:hover,
+.sidebar button:hover {
+	background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.sidebar a[aria-current='page'] {
+	background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.panes {
+	flex: 1;
+	min-width: 0;
+	padding: 0 6px 6px 0;
+	box-sizing: border-box;
+}
+/* A pane: a card, its bar on top. The top row holds the title bar's room, and moves the window. */
+[data-sd-pane] {
+	background: var(--surface);
+	border-radius: 8px;
+	overflow: hidden;
+	box-shadow: 0 0 0 1px var(--line);
+}
+[data-sd-pane][data-focused] {
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, var(--line));
+}
+[data-sd-pane][data-top] {
+	margin-top: 6px;
+}
+.pane-bar {
+	height: 34px;
+	padding: 0 6px;
+	gap: 2px;
+	border-bottom: 1px solid var(--line);
+	--app-region: drag;
+}
+.pane-bar [role='tab'] {
+	height: 26px;
+	padding: 0 8px;
+	border-radius: 6px;
+	color: var(--muted);
+}
+.pane-bar [role='tab'][data-active] {
+	color: var(--text);
+	background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.pane-bar [data-sd-tab-new] {
+	width: 24px;
+	height: 24px;
+	border-radius: 6px;
+	color: var(--muted);
+}
+.page {
+	height: 100vh;
+	box-sizing: border-box;
+	overflow: auto;
+	padding: 16px 20px;
+}
+.page h1 {
+	margin: 0 0 8px;
+	font-size: 16px;
+}

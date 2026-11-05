@@ -102,6 +102,10 @@ test('Python commands: typed, errors, events, a crash restarts the process', asy
 
 test('host.store and host.windowState from the page: the app server owns the files', async () => {
 	await app.eval(`(async () => { await host.store.load(); host.store.set('e2e', { n: 7 }); await host.store.flush(); })()`);
+	// In this app's own folder: the OS's app-data root is shared with every other app.
+	const own = await app.platform<string>('app', 'getPath', { name: 'userData' });
+	expect(own).toContain('dev.svelte-desktop.notes');
+	expect(JSON.parse(await Bun.file(`${own}/svelte-desktop-store.json`).text()).e2e).toEqual({ n: 7 });
 	await app.eval('(window.__beforeReload = true, setTimeout(() => location.reload(), 10), true)');
 	await app.waitFor(() => !(window as any).__beforeReload && document.documentElement.hasAttribute('data-desktop-hydrated'), { timeout: 15_000 });
 	expect(await app.eval(`host.store.load().then((d) => d.e2e)`)).toEqual({ n: 7 });

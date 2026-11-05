@@ -178,6 +178,14 @@ int primary_window();
 /// args.windowId (public id) or the calling page's window, else the
 /// foreground one of ours, else the primary. 0 when none.
 int resolve_window(const Call &c);
+View *view_named(const std::string &ident); // a view by its id, if there's one (svc_embed.cc)
+bool view_at_app(int native_id); // its page is the app's, not another site's
+int view_last_owner(int native_id); // the window it was in, even gone since
+int view_owner(int native_id); // the window a view is in (svc_embed.cc), 0 if it isn't one
+View *view_with_focus(int window); // the shown view with the keyboard in it, if any (svc_embed.cc)
+void views_window_closed(int window); // its views go with it (svc_embed.cc)
+void view_page_focused(int window); // the window's own page has it
+void view_reveal(int native_id); // asks the window's page to show it (viewReveal)
 /// opts as shell_window_create (+ "path", "label" for multi-window). <0 on error (-4 duplicate label).
 int create_app_window(const json &opts);
 /// No window left (quitOnLastWindowClosed: false): reopen the first window's options. 0 when

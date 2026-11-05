@@ -1,6 +1,7 @@
 <!-- Everything the Dock icon does, one card each: bounce, badge, icon, progress, its menu and the
      icon itself hidden. The Dock is outside the window: watch it while you click. -->
 <script lang="ts">
+	import { inPane } from '#lib/window-page';
 	import { goto } from '$app/navigation';
 	import { Button } from 'entasis/button';
 	import { TextInput } from 'entasis/text-input';
@@ -64,14 +65,16 @@
 		] },
 		{ id: 'dock:bounce-on-board', label: 'Bounce on New Board', checked: bounceOnBoard }
 	];
+	// In a pane, its page may not be the one on screen: the window's page takes the active tab there.
+	const open = (path: string) => void (inPane() ? host.broadcast('dashboard:open', path) : goto(path));
 	$effect(() =>
 		host.menu.onAction(({ id }) => {
 			if (!id.startsWith('dock:')) return;
 			note(`Dock menu: ${id.slice(5)}`);
 			if (id === 'dock:new-board') {
-				void goto('/board');
+				open('/board');
 				if (bounceOnBoard) void host.app.bounceDock('informational');
-			} else if (id === 'dock:activity') void goto('/activity');
+			} else if (id === 'dock:activity') open('/activity');
 			else if (id.startsWith('dock:badge-')) void host.app.setDockBadge(id === 'dock:badge-clear' ? null : id === 'dock:badge-new' ? 'New' : id.slice(11));
 			else if (id === 'dock:bounce-on-board') {
 				bounceOnBoard = !bounceOnBoard;

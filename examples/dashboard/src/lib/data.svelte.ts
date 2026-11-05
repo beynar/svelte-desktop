@@ -87,3 +87,45 @@ export const upcoming = () =>
 		.filter(({ start }) => start >= new Date(new Date().setHours(0, 0, 0, 0)))
 		.sort((a, b) => +a.start - +b.start)
 		.map(({ e, start }) => ({ ...e, startsAt: start }));
+
+// Every tab is its own web view, so its own copy of this module: they keep each other up to date, and
+// the window's sidebar with them. A real app's source of truth would be its server.
+if (typeof window !== 'undefined' && 'host' in globalThis) {
+	const CHANNEL = 'dashboard:data';
+	const snapshot = () => JSON.stringify({ boards, items: calendar.items });
+	let last = snapshot();
+	// Not until it knows where things are: what it has is only what it started with, and saying so
+	// would take the others' edits away. Nobody answering in a moment, it's the first.
+	let joined = false;
+	const publish = () => {
+		const now = snapshot();
+		if (now === last) return;
+		last = now;
+		void host.broadcast(CHANNEL, now).catch(() => {});
+	};
+	setTimeout(() => {
+		joined = true;
+		publish();
+	}, 300);
+	const adopt = (json: string) => {
+		if (json === last) return void (joined = true);
+		joined = true;
+		last = json;
+		const data = JSON.parse(json) as { boards: Record<string, Board>; items: EventCalendarItem<Meeting>[] };
+		for (const [id, { columns }] of Object.entries(data.boards)) boardFor(id).columns = columns;
+		// Dates don't survive JSON; an all-day event's are days already.
+		calendar.items = data.items.map((e) => (e.allDay ? e : { ...e, start: new Date(e.start as Date), end: new Date(e.end as Date) }));
+		last = snapshot();
+	};
+	$effect.root(() => {
+		$effect(() => {
+			snapshot(); // what it depends on
+			if (joined) publish();
+		});
+	});
+	host.onBroadcast<string>(CHANNEL, adopt);
+	// A tab just opened asks where things are; those already there say.
+	host.onBroadcast(`${CHANNEL}:ask`, () => void (joined && host.broadcast(CHANNEL, snapshot()).catch(() => {})));
+	void host.broadcast(`${CHANNEL}:ask`).catch(() => {});
+	Object.assign(globalThis, { __dashboardData: { board, boards, calendar } }); // for the tests
+}

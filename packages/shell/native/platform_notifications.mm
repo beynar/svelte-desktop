@@ -76,11 +76,21 @@ static NSString *payload_of(NSDictionary *userInfo) {
 }
 
 static void bring_to_front(int wid) {
-  NSWindow *w = platform_window(wid);
+  int owner = platform_view_owner(wid);
+  NSWindow *w = platform_window(owner ?: wid);
   if (!w) return;
+  if (owner) platform_view_reveal(wid); // its tab comes on screen
   if (w.miniaturized) [w deminiaturize:nil];
   [NSApp activateIgnoringOtherApps:YES];
   [w makeKeyAndOrderFront:nil];
+}
+
+// The page that showed it. Views get their ids again at each launch: a view's is good in its own only.
+static int origin_of(NSDictionary *info) {
+  NSNumber *origin = info[@"sdw"];
+  if (![origin isKindOfClass:NSNumber.class]) return 0;
+  if ((platform_view_owner(origin.intValue) || platform_view_last_owner(origin.intValue)) && ![info[@"sdl"] isEqual:@(NSProcessInfo.processInfo.processIdentifier)]) return 0;
+  return origin.intValue;
 }
 
 static void deliver_response(NSDictionary *base, int origin, BOOL activates, BOOL cold = NO) {
@@ -157,11 +167,11 @@ static NSDictionary *push_message(NSDictionary *userInfo, UNNotificationContent 
   }
   NSDictionary *info = req.content.userInfo;
   if (NSString *p = payload_of(info)) r[@"payload"] = p;
-  NSNumber *origin = info[@"sdw"];
+  int origin = origin_of(info);
   NSArray *background = info[@"sdb"]; // action ids that don't bring the app forward
   BOOL activates = ![r[@"kind"] isEqual:@"dismiss"] && !([background isKindOfClass:NSArray.class] && [background containsObject:action]);
   on_main(^{
-    deliver_response(r, [origin isKindOfClass:NSNumber.class] ? origin.intValue : 0, activates);
+    deliver_response(r, origin, activates);
     completionHandler();
   });
 }
@@ -318,7 +328,12 @@ static void show(PlatformCall *call) {
   NSMutableDictionary *info = [NSMutableDictionary dictionary];
   if (NSString *payload = [call string:@"payload"]) info[@"sd"] = payload;
   int origin = call.callerWindow;
-  if (origin) info[@"sdw"] = @(origin);
+  // A kept-alive tab's page: its window's router takes the click (its tab follows the address).
+  if ([call boolean:@"toWindow" or:NO]) origin = platform_view_owner(origin) ?: origin;
+  if (origin) {
+    info[@"sdw"] = @(origin);
+    info[@"sdl"] = @(NSProcessInfo.processInfo.processIdentifier);
+  }
   if ([call has:@"foreground"]) info[@"sdf"] = @([call boolean:@"foreground" or:YES]);
   if (repeat) info[@"sdr"] = repeat;
   NSString *error = nil;
@@ -572,9 +587,10 @@ void platform_register_notifications(void) {
           r[@"kind"] = [call string:@"kind"] ?: (input ? @"reply" : action ? @"action" : @"click");
           if (input) r[@"input"] = input;
           if (NSString *p = payload_of(info)) r[@"payload"] = p;
-          NSNumber *origin = info[@"sdw"];
+          int origin = origin_of(info);
+          if (NSString *view = [call string:@"fromView"]) origin = platform_view_native(view); // as if shown there
           // Like a real click: anything but a dismissal brings the app forward.
-          deliver_response(r, [origin isKindOfClass:NSNumber.class] ? origin.intValue : 0, ![r[@"kind"] isEqual:@"dismiss"], [call boolean:@"cold" or:NO]);
+          deliver_response(r, origin, ![r[@"kind"] isEqual:@"dismiss"], [call boolean:@"cold" or:NO]);
           [call ok:r];
         });
       }];

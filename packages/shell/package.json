@@ -19,7 +19,6 @@
 		"./push/service-worker.js": "./src/push/service-worker.js",
 		"./native": "./src/native.ts",
 		"./tabs": "./src/tabs/index.ts",
-		"./tabs/Tabs.svelte": "./src/tabs/Tabs.svelte",
 		"./tabs/WindowTabs.svelte": "./src/tabs/WindowTabs.svelte",
 		"./platform": "./src/platform/index.ts",
 		"./stores": "./src/platform/stores.svelte.ts",
@@ -46,6 +45,8 @@
 		"svelte-desktop": "./bin/svelte-desktop.ts"
 	},
 	"dependencies": {
-		"@atlaskit/pragmatic-drag-and-drop": "^4.0.0"
+		"@atlaskit/pragmatic-drag-and-drop": "^4.0.0",
+		"@modelcontextprotocol/client": "^2.4.0",
+		"@modelcontextprotocol/server": "^2.4.0"
 	}
 }

@@ -60,6 +60,7 @@ static SDMenuTarget *menu_target(void) {
 
 static WKWebView *key_webview(void) {
   NSWindow *key = NSApp.keyWindow ?: NSApp.mainWindow;
+  if (WKWebView *view = platform_view_focused(key)) return view; // a pane's, not the window's page under it
   for (NSNumber *n in platform_window_ids())
     if (platform_window(n.intValue) == key) return platform_webview(n.intValue);
   NSArray *ids = platform_window_ids();

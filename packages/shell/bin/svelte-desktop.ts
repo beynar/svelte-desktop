@@ -12,6 +12,7 @@
 import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
+import { removeAdapterOption } from "../src/build/init-edit.ts";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const root = process.cwd();
@@ -43,11 +44,13 @@ async function init() {
         .replace(/import\s*\{\s*sveltekit\s*\}\s*from\s*['"]@sveltejs\/kit\/vite['"];?/, "import { desktop } from '@svelte-desktop/shell/vite';")
         .replace(/\bsveltekit\(/g, "desktop(");
       // the desktop plugin sets the adapter itself
-      src = src.replace(/\n?\s*adapter:\s*adapter\([^)]*\),?/g, "").replace(/import adapter from ['"][^'"]+['"];?\n?/g, "");
+      src = removeAdapterOption(src).replace(/import adapter from ['"][^'"]+['"];?\n?/g, "");
       writeFileSync(viteConfig, src);
       ok(`${viteConfig}: sveltekit(…) → desktop(…)`);
     } else warn(`add desktop() from '@svelte-desktop/shell/vite' to ${viteConfig} manually`);
   }
+  const svelteConfig = ["svelte.config.js", "svelte.config.ts"].map((f) => join(root, f)).find(existsSync);
+  if (svelteConfig && /\badapter\b/.test(readFileSync(svelteConfig, "utf8"))) warn(`${svelteConfig} sets an adapter: remove it, desktop() sets its own`);
 
   pkg.scripts = { ...pkg.scripts, dev: "bunx --bun vite dev", build: "bunx --bun vite build", "test:desktop": "bun test --timeout 30000 tests/" };
   writeFileSync(pkgPath, `${JSON.stringify(pkg, null, "\t")}\n`);
@@ -140,16 +143,19 @@ async function doctor() {
     const c = await loadConfig(root);
     ok(`desktop.config: ${c.appName} (${c.identifier}) v${c.version}${c.native ? `, native plugin in ${c.native}` : ""}`);
     c.icon ? ok(`icon ${relative(root, c.icon.source)}`) : warn("no icon (icon.png, static/icon.png or `icon` in desktop.config)");
-    const identity = c.sign?.identity ?? process.env.CODESIGN_IDENTITY;
-    const ids = await $`security find-identity -v -p codesigning`.nothrow().text();
-    if (identity) ids.includes(identity) ? ok(`signing identity found: ${identity}`) : bad(`signing identity not in keychain: ${identity}`);
-    else warn(`no signing identity — builds are ad-hoc signed. Available: ${(ids.match(/"([^"]+)"/g) ?? []).join(", ") || "none"}`);
-    if (identity && !/Developer ID Application/.test(identity) && !/^[0-9A-F]{40}$/.test(identity)) warn("distribution outside the App Store needs a \"Developer ID Application\" certificate");
-    const profile = c.sign?.notaryProfile ?? process.env.NOTARY_PROFILE;
-    if (profile) {
-      const r = await $`xcrun notarytool history --keychain-profile ${profile}`.nothrow().quiet();
-      r.exitCode === 0 ? ok(`notary profile "${profile}" works`) : bad(`notary profile "${profile}" fails: ${r.stderr.toString().trim().split("\n")[0]}`);
-    } else warn("no notary profile (NOTARY_PROFILE) — builds are not notarized");
+    // Apple's signing tools: nothing to check on another OS.
+    if (process.platform === "darwin") {
+      const identity = c.sign?.identity ?? process.env.CODESIGN_IDENTITY;
+      const ids = await $`security find-identity -v -p codesigning`.nothrow().text();
+      if (identity) ids.includes(identity) ? ok(`signing identity found: ${identity}`) : bad(`signing identity not in keychain: ${identity}`);
+      else warn(`no signing identity — builds are ad-hoc signed. Available: ${(ids.match(/"([^"]+)"/g) ?? []).join(", ") || "none"}`);
+      if (identity && !/Developer ID Application/.test(identity) && !/^[0-9A-F]{40}$/.test(identity)) warn("distribution outside the App Store needs a \"Developer ID Application\" certificate");
+      const profile = c.sign?.notaryProfile ?? process.env.NOTARY_PROFILE;
+      if (profile) {
+        const r = await $`xcrun notarytool history --keychain-profile ${profile}`.nothrow().quiet();
+        r.exitCode === 0 ? ok(`notary profile "${profile}" works`) : bad(`notary profile "${profile}" fails: ${r.stderr.toString().trim().split("\n")[0]}`);
+      } else warn("no notary profile (NOTARY_PROFILE) — builds are not notarized");
+    }
     if (c.update) {
       const key = c.update.privateKey ?? process.env.SVELTE_DESKTOP_UPDATE_KEY;
       key && existsSync(resolve(root, key)) ? ok("update signing key present") : warn("update configured but no private key — release/update.json will be unsigned");

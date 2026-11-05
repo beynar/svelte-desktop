@@ -699,6 +699,7 @@ static NSDictionary *info_row(int id) {
     @"type" : [w isKindOfClass:NSPanel.class] ? @"panel" : @"normal",
     @"focusable" : @([(SDNativeWindow *)w sdFocusable]),
     @"windowId" : @(platform_public_window_id(id)),
+    @"session" : platform_session_of(platform_webview(id)) ?: (NSObject *)NSNull.null,
     @"label" : platform_window_label(id) ?: @"",
     @"focused" : @(w.isKeyWindow),
     @"visible" : @(w.isVisible),

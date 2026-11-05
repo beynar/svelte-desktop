@@ -1282,7 +1282,8 @@ export interface CapturedImage {
 }
 
 export const capture = {
-	isSupported: () => callPlatform<{ supported: boolean }>('capture', 'isSupported'),
+	/** `stills`, macOS only: this version can capture stills (macOS 14+). */
+	isSupported: () => callPlatform<{ supported: boolean; stills?: boolean }>('capture', 'isSupported'),
 	/** List capturable sources; `types` filters (default: every kind). */
 	getSources: (options: { types?: CaptureSourceType[] } = {}) =>
 		callPlatform<CaptureSource[]>('capture', 'getSources', options),
@@ -1816,6 +1817,8 @@ export const view = {
 	show: (id: string, options: { seeThrough?: boolean } = {}) => callPlatform<null>('view', 'show', { id, ...options }),
 	hide: (id: string) => callPlatform<null>('view', 'hide', { id }),
 	reload: (id: string) => callPlatform<null>('view', 'reload', { id }),
+	/** Give it the keyboard. */
+	focus: (id: string) => callPlatform<null>('view', 'focus', { id }),
 	getInfo: (id: string) =>
 		callPlatform<{ id: string; url: string | null; title: string; loading: boolean; hidden: boolean }>('view', 'getInfo', { id }),
 	executeJavaScript: <T = unknown>(id: string, code: string) => callPlatform<T>('view', 'executeJavaScript', { id, code }),
@@ -1825,4 +1828,8 @@ export const view = {
 	onNavigated: (cb: (e: { id: string; url: string }) => void) => onPlatform('viewNavigated', cb),
 	onFailed: (cb: (e: { id: string; error: string }) => void) => onPlatform('viewFailed', cb),
 	onTitle: (cb: (e: { id: string; title: string }) => void) => onPlatform('viewTitle', cb),
+	/** The user pressed in the view (macOS), or it got the keyboard (Linux, Windows). */
+	onFocused: (cb: (e: { id: string }) => void) => onPlatform('viewFocused', cb),
+	/** The page's URL changed, within a document too (a site's own router). */
+	onUrl: (cb: (e: { id: string; url: string }) => void) => onPlatform('viewUrl', cb),
 };

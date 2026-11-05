@@ -3,6 +3,7 @@
      and media, running at full speed out of sight, power events, clearing what sites stored, an OAuth
      sign-in in the system browser and a WebSocket on the app's own server. -->
 <script lang="ts">
+	import { setBackdrop } from '#lib/backdrop';
 	import { onDestroy, onMount } from 'svelte';
 	import NativeProcesses from './NativeProcesses.svelte';
 	import { Button } from 'entasis/button';
@@ -54,20 +55,9 @@
 		backdrop = next;
 		note(next ? `material: ${next}` : 'material off');
 	}
-	$effect(() => {
-		const root = document.documentElement;
-		if (backdrop) root.dataset.backdrop = backdrop;
-		else delete root.dataset.backdrop;
-		root.style.setProperty('--backdrop', backdrop ?? 'none');
-		root.style.setProperty('--backdrop-veil', `${100 - intensity}%`);
-		root.style.setProperty('--backdrop-tint', tintStrength > 0 ? `color-mix(in oklab, ${tint} ${tintStrength}%, transparent)` : 'none');
-	});
-	// Leaving the page: the window as it was.
-	onDestroy(() => {
-		const root = document.documentElement;
-		delete root.dataset.backdrop;
-		for (const p of ['--backdrop', '--backdrop-veil', '--backdrop-tint']) root.style.removeProperty(p);
-	});
+	$effect(() => setBackdrop({ backdrop, intensity, tint: tintStrength > 0 ? `color-mix(in oklab, ${tint} ${tintStrength}%, transparent)` : 'none' }));
+	// Leaving the page: the window as it was. (Not in onDestroy: that runs on the server too.)
+	$effect(() => () => setBackdrop({ backdrop: null, intensity: 100, tint: 'none' }));
 
 	// Share: from a button, anchored on it.
 	const anchorOf = (e: MouseEvent) => (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -329,20 +319,3 @@
 	</section>
 </div>
 
-<style>
-	/* The material, declared in CSS: the title bar and the sidebar (with the margin around the page)
-	   take the one the card picked. The shell draws it behind them. */
-	:global(html[data-backdrop] :is(.titlebar, [data-slot='sidebar-wrapper'])) {
-		--desktop-material: var(--backdrop);
-		--desktop-material-tint: var(--backdrop-tint);
-	}
-	/* In the app, they and what's under them paint no background — only a veil of the canvas color,
-	   as strong as the intensity slider leaves it. */
-	:global(html[data-desktop-materials][data-backdrop]),
-	:global(html[data-desktop-materials][data-backdrop] :is(body, .app, [data-slot='app-shell'], [data-slot='app-shell-frame'], [data-slot='sidebar-container'], [data-slot='sidebar-panel'])) {
-		background: transparent !important;
-	}
-	:global(html[data-desktop-materials][data-backdrop] :is(.titlebar, [data-slot='sidebar-wrapper'])) {
-		background: color-mix(in oklab, var(--color-surface-canvas) var(--backdrop-veil, 0%), transparent) !important;
-	}
-</style>

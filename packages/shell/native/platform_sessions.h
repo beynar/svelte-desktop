@@ -6,6 +6,7 @@ void platform_register_sessions(void);
 /// The page of `nativeId` went: its cookie-change subscription goes with it.
 void platform_sessions_page_unloaded(int nativeId);
 WKWebsiteDataStore *_Nullable platform_session_store(NSString *_Nullable ident);
+NSString *_Nullable platform_session_of(WKWebView *_Nullable webview); // its named session, nil for the default
 void platform_session_window_creation(NSString *_Nullable ident);
 void platform_session_prepare(WKWebViewConfiguration *configuration, NSString *_Nullable session);
 void platform_session_track(int nativeId, WKWebView *webview);

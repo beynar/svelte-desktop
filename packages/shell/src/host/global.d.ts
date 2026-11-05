@@ -25,6 +25,8 @@ interface ServerHost {
   which: typeof import("../server.ts").which;
   /** Server code: the app's command in the user's terminal (desktop.config `command`). */
   command: typeof import("../server.ts").command;
+  /** Server code: the app's MCP server (src/mcp.ts) in an agent's client (Claude Desktop, Cursor…). */
+  mcp: typeof import("../server.ts").mcp;
   /** Server code: load a Node-API addon (native/addons/<name>.c). */
   loadAddon: typeof import("../server.ts").loadAddon;
   /** Server code: before the app quits. */

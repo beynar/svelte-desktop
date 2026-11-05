@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { Tabs } from '@svelte-desktop/shell/tabs';
 	import { board, upcoming } from '#lib/data.svelte';
 
 	const lists = [
@@ -7,6 +6,7 @@
 		{ value: 'doing', label: 'In progress' },
 		{ value: 'done', label: 'Done' }
 	];
+	let list = $state('next');
 
 	const counts = $derived(Object.fromEntries(board.columns.map((c) => [c.id, c.cards.length])));
 	const events = $derived(upcoming());
@@ -34,56 +34,59 @@
 		{/each}
 	</div>
 
-	<!-- Tabs inside a card: fixed (no close, no +), a segmented look, only the active panel rendered. -->
+	<!-- Tabs inside a card are plain Svelte: a segmented look, only the active panel rendered. -->
 	<section class="border-neutral-muted bg-surface-raised rounded-lg border">
-		<Tabs items={lists} label="Lists" class="segmented bg-surface-recessed rounded-md p-0.5">
-			{#snippet layout({ bar, content })}
-				<header class="border-neutral-muted flex items-center justify-between gap-3 border-b px-4 py-3">
-					<h2 class="text-neutral font-medium">This week</h2>
-					{@render bar()}
-				</header>
-				{@render content({ class: 'p-4' })}
-			{/snippet}
-				{#snippet children({ item })}
-					{#if item.value === 'next'}
-						<ul class="flex flex-col gap-2">
-							{#each events.slice(0, 6) as e (e.id)}
-								<li class="flex items-center justify-between gap-3 text-sm">
-									<span class="text-neutral truncate">{e.title}</span>
-									<span class="text-neutral-readable shrink-0 tabular-nums">{e.allDay ? day.format(e.startsAt) : time.format(e.startsAt)}</span>
-								</li>
-							{:else}
-								<li class="text-neutral-readable text-sm">Nothing scheduled.</li>
-							{/each}
-						</ul>
+		<header class="border-neutral-muted flex items-center justify-between gap-3 border-b px-4 py-3">
+			<h2 class="text-neutral font-medium">This week</h2>
+			<div role="tablist" aria-label="Lists" class="segmented bg-surface-recessed flex rounded-md p-0.5">
+				{#each lists as item (item.value)}
+					<button
+						type="button"
+						role="tab"
+						aria-selected={item.value === list}
+						data-active={item.value === list || undefined}
+						onclick={() => (list = item.value)}>{item.label}</button
+					>
+				{/each}
+			</div>
+		</header>
+		<div role="tabpanel" class="p-4">
+			{#if list === 'next'}
+				<ul class="flex flex-col gap-2">
+					{#each events.slice(0, 6) as e (e.id)}
+						<li class="flex items-center justify-between gap-3 text-sm">
+							<span class="text-neutral truncate">{e.title}</span>
+							<span class="text-neutral-readable shrink-0 tabular-nums">{e.allDay ? day.format(e.startsAt) : time.format(e.startsAt)}</span>
+						</li>
 					{:else}
-						<ul class="flex flex-col gap-2">
-							{#each board.columns.find((c) => c.id === item.value)?.cards ?? [] as task (task.id)}
-								<li class="text-sm">
-									<p class="text-neutral">{task.title}</p>
-									{#if task.description}<p class="text-neutral-readable text-xs">{task.description}</p>{/if}
-								</li>
-							{:else}
-								<li class="text-neutral-readable text-sm">Nothing here.</li>
-							{/each}
-						</ul>
-					{/if}
-				{/snippet}
-		</Tabs>
+						<li class="text-neutral-readable text-sm">Nothing scheduled.</li>
+					{/each}
+				</ul>
+			{:else}
+				<ul class="flex flex-col gap-2">
+					{#each board.columns.find((c) => c.id === list)?.cards ?? [] as task (task.id)}
+						<li class="text-sm">
+							<p class="text-neutral">{task.title}</p>
+							{#if task.description}<p class="text-neutral-readable text-xs">{task.description}</p>{/if}
+						</li>
+					{:else}
+						<li class="text-neutral-readable text-sm">Nothing here.</li>
+					{/each}
+				</ul>
+			{/if}
+		</div>
 	</section>
 </div>
 
 <style>
-	/* A segmented control: the same TabBar, a third look. */
-	:global(.segmented [role='tab']) {
-		flex: 0 0 auto;
-		min-width: 0;
+	/* A segmented control. */
+	[role='tab'] {
 		padding: 0.25rem 0.75rem;
 		border-radius: 0.375rem;
 		font-size: 0.8125rem;
 		color: var(--color-neutral-readable);
 	}
-	:global(.segmented [role='tab'][data-active]) {
+	[role='tab'][data-active] {
 		background: var(--color-surface-raised);
 		color: var(--color-neutral);
 		box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);

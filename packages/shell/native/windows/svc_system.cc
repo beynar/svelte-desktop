@@ -95,6 +95,9 @@ void theme_apply_window(Window *w) {
   bool dark = w->theme == "dark" ? true : w->theme == "light" ? false : app_dark();
   set_dark_title_bar(w->hwnd, dark);
   if (w->view.webview) theme_apply_view(&w->view);
+  // Its views follow it.
+  for (auto &[id, v] : views())
+    if (view_owner(id) == w->id) theme_apply_view(v);
 }
 
 void theme_apply_view(View *v) {
@@ -103,7 +106,8 @@ void theme_apply_view(View *v) {
   if (!wv13) return;
   ICoreWebView2Profile *profile = nullptr;
   if (SUCCEEDED(wv13->get_Profile(&profile)) && profile) {
-    Window *w = find_window(v->id);
+    int owner = view_owner(v->id);
+    Window *w = find_window(owner ? owner : v->id);
     std::string pref = w && w->theme != "system" ? w->theme : g_pref;
     profile->put_PreferredColorScheme(pref == "dark" ? COREWEBVIEW2_PREFERRED_COLOR_SCHEME_DARK
                                       : pref == "light" ? COREWEBVIEW2_PREFERRED_COLOR_SCHEME_LIGHT

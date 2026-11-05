@@ -28,9 +28,11 @@ struct View {
   int x = 0, y = 0, w = 0, h = 0;
   int right = 0, bottom = 0; // margins kept by autoresize
   gulong sizeHandler = 0;
+  bool provisional = false; // a load not committed yet: its URI isn't where the page is
 };
 
 static std::map<std::string, View *> g_views;
+static std::map<int, int> g_owners; // the window of every view there was, this run
 static int g_next_view = 2000;
 
 static std::string url_from(const CallPtr &c) {
@@ -41,11 +43,26 @@ static std::string url_from(const CallPtr &c) {
   return origin + (route[0] == '/' ? route : "/" + route);
 }
 
+// Where the overlay puts a view: exactly its bounds. By its alignment it'd get its natural size, which
+// for a web view is its content's: wider than asked, and never narrower again.
+static gboolean on_child_position(GtkOverlay *overlay, GtkWidget *child, GdkRectangle *out, gpointer) {
+  for (auto &[ident, v] : g_views) {
+    if (GTK_WIDGET(v->wv) != child) continue;
+    // Autoresized: the overlay's new size counts now, not at the next allocation.
+    GtkAllocation parent;
+    gtk_widget_get_allocation(GTK_WIDGET(overlay), &parent);
+    if (v->autoresize == "width" || v->autoresize == "both") v->w = std::max(1, parent.width - v->x - v->right);
+    if (v->autoresize == "height" || v->autoresize == "both") v->h = std::max(1, parent.height - v->y - v->bottom);
+    *out = GdkRectangle{v->x, v->y, std::max(1, v->w), std::max(1, v->h)};
+    return TRUE;
+  }
+  return FALSE;
+}
+
 static void place(View *v) {
   GtkWidget *wid = GTK_WIDGET(v->wv);
-  gtk_widget_set_margin_start(wid, v->x);
-  gtk_widget_set_margin_top(wid, v->y);
-  gtk_widget_set_size_request(wid, std::max(1, v->w), std::max(1, v->h));
+  gtk_widget_set_size_request(wid, 1, 1);
+  gtk_widget_queue_resize(wid);
 }
 
 static void on_overlay_size(GtkWidget *, GdkRectangle *alloc, gpointer data) {
@@ -91,8 +108,11 @@ static void on_view_load(WebKitWebView *wv, WebKitLoadEvent ev, gpointer data) {
   auto it = g_views.find(static_cast<const char *>(data));
   if (it == g_views.end()) return;
   const char *uri = webkit_web_view_get_uri(wv);
+  if (ev == WEBKIT_LOAD_STARTED) it->second->provisional = true;
   if (ev == WEBKIT_LOAD_COMMITTED) {
+    it->second->provisional = false;
     page_committed(it->second->nativeId, uri);
+    emit("viewUrl", json{{"id", it->second->ident}, {"url", uri ? uri : ""}});
     emit("viewNavigated", json{{"id", it->second->ident}, {"url", uri ? uri : ""}});
   } else if (ev == WEBKIT_LOAD_FINISHED) {
     emit("viewLoaded", json{{"id", it->second->ident}, {"url", uri ? uri : ""}});
@@ -101,6 +121,7 @@ static void on_view_load(WebKitWebView *wv, WebKitLoadEvent ev, gpointer data) {
 
 static gboolean on_view_failed(WebKitWebView *, WebKitLoadEvent, gchar *, GError *err, gpointer data) {
   auto it = g_views.find(static_cast<const char *>(data));
+  if (it != g_views.end()) it->second->provisional = false;
   if (it != g_views.end() && !(err && err->domain == WEBKIT_POLICY_ERROR))
     emit("viewFailed", json{{"id", it->second->ident}, {"error", err ? err->message : "load failed"}});
   return FALSE;
@@ -110,6 +131,56 @@ static void on_view_title(GObject *obj, GParamSpec *, gpointer data) {
   auto it = g_views.find(static_cast<const char *>(data));
   const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(obj));
   if (it != g_views.end()) emit("viewTitle", json{{"id", it->second->ident}, {"title", title ? title : ""}});
+}
+
+// Its page has the keyboard: it has the user's attention (panes follow it).
+static gboolean on_view_focus(GtkWidget *, GdkEvent *, gpointer data) {
+  auto it = g_views.find(static_cast<const char *>(data));
+  if (it != g_views.end()) emit("viewFocused", json{{"id", it->second->ident}});
+  return FALSE;
+}
+
+int view_owner(int native_id) {
+  for (auto &[ident, v] : g_views)
+    if (v->nativeId == native_id) return v->window;
+  return 0;
+}
+
+// The URL also moves within a document (a site's own router), which nothing else tells.
+static void on_view_uri(GObject *obj, GParamSpec *, gpointer data) {
+  auto it = g_views.find(static_cast<const char *>(data));
+  const char *uri = webkit_web_view_get_uri(WEBKIT_WEB_VIEW(obj));
+  if (it != g_views.end() && !it->second->provisional) emit("viewUrl", json{{"id", it->second->ident}, {"url", uri ? uri : ""}});
+}
+
+bool view_at_app(int native_id) {
+  const std::string origin = app_origin();
+  WebKitWebView *wv = view_owner(native_id) ? webview_for(native_id) : nullptr;
+  const char *uri = wv ? webkit_web_view_get_uri(wv) : nullptr;
+  if (!uri || origin.empty()) return false;
+  const std::string at = uri;
+  return at == origin || at.rfind(origin + "/", 0) == 0;
+}
+
+int view_last_owner(int native_id) {
+  auto it = g_owners.find(native_id);
+  return it == g_owners.end() ? 0 : it->second;
+}
+
+int view_native(const std::string &ident) {
+  auto it = g_views.find(ident);
+  return it == g_views.end() ? 0 : it->second->nativeId;
+}
+
+std::string view_ident(int native_id) {
+  for (auto &[ident, v] : g_views)
+    if (v->nativeId == native_id) return ident;
+  return "";
+}
+
+void view_reveal(int native_id) {
+  for (auto &[ident, v] : g_views)
+    if (v->nativeId == native_id) return emit("viewReveal", json{{"id", ident}});
 }
 
 static void destroy_view(View *v) {
@@ -122,6 +193,13 @@ static void destroy_view(View *v) {
   }
   g_views.erase(v->ident);
   delete v;
+}
+
+void views_window_closed(int window) {
+  for (auto it = g_views.begin(); it != g_views.end();) {
+    View *v = (it++)->second;
+    if (v->window == window) destroy_view(v);
+  }
 }
 
 using ViewOp = std::function<void(CallPtr, View *)>;
@@ -158,21 +236,28 @@ void register_view() {
     v->right = std::max(0, alloc.width - v->x - v->w);
     v->bottom = std::max(0, alloc.height - v->y - v->h);
     g_views[ident] = v;
+    g_owners[v->nativeId] = v->window;
     // The shell's web view (bridge, origin tracking), with browser-style navigation.
-    v->wv = make_webview(v->nativeId, c->flag("debug", false), "window.__desktopView=" + json(ident).dump() + ";"); // the page knows it's a view
+    // A tab's page is its window's: inspectable if the window's is.
+    bool debug = c->flag("debug", c->flag("tab", false) && w->webview && webkit_settings_get_enable_developer_extras(webkit_web_view_get_settings(w->webview)));
+    v->wv = make_webview(v->nativeId, debug, "window.__desktopView=" + json(ident).dump() + ";" + (c->flag("pane", false) ? "window.__desktopPaneView=true;" : "") + (c->flag("tab", false) ? "window.__desktopTabView=true;" : "")); // the page knows it's a view
     g_signal_handlers_disconnect_matched(v->wv, G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, GINT_TO_POINTER(v->nativeId));
     gpointer key = (gpointer)v->ident.c_str();
     g_signal_connect(v->wv, "decide-policy", G_CALLBACK(on_view_policy), key);
     g_signal_connect(v->wv, "load-changed", G_CALLBACK(on_view_load), key);
     g_signal_connect(v->wv, "load-failed", G_CALLBACK(on_view_failed), key);
     g_signal_connect(v->wv, "notify::title", G_CALLBACK(on_view_title), key);
+    g_signal_connect(v->wv, "focus-in-event", G_CALLBACK(on_view_focus), key);
+    g_signal_connect(v->wv, "notify::uri", G_CALLBACK(on_view_uri), key);
     if (c->flag("transparent", false)) {
       GdkRGBA clear{0, 0, 0, 0};
       webkit_web_view_set_background_color(v->wv, &clear);
     }
     GtkWidget *wid = GTK_WIDGET(v->wv);
-    gtk_widget_set_halign(wid, GTK_ALIGN_START);
-    gtk_widget_set_valign(wid, GTK_ALIGN_START);
+    if (!g_object_get_data(G_OBJECT(w->overlay), "sd-views")) {
+      g_object_set_data(G_OBJECT(w->overlay), "sd-views", GINT_TO_POINTER(1));
+      g_signal_connect(w->overlay, "get-child-position", G_CALLBACK(on_child_position), nullptr);
+    }
     place(v);
     gtk_overlay_add_overlay(GTK_OVERLAY(w->overlay), wid);
     if (!c->flag("hidden", false)) gtk_widget_show(wid);
@@ -196,6 +281,10 @@ void register_view() {
     std::string url = url_from(c);
     if (url.empty()) return c->fail("invalid_args", "view.navigate: `url` or `route` is required");
     webkit_web_view_load_uri(v->wv, url.c_str());
+    c->ok();
+  });
+  op("focus", [](CallPtr c, View *v) {
+    gtk_widget_grab_focus(GTK_WIDGET(v->wv));
     c->ok();
   });
   op("show", [](CallPtr c, View *v) {

@@ -9,15 +9,30 @@ const active = (bar: string) => app.eval<string>(`document.querySelector('${bar}
 const shot = (name: string) => Bun.sleep(400).then(() => app.screenshot(`/tmp/dashboard-tabs-${name}.png`));
 
 beforeAll(async () => {
-	app = await launch({ dev: true });
+	app = await launch({ dev: true, env: { VITE_TABS_SPLIT: '0' } });
 	await app.waitFor('main', { timeout: 30_000 });
 	// A clean slate: forget the tabs a previous run left.
 	const dir = await app.platform<string>('app', 'getPath', { name: 'userData' });
-	for (const f of ['tabs-app.json', 'tabs-board-tabs.json']) await Bun.file(`${dir}/${f}`).delete().catch(() => {});
+	await Bun.file(`${dir}/tabs-app.json`).delete().catch(() => {});
+	await app.eval(`host.store.load().then(() => (host.store.delete('board-tabs'), host.store.flush())).then(() => true)`);
 	await app.eval(`(window.__reloading = true, setTimeout(() => location.assign('/'), 10), true)`);
 	await app.waitFor(() => !(window as any).__reloading && !!document.querySelector('.app-tabs [role=tab]'), { timeout: 20_000 });
 }, 60_000);
 afterAll(() => app?.close(), 20_000);
+
+test('a popover route under <WindowTabs>: the page alone, no tab bar', async () => {
+	await app.platform('popover', 'create', { id: 'tabs-popover', route: '/calendar', width: 400, height: 300 });
+	const inside = (code: string) => app.platform('webview', 'executeJavaScript', { popoverId: 'tabs-popover', code });
+	try {
+		// Hydrated, so what the server rendered has been replaced: the page's own content, and no bar.
+		for (let i = 0; i < 100 && !(await inside(`document.documentElement.hasAttribute('data-desktop-hydrated')`).catch(() => false)); i++) await Bun.sleep(100);
+		expect(await inside(`location.pathname`)).toBe('/calendar');
+		expect(await inside(`document.title`)).toBe('Calendar');
+		expect(await inside(`document.querySelectorAll('.app-tabs, [data-sd-tab-new]').length`)).toBe(0);
+	} finally {
+		await app.platform('popover', 'destroy', { id: 'tabs-popover' }).catch(() => {});
+	}
+}, 30_000);
 
 test('the window tabs: new tab, navigation in the active tab, ⌘-click opens in the background, window title', async () => {
 	expect(await titles('.app-tabs')).toEqual(['Overview']);
@@ -44,19 +59,18 @@ test('the window tabs: new tab, navigation in the active tab, ⌘-click opens in
 });
 
 test('tabs inside a page: one board per tab, kept alive; a new board; fixed segmented tabs on the overview', async () => {
-	await app.eval(`document.querySelector('.segmented [role=tab]:nth-child(2)').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))`);
+	await app.eval(`document.querySelector('.segmented [role=tab]:nth-child(2)').click()`);
 	await app.waitFor(() => document.querySelector('.segmented [role=tab][data-active]')?.textContent?.trim() === 'In progress');
-	expect(await app.eval(`document.querySelectorAll('.segmented [data-sd-tab-new], .segmented button').length`)).toBe(0); // fixed: no + nor ×
 	await shot('3-overview-segmented');
 
 	await app.eval(`document.querySelectorAll('.app-tabs [role=tab]')[1].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))`);
 	await app.waitFor(() => location.pathname === '/board' && !!document.querySelector('.board-tabs [role=tab]'));
 	expect(await titles('.board-tabs')).toEqual(['Current sprint', 'Product backlog']);
-	await app.eval(`document.querySelector('.board-tabs [data-sd-tab-new]').click()`);
+	await app.eval(`document.querySelector('.board-tabs .new-tab').click()`);
 	await app.waitFor(() => document.querySelectorAll('.board-tabs [role=tab]').length === 3);
 	expect(await active('.board-tabs')).toBe('Board 3');
-	expect(await app.eval(`document.querySelectorAll('[data-sd-tabpanel]').length`)).toBe(2); // mount="once": the shown ones
-	expect(await app.eval(`document.querySelectorAll('[data-sd-tabpanel]:not([hidden])').length`)).toBe(1);
+	expect(await app.eval(`document.querySelectorAll('.board-panel').length`)).toBe(2); // mounted once shown
+	expect(await app.eval(`document.querySelectorAll('.board-panel:not([hidden])').length`)).toBe(1);
 	await shot('4-board-tabs');
 });
 

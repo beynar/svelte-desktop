@@ -20,6 +20,7 @@ export default async (t: Harness) => {
   const got1 = (await t.call("menu", "get", { id: "check" })).value;
   t.check("menu.update + get", upd.ok && got1?.id === "check" && got1.text === "Checked" && got1.enabled === true && got1.checked === true, got1);
   t.check("menu.update unknown id → invalid_args", (await t.call("menu", "update", { id: "nope" })).error?.code === "invalid_args");
+  t.check("menu.insert: what it did, as typed", (await t.call("menu", "insert", { name: "Extra", items: [{ label: "X", id: "x" }], index: 1 })).value?.inserted === true);
   t.check("menu.insert / remove", (await t.call("menu", "insert", { name: "Extra", items: [{ label: "X", id: "x" }], index: 1 })).ok &&
     (await t.call("menu", "items")).value[1].text === "Extra" && (await t.call("menu", "remove", { name: "Extra" })).value.removed === true &&
     (await t.call("menu", "items")).value.length === 2);

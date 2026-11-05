@@ -89,6 +89,14 @@ BOOL platform_close_veto(int native_id);
 
 // Module registration (each platform_*.mm defines one) ----------------------
 void platform_register_app(void);
+int platform_view_owner(int nativeId);
+WKWebView *_Nullable platform_view_webview(int nativeId);
+int platform_view_native(NSString *ident);
+BOOL platform_view_at_app(int nativeId); // its page is the app's, not another site's
+int platform_view_last_owner(int nativeId); // the window it was in, even gone since; 0 if none this run
+void platform_views_window_closed(int windowNative); // its views go with it
+WKWebView *_Nullable platform_view_focused(NSWindow *window); // the view with the keyboard in it, if any
+void platform_view_reveal(int nativeId); // asks the window's page to show it (viewReveal)
 void platform_app_observe_launch(void);
 void platform_register_metrics(void);
 void platform_register_window(void);

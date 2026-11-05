@@ -154,8 +154,11 @@ void platform_page_unloaded(int native_id) {
 }
 
 int platform_target_window(int preferred) {
-  auto ready = [](int id) { return g_ready_pages.count(id) && g_webviews.count(id) && g_webviews[id] && platform_window(id); };
+  // A view's page too: what it showed comes back to it (bring_to_front raises its window).
+  auto ready = [](int id) { return g_ready_pages.count(id) && g_webviews.count(id) && g_webviews[id] && (platform_window(id) || (platform_view_owner(id) && platform_view_at_app(id))); };
   if (preferred > 0 && ready(preferred)) return preferred;
+  // A view gone since (its tab suspended): its window, whose page brings it back.
+  if (int owner = preferred > 0 ? platform_view_last_owner(preferred) : 0; owner && ready(owner)) return owner;
   for (NSWindow *w in @[ NSApp.keyWindow ?: NSNull.null, NSApp.mainWindow ?: NSNull.null ]) {
     if (![w isKindOfClass:NSWindow.class]) continue;
     for (auto &[id, wv] : g_webviews)

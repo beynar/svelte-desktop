@@ -29,7 +29,7 @@ const drag = (from: { x: number; y: number }, ...path: Array<{ x: number; y: num
 
 beforeAll(async () => {
 	if (!process.env.DESKTOP_TEST_MOUSE) return;
-	app = await launch({ dev: true });
+	app = await launch({ dev: true, env: { VITE_TABS_SPLIT: '0' } });
 	await app.waitFor('.app-tabs [role=tab]', { timeout: 30_000 });
 	await app.eval(`(window.__tabs.items = [], window.__tabs.open({ path: '/' }), window.__tabs.open({ path: '/board' }), window.__tabs.open({ path: '/calendar' }), true)`);
 	await app.platform('window', 'setBounds', { x: 100, y: 100, width: 1200, height: 800 });

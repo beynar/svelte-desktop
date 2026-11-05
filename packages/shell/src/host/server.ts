@@ -2,7 +2,7 @@
 // runtime): the page members (backed by the same platform bus) plus the
 // server-only ones.
 import { buildHost } from "./build.ts";
-import { desktop, isDesktop, loadAddon, onDesktopReady, sidecar, services, diagnostics, shellEnv, which, command } from "../server.ts";
+import { desktop, isDesktop, loadAddon, onDesktopReady, sidecar, services, diagnostics, shellEnv, which, command, mcp } from "../server.ts";
 import { jobs as jobManager } from "../jobs/host.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -25,6 +25,8 @@ const serverOnly = {
   which,
   /** The app's command in the user's terminal (desktop.config `command`): status, install, uninstall. */
   command,
+  /** The app's MCP server (src/mcp.ts) in an agent's client: status, install, uninstall. */
+  mcp,
   onBeforeQuit: (fn: () => void | Promise<void>) => desktop.onBeforeQuit(fn),
   /** Runs `fn` once the app's native layer is ready (immediately if it is). */
   ready: onDesktopReady,

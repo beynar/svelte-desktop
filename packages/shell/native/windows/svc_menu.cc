@@ -232,10 +232,12 @@ static Window *role_window(int nativeWindow) {
 
 static void perform_role(const std::string &r, int nativeWindow, bool legacy) {
   Window *w = role_window(nativeWindow);
+  // The page with the keyboard: a pane's, not the window's under it.
+  View *page = !w ? nullptr : view_with_focus(w->id) ? view_with_focus(w->id) : &w->view;
   if (is_edit_role(r)) {
-    if (!w || !w->view.controller) return;
+    if (!page || !page->controller) return;
     // The web view handles editing natively: give it focus and replay the key.
-    w->view.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    page->controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
     std::vector<WORD> keys = r == "undo" ? std::vector<WORD>{VK_CONTROL, 'Z'}
                              : r == "redo" ? std::vector<WORD>{VK_CONTROL, 'Y'}
                              : r == "cut" ? std::vector<WORD>{VK_CONTROL, 'X'}
@@ -274,14 +276,14 @@ static void perform_role(const std::string &r, int nativeWindow, bool legacy) {
   else if (r == "close" || r == "closewindow") PostMessageW(w->hwnd, WM_CLOSE, 0, 0);
   else if (r == "togglefullscreen" || r == "fullscreen") set_fullscreen(w, !w->fullscreen);
   else if (r == "reload" || r == "forcereload") {
-    if (w->view.webview) w->view.webview->Reload();
+    if (page->webview) page->webview->Reload();
   } else if (r == "toggledevtools") {
-    if (w->view.webview) w->view.webview->OpenDevToolsWindow();
+    if (page->webview) page->webview->OpenDevToolsWindow();
   } else if (r == "zoomin" || r == "zoomout" || r == "resetzoom") {
-    if (!w->view.controller) return;
-    double z = view_zoom(&w->view);
+    if (!page->controller) return;
+    double z = view_zoom(page);
     z = r == "resetzoom" ? 1.0 : r == "zoomin" ? std::min(5.0, z + 0.1) : std::max(0.25, z - 0.1);
-    w->view.controller->put_ZoomFactor(z);
+    page->controller->put_ZoomFactor(z);
   }
 }
 

@@ -23,9 +23,11 @@
 /// Created `hidden`: it loads over the page, see-through and letting the pointer through (still
 /// drawing: behind the page or out of the window, WebKit stops), until `show`.
 @property(nonatomic) BOOL seeThrough;
+@property(nonatomic) BOOL provisional; // a load not committed yet: its URL isn't where the page is
 @end
 
 static NSMutableDictionary<NSString *, SDView *> *g_views;
+static NSMutableDictionary<NSNumber *, NSNumber *> *g_owners; // the window of every view there was, this run
 static int g_next_view = 2000;
 
 static NSView *host_for(int windowNative) {
@@ -63,10 +65,20 @@ static NSURL *url_from(PlatformCall *c) {
   platform_web_auth(view, challenge, completionHandler);
 }
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)ctx {
-  platform_emit(@"viewTitle", @{@"id" : self.ident, @"title" : self.webview.title ?: @""});
+  // The URL also moves within a document (a site's own router), which nothing else tells.
+  if ([keyPath isEqual:@"URL"]) { if (!self.provisional) platform_emit(@"viewUrl", @{@"id" : self.ident, @"url" : self.webview.URL.absoluteString ?: @""}); }
+  else platform_emit(@"viewTitle", @{@"id" : self.ident, @"title" : self.webview.title ?: @""});
 }
 - (void)webView:(WKWebView *)wv decidePolicyForNavigationAction:(WKNavigationAction *)action
     decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+  if (action.shouldPerformDownload) { // <a download>: what the content policy allows
+    if (platform_web_content_decide_navigation(wv, action, ^(WKNavigationActionPolicy policy) {
+          decisionHandler(policy == WKNavigationActionPolicyAllow ? WKNavigationActionPolicyDownload : policy);
+        }))
+      return;
+    decisionHandler(WKNavigationActionPolicyDownload);
+    return;
+  }
   NSString *scheme = action.request.URL.scheme.lowercaseString;
   if (action.targetFrame == nil) { // target=_blank / window.open → the default browser
     decisionHandler(WKNavigationActionPolicyCancel);
@@ -74,19 +86,32 @@ static NSURL *url_from(PlatformCall *c) {
     return;
   }
   BOOL ok = [scheme isEqual:@"http"] || [scheme isEqual:@"https"] || [scheme isEqual:@"about"] || [scheme isEqual:@"data"] || [scheme isEqual:@"blob"] || platform_web_content_is_scheme(scheme);
-  void (^decide)(WKNavigationActionPolicy) = ^(WKNavigationActionPolicy policy) {
-    decisionHandler(policy);
-    if (policy == WKNavigationActionPolicyAllow && action.targetFrame.isMainFrame)
-      platform_emit(@"viewNavigated", @{@"id" : self.ident, @"url" : action.request.URL.absoluteString ?: @""});
-  };
-  if (ok && platform_web_content_decide_navigation(wv, action, decide)) return;
-  decide(ok ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
+  if (ok && platform_web_content_decide_navigation(wv, action, decisionHandler)) return;
+  decisionHandler(ok ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
+}
+// Downloads (platform_webview.mm): attachments and non-displayable responses.
+- (void)webView:(WKWebView *)wv decidePolicyForNavigationResponse:(WKNavigationResponse *)response
+    decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler {
+  decisionHandler(platform_webview_response_policy(response));
+}
+- (void)webView:(WKWebView *)wv navigationAction:(WKNavigationAction *)a didBecomeDownload:(WKDownload *)d {
+  platform_webview_download_started(self.nativeId, d);
+}
+- (void)webView:(WKWebView *)wv navigationResponse:(WKNavigationResponse *)r didBecomeDownload:(WKDownload *)d {
+  platform_webview_download_started(self.nativeId, d);
+}
+// Once it's there: a response that turns out to be a download leaves the page where it is.
+- (void)webView:(WKWebView *)wv didCommitNavigation:(WKNavigation *)nav {
+  self.provisional = NO;
+  platform_emit(@"viewUrl", @{@"id" : self.ident, @"url" : wv.URL.absoluteString ?: @""});
+  platform_emit(@"viewNavigated", @{@"id" : self.ident, @"url" : wv.URL.absoluteString ?: @""});
 }
 - (void)webView:(WKWebView *)wv didFinishNavigation:(WKNavigation *)nav {
   platform_lifecycle_emit(wv, @"loaded", nil, NO, nav);
   platform_emit(@"viewLoaded", @{@"id" : self.ident, @"url" : wv.URL.absoluteString ?: @""});
 }
 - (void)webView:(WKWebView *)wv didFailProvisionalNavigation:(WKNavigation *)nav withError:(NSError *)error {
+  self.provisional = NO;
   platform_lifecycle_emit(wv, @"failed", error, YES, nav);
   platform_emit(@"viewFailed", @{@"id" : self.ident, @"error" : error.localizedDescription ?: @""});
 }
@@ -95,6 +120,7 @@ static NSURL *url_from(PlatformCall *c) {
   platform_lifecycle_emit(wv, @"terminated", nil, NO);
 }
 - (void)webView:(WKWebView *)wv didStartProvisionalNavigation:(WKNavigation *)nav {
+  self.provisional = YES;
   platform_page_unloaded(self.nativeId);
   platform_lifecycle_emit(wv, @"navigationStarted", nil, YES, nav);
 }
@@ -115,6 +141,7 @@ static void destroy_view(SDView *v) {
   NSWindow *focusWindow = window_focusing_view(v);
   @try {
     [v.webview removeObserver:v forKeyPath:@"title"];
+    [v.webview removeObserver:v forKeyPath:@"URL"];
   } @catch (NSException *) {
   }
   platform_detach_webview(v.nativeId);
@@ -139,9 +166,61 @@ static void reg(NSString *op, ViewOp body) {
 
 // A view loading out of sight (alpha 0) lets the pointer through to the page under it.
 static IMP g_hit_test;
+// The strip along a view's edges that it leaves to what's under it (a pane's: the line between two panes,
+// grabbable a little beyond the gap between their views). The window's page hears the mouse there anyway:
+// it shows that line as hovered, a press has to reach it too.
+static char kHitInset;
 static NSView *see_through_hit_test(NSView *self, SEL cmd, NSPoint point) {
   if (self.alphaValue == 0) return nil;
+  if (NSValue *inset = objc_getAssociatedObject(self, &kHitInset)) {
+    NSEdgeInsets i = inset.edgeInsetsValue;
+    NSRect f = self.frame;
+    CGFloat fromTop = self.superview.isFlipped ? point.y - NSMinY(f) : NSMaxY(f) - point.y;
+    if (NSPointInRect(point, f) && (point.x - NSMinX(f) < i.left || NSMaxX(f) - point.x < i.right || fromTop < i.top || NSHeight(f) - fromTop < i.bottom))
+      return nil;
+  }
   return ((NSView * (*)(id, SEL, NSPoint)) g_hit_test)(self, cmd, point);
+}
+
+// The window a view is in: its page's calls are about that one, not whichever has the focus.
+int platform_view_owner(int nativeId) {
+  for (SDView *v in g_views.allValues)
+    if (v.nativeId == nativeId) return v.windowNative;
+  return 0;
+}
+
+WKWebView *platform_view_webview(int nativeId) {
+  for (SDView *v in g_views.allValues)
+    if (v.nativeId == nativeId) return v.webview;
+  return nil;
+}
+
+BOOL platform_view_at_app(int nativeId) {
+  NSString *origin = platform_app_origin();
+  NSString *at = platform_view_webview(nativeId).URL.absoluteString;
+  return origin && at && ([at isEqual:origin] || [at hasPrefix:[origin stringByAppendingString:@"/"]]);
+}
+
+int platform_view_last_owner(int nativeId) { return g_owners[@(nativeId)].intValue; }
+
+void platform_views_window_closed(int windowNative) {
+  for (SDView *v in g_views.allValues)
+    if (v.windowNative == windowNative) destroy_view(v);
+}
+
+WKWebView *platform_view_focused(NSWindow *window) {
+  id first = window.firstResponder;
+  if (![first isKindOfClass:NSView.class]) return nil;
+  for (SDView *v in g_views.allValues)
+    if (v.webview.window == window && [(NSView *)first isDescendantOf:v.webview]) return v.webview;
+  return nil;
+}
+
+int platform_view_native(NSString *ident) { return g_views[ident].nativeId; }
+
+void platform_view_reveal(int nativeId) {
+  for (SDView *v in g_views.allValues)
+    if (v.nativeId == nativeId) return platform_emit(@"viewReveal", @{@"id" : v.ident});
 }
 
 void platform_register_view(void) {
@@ -150,6 +229,19 @@ void platform_register_view(void) {
   g_hit_test = method_getImplementation(m);
   if (!class_addMethod(WKWebView.class, @selector(hitTest:), (IMP)see_through_hit_test, method_getTypeEncoding(m)))
     method_setImplementation(m, (IMP)see_through_hit_test);
+  // A press in a view: it has the user's attention (panes follow it; nothing else tells the page).
+  [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown
+                                        handler:^NSEvent *(NSEvent *e) {
+                                          // What's under it, as AppKit sees it: stacking and see-through views included.
+                                          NSView *under = [e.window.contentView.superview ?: e.window.contentView hitTest:e.locationInWindow];
+                                          for (NSView *n = under; n; n = n.superview)
+                                            for (SDView *v in g_views.allValues)
+                                              if (v.webview == n) {
+                                                platform_emit(@"viewFocused", @{@"id" : v.ident});
+                                                return e;
+                                              }
+                                          return e;
+                                        }];
   platform_register(@"view", @"create", ^(PlatformCall *c) {
     if (!platform_webview_options_valid(c.args)) return [c fail:@"invalid_args" message:@"view.create: unknown session or invalid recovery policy"];
     int win = platform_resolve_window(c);
@@ -169,10 +261,16 @@ void platform_register_view(void) {
     v.autoresize = [c string:@"autoresize"] ?: @"none";
     WKWebViewConfiguration *cfg = [WKWebViewConfiguration new];
     platform_webview_prepare_configuration(cfg, [c string:@"session"]);
+    // A tab's page is its window's: the same profile, inspectable if the window's is.
+    BOOL tab = [c boolean:@"tab" or:NO];
+    WKWebView *page = platform_webview(win);
+    if (tab && page && ![c string:@"session"]) cfg.websiteDataStore = page.configuration.websiteDataStore;
     // The page knows it's a view (an isolated tab), not a window: window.__desktopView = its id.
     NSString *mark = [NSString stringWithFormat:@"window.__desktopView=%@;",
                                                 [[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:ident options:NSJSONWritingFragmentsAllowed error:nil]
                                                                       encoding:NSUTF8StringEncoding]];
+    if ([c boolean:@"pane" or:NO]) mark = [mark stringByAppendingString:@"window.__desktopPaneView=true;"]; // what it shows comes back to it
+    if ([c boolean:@"tab" or:NO]) mark = [mark stringByAppendingString:@"window.__desktopTabView=true;"]; // <WindowTabs>'s, not the app's own
     [cfg.userContentController addUserScript:[[WKUserScript alloc] initWithSource:mark injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
     v.webview = [[WKWebView alloc] initWithFrame:to_frame(host, b) configuration:cfg];
     v.webview.autoresizingMask = mask_for(v.autoresize, host.isFlipped);
@@ -181,10 +279,11 @@ void platform_register_view(void) {
       [v.webview setValue:@NO forKey:@"drawsBackground"];
       if (@available(macOS 12.0, *)) v.webview.underPageBackgroundColor = NSColor.clearColor;
     }
-    if (@available(macOS 13.3, *)) v.webview.inspectable = [c boolean:@"debug" or:NO];
+    if (@available(macOS 13.3, *)) v.webview.inspectable = [c boolean:@"debug" or:tab && page.inspectable];
     if (![c boolean:@"backgroundThrottling" or:YES]) platform_webview_set_throttling(v.webview, NO); // keeps running at full speed hidden
     v.webview.navigationDelegate = v;
     [v.webview addObserver:v forKeyPath:@"title" options:0 context:nil];
+    [v.webview addObserver:v forKeyPath:@"URL" options:0 context:nil];
     platform_attach_webview(v.nativeId, v.webview);
     platform_lifecycle_configure(v.webview, @{@"viewId":ident, @"windowId":@(platform_public_window_id(win))}, [c string:@"recovery"], win);
     platform_webview_configure(v.nativeId, v.webview);
@@ -192,6 +291,7 @@ void platform_register_view(void) {
     if (v.seeThrough) v.webview.alphaValue = 0;
     [host addSubview:v.webview positioned:NSWindowAbove relativeTo:nil];
     g_views[ident] = v;
+    (g_owners ?: (g_owners = [NSMutableDictionary dictionary]))[@(v.nativeId)] = @(win);
     platform_webview_load(v.webview, platform_webview_request(v.webview, url));
     [c ok:@{@"id" : ident, @"windowId" : @(platform_public_window_id(win))}];
   });
@@ -199,6 +299,11 @@ void platform_register_view(void) {
     NSView *host = host_for(v.windowNative);
     v.webview.frame = to_frame(host, @{@"x" : c.args[@"x"] ?: @0, @"y" : c.args[@"y"] ?: @0, @"width" : c.args[@"width"] ?: @(v.webview.frame.size.width),
                                        @"height" : c.args[@"height"] ?: @(v.webview.frame.size.height)});
+    [c ok:nil];
+  });
+  reg(@"setHitInset", ^(PlatformCall *c, SDView *v) {
+    NSEdgeInsets i = NSEdgeInsetsMake([c number:@"top" or:0], [c number:@"left" or:0], [c number:@"bottom" or:0], [c number:@"right" or:0]);
+    objc_setAssociatedObject(v.webview, &kHitInset, [NSValue valueWithEdgeInsets:i], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [c ok:nil];
   });
   reg(@"getBounds", ^(PlatformCall *c, SDView *v) {
@@ -230,6 +335,10 @@ void platform_register_view(void) {
     v.webview.alphaValue = 1;
     v.seeThrough = NO;
     if (focusWindow) [focusWindow makeFirstResponder:platform_webview(v.windowNative)];
+    [c ok:nil];
+  });
+  reg(@"focus", ^(PlatformCall *c, SDView *v) {
+    if (v.webview.window) [v.webview.window makeFirstResponder:v.webview];
     [c ok:nil];
   });
   reg(@"reload", ^(PlatformCall *c, SDView *v) {

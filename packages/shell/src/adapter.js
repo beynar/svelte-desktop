@@ -125,6 +125,11 @@ function write_entries(dir, c, server_dir) {
 	const built_socket = path.join(server_dir, 'desktop-websocket.js');
 	if (has_socket && !fs.existsSync(built_socket)) throw new Error('svelte-desktop: src/websocket.ts was not built with the server (is the desktop() Vite plugin in vite.config?)');
 	const socket = has_socket ? built_socket : undefined;
+	// The app's MCP server: src/mcp.ts, built the same way (one instance of what it shares with the
+	// routes). `--mcp` runs this executable as an agent client's stdio server.
+	const has_mcp = ['ts', 'js'].some((ext) => fs.existsSync(path.join(c.root, 'src', `mcp.${ext}`)));
+	const built_mcp = path.join(server_dir, 'desktop-mcp.js');
+	if (has_mcp && !fs.existsSync(built_mcp)) throw new Error('svelte-desktop: src/mcp.ts was not built with the server (is the desktop() Vite plugin in vite.config?)');
 	const runtime = {
 		appName: c.appName,
 		identifier: c.identifier,
@@ -145,8 +150,8 @@ function write_entries(dir, c, server_dir) {
 import { runShell } from ${src('main.ts')};
 import { resolveLib, resolvePlugins } from ${src('resolve-lib.ts')};
 import { applySystemNetwork } from ${src('system-network.ts')};
-const config = ${JSON.stringify(runtime, null, '\t')};
-// The system's certificates and proxy for server code, before anything connects (the jobs and
+${has_mcp ? `import { runMcpBridge } from ${src('mcp/bridge.ts')};\n` : ''}const config = ${JSON.stringify(runtime, null, '\t')};
+${has_mcp ? `if (process.argv[2] === '--mcp') await runMcpBridge({ identifier: config.identifier, appName: config.appName, version: config.version ?? '0.0.0' });\n` : ''}// The system's certificates and proxy for server code, before anything connects (the jobs and
 // services this executable runs again inherit them).
 applySystemNetwork(config.network);
 // desktop.config \`command\`: host.command installs it (src/command.ts).
@@ -174,8 +179,8 @@ import { handler } from './adapter/handler.js';
 import { routes } from './adapter/routes.js';
 import './desktop-jobs.js';
 import './desktop-services.js';
-${socket ? `import websocket from ${JSON.stringify(socket)};\n` : ''}import { startWorker } from ${src('worker.ts')};
-startWorker({ handler, routes${socket ? ', websocket' : ''} });
+${socket ? `import websocket from ${JSON.stringify(socket)};\n` : ''}${has_mcp ? `import mcpServer from ${JSON.stringify(built_mcp)};\nimport { createMcpHandler } from '@modelcontextprotocol/server';\nimport { startMcpEndpoint } from ${src('mcp/app.ts')};\n` : ''}import { startWorker } from ${src('worker.ts')};
+startWorker({ handler, routes${socket ? ', websocket' : ''}${has_mcp ? ', mcp: (identity) => startMcpEndpoint(identity, createMcpHandler, () => mcpServer)' : ''} });
 `
 	);
 	fs.writeFileSync(path.join(dir, 'desktop.json'), JSON.stringify(runtime, null, '\t'));

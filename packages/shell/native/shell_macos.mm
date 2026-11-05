@@ -284,6 +284,7 @@ static void observe_window(Window *w) {
       platform_detach_webview(wid);
       g_windows.erase(wid);
       g_order.erase(std::remove(g_order.begin(), g_order.end(), wid), g_order.end());
+      platform_views_window_closed(wid);
       // The vendor stays alive; only our coordinator may terminate the app.
     }
     emit(@{@"type" : @"closed", @"window" : @(wid)});
@@ -477,6 +478,7 @@ int platform_resolve_window(PlatformCall *call) {
     return find(pid) ? pid : 0;
   }
   if (call.callerWindow && find(call.callerWindow)) return call.callerWindow;
+  if (int owner = call.callerWindow ? platform_view_owner(call.callerWindow) : 0; owner && find(owner)) return owner;
   if (Window *key = find_by_nswindow(NSApp.keyWindow)) return key->id;
   return g_order.empty() ? 0 : g_order.front();
 }

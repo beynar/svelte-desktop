@@ -4,7 +4,8 @@
 // layer): localStorage.
 import { callPlatform, onPlatform, platformReady } from './bus';
 
-export type AppDir = 'appData' | 'userData';
+// `userData` only: this app's own directory. The OS app-data root is shared with every other app.
+export type AppDir = 'userData';
 
 const CHANNEL = { request: 'appfile:request', reply: 'appfile:reply' } as const;
 type Request = { op: 'read' | 'write'; dir: AppDir; name: string; text?: string; nonce: string };
@@ -71,7 +72,7 @@ export function serveAppFiles(): void {
 		if (!r || typeof r.nonce !== 'string') return;
 		let reply: Reply;
 		try {
-			if ((r.op !== 'read' && r.op !== 'write') || (r.dir !== 'appData' && r.dir !== 'userData')) throw new Error('invalid request');
+			if ((r.op !== 'read' && r.op !== 'write') || r.dir !== 'userData') throw new Error('invalid request');
 			reply = { nonce: r.nonce, ok: true, text: await local(r.op, r.dir, r.name, r.text) };
 		} catch (err) {
 			reply = { nonce: r.nonce, ok: false, error: (err as Error).message };

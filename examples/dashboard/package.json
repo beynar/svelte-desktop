@@ -6,6 +6,7 @@
 	"scripts": {
 		"dev": "bunx --bun vite dev",
 		"build": "bunx --bun vite build",
+		"build:test": "VITE_TABS_SPLIT=0 bunx --bun vite build",
 		"prepare": "svelte-kit sync || echo ''",
 		"postinstall": "ln -sfn ../../../../packages/shell node_modules/@svelte-desktop/shell-link && rm -rf node_modules/@svelte-desktop/shell && mv node_modules/@svelte-desktop/shell-link node_modules/@svelte-desktop/shell"
 	},

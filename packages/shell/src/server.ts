@@ -82,6 +82,9 @@ export { shellEnv, which } from "./shell-env.ts";
 /** The app's command in the user's terminal (desktop.config `command`). */
 export { command } from "./command.ts";
 export type { CommandStatus } from "./command.ts";
+/** The app's MCP server (src/mcp.ts) in an agent's client: status, install, uninstall. */
+export { mcp } from "./mcp/clients.ts";
+export type { McpClient, McpClientStatus, McpInstallResult, McpStatus } from "./mcp/clients.ts";
 export type { ShellEnvOptions } from "./shell-env.ts";
 
 /** Persistent duplex children; server code owns their lifetime and page-facing commands. */

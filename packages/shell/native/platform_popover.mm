@@ -58,9 +58,11 @@ static SDPopover *find_native(int nativeId) {
 }
 
 static NSDictionary *describe(SDPopover *p) {
+  NSRect f = p.webview.window.frame; // AppKit screen coordinates
   return @{@"id" : p.ident, @"style" : p.style, @"shown" : @(p.shown), @"width" : @(p.width), @"height" : @(p.height),
            @"url" : p.url ?: NSNull.null, @"ready" : @(p.ready),
-           @"key" : @(p.webview.window.isKeyWindow), @"appActive" : @(NSApp.isActive)};
+           @"key" : @(p.webview.window.isKeyWindow), @"appActive" : @(NSApp.isActive),
+           @"frame" : @{@"x" : @(f.origin.x), @"y" : @(f.origin.y), @"width" : @(f.size.width), @"height" : @(f.size.height)}};
 }
 
 @implementation SDPopover
@@ -319,7 +321,7 @@ static NSString *popover_anchor(SDPopover *p, NSDictionary *args, int caller, NS
       int wid = [anchor[@"windowId"] intValue];
       wv = platform_webview(wid == 0 ? [platform_window_ids().firstObject intValue] : wid);
     } else {
-      wv = platform_webview(caller) ?: find_native(caller).webview; // a window page, or another popover
+      wv = platform_webview(caller) ?: find_native(caller).webview ?: platform_view_webview(caller); // a window page, another popover, or a view
       if (!wv) wv = platform_webview([platform_window_ids().firstObject intValue]);
     }
     if (!wv) return @"popover.show: no window to anchor to";

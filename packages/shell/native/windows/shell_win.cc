@@ -534,6 +534,17 @@ static void flush_pending(View *v) {
 static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
   ctl->AddRef();
   v->controller = ctl;
+  // A window's own page has the keyboard: no view of it does any more.
+  if (find_window(v->id)) {
+    auto *onFocus = new Cb<ICoreWebView2FocusChangedEventHandler, ICoreWebView2Controller *, IUnknown *>(
+        IID_ICoreWebView2FocusChangedEventHandler, [id = v->id](ICoreWebView2Controller *, IUnknown *) -> HRESULT {
+          view_page_focused(id);
+          return S_OK;
+        });
+    EventRegistrationToken focusToken{};
+    ctl->add_GotFocus(onFocus, &focusToken);
+    onFocus->Release();
+  }
   ctl->get_CoreWebView2(&v->webview);
   if (!v->webview) {
     v->failed = true;
@@ -594,8 +605,7 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
         if (View *bv = find_view(id); bv && !bv->browserView.empty()) {
           // view.*: a browser view — web URLs load, anything else is refused.
           std::string sc = url_scheme(url);
-          if (sc == "http" || sc == "https" || sc == "about" || sc == "data" || sc == "blob") emit("viewNavigated", json{{"id", bv->browserView}, {"url", url}});
-          else args->put_Cancel(TRUE);
+          if (!(sc == "http" || sc == "https" || sc == "about" || sc == "data" || sc == "blob")) args->put_Cancel(TRUE);
           return S_OK;
         }
         if (is_internal_url(url)) return S_OK;
@@ -605,6 +615,20 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
       });
   v->webview->add_NavigationStarting(onNav, &v->tokens[1]);
   onNav->Release();
+
+  // view.*: once it's there. A response that turns out to be a download leaves the page where it is.
+  auto *onContent = new Cb<ICoreWebView2ContentLoadingEventHandler, ICoreWebView2 *, ICoreWebView2ContentLoadingEventArgs *>(
+      IID_ICoreWebView2ContentLoadingEventHandler, [id](ICoreWebView2 *wv, ICoreWebView2ContentLoadingEventArgs *) -> HRESULT {
+        View *bv = find_view(id);
+        if (!bv || bv->browserView.empty()) return S_OK;
+        LPWSTR source = nullptr;
+        wv->get_Source(&source);
+        emit("viewNavigated", json{{"id", bv->browserView}, {"url", take_string(source)}});
+        return S_OK;
+      });
+  EventRegistrationToken contentToken{};
+  v->webview->add_ContentLoading(onContent, &contentToken);
+  onContent->Release();
 
   auto *onNewWindow = new Cb<ICoreWebView2NewWindowRequestedEventHandler, ICoreWebView2 *, ICoreWebView2NewWindowRequestedEventArgs *>(
       IID_ICoreWebView2NewWindowRequestedEventHandler, [id](ICoreWebView2 *, ICoreWebView2NewWindowRequestedEventArgs *args) -> HRESULT {
@@ -880,6 +904,7 @@ int resolve_window(const Call &c) {
     return find_window(pid) ? pid : 0;
   }
   if (c.caller && find_window(c.caller)) return c.caller;
+  if (int owner = c.caller ? view_owner(c.caller) : 0; owner && find_window(owner)) return owner;
   if (Window *fg = find_window_hwnd(GetForegroundWindow())) return fg->id;
   return primary_window();
 }
@@ -941,6 +966,7 @@ static void destroy_window_state(Window *w) {
   g_order.erase(std::remove(g_order.begin(), g_order.end(), id), g_order.end());
   if (w->menu) DestroyMenu(w->menu);
   delete w;
+  views_window_closed(id);
   emit_raw(json{{"type", "closed"}, {"window", id}});
   emit("closed", json{{"windowId", publicId}});
   // Same as macOS: closing the last window ends the run loop (graceful quit).
@@ -969,7 +995,11 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       return 0;
     case WM_ACTIVATE: {
       bool active = LOWORD(wp) != WA_INACTIVE;
-      if (active && w->view.controller) w->view.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+      // Back to the page that had the keyboard: a pane's, or the window's own.
+      if (active) {
+        View *page = view_with_focus(w->id) ? view_with_focus(w->id) : &w->view;
+        if (page->controller) page->controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+      }
       emit_raw(json{{"type", active ? "focus" : "blur"}, {"window", w->id}});
       emit("focusChanged", json{{"focused", active}, {"windowId", window_event_id(w->id)}});
       return 0;

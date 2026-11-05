@@ -1,7 +1,7 @@
 /** What a job receives besides its arguments. */
 export interface JobContext {
   readonly id: string;
-  /** Aborted when the job is canceled (jobs.cancel) or the app quits. */
+  /** Aborted when the job is canceled (jobs.cancel); the process is killed if it hasn't ended 2 s later. At app quit the process is killed without aborting this signal. */
   readonly signal: AbortSignal;
   /** 0…1, with an optional status line. Throttled to the page store. */
   progress(fraction: number, message?: string): void;

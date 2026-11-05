@@ -362,6 +362,13 @@ function handleResponse(r: WireResponse, opts: { target?: boolean; navigated?: b
 	}
 	const p = parsePayload(r.payload);
 	const kind: NotificationEventKind = r.kind ?? (r.actionId ? 'action' : 'click');
+	// A pane's: its tab on screen, now or when the tabs are there (a click that launched the app).
+	const { view, quiet } = p as { view?: string; quiet?: string[] };
+	if (view && kind !== 'dismiss' && !(r.actionId && quiet?.includes(r.actionId))) {
+		const g = globalThis as { __desktopRevealView?: (view: string) => void; __desktopRevealLater?: string };
+		if (g.__desktopRevealView) g.__desktopRevealView(view);
+		else g.__desktopRevealLater = view;
+	}
 	const url = kind === 'dismiss' ? undefined : (r.actionId && p.actions?.[r.actionId]) || p.url;
 	let prevented = false;
 	const event: NotificationEvent = {
@@ -379,9 +386,11 @@ function handleResponse(r: WireResponse, opts: { target?: boolean; navigated?: b
 	if (!isPage || !target || !url || opts.navigated) return;
 	// Nobody listening yet (a click that launched the app): give the page's listeners, which
 	// subscribe while it mounts, the chance to preventDefault before navigating.
-	if (heard) {
+	// A pane's, its tabs still coming back (a click that launched the app): there first, it's for its tab.
+	const tabsBack = () => (view ? (globalThis as { __desktopTabsBack?: Promise<void> }).__desktopTabsBack : undefined);
+	if (heard && !tabsBack()) {
 		if (!prevented) void openNotificationUrl(url);
-	} else void hydrated().then(() => setTimeout(() => !prevented && openNotificationUrl(url), 0));
+	} else void hydrated().then(tabsBack).then(() => setTimeout(() => !prevented && openNotificationUrl(url), 0));
 }
 
 function handleShown(d: { id: string; payload?: string; push?: boolean }) {
@@ -584,6 +593,12 @@ export const notifications = {
 		if (o.url) p.url = o.url;
 		if (o.data !== undefined) p.data = o.data;
 		if (Object.keys(actionUrls).length) p.actions = actionUrls;
+		// A pane's: its tab comes back on screen on a click, even with its view suspended by then.
+		const pane = globalThis as { __desktopView?: string; __desktopPaneView?: boolean };
+		if (pane.__desktopPaneView && pane.__desktopView) {
+			const quiet = (o.actions ?? []).filter((a) => a.foreground === false).map((a) => a.id);
+			Object.assign(p, { view: pane.__desktopView, ...(quiet.length && { quiet }) });
+		}
 		const payload = Object.keys(p).length ? JSON.stringify(p) : undefined;
 		const at = o.at != null ? toMillis(o.at) : o.delay != null ? Date.now() + o.delay : null;
 		if (o.repeat && at === null) throw new NativeApiError('invalid_args', 'notifications.show: `repeat` needs `at` or `delay`');
@@ -598,6 +613,9 @@ export const notifications = {
 			actions: o.actions?.map(({ url: _url, label, ...a }) => ({ ...a, title: a.title ?? label })),
 		};
 		for (const k of Object.keys(args)) if (args[k] === undefined) delete args[k];
+		// A kept-alive tab's page (not a pane's): its window's router takes the click.
+		const view = globalThis as { __desktopTabView?: boolean; __desktopPaneView?: boolean };
+		if (view.__desktopTabView && !view.__desktopPaneView) args.toWindow = true;
 		const r = await callPlatform<{ id?: string; tag?: string; scheduled?: boolean; skipped?: boolean }>('notifications', 'show', args);
 		if (r?.skipped && !skippedSaid) {
 			skippedSaid = true;

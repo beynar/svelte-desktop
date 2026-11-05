@@ -96,6 +96,13 @@ WKWebsiteDataStore *platform_session_store(NSString *ident) {
   return s.removing ? nil : s.store;
 }
 void platform_session_window_creation(NSString *ident) { creatingSession = ident; }
+NSString *platform_session_of(WKWebView *wv) {
+  ensure_sessions();
+  WKWebsiteDataStore *store = wv.configuration.websiteDataStore;
+  for (NSString *ident in sessions)
+    if (![ident isEqual:@"default"] && platform_session_store(ident) == store) return ident;
+  return nil;
+}
 void platform_session_prepare(WKWebViewConfiguration *cfg, NSString *session) { cfg.websiteDataStore = platform_session_store(session ?: creatingSession); }
 void platform_session_track(int nativeId, WKWebView *wv) { ensure_sessions(); [views setObject:wv forKey:@(nativeId)]; }
 void platform_session_detach(int nativeId) { [views removeObjectForKey:@(nativeId)]; }

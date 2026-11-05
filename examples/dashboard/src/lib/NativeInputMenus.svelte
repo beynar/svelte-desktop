@@ -26,6 +26,7 @@
 	}
 	async function radio() {
 		await host.menu.insert({ name: 'Demo Mode', items: choices });
+		localStorage.setItem(MENU_OWNER, menuOwner);
 		await host.menu.update({ id: 'native-mode-read', checked: true });
 		const a = await host.menu.get('native-mode-write'), b = await host.menu.get('native-mode-read');
 		note(`Exclusive selection: Write=${a?.checked}, Read=${b?.checked}`);
@@ -35,6 +36,8 @@
 		const data = await host.clipboard.read({ formats: ['text/plain', 'text/html', 'com.svelte-desktop.dashboard'] });
 		note(`Copy #${result.changeCount}: ${result.changeCount - result.previousChangeCount} ownership change, ${Object.keys(data.formats).length} representations; ${atob(data.formats['com.svelte-desktop.dashboard'] ?? '')}`);
 	}
+	const MENU_OWNER = 'dashboard:demo-menu-owner';
+	const menuOwner = crypto.randomUUID();
 	onMount(() => {
 		const offs = [
 			host.webview.onBeforeInput((event) => note(`${event.type}: ${event.key} (native interception)`)),
@@ -44,7 +47,11 @@
 		return () => {
 			offs.forEach((off) => off());
 			if (inputTouched) void host.webview.setInputPolicy({});
-			void host.menu.remove('Demo Mode');
+			// The app's menu is shared with the other panes: only what this page put there, last.
+			if (localStorage.getItem(MENU_OWNER) === menuOwner) {
+				localStorage.removeItem(MENU_OWNER);
+				void host.menu.remove('Demo Mode');
+			}
 		};
 	});
 </script>

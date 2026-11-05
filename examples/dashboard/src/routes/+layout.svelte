@@ -18,8 +18,12 @@
 	import { WindowTabs, type TabGroup, type TabLike } from '@svelte-desktop/shell/tabs';
 	import { board, upcoming } from '#lib/data.svelte';
 	import ThemeToggle from '#lib/ThemeToggle.svelte';
+	import { backdropTabs, followBackdrop } from '#lib/backdrop';
+	import { inPane } from '#lib/window-page';
+	import { goto } from '$app/navigation';
 
 	let { children } = $props();
+	const split = import.meta.env.VITE_TABS_SPLIT !== '0';
 
 	const pages = {
 		'/': { title: 'Overview', subtitle: 'What needs your attention today' },
@@ -39,8 +43,29 @@
 	// The window's tabs, for the header (the active tab's title) and the tests (dev).
 	let tabs = $state<TabGroup<TabLike>>();
 	$effect(() => {
-		if (import.meta.env.DEV) (globalThis as { __tabs?: unknown }).__tabs = tabs;
+		(globalThis as { __tabs?: unknown }).__tabs = tabs; // the tests read it (a built app too: tests/split.test.ts)
 	});
+
+	// The Native page asks for the window's material from its pane.
+	$effect(() => (inPane() ? undefined : followBackdrop()));
+	$effect(() => {
+		const group = tabs;
+		if (group && !inPane()) backdropTabs(group.items.map((t) => `${group.id}-${t.id}`));
+	});
+	// The Dock page's menu, from a pane that may not be on screen and any window: the active tab of the
+	// window in front (or the first) goes there, once.
+	let opened = { path: '', at: 0 };
+	$effect(() =>
+		inPane()
+			? undefined
+			: host.onBroadcast<string>('dashboard:open', async (path) => {
+					if (path === opened.path && Date.now() - opened.at < 300) return;
+					opened = { path, at: Date.now() };
+					const [all, me] = await Promise.all([host.windows.list(), host.window.getInfo()]);
+					const first = all.find((w) => w.focused) ?? all[0];
+					if (!first || first.windowId === me.windowId) void goto(path);
+				}),
+	);
 
 	let displayState = $state<SidebarDisplayState>('expanded');
 	const openTasks = $derived(board.columns.filter((c) => c.id !== 'done').reduce((n, c) => n + c.cards.length, 0));
@@ -72,13 +97,16 @@
 </script>
 
 <Theme>
-	<!-- The window's tabs, in the title bar: each one is a place in the app — links and the sidebar move
-	     the active tab, ⌘-click opens one in the background, ⌘T a new one; /activity keeps running in
-	     its own tab; restored at the next launch; a tab dragged out opens in its own window, which rises
-	     into place. `prewarm` and `maxViews` stay off here (tests/tabs-views.test.ts turns them on). -->
+	<!-- The window's tabs, in panes: drag a tab to a side of a pane to split it, or use ⌘\ and ⇧⌘\. Each
+	     tab is a place in the app, in its own web view — links and the sidebar move the active tab of the
+	     pane in focus, ⌘-click opens one in the background, ⌘T a new one; /activity is one tab, wherever it
+	     is; restored at the next launch; a tab dragged out opens in its own window, which rises into place.
+	     `prewarm` and `maxViews` stay off here (tests/tabs-views.test.ts turns them on).
+	     VITE_TABS_SPLIT=0: the tabs in the title bar instead, one page at a time (`bun run build:test`). -->
 	<WindowTabs
 		page={children}
 		newTab="/"
+		{split}
 		keepAlive={['/activity']}
 		windowAnimation={{ duration: 220, easing: [0.2, 0.9, 0.1, 1], offset: { y: 16 }, scale: 0.97 }}
 		prewarm={import.meta.env.VITE_TABS_PREWARM === '1'}
@@ -97,45 +125,77 @@
 		{#snippet layout({ bar, content, api })}
 			<!-- Another site's tab titles the header itself (a kept-alive page is the window's address). -->
 			{@const site = api.active?.url ? api.active : undefined}
-			<div class="app flex h-full flex-col">
-				<header class="titlebar bg-surface-canvas flex shrink-0 items-end gap-2">
-					{@render bar({ label: 'Open pages', class: 'app-tabs min-w-0 flex-1 gap-1' })}
-					<ThemeToggle />
-				</header>
-				<div class="min-h-0 flex-1">
-					<AppShell
-						variant="inset"
-						{sidebar}
-						title={site ? api.titleOf(site) : current.title}
-						subtitle={site?.url ? new URL(site.url).host : current.subtitle}
-						contentWidth="full"
-					>
-						{#snippet headerActions({ sidebar })}
-							<!-- Another site, in its own tab (its own web view), next to the app's tabs. -->
-							<button
-								type="button"
-								class="state-layer border-neutral-muted text-neutral inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-sm"
-								onclick={() => api.open({ id: 'docs', url: 'https://svelte.dev/docs/svelte/overview', title: 'Svelte docs' })}
-							>
-								{@render globeIcon({ class: 'size-4' })} Docs
-							</button>
-							<button
-								type="button"
-								class="state-layer border-neutral-muted text-neutral inline-flex size-8 items-center justify-center rounded-md border"
-								aria-label="Toggle sidebar"
-								onclick={sidebar.toggle}
-							>
-								{@render sidebarIcon({ class: 'size-4' })}
-							</button>
+			{#if split}
+				<!-- The panes' bars are the top of the window, as the sidebar's header is: no title bar of its own.
+				     What was in the header goes at the end of the top right pane's bar; each page has its title. -->
+				<div class="app app-split h-full" data-sidebar-state={displayState}>
+					<!-- No rounded card around the panes: the pages' web views are square, they'd cover its corners. -->
+					<AppShell variant="admin" {sidebar} contentWidth="full">
+						{#snippet children({ sidebar: shell })}
+							{#snippet actions()}
+								<span class="pane-actions">
+									<button type="button" class="pane-action state-layer" aria-label="Svelte docs" onclick={() => api.open({ id: 'docs', url: 'https://svelte.dev/docs/svelte/overview', title: 'Svelte docs' })}>
+										{@render globeIcon({ class: 'size-4' })}
+									</button>
+									<button type="button" class="pane-action state-layer" aria-label="Toggle sidebar" onclick={shell.toggle}>
+										{@render sidebarIcon({ class: 'size-4' })}
+									</button>
+									<ThemeToggle />
+								</span>
+							{/snippet}
+							{@render content({ class: 'min-h-0 flex-1', bar: { label: 'Open pages', class: 'app-tabs pane-bar', end: actions } })}
 						{/snippet}
-						{@render content({ class: 'h-full' })}
 					</AppShell>
 				</div>
-			</div>
+			{:else}
+				<div class="app flex h-full flex-col">
+					<header class="titlebar bg-surface-canvas flex shrink-0 items-end gap-2">
+						{@render bar({ label: 'Open pages', class: 'app-tabs min-w-0 flex-1 gap-1' })}
+						<ThemeToggle />
+					</header>
+					<div class="min-h-0 flex-1">
+						<AppShell
+							variant="inset"
+							{sidebar}
+							title={site ? api.titleOf(site) : current.title}
+							subtitle={site?.url ? new URL(site.url).host : current.subtitle}
+							contentWidth="full"
+						>
+							{#snippet headerActions({ sidebar })}
+								<!-- Another site, in its own tab (its own web view), next to the app's tabs. -->
+								<button
+									type="button"
+									class="state-layer border-neutral-muted text-neutral inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-sm"
+									onclick={() => api.open({ id: 'docs', url: 'https://svelte.dev/docs/svelte/overview', title: 'Svelte docs' })}
+								>
+									{@render globeIcon({ class: 'size-4' })} Docs
+								</button>
+								<button
+									type="button"
+									class="state-layer border-neutral-muted text-neutral inline-flex size-8 items-center justify-center rounded-md border"
+									aria-label="Toggle sidebar"
+									onclick={sidebar.toggle}
+								>
+									{@render sidebarIcon({ class: 'size-4' })}
+								</button>
+							{/snippet}
+							{@render content({ class: 'h-full' })}
+						</AppShell>
+					</div>
+				</div>
+			{/if}
 		{/snippet}
 
 		{#snippet embedded({ page })}
-			<div class="h-full overflow-auto p-6">{@render page()}</div>
+			<div class="bg-surface-canvas min-h-dvh p-6">
+				{#if split && !pageState.url.pathname.startsWith('/sheets')}
+					<header class="mb-5">
+						<h1 class="text-neutral text-base font-semibold">{current.title}</h1>
+						<p class="text-neutral-readable text-sm">{current.subtitle}</p>
+					</header>
+				{/if}
+				{@render page()}
+			</div>
 		{/snippet}
 	</WindowTabs>
 </Theme>

@@ -1,7 +1,7 @@
 /**
  * Persisted JSON key-value store. Pure JS: a flat record flushed to
- * `${app.getPath('appData')}/svelte-desktop-store.json` — writes are
- * debounced 250ms so bursts of set() calls coalesce into one write.
+ * `${app.getPath('userData')}/svelte-desktop-store.json`, this app's own —
+ * writes are debounced 250ms so bursts of set() calls coalesce into one write.
  * From a page, the app's server process does the file I/O (app-files.ts).
  * Call load() once at init (the stores-module `store` namespace does it);
  * failures there land on `store.error` like every other namespace.
@@ -17,7 +17,7 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 
 async function persist(): Promise<void> {
 	if (!loaded) return; // flush() guards; a stray timer before load() is a no-op
-	await writeAppFile('appData', FILE_NAME, JSON.stringify(data, null, 2));
+	await writeAppFile('userData', FILE_NAME, JSON.stringify(data, null, 2));
 }
 
 function scheduleSave(): void {
@@ -62,7 +62,7 @@ export const store = {
 
 	/** Resolve the file path and read it into memory. Missing file → {}. */
 	async load(): Promise<Record<string, unknown>> {
-		const text = await readAppFile('appData', FILE_NAME);
+		const text = await readAppFile('userData', FILE_NAME);
 		loaded = true;
 		if (text === null) {
 			data = {};

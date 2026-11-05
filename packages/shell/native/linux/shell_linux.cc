@@ -162,6 +162,7 @@ int resolve_window(const Call &c) {
     return find_window(pid) ? pid : 0;
   }
   if (c.caller && find_window(c.caller)) return c.caller;
+  if (int owner = c.caller ? view_owner(c.caller) : 0; owner && find_window(owner)) return owner;
   for (int id : g_order)
     if (gtk_window_is_active(GTK_WINDOW(find_window(id)->window))) return id;
   return primary_window();
@@ -259,6 +260,7 @@ static void on_destroy(GtkWidget *, gpointer data) {
   g_windows.erase(id);
   g_order.erase(std::remove(g_order.begin(), g_order.end(), id), g_order.end());
   delete w;
+  views_window_closed(id);
   emit_raw(json{{"type", "closed"}, {"window", id}});
   emit("closed", json{{"windowId", pub}});
   if (g_order.empty() && g_quit_on_last_window) request_quit(); // like webview/webview on macOS: last window ends the loop

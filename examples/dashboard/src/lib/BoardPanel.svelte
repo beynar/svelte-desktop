@@ -9,5 +9,5 @@
 </script>
 
 {#if board}
-	<Kanban bind:columns={() => board.columns, (columns) => (board.columns = columns)} columnHeight="calc(100vh - 15rem)" />
+	<Kanban bind:columns={() => board.columns, (columns) => (board.columns = columns)} columnHeight="max(16rem, calc(100vh - 15rem))" />
 {/if}

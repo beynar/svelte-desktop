@@ -30,7 +30,7 @@ describe('built app', () => {
 });
 
 test('vite dev: not available, and nothing rejects', async () => {
-	const app = await launch({ dev: true, timeout: 60_000 });
+	const app = await launch({ dev: true, env: { VITE_TABS_SPLIT: '0' }, timeout: 60_000 });
 	try {
 		await app.waitFor('[data-theme-toggle]', { timeout: 30_000 });
 		expect(await app.eval(`host.app.getLoginItem()`)).toEqual(off);

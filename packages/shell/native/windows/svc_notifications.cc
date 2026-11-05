@@ -55,8 +55,9 @@ namespace sd {
 namespace notif {
 
 int target_window(int preferred) {
-  auto ok = [](int id) { return id && win::find_window(id) && page_loaded(id); };
+  auto ok = [](int id) { return id && (win::find_window(id) || win::view_at_app(id)) && page_loaded(id); }; // a view's page too
   if (ok(preferred)) return preferred;
+  if (int owner = win::view_last_owner(preferred); ok(owner)) return owner; // a view gone since (suspended): its window
   if (win::Window *fg = win::find_window_hwnd(GetForegroundWindow()))
     if (ok(fg->id)) return fg->id;
   for (int id : win::window_order())
@@ -65,8 +66,10 @@ int target_window(int preferred) {
 }
 
 void bring_to_front(int native_id) {
-  win::Window *w = win::find_window(native_id);
+  int owner = win::view_owner(native_id);
+  win::Window *w = win::find_window(owner ? owner : native_id);
   if (!w) return;
+  if (owner) win::view_reveal(native_id); // its tab comes on screen
   if (IsIconic(w->hwnd)) ShowWindow(w->hwnd, SW_RESTORE);
   else ShowWindow(w->hwnd, SW_SHOW);
   if (!SetForegroundWindow(w->hwnd) || GetForegroundWindow() != w->hwnd) {
@@ -1174,7 +1177,10 @@ void register_notifications() {
     notif::Show s;
     std::string err;
     if (!notif::parse_show(c->args, s, &err)) return c->fail("invalid_args", err);
-    int window = find_window(c->caller) ? c->caller : 0;
+    int window = find_window(c->caller) || view_owner(c->caller) ? c->caller : 0;
+    // A kept-alive tab's page: its window's router takes the click (its tab follows the address).
+    if (c->flag("toWindow", false))
+      if (int owner = view_owner(c->caller)) window = owner;
     double now = notif::now_ms();
     bool future = s.hasAt && s.at > now + 1000;
     if (!future) {
@@ -1235,7 +1241,11 @@ void register_notifications() {
     for (auto &e : store().items) out.push_back(notif::pending_json(e));
     c->ok(out);
   });
-  reg("notifications", "claim", [](CallPtr c) { c->ok(notif::take_claims()); });
+  reg("notifications", "claim", [](CallPtr c) {
+    // Windows only: popover and embedded pages start too, they don't own app navigation.
+    if (c->caller && !find_window(c->caller)) return c->ok(json::array());
+    c->ok(notif::take_claims());
+  });
   reg("notifications", "responses", [](CallPtr c) { c->ok(notif::ring()); });
   reg("notifications", "getBadge", [](CallPtr c) { c->ok(g_badge > 0 ? json(g_badge) : json(nullptr)); });
   reg("notifications", "setBadge", [](CallPtr c) {

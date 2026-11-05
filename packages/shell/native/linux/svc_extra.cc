@@ -159,18 +159,18 @@ static void register_menu() {
     menus.insert(menus.begin() + (long)idx, entry);
     g_app_menus = menus;
     rebuild_menubars();
-    c->ok();
+    c->ok(json{{"inserted", true}, {"name", name}});
   });
   reg("menu", "remove", [](CallPtr c) {
     std::string name = c->str("name", c->str("id"));
-    if (!g_app_menus.is_array()) return c->ok(json{{"removed", false}});
+    if (!g_app_menus.is_array()) return c->ok(json{{"removed", false}, {"name", name}});
     for (size_t i = 0; i < g_app_menus.size(); i++)
       if (g_app_menus[i].value("name", "") == name) {
         g_app_menus.erase(g_app_menus.begin() + (long)i);
         rebuild_menubars();
-        return c->ok(json{{"removed", true}});
+        return c->ok(json{{"removed", true}, {"name", name}});
       }
-    c->ok(json{{"removed", false}});
+    c->ok(json{{"removed", false}, {"name", name}});
   });
   reg("menu", "update", [](CallPtr c) {
     std::string id = c->str("id");
@@ -204,14 +204,17 @@ static void register_menu() {
     std::string error;
     GtkWidget *menu = build_gtk_menu(c->args.contains("items") ? c->args["items"] : json::array(), &error);
     if (!menu) return c->fail("invalid_args", error);
-    Window *w = find_window(c->caller) ? find_window(c->caller) : find_window(primary_window());
+    int owner = view_owner(c->caller);
+    Window *w = find_window(owner ? owner : c->caller) ? find_window(owner ? owner : c->caller) : find_window(primary_window());
     if (!w) return c->fail("unavailable", "menu.popup: no window");
-    // Anchored at {x, y} in the page (CSS px), or at the pointer over the window.
-    GdkWindow *gw = gtk_widget_get_window(GTK_WIDGET(w->webview));
+    // Anchored at {x, y} in the page (CSS px), a view's own if it's a view's, or at the pointer over the window.
+    WebKitWebView *page = owner && webview_for(c->caller) ? webview_for(c->caller) : w->webview;
+    GdkWindow *gw = gtk_widget_get_window(GTK_WIDGET(page));
     GdkRectangle rect{0, 0, 1, 1};
     if (c->has("x") && c->has("y")) {
-      rect.x = (int)c->num("x", 0);
-      rect.y = (int)c->num("y", 0);
+      double z = webkit_web_view_get_zoom_level(page);
+      rect.x = (int)(c->num("x", 0) * z);
+      rect.y = (int)(c->num("y", 0) * z);
     } else if (gw) {
       GdkDevice *pointer = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_window_get_display(gw)));
       gdk_window_get_device_position(gw, pointer, &rect.x, &rect.y, nullptr);
@@ -562,7 +565,7 @@ static void register_system() {
       g_clear_error(&err);
       return c->fail("unavailable", "system.openSettings: " + m);
     }
-    c->ok();
+    c->ok(json{{"opened", true}});
   });
 }
 

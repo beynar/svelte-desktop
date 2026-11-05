@@ -3,7 +3,7 @@ import { test } from 'bun:test';
 import { launch } from '@svelte-desktop/shell/test';
 
 test('dashboard pages', async () => {
-	const app = await launch({ dev: true });
+	const app = await launch({ dev: true, env: { VITE_TABS_SPLIT: '0' } });
 	await app.waitFor('main', { timeout: 30_000 });
 	for (const [path, name] of [['/', 'overview'], ['/board', 'board'], ['/calendar', 'calendar']]) {
 		await app.goto(path);

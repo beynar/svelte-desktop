@@ -13,7 +13,7 @@ const until = async <T>(get: () => Promise<T>, ok: (v: T) => boolean, tries = 60
 	return v;
 };
 const start = async () => {
-	app = await launch({ dev: true, env: { VITE_TABS_PREWARM: '1', VITE_TABS_MAX_VIEWS: '1' } });
+	app = await launch({ dev: true, env: { VITE_TABS_SPLIT: '0', VITE_TABS_PREWARM: '1', VITE_TABS_MAX_VIEWS: '1' } });
 	await app.waitFor('.app-tabs [role=tab]', { timeout: 30_000 });
 	await app.platform('window', 'focus');
 };

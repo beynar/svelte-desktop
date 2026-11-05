@@ -488,7 +488,7 @@ static void register_popover() {
 
 struct Target {
   WebKitWebView *wv = nullptr;
-  json source; // {windowId} | {popoverId}
+  json source; // {windowId} | {popoverId} | {viewId, windowId}
 };
 
 static bool resolve_target(CallPtr c, Target *t) {
@@ -501,9 +501,20 @@ static bool resolve_target(CallPtr c, Target *t) {
     *t = Target{it->second->wv, json{{"popoverId", it->first}}};
     return true;
   }
-  if (!c->has("windowId") && c->caller && !find_window(c->caller))
+  // The view its source names, first; else a view's page: itself, not the window it's in.
+  int view = c->has("viewId") ? view_native(c->str("viewId")) : !c->has("windowId") ? c->caller : 0;
+  if (c->has("viewId") && !view) {
+    c->fail("invalid_args", "webview." + c->op + ": unknown view `" + c->str("viewId") + "`");
+    return false;
+  }
+  if (!c->has("viewId") && !c->has("windowId") && c->caller && !find_window(c->caller))
     if (Popover *p = find_native(c->caller)) {
       *t = Target{p->wv, json{{"popoverId", p->id}}};
+      return true;
+    }
+  if (int owner = view ? view_owner(view) : 0)
+    if (WebKitWebView *wv = webview_for(view)) {
+      *t = Target{wv, json{{"viewId", view_ident(view)}, {"windowId", public_id(owner)}}};
       return true;
     }
   Window *w = find_window(resolve_window(*c));

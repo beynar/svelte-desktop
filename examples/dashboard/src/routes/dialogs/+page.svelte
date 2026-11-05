@@ -12,8 +12,8 @@
 			log.unshift({ at: new Date().toLocaleTimeString(), what, result: `error: ${(e as Error).message}` });
 		}
 	};
-	// Where an attached sheet hangs: under the window's tab strip.
-	const top = () => document.querySelector('.titlebar')?.getBoundingClientRect().bottom ?? 0;
+	// Where an attached sheet hangs: under the window's tab strip. In a pane there's none: where the system puts it.
+	const top = () => document.querySelector('.titlebar')?.getBoundingClientRect().bottom;
 	const route = '/sheets/new-board';
 </script>
 

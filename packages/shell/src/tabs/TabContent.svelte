@@ -1,5 +1,5 @@
 <!--
-	The content of the route <Tabs> around it: the page (`children`, your `{@render children()}`) for the
+	The content of the <WindowTabs> around it: the page (`children`, your `{@render children()}`) for the
 	tabs that are routes of the page, and each isolated tab's own web view (kept alive, hidden
 	while another tab is shown).
 
@@ -36,7 +36,7 @@
 
 <style>
 	/* Hidden even with a display class (flex, grid) on it. */
-	:global(:where([data-sd-tabcontent], [data-sd-tabview], [data-sd-tabpanel])[hidden]) {
+	:global(:where([data-sd-tabcontent], [data-sd-tabview])[hidden]) {
 		display: none !important;
 	}
 </style>

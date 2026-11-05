@@ -156,17 +156,20 @@ static void on_item_activate(GtkMenuItem *item, gpointer) {
                                                               {"cut", WEBKIT_EDITING_COMMAND_CUT}, {"copy", WEBKIT_EDITING_COMMAND_COPY},
                                                               {"paste", WEBKIT_EDITING_COMMAND_PASTE}, {"selectAll", WEBKIT_EDITING_COMMAND_SELECT_ALL},
                                                               {"pasteAndMatchStyle", WEBKIT_EDITING_COMMAND_PASTE_AS_PLAIN_TEXT}};
-    if (auto e = kEdit.find(role); e != kEdit.end()) return webkit_web_view_execute_editing_command(w->webview, e->second);
+    // The page with the keyboard: a pane's, not the window's under it.
+    GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(w->window));
+    WebKitWebView *page = focus && WEBKIT_IS_WEB_VIEW(focus) ? WEBKIT_WEB_VIEW(focus) : w->webview;
+    if (auto e = kEdit.find(role); e != kEdit.end()) return webkit_web_view_execute_editing_command(page, e->second);
     GtkWindow *gw = GTK_WINDOW(w->window);
-    if (role == "reload") webkit_web_view_reload(w->webview);
+    if (role == "reload") webkit_web_view_reload(page);
     else if (role == "minimize") gtk_window_iconify(gw);
     else if (role == "close") gtk_window_close(gw);
     else if (role == "zoom") gtk_window_is_maximized(gw) ? gtk_window_unmaximize(gw) : gtk_window_maximize(gw);
     else if (role == "toggleFullscreen") (w->state & GDK_WINDOW_STATE_FULLSCREEN) ? gtk_window_unfullscreen(gw) : gtk_window_fullscreen(gw);
-    else if (role == "toggleDevTools") webkit_web_inspector_show(webkit_web_view_get_inspector(w->webview));
-    else if (role == "resetZoom") webkit_web_view_set_zoom_level(w->webview, 1.0);
-    else if (role == "zoomIn") webkit_web_view_set_zoom_level(w->webview, webkit_web_view_get_zoom_level(w->webview) * 1.1);
-    else if (role == "zoomOut") webkit_web_view_set_zoom_level(w->webview, webkit_web_view_get_zoom_level(w->webview) / 1.1);
+    else if (role == "toggleDevTools") webkit_web_inspector_show(webkit_web_view_get_inspector(page));
+    else if (role == "resetZoom") webkit_web_view_set_zoom_level(page, 1.0);
+    else if (role == "zoomIn") webkit_web_view_set_zoom_level(page, webkit_web_view_get_zoom_level(page) * 1.1);
+    else if (role == "zoomOut") webkit_web_view_set_zoom_level(page, webkit_web_view_get_zoom_level(page) / 1.1);
     return;
   }
   if (id) emit("menuAction", json{{"id", id}});

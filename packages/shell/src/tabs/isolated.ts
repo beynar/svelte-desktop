@@ -16,6 +16,12 @@ export interface IsolatedParams {
 	shown: boolean;
 	/** Its view suspended (memory): closed while not on screen, made again when shown. */
 	suspended?: boolean;
+	/** Where its view goes (panes: its pane's box), rather than this element's. */
+	box?: () => Rect | null;
+	/** Changes when `box` does, without this element changing (panes moving). */
+	revision?: unknown;
+	/** Along its edges, what it leaves to the window's page under it (px; macOS): the line between two panes. */
+	grab?: () => { top: number; right: number; bottom: number; left: number } | null;
 }
 
 /** How long a view may take to draw its page before it's shown anyway. */
@@ -53,21 +59,35 @@ function drawn(id: string, route: boolean): Promise<void> {
  *  be drawn; false if it couldn't be made. An app page is see-through for good: where it paints
  *  nothing, your layout's background under it shows (not WebKit's own, black or white); another
  *  site keeps a browser's white. */
-async function make(id: string, target: { route: string } | { url: string }, bounds: Rect): Promise<boolean> {
+async function make(id: string, target: { route: string } | { url: string }, bounds: Rect, pane: boolean, stopped?: Promise<void>): Promise<boolean> {
 	const route = 'route' in target;
 	const ready = drawn(id, route);
-	const made = await callPlatform('view', 'create', { id, ...target, transparent: route, bounds, hidden: true }).then(() => true, () => false);
-	if (made) await ready;
+	const made = await callPlatform('view', 'create', { id, ...target, tab: true, ...(pane && { pane: true }), transparent: route, bounds, hidden: true }).then(() => true, () => false);
+	if (made) await (stopped ? Promise.race([ready, stopped]) : ready);
 	return made;
 }
 
+/** Views going away: their last step. A tab closed and reopened at once has the same view id: its
+ *  new view waits for the old one to be gone, or that one's end would take the new one with it. */
+const retiring = new Map<string, Promise<unknown>>();
+
 /** Views made ahead for a tab about to open (a hovered link, the spare one): drawn, then out of
  *  the window. `want`: the page the tab it went to is at, when not the one it was made on. */
-const ahead = new Map<string, { made: Promise<boolean>; path: string; want?: string }>();
+type Ahead = { made: Promise<boolean>; path: string; want?: string; abandoned?: boolean };
+const ahead = new Map<string, Ahead>();
+/** Those a tab took, not drawn yet: where it should go can still change. */
+const adopting = new Map<string, Ahead>();
 
 /** Make the view of a tab not open yet (its view id), for an app path: opened, it shows at once. */
-export function prepareView(id: string, path: string, bounds: Rect): void {
-	if (!ahead.has(id)) ahead.set(id, { path, made: make(id, { route: path }, bounds).then(async (ok) => (ok && (await callPlatform('view', 'hide', { id }).catch(() => {})), ok)) });
+export function prepareView(id: string, path: string, bounds: Rect, pane = false): void {
+	if (ahead.has(id)) return;
+	const entry: Ahead = { path, made: Promise.resolve(false) };
+	// Its tab closed before it was drawn: another view may have this id by now, not to be hidden.
+	entry.made = make(id, { route: path }, bounds, pane).then(async (ok) => {
+		if (ok && !entry.abandoned) await callPlatform('view', 'hide', { id }).catch(() => {});
+		return ok;
+	});
+	ahead.set(id, entry);
 }
 
 /** A view made ahead goes to a tab at another page (the spare one): it goes there when the tab
@@ -82,8 +102,15 @@ export function retargetView(id: string, path: string): void {
 async function retarget(id: string, path: string): Promise<void> {
 	if (/Mac/.test(navigator.platform)) await callPlatform('view', 'show', { id, seeThrough: true }).catch(() => {});
 	// Two frames to draw it — or a moment, when nothing draws (the window covered by another app).
-	const code = `(async () => { await globalThis.__desktopGoto?.(${JSON.stringify(path)}, { replace: true }); await new Promise((r) => { requestAnimationFrame(() => requestAnimationFrame(r)); setTimeout(r, 300); }); return true; })()`;
-	await callPlatform('view', 'executeJavaScript', { id, code }).catch(() => {});
+	// Failed: no router yet (not hydrated either: it would start again where it was loaded), it refused (no such route), or something canceled it (it says nothing: no
+	// navigation ended, and the page isn't there). The page is loaded instead, so the tab is at its path
+	// whatever happens. Not failed: a navigation ended, even elsewhere or back here (a redirect, a
+	// trailing slash), or another came meanwhile, which is the one that counts. The mark goes either way, or this page
+	// would never again leave for a kept route's tab.
+	const to = JSON.stringify(path);
+	const code = `(async () => { const g = globalThis; const norm = (u) => { const url = new URL(u, location.href); return url.pathname + url.search + url.hash; }; if (!g.__desktopGoto || !document.documentElement.hasAttribute('data-desktop-hydrated')) return false; g.__desktopRetarget = true; const before = g.__desktopPageUrl?.(); const asked = g.__desktopNavigations ?? 0; let done = false; const off = g.__desktopAfterNavigate?.(() => { done = true; }); try { await g.__desktopGoto(${to}, { replace: true }); } catch { if ((g.__desktopNavigations ?? 0) === asked) return false; } finally { delete g.__desktopRetarget; off?.(); } const after = g.__desktopPageUrl?.(); if (!done && before !== undefined && after === before && norm(before) !== norm(${to}) && (g.__desktopNavigations ?? 0) === asked) return false; await new Promise((r) => { requestAnimationFrame(() => requestAnimationFrame(r)); setTimeout(r, 300); }); return true; })()`;
+	const went = await callPlatform('view', 'executeJavaScript', { id, code }).catch(() => true);
+	if (went === false) await callPlatform('view', 'navigate', { id, route: path }).catch(() => {});
 }
 
 // The page going (a reload) takes the views made ahead along.
@@ -93,6 +120,86 @@ if (typeof window !== 'undefined') addEventListener('pagehide', () => [...ahead.
  *  in flight; a page unloading can't wait for an answer). */
 export function dropView(id: string): void {
 	if (ahead.delete(id)) void callPlatform('view', 'destroy', { id }).catch(() => {});
+}
+
+/** What goto() took in the window's page, for its pane's router. */
+export type GotoOptions = {
+	replace?: boolean;
+	/** A link to where it is, or goto() said so: its loads run again. */
+	refreshAll?: boolean;
+	/** Back or Forward in the window: where it was scrolled comes back. */
+	traversal?: boolean;
+	/** `data-sveltekit-reset`, goto()'s. */
+	reset?: boolean;
+	persistState?: boolean;
+	shallow?: boolean;
+	/** A shallow entry's page. */
+	pageUrl?: string;
+	/** The state as SvelteKit serialized it (a Date stays one). */
+	stateJson?: string;
+};
+
+/** Give a page its navigation's state, if it's there: the app's page, hydrated, at that path. Not
+ *  there: false, and it says so when it is (`tabs:view-url`, `tabs:view-ready`). */
+export function deliverState(id: string, path: string, options: GotoOptions): Promise<boolean> {
+	const to = JSON.stringify(path);
+	// Another site's page at the same path, or claiming to have the router, gets nothing: its origin comes first.
+	const code = `(async () => { if (location.origin !== ${JSON.stringify(location.origin)}) return false; const g = globalThis; const norm = (u) => { const url = new URL(u, location.href); return url.pathname + url.search + url.hash; }; if (!g.__desktopGoto || !document.documentElement.hasAttribute('data-desktop-hydrated') || norm(location.href) !== norm(${to})) return false; let off; let done = false; off = g.__desktopAfterNavigate?.(() => { done = true; }); try { await g.__desktopGoto(${to}, ${JSON.stringify({ ...options, replace: true })}); } catch {} finally { off?.(); } g.__desktopCanceled = !done; return true; })()`;
+	return callPlatform<boolean>('view', 'executeJavaScript', { id, code }).then(
+		(done) => done === true,
+		() => false, // not made yet
+	);
+}
+
+/** The last navigation asked of a view's page got there: false if its page canceled it. */
+export function navigationTaken(id: string): Promise<boolean> {
+	return callPlatform<boolean>('view', 'executeJavaScript', { id, code: 'globalThis.__desktopCanceled !== true' }).then(
+		(taken) => taken !== false,
+		() => true,
+	);
+}
+
+/** A navigation that found no view: where a view being made should go once it's there. */
+const missed = new Map<string, string>();
+
+/** A spare view still on its way to its tab: it isn't where it's going yet. */
+export const viewComing = (id: string): boolean => adopting.has(id);
+
+/** Its tab closed: a tab reopened with this id starts afresh. */
+export const forgetMissed = (id: string): void => void missed.delete(id);
+
+/** A view at another page of the app, by SvelteKit's router (loaded when it's on another site).
+ *  Resolves where its page is then: something in it may have canceled that. Null: no view yet.
+ *  Undefined: being loaded there; what it is isn't known yet (it may be a download). */
+export function navigateView(id: string, path: string, otherSite: boolean, options?: GotoOptions): Promise<string | null | undefined> {
+	// A spare view still on its way to its tab: it goes here instead, when it's ready.
+	const coming = adopting.get(id);
+	if (coming) {
+		coming.want = path;
+		return Promise.resolve(path);
+	}
+	if (otherSite) return callPlatform('view', 'navigate', { id, route: path }).then(() => undefined, () => null);
+	// No router to take it yet (not hydrated), or no page of its for that address (a file, an endpoint):
+	// false, the address is loaded instead. A navigation that fails stays as it is. Another navigation of its own getting there first ends the wait
+	// (this one may never be done); a shallow entry's page, on its way there, doesn't.
+	const shallowWait = options?.shallow
+		? `if (!document.documentElement.hasAttribute('data-desktop-hydrated') && location.origin === ${JSON.stringify(location.origin)}) await new Promise((resolve) => { addEventListener('desktop:hydrated', resolve, { once: true }); setTimeout(resolve, 10000); });`
+		: '';
+	// Shallow: it's about the page it has, which a load would replace; it waits for its router.
+	// Never ready: it stays where it is (as if canceled), the page it has isn't replaced.
+	const notReady = options?.shallow ? '(g.__desktopCanceled = true, location.pathname + location.search + location.hash)' : 'false';
+	const code = `(async () => { const g = globalThis; ${shallowWait} if (!g.__desktopGoto || !document.documentElement.hasAttribute('data-desktop-hydrated')) return ${notReady}; g.__desktopNavigations = (g.__desktopNavigations ?? 0) + 1; let off; let done = false; const overtaken = new Promise((resolve) => { off = g.__desktopAfterNavigate?.((nav) => { const href = nav?.to?.url?.href; if (href !== ${JSON.stringify(options?.pageUrl ?? null)} || href === new URL(${JSON.stringify(path)}, location.href).href) { done = true; resolve(); } }); }); const go = async () => { if ((await g.__desktopRouteOf?.(${JSON.stringify(path)}).catch(() => '')) === null) return false; await g.__desktopGoto(${JSON.stringify(path)}, ${JSON.stringify(options ?? {})}); }; try { if ((await Promise.race([go(), overtaken])) === false) return false; } catch {} finally { off?.(); } g.__desktopCanceled = !done; return g.__desktopShownUrl?.() ?? null; })()`;
+	return callPlatform<string | null | false>('view', 'executeJavaScript', { id, code }).catch((e) => {
+		missed.set(id, path); // no view yet: it may be being made
+		throw e;
+	}).then(
+		// Its page is still loading, its router isn't there yet: it's loaded at that path instead.
+		(at) => {
+			if (at !== false) return at;
+			return callPlatform('view', 'navigate', { id, route: path }).then(() => undefined, () => null);
+		},
+		() => null,
+	);
 }
 
 /** At launch, views of tabs in the background wait for the window's page: hydrated (without the
@@ -115,16 +222,21 @@ export function isolatedView(node: HTMLElement, params: IsolatedParams) {
 	// 'loading': in the window, see-through, until its page is drawn.
 	let view: 'none' | 'loading' | 'shown' | 'hidden' = 'none';
 	let placed = '';
-	let queue: Promise<unknown> = Promise.resolve();
+	let grabbed = '';
+	let queue: Promise<unknown> = retiring.get(id) ?? Promise.resolve();
 	let frame = 0;
 	let gone = false;
+	let adopted: { abandoned?: boolean } | null = null;
+	let stop = () => {};
+	const stopped = new Promise<void>((resolve) => (stop = resolve));
 	const call = (op: string, args: object = {}) => callPlatform('view', op, { id, ...args });
 
 	// The element's box — hidden while its view loads, the box of the one shown in its place (the
 	// page, another tab's view).
 	const bounds = () => {
+		if (p.box) return p.box() ?? { x: 0, y: 0, width: 0, height: 0 };
 		const shown = node.hidden
-			? node.parentElement?.querySelector<HTMLElement>(':scope > :is([data-sd-tabcontent], [data-sd-tabview], [data-sd-tabpanel]):not([hidden])')
+			? node.parentElement?.querySelector<HTMLElement>(':scope > :is([data-sd-tabcontent], [data-sd-tabview]):not([hidden])')
 			: null;
 		return boxOf(shown ?? node);
 	};
@@ -136,12 +248,19 @@ export function isolatedView(node: HTMLElement, params: IsolatedParams) {
 		if (entry) {
 			// Made ahead (a hovered link, the spare one): drawn already, or soon — at another page,
 			// taken there first.
+			// It's this action's from here: closed meanwhile, its end takes the view along, and a tab
+			// reopened at once doesn't wait for a page that may never come.
 			ahead.delete(id);
-			if (!(await entry.made)) return void run();
-			if (entry.want && entry.want !== entry.path) {
-				await retarget(id, entry.want);
+			adopted = entry;
+			adopting.set(id, entry);
+			view = 'hidden';
+			const made = await Promise.race([entry.made, stopped.then(() => true)]);
+			if (adopting.get(id) === entry) adopting.delete(id);
+			if (!made) view = 'none';
+			else if (entry.want && entry.want !== entry.path) {
+				await Promise.race([retarget(id, entry.want), stopped]);
 				view = 'loading';
-			} else view = 'hidden';
+			}
 			placed = '';
 			return void run();
 		}
@@ -160,23 +279,59 @@ export function isolatedView(node: HTMLElement, params: IsolatedParams) {
 			}
 		}
 		const b = bounds();
-		if (!b.width || !b.height) return;
+		if (b.width <= 0 || b.height <= 0) {
+			// Nothing of its pane left (the room for a dragged tab): it doesn't stay over it.
+			if (p.box && view === 'shown') {
+				view = 'hidden';
+				placed = '';
+				await call('hide').catch(() => {});
+			}
+			return;
+		}
 		const key = `${b.x},${b.y},${b.width},${b.height}`;
 		if (view === 'none') {
 			view = 'loading';
 			placed = key;
-			if (!(await make(id, route ? { route: p.tab.path ?? '/' } : { url: p.tab.url! }, b))) view = 'none';
-			else run(); // the tab may have changed meanwhile (not awaited: the queue is waiting on this step)
+			grabbed = '';
+			const asked = p.tab.path;
+			if (!(await make(id, route ? { route: p.tab.path ?? '/' } : { url: p.tab.url! }, b, !!p.box, stopped))) view = 'none';
+			else {
+				// Sent elsewhere too early for it, just before it was made or meanwhile (a link right after its
+				// tab came back): there. Unless it's where it was made.
+				const to = missed.get(id);
+				missed.delete(id);
+				if (to !== undefined && route && p.box && to === p.tab.path && to !== asked) await call('navigate', { route: to }).catch(() => {});
+				run();
+			} // the tab may have changed meanwhile (not awaited: the queue is waiting on this step)
 			return;
 		}
 		if (key !== placed) (placed = key), await call('setBounds', b).catch(() => {});
-		if (view !== 'shown') (view = 'shown'), await call('show').catch(() => {});
+		const grab = p.grab?.();
+		const grabKey = grab ? JSON.stringify(grab) : '';
+		if (grab && grabKey !== grabbed) (grabbed = grabKey), void call('setHitInset', grab).catch(() => {}); // only macOS's page hears under a view
+		if (view !== 'shown') {
+			view = 'shown';
+			await call('show').catch(() => {});
+			// In panes the keyboard goes to the tab in focus (its window's page has it otherwise).
+			if (p.box && p.tabs.activeId === p.tab.id && !p.tabs.pageKeyboard) await call('focus').catch(() => {});
+		}
 		if (p.active) p.tabs.reveal(p.tab.id); // in front: the tab shown, the address its own
 	}
 	const run = () => (queue = queue.then(sync).catch((e) => console.error('[tabs] isolated view', e)));
-	// Layout changes: once per frame.
+	// Layout changes: once per frame — or a moment later when no frames come (the window covered by
+	// another app, where a view still has to follow).
+	let timer: ReturnType<typeof setTimeout> | undefined;
 	const schedule = () => {
-		if (!frame) frame = requestAnimationFrame(() => ((frame = 0), run()));
+		if (frame) return;
+		const go = () => {
+			if (!frame) return;
+			cancelAnimationFrame(frame);
+			clearTimeout(timer);
+			frame = 0;
+			run();
+		};
+		frame = requestAnimationFrame(go);
+		timer = setTimeout(go, 100);
 	};
 
 	// The page going (a reload) takes its views along: they belong to the window, not the page.
@@ -189,8 +344,26 @@ export function isolatedView(node: HTMLElement, params: IsolatedParams) {
 	const offNav = onPlatform<{ id: string; url: string }>('viewNavigated', (e) => {
 		if (e?.id !== id) return;
 		const url = new URL(e.url, location.origin);
-		if (url.origin === location.origin) p.tabs.update(p.tab.id, { path: url.pathname + url.search + url.hash });
-		else p.tabs.update(p.tab.id, { url: e.url });
+		if (p.box) queueMicrotask(() => p.tabs.followAddress(p.tab.id));
+		// In panes a tab is at one place: another site's page isn't at the path it left (a link to that
+		// path has to go there, a new window has to open what it shows).
+		if (url.origin === location.origin) p.tabs.update(p.tab.id, { path: url.pathname + url.search + url.hash, ...(p.box && { url: undefined }) });
+		else if (!p.box || /^https?:$/.test(url.protocol)) p.tabs.update(p.tab.id, { url: e.url, ...(p.box && { path: undefined }) });
+	});
+	// Another site's own router (panes: a tab reopens where it was; the app's pages say so themselves).
+	const offUrl = onPlatform<{ id: string; url: string }>('viewUrl', (e) => {
+		if (e?.id !== id || !/^https?:/.test(e.url)) return;
+		// Without panes, a tab keeps its path whatever its page's router does; its fragment it follows.
+		if (!p.box) {
+			const url = new URL(e.url);
+			const noFragment = (at: string) => new URL(at, location.origin).href.split('#')[0];
+			const now = p.tab.url ?? p.tab.path;
+			if (now === undefined || noFragment(now) !== url.href.split('#')[0]) return;
+			if (p.tab.url !== undefined) p.tabs.update(p.tab.id, { url: e.url });
+			else if (p.tab.path !== url.pathname + url.search + url.hash) p.tabs.update(p.tab.id, { path: url.pathname + url.search + url.hash });
+			return;
+		}
+		if (new URL(e.url).origin !== location.origin && p.tab.url !== e.url) p.tabs.update(p.tab.id, { url: e.url, path: undefined });
 	});
 	const offTitle = onPlatform<{ id: string; title: string }>('viewTitle', (e) => {
 		if (e?.id === id && e.title) p.tabs.update(p.tab.id, { title: e.title });
@@ -207,13 +380,23 @@ export function isolatedView(node: HTMLElement, params: IsolatedParams) {
 		destroy() {
 			gone = true;
 			cancelAnimationFrame(frame);
+			clearTimeout(timer);
 			observer.disconnect();
 			removeEventListener('resize', schedule);
 			removeEventListener('scroll', schedule, true);
 			removeEventListener('pagehide', unload);
 			offNav();
+			offUrl();
 			offTitle();
-			queue = queue.then(() => view !== 'none' && call('destroy').catch(() => {}));
+			stop();
+			if (adopted) {
+				adopted.abandoned = true;
+				if (adopting.get(id) === adopted) adopting.delete(id);
+			}
+			const last = queue.then(() => view !== 'none' && call('destroy').catch(() => {}));
+			queue = last;
+			retiring.set(id, last);
+			void last.finally(() => retiring.get(id) === last && retiring.delete(id));
 		},
 	};
 }
