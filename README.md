@@ -1,70 +1,68 @@
-# svelte-desktop
+# kitop
 
-Feasibility spike: a **SvelteKit 3 (RC) app with remote functions, SSR and `bun:sqlite`,
-running inside an Electrobun 2 (beta) shell as a single macOS `.app`** — no Electron,
-no Chromium, no separate server process.
+Desktop apps from an unmodified SvelteKit app: one Vite plugin, one config file, Bun, the system's web view, and a single binary.
 
-## Layout
+```diff vite.config.ts
+-import { sveltekit } from '@sveltejs/kit/vite';
++import { desktop } from '@kitop/shell/vite';
+ import { defineConfig } from 'vite';
 
-- `app/` — SvelteKit 3 RC app (`@sveltejs/kit@next`), `@sveltejs/adapter-bun`,
-  remote functions enabled in `vite.config.ts`. `src/lib/data.remote.ts` demos
-  `query` + `command` + `form` against `bun:sqlite`, plus a native-dialog
-  `command` routed through `globalThis.__nativeBridge`.
-- `shell/` — Electrobun 2.0.2-beta app. `mainProcess: "bun"`, so the SvelteKit
-  server runs **in-process** in the same Bun runtime that owns the window.
-  `src/bun/index.ts` is the whole trick (see below). `kit/` is a staged copy of
-  `app/build` (mapped into `Resources/app/kit/` via `build.copy`).
-
-## The trick (`shell/src/bun/index.ts`)
-
-1. `Bun.serve` is monkey-patched **before** importing `app/build/index.js`:
-   - forces `PORT=0` → the server binds an **ephemeral port**; `server.url` is
-     captured and handed to `BrowserWindow`. No fixed port, no `paths.origin`.
-   - injects `x-forwarded-proto: http` + `PROTOCOL_HEADER` env so adapter-bun
-     computes `self_origin` as `http://…` — otherwise remote-function
-     **mutations are CSRF-rejected** (adapter-bun assumes TLS upstream, like
-     adapter-node).
-2. `globalThis.__nativeBridge` is populated with Electrobun APIs
-   (`Utils.showMessageBox`, `Utils.quit`). Remote functions call it — remote
-   functions *are* the native bridge (the `window.__TAURI__` pattern, server-side).
-3. `await import(Resources/app/kit/index.js)` starts the SvelteKit server in-process.
-
-## Build / run
-
-```sh
-# kit
-cd app && bun run --bun build          # adapter-bun calls Bun.build — needs --bun
-rm -rf ../shell/kit && cp -R build ../shell/kit
-
-# shell (needs hutch canary channel for beta templates)
-cd ../shell
-HUTCH_ACTIVE_CHANNEL=canary hutch electrobun dev          # dev bundle + launch
-HUTCH_ACTIVE_CHANNEL=canary hutch electrobun build --env=stable  # .app + .dmg in build/ + artifacts/
+ export default defineConfig({
+-  plugins: [sveltekit({ adapter: adapter() })],
++  plugins: [desktop()],
+ });
 ```
 
-## Verified in the stable .app
+Routes, load functions, remote functions, form actions, endpoints and hooks stay as they are, and run on Bun inside the app. `host` adds what a browser doesn't have: windows, menus, tray, notifications, files, self-update.
 
-SSR ✓ client routing ✓ `query` ✓ `command` ✓ `form` (binary wire format) ✓
-`bun:sqlite` persistence across launches ✓ `Utils.showMessageBox` from a
-`command` ✓ ephemeral port per launch ✓
+## Status
 
-## Sizes
+Early, and not yet used in production. `@kitop/shell` isn't on npm yet, and its API can still change.
 
-- stable `.app`: **21 MB** self-extracting (launcher + zstd payload), 20 MB `.dmg`
-- dev `.app`: 68 MB unpacked (bundles `bun` binary in `Contents/MacOS`)
-- `app/vite.config.binary.ts` also produces a single `build-bin/server`
-  **62 MB Mach-O executable** (server+assets+runtime) via `buildOptions.compile`
-- for reference, Electron hello-world is ~85 MB compressed / ~200 MB unpacked
+| | Web view | Output | Tested in CI |
+| --- | --- | --- | --- |
+| macOS | WKWebView | `.app`, zip, DMG | End to end on macOS 15 |
+| Linux | WebKitGTK | Folder, `.tar.gz`, AppImage | End to end in Docker, without a real display |
+| Windows | WebView2 | Folder, zip, NSIS installer | End to end on a Windows runner, x64 only |
 
-## Known limitations / next questions
+Signing with a real identity hasn't been run. See [what's limited on each platform](website/docs/shipping/limitations.mdx).
 
-- **Cookie/localStorage persistence**: ephemeral port = new origin each launch →
-  web storage doesn't survive restarts. Desktop state should live in
-  `bun:sqlite`/files anyway; if web storage matters, pin a port + `paths.origin`.
-- `compile`-mode binaries pin `paths.origin` at build → fixed port.
-- No `icon.iconset` yet; signing/notarization config needed for real distribution.
-- Fire-and-forget view→main RPC (outside remote functions) would need Electrobun's
-  socket client — `electrobun` npm package is a stub in 2.x; vendor
-  `api/browser/` from the devkit if needed. Remote functions cover request/response.
-- HMR dev loop: point `BrowserWindow` at `bun run --bun dev` (Vite) instead of the
-  built server — standard Electrobun+Vite pattern, not wired here.
+## Try it
+
+With [Bun](https://bun.sh) 1.4 or newer. On macOS you also need the Xcode command line tools.
+
+```sh
+(cd packages/shell && bun install)
+cd examples/notes
+bun install
+bun run dev      # a native window, with hot reload
+bun run build    # the app, in .desktop/dist
+```
+
+To turn your own app into a desktop app, follow [Convert a SvelteKit app](website/docs/convert-sveltekit-app.mdx).
+
+## What's where
+
+| Folder | What it is |
+| --- | --- |
+| `packages/shell` | The framework: `@kitop/shell`, its CLI, and the native shells in `native/` |
+| `packages/push-worker` | The optional push notification service |
+| `examples/notes` | The app most tests run against |
+| `examples/dashboard`, `examples/panes` | Tabs, panes and a larger layout |
+| `website` | The documentation. Run it with `cd website && bun install && bun run dev` |
+
+Other top-level folders are earlier experiments, kept for reference. kitop doesn't use them.
+
+## Tests
+
+```sh
+cd packages/shell
+bun test src                # unit tests, no window
+test/docker/run.sh e2e      # Linux end to end, in Docker
+```
+
+`bun test` in `examples/*` opens real windows and takes the keyboard. `.github/workflows` shows what runs on each platform.
+
+## License
+
+[MIT](LICENSE)

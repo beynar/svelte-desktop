@@ -17,7 +17,7 @@ Your app is a local web server plus a window. Most of the protection is on by de
 In the built app the server listens on `127.0.0.1` behind a gate, on a port derived from the app's identifier, so the port isn't a secret:
 
 1. A request whose `Host` header isn't the server's own gets a 421 (DNS rebinding). Static assets and prerendered pages are served before this check and without the cookie, so don't put anything private in them.
-2. The first navigation trades a one-time secret for an `HttpOnly`, `SameSite=Strict` session cookie. Every other request needs that cookie or gets a 403. Other processes and browser tabs never see the cookie. Each process has its own secret and cookie, so one [restarted after a crash](/concepts/architecture#when-something-crashes) doesn't accept the old ones.
+2. The first navigation trades a one-time secret for an `HttpOnly`, `SameSite=Strict` session cookie. Every other request needs that cookie or gets a 403. Other processes and browser tabs don't get the cookie, apart from the case under [What is not protected](#what-is-not-protected). Each process has its own secret and cookie, so one [restarted after a crash](/concepts/architecture#when-something-crashes) doesn't accept the old ones.
 3. [WebSocket](/features/websockets#security) upgrades also need the cookie, and an `Origin` header, when present, must be the app's own.
 
 Behind the cookie like the app, and added by the shell: `/__desktop/page-crashed`, the static page shown when a page keeps crashing. Its only link stays on the app's own origin, whatever its URL says.
@@ -28,6 +28,7 @@ Not behind the cookie: immutable build assets, including prerendered pages, and 
 
 - **`vite dev` has no cookie gate.** The server is Vite's, on `localhost`; Vite's host checks apply, and WebSockets require a matching `Origin`. Anything on the machine that can reach that port can request your app. Don't develop against real credentials you wouldn't expose to local processes. The native bridge in dev is a separate WebSocket on `127.0.0.1` guarded by a random token.
 - **Other programs running as the same user.** They can read the app's data folder and, with the right permissions, drive the machine anyway. The gate keeps out other web pages and unrelated processes, not the user's own account. The [MCP](/features/mcp#security) channel has the same limit.
+- **Another server on `127.0.0.1`.** Cookies aren't tied to a port, and `SameSite` counts every port of a host as the same site. So whatever the web view requests from another local port carries the session cookie: a view navigated there, or an `<img>` in one of your pages. A process listening on that port could then call your server until the app quits. This takes a program already running on the machine, and it's the reason not to point a view at a local server you don't trust, and to set a Content-Security-Policy if your pages show content from others. On macOS and Windows, [`setNavigationPolicy`](/host/web/web-content#setnavigationpolicypolicy) can refuse those navigations.
 - **Your own server code.** See above.
 
 ## Related
