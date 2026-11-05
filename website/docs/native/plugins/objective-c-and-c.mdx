@@ -3,11 +3,11 @@ title: Objective-C, C and C++
 description: Objective-C commands on macOS and the shared C plugin ABI.
 ---
 
-Use Objective-C plugins for AppKit and other macOS frameworks. Use the C ABI for C/C++ libraries and platform-specific native work. Handlers start on the shell's UI thread, in the shell process; move blocking work to another thread. Pages and SvelteKit server code call the same commands through `host.native`, receive replies as promises, and listen to plugin events with `host.on`. A [sidecar](/native/sidecars) provides process isolation; an [addon](/native/addons) provides a server-only native library.
+Use Objective-C plugins for AppKit and other macOS frameworks. Use the C ABI for C/C++ libraries and platform-specific native work. **On macOS, write plugins in Objective-C or Swift:** the build supplies its own `sd_plugin_init`, so a raw C entry point works only on Linux and Windows. Handlers start on the shell's UI thread, in the shell process, so move blocking work to another thread. Shared rules (names, errors, events, `bridge.allow`, dev restarts) are on [Plugins](/native/plugins); per-OS support is on [Platforms](/native/plugins/platforms).
 
-## Objective-C
+## Quick start: Objective-C
 
-The shell package supplies `native/include/SvelteDesktop.h` and `SvelteDesktop.m`. The build adds the include directory automatically. Use this example in a macOS native source set with no Swift files. Define one `SDSetup` function and register commands inside it:
+The shell supplies `native/include/SvelteDesktop.h` and `SvelteDesktop.m`, and the build adds the include directory. In a macOS source set with no Swift files, define one `SDSetup` function and register commands in it:
 
 ```objc native/macos/Files.m
 #import "SvelteDesktop.h"
@@ -46,7 +46,7 @@ void SDSetup(void) {
 ```
 
 ```ts
-// In a page or server module, after the native transport is ready:
+// In a page or server module
 const off = host.on<{ count: number }>('folder.counted', ({ count }) => {
   console.log('Counted', count);
 });
@@ -55,104 +55,66 @@ const title = await host.native.folder.windowTitle();
 off();
 ```
 
-Objective-C results are `unknown` in generated TypeScript. Narrow them in JavaScript before relying on their shape. The example copies the path before leaving the UI thread. It calls the reply exactly once and accesses `SDWindow` only from a UI-thread handler.
+The example copies the path before leaving the UI thread, calls the reply exactly once, and uses `SDWindow` only from a UI-thread handler.
 
 | API | Behavior |
 | --- | --- |
-| `SDSetup(void)` | App-defined registration function, called by the supplied `sd_plugin_init`. |
-| `SDCommand(name, handler)` | Registers exactly `service.op`. The block receives an `NSDictionary` and an `SDReply`; it starts on the UI thread. An occupied name is logged and not registered. |
-| `SDReply(value, error)` | Reply once, synchronously or later, from any thread. `nil` without an error resolves JSON `null`. An error rejects. |
-| `SDError(code, message)` | Creates an `NSError` carrying the string bridge code. Other errors default to `internal` unless their `userInfo` contains `code`. |
-| `SDEmit(event, data)` | Broadcasts a JSON event to pages and server code, from any thread. Prefer dictionary payloads. |
-| `SDWindow(windowId)` | Returns a borrowed `NSWindow` or `nil`. Use only on the UI thread; `0` selects the main window. |
+| `SDSetup(void)` | Your registration function, called by the supplied `sd_plugin_init`. |
+| `SDCommand(name, handler)` | Registers `service.op`. The block gets an `NSDictionary` and an `SDReply`, and starts on the UI thread. |
+| `SDReply(value, error)` | Reply once, now or later, from any thread. `nil` without an error resolves `null`; an error rejects. |
+| `SDError(code, message)` | An `NSError` carrying the bridge code. Other errors are `internal` unless their `userInfo` has a `code`. |
+| `SDEmit(event, data)` | Broadcasts a JSON event from any thread. Prefer dictionary payloads. |
+| `SDWindow(windowId)` | A borrowed `NSWindow` or `nil`; UI thread only. `0` is the main window. |
 
-The supplied implementation checks `SD_ABI_VERSION`, retains command blocks for the process lifetime, serializes arguments/results, and routes replies through the C host. Do not race multiple reply calls; the wrapper's duplicate-reply guard is not a cross-thread synchronization primitive.
+### Type mapping
+
+Objective-C results are `unknown` in generated TypeScript; narrow them in JavaScript. Arguments arrive as an `NSDictionary`, results are JSON values.
 
 ### Mixing sources on macOS
 
-The automatic build links `SvelteDesktop.m` only when there are no Swift sources. That helper defines `sd_plugin_init` and calls your `SDSetup`. With Swift sources, `SvelteDesktop.swift` supplies the entry point and calls `desktopSetup` instead; the Objective-C convenience implementation is not included. Do not assume that `SDCommand` and Swift setup can be mixed automatically in one plugin.
-
-This also limits raw C plugins on macOS: a loose C/C++ file defining its own `sd_plugin_init` collides with the supplied entry point, and the Swift-less helper still requires `SDSetup`. For the automatic macOS build, register through Objective-C or Swift and call C/C++ routines from those handlers. The standalone ABI examples below target Linux and Windows, whose builders do not inject that helper.
+The build links `SvelteDesktop.m` only when there are no Swift sources. With Swift sources, `SvelteDesktop.swift` supplies the entry point and calls `desktopSetup` instead, so don't mix `SDCommand` and Swift setup. A loose C/C++ file defining its own `sd_plugin_init` collides with the supplied one: on macOS, register through Objective-C or Swift and call your C/C++ routines from the handlers. Swift `import` and Objective-C `@import` autolink frameworks; there is no linker-flags option.
 
 ## The C ABI
 
-The public header is `native/include/svelte_desktop.h` in `@svelte-desktop/shell`. It has C++ linkage guards and no dependency on Cocoa. A standalone plugin exports:
+The header is `native/include/svelte_desktop.h` in `@svelte-desktop/shell`, with C++ linkage guards and no Cocoa dependency. A standalone plugin (Linux and Windows) exports:
 
 ```c
 int sd_plugin_init(const sd_host *host);
 ```
 
-The shell initializes its built-in registry, loads the library on the UI thread, finds that symbol, and calls it before entering the native run loop. Return `0` on success and a nonzero value on initialization failure. Check `host->abi == SD_ABI_VERSION` before using the function table. Retain the host pointer for later calls; the shell owns it. There is no shutdown callback or plugin-unload API in this ABI.
+The shell calls it on the UI thread before the run loop. Return `0` on success, nonzero on failure. Check `host->abi == SD_ABI_VERSION` first, and retain the host pointer: the shell owns it. There is no shutdown callback. Keep initialization to registration; the build also runs it in a subprocess with a recording host.
 
-Keep initialization limited to registration. Type generation may execute it in a separate inspection subprocess with a recording host, without real windows or app services.
-
-Each registered handler has this signature:
+A handler has this signature:
 
 ```c
 void handler(sd_call *call, const char *args_json, void *user);
 ```
 
-`args_json` is a non-null JSON object, valid for the handler invocation. Copy or parse what you need before returning if another thread will use it. `user` is the pointer you supplied at registration; you own its lifetime. Treat `sd_call` as opaque. It remains available until you resolve or reject it, after which it must never be used again. Reply exactly once, even on failure.
+`args_json` is a non-null JSON object, valid only during the call: copy it if another thread will use it. `user` is the pointer you registered. `sd_call` is opaque; reply exactly once with `resolve` or `reject`, even on failure, and never use it afterwards. Don't race multiple replies.
 
 ### Every `sd_host` function
 
 | Function | Contract and thread |
 | --- | --- |
-| `register_op(service, op, fn, user)` | Register during UI-thread initialization. Returns `0`, or `-1` if the full name is already registered by the shell or another plugin. The handler is invoked on the UI thread. |
-| `resolve(call, value_json)` | Complete the call with any JSON value, such as `"42"`, `"null"` or a JSON object. May be called from any thread; the host copies/parses the value and routes completion to the UI thread. |
-| `reject(call, code, message)` | Complete the call with an error from any thread. Use `invalid_args`, `unsupported`, `unavailable`, `denied` or `internal`. |
-| `emit(event, data_json)` | Broadcast an event from any thread. Object payloads pass through; other values are wrapped in an object with a `value` property. Receive with `host.on` in pages or server code. |
-| `window(window_id)` | Borrow a native window handle, or null. UI thread only. Public id `0` selects the main window. |
-| `webview(window_id)` | Borrow a native webview handle, or null. UI thread only. Uses the same public ids. |
-| `caller_window(call)` | Read the issuing page's public window id, or `-1` for a server call. Read it in the handler while the call is alive, before replying. |
-| `log(message)` | Write a native-plugin log message. macOS uses `NSLog`; Linux/Windows write to stderr. It does not marshal JavaScript or UI work. |
+| `register_op(service, op, fn, user)` | Register during initialization. Returns `0`, or `-1` if the name is taken by the shell or another plugin. Handlers run on the UI thread. |
+| `resolve(call, value_json)` | Complete with any JSON value (`"42"`, `"null"`, an object). Any thread. |
+| `reject(call, code, message)` | Complete with an error. Any thread. Use `invalid_args`, `unsupported`, `unavailable`, `denied` or `internal`. |
+| `emit(event, data_json)` | Broadcast an event. Any thread. Objects pass through; other values arrive as `{ value }`. |
+| `window(window_id)` | Borrow a native window handle, or null. UI thread only. `0` is the main window. |
+| `webview(window_id)` | Borrow a native webview handle, or null. UI thread only. |
+| `caller_window(call)` | The calling page's window id, or `-1` for a server call. Read it before replying. |
+| `log(message)` | Write a log message (`NSLog` on macOS, stderr elsewhere). |
 
 | Handle | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `window` | `NSWindow *` | `GtkWidget *` for the window | `HWND` |
+| `window` | `NSWindow *` | `GtkWidget *` | `HWND` |
 | `webview` | `WKWebView *` | `WebKitWebView *` | `ICoreWebView2 *` |
 
-Handles remain owned by the shell. Do not destroy them or keep using them after their window closes. The ABI has no generic function for scheduling arbitrary UI callbacks. If background work must later access a handle, use the platform's UI scheduling mechanism; calling `resolve` or `emit` does not move your own code to the UI thread.
-
-### Complete C example
-
-On Linux, place this in `native/linux/Echo.c`. The same source can be placed in `native/windows/Echo.c` for a Windows production build. Keep Apple sources under `native/macos/`, so they are excluded on Windows.
-
-```c native/linux/Echo.c
-#include "svelte_desktop.h"
-
-#if defined(_WIN32)
-#define PLUGIN_EXPORT __declspec(dllexport)
-#else
-#define PLUGIN_EXPORT __attribute__((visibility("default")))
-#endif
-
-static const sd_host *host;
-
-static void echo(sd_call *call, const char *args_json, void *user) {
-  (void)user;
-  host->resolve(call, args_json);
-}
-
-PLUGIN_EXPORT int sd_plugin_init(const sd_host *api) {
-  if (!api || api->abi != SD_ABI_VERSION) return -1;
-  host = api;
-  return host->register_op("cEcho", "echo", echo, 0);
-}
-```
-
-```ts
-const echoed = await host.native.cEcho.echo({ message: 'Hello' });
-// echoed is unknown; the runtime result is { message: 'Hello' }.
-```
-
-The handler resolves before returning, while `args_json` is still valid. It returns the registration result from initialization, so a collision is reported as an initialization failure. C argument validation and JSON parsing are your responsibility.
+The shell owns the handles: don't destroy them or use them after their window closes. The ABI can't schedule callbacks on the UI thread; use the platform's own mechanism. Validating and parsing arguments is up to you.
 
 ### C++ and background replies
 
-The scanner accepts `.cc`, `.cpp` and Objective-C++ `.mm`. C++ compilation uses C++17; C compilation uses C17. `.mm` is macOS-only and uses ARC and Objective-C modules. C++ exports need `extern "C"` so the loader can find `sd_plugin_init`.
-
-As an alternative to the C example, this complete Linux plugin starts one native thread for each call. It can also be placed under `native/windows/` for production packaging. Do not put both standalone entry-point examples in the same platform's source set.
+C compiles as C17 and C++ as C++17. Export `sd_plugin_init` with `extern "C"`. This Linux plugin starts a native thread per call; the same file works under `native/windows/` for production. Don't put two standalone entry points in one platform's source set.
 
 ```cpp native/linux/Work.cpp
 #include "svelte_desktop.h"
@@ -197,19 +159,11 @@ extern "C" PLUGIN_EXPORT int sd_plugin_init(const sd_host *api) {
 const off = host.on<{ finished: boolean }>('cppWork.finished', console.log);
 const result = await host.native.cppWork.copyLater({ text: 'Copied off the UI thread' });
 off();
+// raw ABI results are unknown in the generated types
 ```
 
-The C host accepts replies and events from the worker thread. It does not manage that thread's lifetime, cap concurrency, cancel work when a page goes away, or wait for detached threads on quit. Own those policies for long-running work. Catch errors inside a background thread before they escape; the shell cannot catch exceptions thrown there.
+The host accepts replies and events from any thread but doesn't manage the thread's lifetime, cap concurrency, cancel work, or wait for detached threads on quit: own those policies. Catch exceptions inside a background thread; the shell can't.
 
-On Linux the plugin is linked with `c++`; the Windows builder selects `clang++` when it sees C++ sources. The Swift-less macOS linker uses `clang` and does not explicitly add `libc++`, so automatic linking of C++ standard-library dependencies is not guaranteed. There is no plugin linker-flags option in the config.
+## Build notes
 
-## Frameworks, dev and build
-
-On macOS, the compiler supplies the SDK include directory, enables `-fmodules` for Objective-C/Objective-C++, and links Cocoa. Swift `import` and Objective-C `@import` can autolink framework modules. This is not a scan of arbitrary `#include` or `#import` statements, nor automatic discovery of third-party C/C++ link dependencies.
-
-| Sources | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| Objective-C / Objective-C++ | Built with `clang`, ARC and modules | Skipped with a warning | Causes the selected C-family plugin to be skipped |
-| C / C++ | Compiled into the shared macOS plugin, with the entry-point limits above | Built with `cc` / `c++` on a matching Linux host | Built with llvm-mingw in Docker |
-
-During native-window dev, an existing source-file edit restarts the shell process and rebuilds its plugins; it does not replace a loaded library. Native additions and removals require a manual dev restart. Linux/Windows raw ABI commands have `unknown` results in generated declarations. The current Windows dev builder does not use the Windows production compiler path. For source selection, signing, bundle paths and cross-compilation limits, see [Plugins](/native/plugins) and [Platforms and configuration](/native/plugins/platforms).
+Objective-C and Swift files are skipped on Linux and make the Windows C-family build skip entirely: keep them under `native/macos/`. Dev restarts and other builds: [Plugins](/native/plugins#dev-loop) and [Platforms](/native/plugins/platforms).

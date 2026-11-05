@@ -1,127 +1,62 @@
 ---
 title: Platforms and configuration
-description: Plugin toolchains, source selection, architectures and bundle layouts on each desktop target.
+description: Which plugin languages build on which OS, cross-compiling, and where plugins land in the package.
 ---
 
-Use platform folders when a plugin needs different implementations on macOS, Linux and Windows. Keep the same `service.op` contract where callers should be portable. Plugins run inside the shell process: initialization and raw C/Objective-C handlers use the UI thread, Swift uses `MainActor`, Rust uses native threads, and Go uses goroutines. Pages and server code communicate with them through `host.native` replies and `host.on` events, rather than shared JavaScript state. Use a [sidecar](/native/sidecars) when a dependency needs its own process.
+Use `macos/`, `linux/` and `windows/` folders under `native/` when a plugin needs a different implementation per OS, and keep the same `service.op` contract. A target builds the shared sources plus its own folder. For how plugins work in general, see [Plugins](/native/plugins).
 
-## Support and compilers
-
-This table describes the production builders. It does not promise that every dependency or plugin supports both architectures.
+## Languages by OS
 
 | Language | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| Swift | `swiftc` and the macOS SDK; `clang` for accompanying C-family files | Skipped | Selected Swift sources cause the entire C-family plugin to be skipped |
-| Objective-C / Objective-C++ | `clang`, macOS SDK, ARC and modules | Skipped with a warning | Selected `.m` / `.mm` files cause the entire C-family plugin to be skipped |
-| C / C++ | `clang`, C17 / C++17; automatic entry point supplied by the Objective-C or Swift layer | `cc` / `c++`, C17 / C++17, on Linux with the target architecture | llvm-mingw `clang` / `clang++`, C17 / C++17, in the Docker toolchain |
-| Rust | Cargo, Rust target and linker for each requested macOS architecture | Cargo and a usable GNU/Linux target linker, on Linux | Cargo and the requested `pc-windows-msvc` target/linker, on Windows |
-| Go | Go, cgo and a C toolchain for each architecture | Go, cgo and a matching C toolchain, on Linux | Go, cgo and a usable Windows C toolchain, on Windows |
+| Swift | Yes | No | No |
+| Objective-C / Objective-C++ | Yes | No | No |
+| C / C++ | Yes, through Objective-C or Swift setup | Yes | Yes (production only) |
+| Rust | Yes | Yes | Yes |
+| Go | Yes | Yes | Yes |
+| Python | Yes | Dev only | No |
 
-The macOS tools normally come from Xcode or its Command Line Tools. Universal builds also need `lipo`. Rust loose files are wrapped in an edition-2024 crate, so the installed Rust toolchain must support that edition. The Go SDK uses `reflect.TypeFor`; use Go 1.22 or later and keep `CGO_ENABLED` available. The builder sets it to `1`.
+- Keep Swift, `.m` and `.mm` files under `macos/`. On Linux they are skipped. On Windows they cause the whole C-family library to be skipped.
+- On macOS the build supplies its own `sd_plugin_init`, so a raw C entry point works only on Linux and Windows. See the [C ABI](/native/plugins/objective-c-and-c#the-c-abi).
+- Native-window dev builds C-family plugins on macOS and Linux only, for the host architecture. Windows C/C++ plugins build for production but not in dev.
+- Rust needs Cargo, a target and its linker; Go needs Go 1.22 or later and a C toolchain for cgo. The build doesn't install toolchains. A missing Rust target prints a `rustup target add <triple>` hint.
+- Python needs [uv](https://docs.astral.sh/uv/) and a C++ compiler. Packaged apps with Python commands are macOS only.
 
-The raw C ABI works in all three native backends, but the automatic macOS builder injects its own `sd_plugin_init`. Use Objective-C `SDSetup` or Swift `desktopSetup` there and call your C/C++ routines from their handlers. A standalone C entry point is supported by the Linux and Windows builders. See the [C ABI and source-mixing limits](/native/plugins/objective-c-and-c#the-c-abi).
+## Cross-compiling
 
-The current Windows C-family dev path does not call the Windows production builder. Windows production support therefore does not establish native-window dev support. macOS and Linux native-window dev build for the running host architecture.
-
-## Per-platform folders
-
-```text
-native/
-  common.rs
-  macos/
-    Integration.swift
-  linux/
-    Integration.c
-  windows/
-    Integration.cpp
-```
-
-For a target, shared sources and that platform's sources are selected; the other two platform folders are skipped. Keep `macos/`, `linux/` and `windows/` directly under the configured native root. The C-family scanner applies platform exclusions recursively, but the Rust/Go scanner applies platform-folder exclusions only at the source root. A Cargo crate or Go module is handed to its own build tool as a project; source selection inside it follows that project's rules.
-
-Keep Swift, `.m` and `.mm` files under `macos/`. The Linux builder filters these out and still builds selected C/C++ files. The Windows builder instead returns without building any C-family library if its selected source list contains an Apple-only file. Rust and Go libraries are built separately.
-
-`addons/` and `sidecars/` are excluded from plugin discovery. Cargo projects and Go modules are also excluded from the C-family scan, so their internal C sources are not accidentally linked into the app's other plugin. See the full [source-discovery rules](/native/plugins#source-discovery).
-
-## Configuration
-
-```ts desktop.config.ts
-import { defineConfig } from '@svelte-desktop/shell/config';
-
-export default defineConfig({
-  appName: 'Example',
-  identifier: 'com.example.plugins',
-  native: 'native',
-  bridge: { allow: ['text.*', 'folder.count'] },
-  build: {
-    target: 'macos',
-    minimumSystemVersion: '12.0',
-    universal: true
-  }
-});
-```
-
-| Option | Effect |
+| Library | Limit |
 | --- | --- |
-| `native` | Source-root path relative to the project, or an absolute path. Defaults to `native` if that folder exists. A missing folder resolves to no native sources. |
-| `native: false` | Disables plugin-source discovery and automatic addon-source discovery under that root. Explicit `addons` and `sidecars` config entries remain separate. |
-| `bridge.allow` | Page-call allowlist of `service.op` or `service.*` entries. Omitted means every op; `[]` permits none. Server calls are unrestricted. |
-| `build.target` | `macos`, `linux` or `windows`; defaults to the host OS. |
-| `build.targetArch` | `x64` or `arm64` for Linux/Windows. Windows defaults to `x64`; Linux defaults to the Linux host architecture, or `x64` when built from another OS. It does not select the macOS architecture. |
-| `build.universal` | On macOS, builds `arm64` and `x64` slices and joins them. Linux and Windows package one architecture per build. |
-| `build.minimumSystemVersion` | Minimum macOS version, default `12.0`; passed to macOS plugin compilation and written into `LSMinimumSystemVersion`. |
-| `build.outDir` | Output directory, relative to the project or absolute. Defaults to `.desktop/dist`. |
-| `build.aot` | Bun ahead-of-time compilation for the app executable; host-only. It does not change plugin handler threads. |
-| `addons` | Named paths to prebuilt Node-API `.node` libraries; see [addons](/native/addons). |
-| `sidecars` | Named executable paths, either shared or keyed by `macos`, `linux`, `windows`; see [sidecars](/native/sidecars). |
-| `sign` | macOS signing/notarization and optional Windows Authenticode settings, described below. |
-| `permissions` | OS permission reasons and related macOS entitlements. Separate from `bridge.allow`; native code still needs the OS authorization its APIs require. |
+| macOS Swift / C-family | Needs macOS and the Apple SDK. |
+| Linux C/C++ | Builds on a Linux host of the same architecture; otherwise skipped with a warning. Use a matching Linux machine or container. |
+| Windows C/C++ | Builds in Docker with an llvm-mingw image, also from macOS or Linux. Without Docker it is skipped with a warning. |
+| Rust and Go | Built only when the target OS is the host OS; other targets are skipped with a warning. Changing architecture on the same OS needs that target's toolchain. |
+| Python | One architecture per macOS build: the build machine's. `build.universal` fails with Python commands. |
 
-`SVELTE_DESKTOP_TARGET` and `SVELTE_DESKTOP_TARGET_ARCH` override the corresponding build settings. `permissions.pages` is the deprecated fallback for `bridge.allow`; prefer the latter. There are no plugin-specific compiler, linker-flags or prebuilt-plugin options in `DesktopConfig`. The `addons` option accepts Node-API addons, not plugin-ABI libraries. See the complete [config reference](/reference/config).
+Cross-compiling the Bun executable doesn't build the plugins. Check the build output and the package before shipping.
 
-## Architectures and system versions
+## Architectures
 
-macOS defaults to the host architecture. `build.universal: true` selects `arm64` and `x64` for the app executable, shell library and plugin libraries. The C-family builder compiles each slice and uses `lipo`; Rust and Go do the same after their individual builds. Rust requires the corresponding targets, `aarch64-apple-darwin` and `x86_64-apple-darwin`, installed with `rustup target add`. Go also needs cgo to compile for each requested architecture; selecting `GOARCH` does not install or configure that C toolchain.
+`build.universal: true` on macOS builds `arm64` and `x64` and joins them with `lipo`; Rust also needs `aarch64-apple-darwin` and `x86_64-apple-darwin` installed, and Go needs cgo working for each. Linux and Windows build one architecture per run (`build.targetArch`).
 
-`minimumSystemVersion` defaults to macOS 12.0. The C-family builder uses it for `-mmacosx-version-min` and Swift's target triple; Rust receives `MACOSX_DEPLOYMENT_TARGET`, and Go receives the macOS deployment flag in `CGO_CFLAGS` and `CGO_LDFLAGS`. The shipped shell build itself targets macOS 12.0. Lowering the config value alone does not lower the whole app's deployment requirement. Plugins and dependencies may require a newer OS even when the app's plist says otherwise.
+`build.minimumSystemVersion` (default `12.0`) sets the macOS deployment target of every plugin. It doesn't lower the app's own requirement, and a dependency may need a newer macOS. Linux needs GTK 3 and WebKitGTK 4.1; Windows needs the WebView2 runtime.
 
-| Target | Runtime baseline established by the source |
-| --- | --- |
-| macOS | Shell build targets 12.0; the packager defaults `LSMinimumSystemVersion` to 12.0. |
-| Linux | System GTK 3 and WebKitGTK 4.1. The supplied build/test image is Ubuntu 24.04; no configurable minimum distro or glibc version is declared. |
-| Windows | The native shell targets Windows 10 APIs and UCRT; a WebView2 runtime is required. The config has no Windows minimum-version setting. |
+Other build options (`build.target`, `outDir`, `sign`, `permissions`, `addons`, `sidecars`) are in the [config reference](/reference/config). There are no plugin-specific compiler or linker options.
 
-Linux/Windows use `arm64` or `x64`, with separate output builds. Rust uses `aarch64-unknown-linux-gnu` / `x86_64-unknown-linux-gnu` or `aarch64-pc-windows-msvc` / `x86_64-pc-windows-msvc`. Go uses `GOOS=linux` / `windows` and `GOARCH=arm64` / `amd64`. The build selects those targets but does not install their linkers or dependencies.
+## Bundle paths
 
-## Cross-compilation limits
-
-| Build step | Actual limit |
-| --- | --- |
-| macOS Swift/C-family | Uses Apple compiler flags and SDK tools. No non-macOS cross-toolchain path is provided. |
-| Linux C/C++ plugin | Requires `process.platform === 'linux'` and target architecture equal to the running Bun architecture. Otherwise sources are skipped with a warning. Run the build on a matching Linux host or inside a matching Linux container. |
-| Windows C/C++ plugin | Uses Docker and the supplied llvm-mingw toolchain image, including from macOS/Linux. Without Docker it is skipped with a warning. The builder has no alternate local MSVC compilation branch. |
-| Rust/Go libraries | Built only when the target OS equals the host OS. Other-OS builds skip them with a warning. A same-OS architecture change still needs a working target toolchain; failures propagate. |
-
-Cross-compiling the Bun executable or obtaining the shell library does not establish that every plugin was built. Review build notices and the final bundle before shipping. The Windows builder's MinGW toolchain is separate from the Rust builder's MSVC targets and the Go builder's host cgo toolchain.
-
-## Linux and Windows builds
-
-`src/build/package-linux.ts` gathers the selected C/C++ files, compiles each with `-fPIC`, and links them using `c++ -shared` into `libapp-native.so`. It builds only on a matching Linux host architecture. Swift and Objective-C files are reported and excluded. The packager separately asks the Rust/Go builder for release libraries, then copies all successful outputs into the app directory.
-
-`src/build/package-windows.ts` gathers the selected sources and rejects the whole C-family source set if it contains Swift or Objective-C. For C/C++ it checks Docker, builds the toolchain image if needed, mounts the native sources read-only, and invokes llvm-mingw for `x86_64-w64-mingw32` or `aarch64-w64-mingw32`. It links a static-runtime shared library as `app-native.dll`. Rust/Go are separate release builds and require a Windows host. Neither production packager currently regenerates `src/native.d.ts`; native-window dev and the macOS packager do.
-
-## Bundle paths and signing
-
-Paths below are relative to the app bundle or app directory. Rust/Go library names depend on their discovered project paths; `rust` and `go` are examples.
+Relative to the app bundle or directory:
 
 | Artifact | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| App output | `.desktop/dist/<appName>.app` | `.desktop/dist/<appName>/` | `.desktop/dist/<appName>-windows-<arch>/` |
 | Shell | `Contents/Frameworks/libshell.dylib` | `lib/libshell.so` | `shell.dll` |
 | C-family plugin | `Contents/Frameworks/libapp-native.dylib` | `lib/libapp-native.so` | `app-native.dll` |
-| Rust/Go plugins | `Contents/Frameworks/plugins/libapp-rust.dylib`, `libapp-go.dylib` | `lib/plugins/libapp-rust.so`, `libapp-go.so` | `plugins/app-rust.dll`, `app-go.dll` |
+| Rust and Go plugins | `Contents/Frameworks/plugins/libapp-<name>.dylib` | `lib/plugins/libapp-<name>.so` | `plugins/app-<name>.dll` |
+| Python bridge | `Contents/Frameworks/plugins/libapp-python.dylib`, runtime in `Contents/Resources/python` | Not packaged | Not packaged |
 
-On macOS, the signer signs each nested library, including every `plugins/` entry, before signing and verifying the app bundle. Identity selection is `sign.identity`, then `CODESIGN_IDENTITY`, then `-` for ad-hoc signing. `sign.hardenedRuntime` defaults on for identity signing and off for ad-hoc signing. `sign.entitlements` adds app entitlements. `sign.notaryProfile` or `NOTARY_PROFILE` enables notarization and stapling when an identity is used.
+`<name>` comes from the project's path under `native/`: `native/rust/` gives `rust`, `native/stats.rs` gives `rust-stats`.
 
-Linux packaging does not code-sign individual plugin libraries. Windows optionally uses `osslsigncode` through `sign.windows.certificateFile`, `password` and `timestampUrl`, with environment fallbacks `WINDOWS_CERT_PFX` and `WINDOWS_CERT_PASSWORD`. The Windows signing list includes the executable, shell, C-family plugin, addons and sidecar executables. It currently omits Rust/Go libraries under `plugins/`; do not assume those DLLs receive Authenticode signatures.
+## Signing
 
-At runtime, the shell loads the main C-family plugin first, then sorted entries in the sibling `plugins/` directory. Initialization runs on the UI thread after the native window is created and before the run loop starts. Handler threads follow their language SDK, and events/replies return through the host bridge. See [startup and dev behavior](/native/plugins#production-and-startup), [Rust](/native/plugins/rust), [Go](/native/plugins/go), [Swift](/native/plugins/swift), and [Objective-C, C and C++](/native/plugins/objective-c-and-c).
+- **macOS:** nested libraries, including every `plugins/` entry, are signed before the app bundle. The identity is `sign.identity`, then `CODESIGN_IDENTITY`, otherwise ad-hoc. Notarization is configured under `sign`.
+- **Linux:** plugin libraries aren't signed.
+- **Windows:** Authenticode signing (optional, `sign.windows`) covers the executable, shell, C-family plugin, addons and sidecars, but not the Rust and Go DLLs under `plugins/`.

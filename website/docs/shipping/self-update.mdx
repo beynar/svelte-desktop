@@ -3,6 +3,10 @@ title: Self-update
 description: Signed updates from a static host, verified downloads, macOS delta patches and a post-exit install helper.
 ---
 
+:::warning
+Self-update works on macOS and Windows. Linux isn't supported yet: see [Platform support](#platform-support).
+:::
+
 The updater fetches a signed `update.json` from any static host (S3, R2, GitHub Releases, a CDN), downloads a SHA-256-pinned archive or a macOS delta patch, swaps the app after it quits and relaunches it. Delta reconstruction also verifies each resulting file. See the platform and rollback limits below.
 
 <Steps>
@@ -18,20 +22,23 @@ The updater fetches a signed `update.json` from any static host (S3, R2, GitHub 
       manifestUrl: 'https://updates.example.com/notes/{channel}/update.json',
       publicKey: 'q1r…base64…=',           // contents of updater.key.pub
       channel: 'stable',
-      privateKey: './updater.key',          // or $SVELTE_DESKTOP_UPDATE_KEY; used by vite build only
+      privateKey: './updater.key',          // a file path (or $SVELTE_DESKTOP_UPDATE_KEY); used by vite build only
       baseUrl: 'https://updates.example.com/notes/stable/',
     },
     ```
   </Step>
   <Step title="Build and upload">
-    `vite build` writes `release/<version>/` with the archive (and a delta patch from the previous release found in `release/`) and a signed `release/update.json`. Upload the archives first and `update.json` last, so clients never see a manifest pointing at missing files. To build every platform and publish from CI, follow [Release with CI](/shipping/release).
+    `vite build` writes `release/<version>/` with the archive (and a delta patch from the previous release found in `release/`) and a signed `release/update.json`. Without a key file (unset, or the path doesn't exist) the build logs a `release` line and writes `release/update.unsigned.json` instead of `update.json`; sign it separately, for instance with `release merge` in [CI](/shipping/release). `notes` and `minimumVersion` are not written by `vite build`: they come from `release merge --notes` and `--minimum-version`. Upload the archives first and `update.json` last, so clients never see a manifest pointing at missing files. To build every platform and publish from CI, follow [Release with CI](/shipping/release).
   </Step>
   <Step title="Check from the app">
     ```svelte
-    <button onclick={() => host.update.check()} disabled={host.update.checking}>Check for updates</button>
-    {#if host.update.available}
-      <p>Version {host.update.available.version} is available.</p>
-      <button onclick={() => host.update.available.downloadAndInstall()}>Install and relaunch</button>
+    <button onclick={() => host.update.check().catch(() => {})} disabled={host.update.checking}>Check for updates</button>
+    {#if host.update.checkError}
+      <p>Couldn't check: {host.update.checkError.message}</p>
+    {:else if host.update.available}
+      {@const update = host.update.available}
+      <p>Version {update.version} is available.</p>
+      <button onclick={() => update.downloadAndInstall()}>Install and relaunch</button>
     {:else if host.update.upToDate}
       <p>Up to date.</p>
     {/if}
@@ -39,14 +46,14 @@ The updater fetches a signed `update.json` from any static host (S3, R2, GitHub 
   </Step>
 </Steps>
 
-`check()` resolves the available update or `null`. An update has `version`, `currentVersion`, `notes`, `date`, `mandatory` (the installed version is older than the manifest's `minimumVersion`) and `downloadAndInstall()`. Checking is opt-in: nothing hits the network until you call it.
+`check()` resolves the available update or `null`. An update has `version`, `currentVersion`, `notes`, `date`, `mandatory` (the installed version is older than the manifest's `minimumVersion`) and `downloadAndInstall()`. `check()` rejects when the feed can't be used (network error, invalid signature, wrong channel) and records the error in `host.update.checkError`. Checking is opt-in: nothing hits the network until you call it. When installation starts, the app quits and relaunches on its own; there is no progress callback.
 
 <TypeTable
   type={{
     manifestUrl: { type: "string", required: true, description: "update.json URL; may contain {channel}." },
     publicKey: { type: "string | string[]", required: true, description: "ed25519 public key(s), base64. An array allows key rotation." },
     channel: { type: "string", default: '"stable"', description: "A signed manifest for another channel is refused." },
-    privateKey: { type: "string", default: "$SVELTE_DESKTOP_UPDATE_KEY", description: "Private key file used by vite build to sign release/update.json. Without it the manifest is written unsigned." },
+    privateKey: { type: "string", default: "$SVELTE_DESKTOP_UPDATE_KEY", description: "Path to the private key file used by vite build to sign release/update.json. If unset or the file is missing, release/update.unsigned.json is written instead." },
     baseUrl: { type: "string", description: "Public base URL where release/ is uploaded (absolute artifact URLs in update.json). Without it, URLs are relative to update.json, which works for every channel." },
   }}
 />
@@ -72,11 +79,11 @@ With a previous release in `release/`, `vite build` also writes a `.sdpatch`: pe
 
 ## Install and rollback
 
-The install is swapped by a helper after the app exits; the previous copy is kept as `.old`. The lower-level updater counts unconfirmed starts and restores the backup on the second one, then skips that version in future checks.
+The install is swapped by a helper after the app exits, and the previous copy is kept as `.old`. If the new version starts twice without confirming it started, the shell restores the previous copy and skips that version in future checks. The confirmation happens when the shell's worker starts, so it is not a check that your pages or app logic work. If the new executable cannot start at all, nothing is restored.
 
-The shell currently calls rollback handling and then confirmation during Bun Worker initialization. This is not a page or application health check. If the new executable cannot start the Worker, no rollback code runs; recovery is not automatic. Windows-style compiled paths also bypass this startup hook. Applications using `createUpdater()` directly own the timing of `rollbackIfNeeded()`, `confirm()` and the restart after a rollback.
+Applications that call `createUpdater()` directly own the timing of `rollbackIfNeeded()`, `confirm()` and the restart: see `src/updater/README.md`.
 
-The install directory must be writable by the user: `/Applications` for an admin on macOS, a per-user location on Windows (the NSIS installer is per-user) and a user-owned directory on Linux. A translocated (quarantined) macOS app is refused.
+The install directory must be writable by the user: `/Applications` for an admin on macOS, a per-user location on Windows (the NSIS installer is per-user) (Linux is not supported yet). A translocated (quarantined) macOS app is refused.
 
 :::note
 For manual control (custom download UI, publishing from CI), the lower-level `createUpdater()` from `@svelte-desktop/shell/updater` and the `updater-cli.ts` script in the shell package (`keygen`, `sign`, `verify`, `pack`, `make-manifest`) are documented in the package's `src/updater/README.md`.

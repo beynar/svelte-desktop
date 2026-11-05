@@ -1,15 +1,34 @@
 ---
-title: host.window and host.windows
-description: Read the current window reactively, control native window behavior, and manage multiple windows.
+title: host.window
+description: Read the current window reactively and control its size, position, state, title bar and appearance.
 ---
 
-`host.window` is the current window's reactive store with window operations attached. `host.windows` is the service for creating, finding, and targeting windows by ID. The store wraps some service methods to update reactive state; their signatures and return values can differ.
+`host.window` is the current window's reactive store with the window operations attached. To create, find or parent windows, see [`host.windows`](/host/windows/windows).
 
 How-to: [Windows](/ui/windows).
 
-## `host.window`
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
 
-### Reactive state
+  // Ask before the user closes this window.
+  onMount(async () => {
+    const disarm = await host.window.onCloseRequested(() => {
+      if (confirm('Discard changes?')) host.window.close();
+    });
+    return () => disarm();
+  });
+</script>
+
+<header>
+  <span>{host.window.title}</span>
+  <button onclick={() => host.window.toggleMaximize()}>
+    {host.window.maximized ? 'Restore size' : 'Maximize'}
+  </button>
+</header>
+```
+
+## Reactive state
 
 | Property | Type | Initial value | Description |
 | --- | --- | --- | --- |
@@ -55,11 +74,13 @@ Each one is `null` until it's known, and stays `null` on a platform without its 
 
 Bounds, focus, scale, and fullscreen completion feed the store through native events. A page tracks its own window; server code uses the native default target. Some operations schedule a refresh after 150 ms to allow native geometry to settle. `refresh()` keeps previous scalar values when their queries fail; failed bounds, cursor, and controls queries become `null`.
 
-### Store methods
+## Store methods
 
 `init()` refreshes the store, attaches its event subscriptions, sets `ready`, and resolves the namespace. The host calls it during startup. `refresh()` re-reads the native fields and resolves the namespace. `dispose()` synchronously removes the store's own subscriptions; it does not close the native window.
 
-All service operations in [the second part](#hostwindows) are also available through `host.window`. These wrappers target the current window, accept no trailing `windowId`, and resolve `void` rather than the service's result:
+`host.window` also exposes every operation of the [`host.windows`](/host/windows/windows) service, so `host.window.hide()` and `host.windows.hide()` do the same. The store has its own version of the methods below: they target the current window, accept no trailing `windowId`, and resolve `void` rather than the service's result. Any other service method falls through unchanged, with its own signature, optional trailing `windowId` and return value: `host.window.hide(3)` hides window 3, and `host.window.getBounds()` returns the service result.
+
+The table lists only the store's own versions; the service signatures are under [Window operations](#window-operations).
 
 | Method | Parameters | Behavior |
 | --- | --- | --- |
@@ -96,7 +117,7 @@ const disarm = await host.window.onCloseRequested(() => {
 await disarm();
 ```
 
-The veto is one native flag per window. Use one guard at a time; disarming one registration also drops the flag used by another. `close()` is a programmatic close and bypasses the veto. This helper subscribes to the event stream without filtering `windowId`; when several windows install guards, use `host.windows.onWillClose()` and explicit IDs to filter requests yourself.
+The veto is one native flag per window. Use one guard at a time; disarming one registration also drops the flag used by another. `close()` is a programmatic close and bypasses the veto. This helper subscribes to the event stream without filtering `windowId`; when several windows install guards, use [`host.windows.onWillClose()`](/host/windows/windows#events) and explicit IDs to filter requests yourself.
 
 ### Store event methods
 
@@ -109,89 +130,13 @@ The veto is one native flag per window. Use one guard at a time; disarming one r
 | `focusChanged` | `{ focused: boolean }` |
 | `scaleFactorChanged` | `{ scaleFactor: number }` |
 
-The native payloads also carry window IDs, but these store callback types omit them. Use the service's typed helpers below when you need IDs or completed transitions. `host.window.on()` is the store's method, so it does not accept the transition names supported by `host.windows.on()`.
+The native payloads also carry window IDs, but these store callback types omit them. Use the service's typed helpers when you need IDs or completed transitions. `host.window.on()` is the store's method, so it does not accept the transition names supported by [`host.windows.on()`](/host/windows/windows#events).
 
-## `host.windows`
+## Window operations
 
-The service has no reactive state. Targeted methods accept a trailing `windowId?: number`, omitted from signatures in the tables below. With no ID, a page targets its own window; server calls resolve the active/key window, then the primary window. `0` addresses the current primary window. IDs are runtime addresses; closing the primary can change the remaining windows' public IDs. Use labels to find windows again.
+Every method in this part is a service operation, available as `host.window.method(...)` for the current window. Pass a trailing `windowId?: number` (omitted from the signatures below) to target another window; it is also how `host.windows` calls them. With no ID, a page targets its own window; server calls resolve the active/key window, then the primary window. `0` addresses the primary window. Unknown target windows reject `invalid_args`. See [`host.windows`](/host/windows/windows#hostwindows) for IDs and labels.
 
-Unless stated otherwise, setters and commands resolve `null`. Numeric coordinates use a top-left screen origin, with y increasing downward, in macOS points, Linux logical coordinates, or Windows DIPs. Unknown target windows reject `invalid_args`.
-
-### `create(options?)`
-
-Create a window and resolve `{ windowId: number; label: string }`. This starts page loading; it does not wait for the page to load. All fields in `WindowCreateOptions` are optional:
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `parentId` | `number` | No parent | macOS parent window ID. |
-| `modal` | `boolean` | `false` | macOS native sheet child; requires a valid parent and focusable window. |
-| `type` | `'normal' \| 'panel'` | `'normal'` | macOS native window class. |
-| `focusable` | `boolean` | `true` | macOS: permit keyboard focus. |
-| `session` | `string` | Default session | macOS [web session](/host/web/sessions). |
-| `recovery` | `WebviewRecovery` | `'reload'` on macOS | `'reload'` or `'manual'` content-process recovery. See [`host.webview`](/host/web/webview). |
-| `label` | `string` | Generated (`'main'` for the first window, otherwise `window-…`) | App-wide unique label; duplicates reject `invalid_args`. |
-| `path` | `string` | `'/'` | App route, loaded with the app's authenticated session. |
-| `url` | `string` | App origin + `path` | Full URL instead of an app route; other origins have no native bridge. |
-| `html` | `string` | None | HTML document instead of a route; `url` takes precedence. |
-| `title` | `string` | Native default; app name on Linux/Windows | Initial title. |
-| `x`, `y` | `number` | Centered | Initial frame position; supply both coordinates. |
-| `width` | `number` | `1024` | Initial content width. |
-| `height` | `number` | `720` | Initial content height. |
-| `minWidth`, `minHeight` | `number` | No explicit minimum | Minimum content size. |
-| `decorations` | `boolean` | `true` | `false` creates a borderless window. |
-| `visible` | `boolean` | `true` | Show on creation; `false` waits for an explicit `show()`. |
-| `alwaysOnTop` | `boolean` | `false` | Float above normal windows. |
-| `resizable` | `boolean` | `true` | Allow resizing. |
-| `movable` | `boolean` | `true` on macOS | macOS movement policy. |
-| `minimizable` | `boolean` | `true` | Allow minimizing; ignored on Linux. |
-| `focus` | `boolean` | `true` on macOS | macOS: request focus when showing. |
-| `animate` | `boolean \| WindowAnimation` | No animation | macOS presentation animation; `true` selects the defaults below. |
-| `transparent` | `boolean` | `false` | Transparent background; page content must paint any desired background. |
-| `opacity` | `number` | `1` | Initial window alpha, intended range `0`–`1`. |
-| `titlebarTransparent` | `boolean` | `false` | macOS: blend the title bar into content. |
-| `vibrancy` | `VibrancyMaterial` | None | macOS material behind the page. |
-| `vibrancyState` | `VibrancyState` | `'followsWindow'` | macOS material activity. |
-| `trafficLightPosition` | `{ x: number; y: number }` | System position | macOS close button's top-left in points from the window frame's top-left. |
-| `aspectRatio` | `number` | Unconstrained | macOS content width/height ratio while resizing. |
-| `backgroundThrottling` | `boolean` | `true` | macOS: `false` keeps the page running at full speed out of sight. |
-| `tabbingIdentifier` | `string` | System default | macOS native tab group identifier. |
-
-Linux and Windows ignore `parentId`, `modal`, `type`, `focusable`, `session`, `recovery`, `movable`, `focus`, `animate`, `titlebarTransparent`, `vibrancy`, `vibrancyState`, `trafficLightPosition`, `aspectRatio`, `backgroundThrottling`, and `tabbingIdentifier`. Do not rely on these options there. `titleBarStyle` belongs to main-window configuration and the runtime setter; it is not a field in the exported `WindowCreateOptions` type.
-
-On macOS, invalid relationship/class/focusability options or an unknown session/recovery policy reject `invalid_args`. Native creation failure rejects `internal`.
-
-#### `WindowAnimation`
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `duration` | `number` | `180` | Milliseconds; `0` skips animation. |
-| `easing` | `'easeOut' \| 'easeIn' \| 'easeInOut' \| 'linear' \| [x1: number, y1: number, x2: number, y2: number]` | `'easeOut'` | Timing curve. |
-| `offset` | `{ x?: number; y?: number }` | `{ x: 0, y: -10 }` | Starting offset in points, y down. Within a supplied object, omitted axes become `0`. |
-| `scale` | `number` | `1` | Starting size around the center; page layout resizes during animation. |
-| `opacity` | `number` | `0` | Starting alpha. |
-
-### Finding windows
-
-| Method | Resolves | Description |
-| --- | --- | --- |
-| `getInfo(windowId?)` | `WindowInfo` | Info for the target window. |
-| `list()` | `WindowInfo[]` | Every open window. |
-| `get(label: string)` | `WindowInfo \| null` | Find by label; `null` when absent. |
-
-`WindowInfo` has these fields:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `windowId` | `number` | Current public ID. |
-| `label` | `string` | Window label. |
-| `focused` | `boolean` | Native focus state. |
-| `visible` | `boolean` | Native visibility observation; semantics differ by backend. |
-| `bounds` | `WindowBounds` | Outer frame. |
-| `parentId` | `number \| null` (optional) | macOS parent, or `null`. |
-| `modal` | `boolean` (optional) | macOS modal-child policy. |
-| `type` | `'normal' \| 'panel'` (optional) | macOS native class. |
-| `focusable` | `boolean` (optional) | macOS focus policy. |
-| `sheetAttached` | `boolean` (optional) | Whether AppKit has actually presented the modal as a sheet. |
+Unless stated otherwise, setters and commands resolve `null`. Numeric coordinates use a top-left screen origin, with y increasing downward, in macOS points, Linux logical coordinates, or Windows DIPs.
 
 ### Geometry
 
@@ -278,7 +223,7 @@ The boolean setters below require the named boolean argument. They have no JavaS
 | `invalidateShadow()` | `null` | Recalculate macOS window shadow. |
 | `setOpacity(opacity: number)` | `null` | Window alpha clamped to `0`–`1`. |
 | `getOpacity()` | `{ opacity: number }` | Read alpha. |
-| `setTheme(theme: WindowTheme)` | `null` | `'light'`, `'dark'`, or `'system'`; macOS appearance override or Windows title bar mode. |
+| `setTheme(theme: WindowTheme)` | `null` | `'light'`, `'dark'`, or `'system'`; macOS appearance override or Windows title bar mode. On Windows the pages of all windows share one `prefers-color-scheme`, WebView2's: the last one set. |
 | `getTheme()` | `WindowTheme` | The window's own theme; `'system'` follows the app's. macOS and Windows. |
 | `setAlwaysOnTop(enabled: boolean)` | `null` | Float above normal windows. |
 | `setAlwaysOnBottom(enabled: boolean)` | `null` | Place below normal windows. |
@@ -296,7 +241,7 @@ The boolean setters below require the named boolean argument. They have no JavaS
 | `setContentProtected(enabled: boolean)` | `null` | Exclude from screen capture, subject to platform restrictions. |
 | `isContentProtected()` | `{ contentProtected: boolean }` | Read capture-protection setting. |
 | `setFocusable(enabled: boolean)` | `null` | Toggle focusability on macOS and Linux. |
-| `isFocusable()` | `boolean` | Read macOS focusability policy. |
+| `isFocusable()` | `boolean` | Read the focusability policy, macOS and Linux. |
 | `setDocumentEdited(edited: boolean)`, `setEdited(edited: boolean)` | `null` | macOS document-edited indicator; Windows stores the flag. |
 | `isDocumentEdited()` | `{ edited: boolean }` | Read document-edited state. |
 | `setRepresentedFilename(path: string \| null)` | `null` | macOS title bar document URL; `null` clears it. |
@@ -369,130 +314,38 @@ macOS only. `position` is `{ x: number; y: number } | null`: the close button's 
 
 `ControlsRect` is `{ x: number; y: number; width: number; height: number }`. The reactive `host.window.controlsArea` exposes the same coordinates without conversion.
 
-### Parents and modal children
-
-macOS only. Normal children follow parent movement; `modal: true` presents a native sheet and blocks the parent until hidden or closed. Panels can become key when focusable but do not become the app's main document window. Closing a parent closes its descendants.
-
-| Method, before optional `windowId` | Resolves | Description |
-| --- | --- | --- |
-| `setParent(parentId: number \| null)` | `null` | Reparent; `null` detaches a nonmodal child. |
-| `getParent()` | `WindowInfo \| null` | Current parent. |
-| `getChildren()` | `WindowInfo[]` | Direct children. |
-
-Missing parents, cycles, a second attached sheet, or detaching a modal reject `invalid_args`. Hide an attached modal before reparenting it. Modal children must stay focusable: `setFocusable(false)` rejects `invalid_args` for them. For a route dialog that returns a result, use [`host.dialog.sheet()`](/host/windows/dialog).
-
-```ts
-const parent = await host.windows.getInfo();
-const child = await host.windows.create({
-  parentId: parent.windowId, modal: true,
-  label: 'confirmation', path: '/confirm', width: 420, height: 260,
-});
-await host.windows.close(child.windowId);
-```
-
-### Events
-
-Subscriptions are app-wide; filter payloads by `windowId` for a particular window. Typed helpers and `host.on(event, fn)` return synchronous unsubscribe functions. `host.windows.onCloseRequested()` is an alias for `onWillClose()`; it subscribes without arming a veto, unlike the store helper.
-
-| Event | Service helper | Payload | When |
-| --- | --- | --- | --- |
-| `created` | `onCreated(fn)` | `{ windowId?: number; label?: string }` | A service-created window exists. |
-| `closed` | `onClosed(fn)` | `{ windowId?: number }` | Window closed; its native root binding is gone. |
-| `willClose` | `onWillClose(fn)`, `onCloseRequested(fn)` | `{ windowId?: number }` | An armed veto suppressed an OS close request. |
-| `boundsChanged` | `onBoundsChanged(fn)` | `WindowBounds & { windowId?: number }` | Frame moved/resized. |
-| `focusChanged` | `onFocusChanged(fn)` | `{ focused: boolean; windowId?: number }` | Focus changed. |
-| `scaleFactorChanged` | `onScaleFactorChanged(fn)` | `{ scaleFactor: number; windowId?: number }` | Display backing scale changed. |
-
-macOS also emits completed transitions defined by `WindowTransitionEvents`. `host.windows.on(event, callback)` accepts these nine names; named helpers are equivalent:
-
-| Event | Helper | Payload | When |
-| --- | --- | --- | --- |
-| `shown` | `onShown(fn)` | `WindowTransition` | Visibility changed to shown. |
-| `hidden` | `onHidden(fn)` | `WindowTransition` | Visibility changed to hidden, including application hide. |
-| `minimized` | `onMinimized(fn)` | `WindowTransition` | Window miniaturized. |
-| `restored` | `onRestored(fn)` | `WindowTransition` | Window deminiaturized; not general `restore()` completion. |
-| `fullscreenChanged` | `onFullscreenChanged(fn)` | `WindowFullscreenTransition` | Native Spaces transition completed. |
-| `moved` | `onMoved(fn)` | `WindowTransition & WindowBounds` | Frame moved. |
-| `resized` | `onResized(fn)` | `WindowTransition & WindowBounds` | Frame resized. |
-| `focus` | `onFocus(fn)` | `WindowTransition` | Became key. |
-| `blur` | `onBlur(fn)` | `WindowTransition` | Resigned key. |
-
-`WindowTransition` is `{ windowId: number }`. `WindowFullscreenTransition` adds `fullscreen: boolean` and `transition: 'entered' | 'exited'`. Covering a window alone does not count as hiding it. Linux and Windows do not emit these nine platform transition events.
-
 ## Platform support
 
-Support applies to both the service and corresponding store wrappers. Subscriptions can be installed anywhere; event rows describe where their events are emitted.
+Applies to the service and its store wrappers. `—` means the call rejects or the field stays `null`.
 
-| Method | macOS | Linux | Windows |
+| Operations | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| Store `init`, `refresh`, `dispose`, `on`, `once`, `onCloseRequested` | ✓ | ✓ | ✓ |
-| `create` | ✓ | partial | partial |
-| `getInfo`, `list`, `get` | ✓ | ✓ | ✓ |
-| `getBounds`, `setBounds`, `getSize`, `getContentSize`, `setSize` | ✓ | ✓ | ✓ |
-| `innerSize`, `outerSize`, `innerPosition`, `outerPosition` | ✓ | ✓ | ✓ |
-| `getPosition`, `setPosition`, `center` | ✓ | ✓ | ✓ |
+| Store: `init`, `refresh`, `dispose`, `on`, `once`, `onCloseRequested` | ✓ | ✓ | ✓ |
+| Size, position, bounds, `center`, min/max size, scale factor, cursor point and warp | ✓ | ✓ | ✓ |
 | `positionTo` | ✓ | partial | ✓ |
-| `setMinSize`, `setMaxSize`, `getMinSize`, `getMaxSize`, `getScaleFactor`, `getCursorPoint` | ✓ | ✓ | ✓ |
 | `setAspectRatio`, `getAspectRatio` | ✓ | — | — |
-| `setCursorPosition` | ✓ | ✓ | ✓ |
 | `setCursorHidden`, `isCursorHidden` | ✓ | — | ✓ |
 | `getControlsArea` | ✓ | partial | — |
-| `getTitle`, `setTitle`, `show`, `hide`, `close`, `setCloseVeto`, `hasCloseVeto` | ✓ | ✓ | ✓ |
-| `minimize`, `unminimize`, `isMinimized`, `restore` | ✓ | ✓ | ✓ |
-| `maximize`, `unmaximize`, `toggleMaximize`, `isMaximized` | ✓ | ✓ | ✓ |
-| `setFullscreen`, `toggleFullscreen`, `isFullscreen` | ✓ | ✓ | ✓ |
+| Title, `show`, `hide`, `close`, close veto | ✓ | ✓ | ✓ |
+| Minimize, maximize, `restore`, fullscreen | ✓ | ✓ | ✓ |
 | `setSimpleFullscreen`, `isSimpleFullscreen` | ✓ | — | — |
 | `focus` | ✓ | partial | partial |
 | `blur`, `isFocused`, `isActive`, `isHovered`, `requestAttention` | ✓ | ✓ | ✓ |
 | `isOccluded` | ✓ | partial | partial |
-| `setAlwaysOnTop`, `isAlwaysOnTop`, `setAlwaysOnBottom`, `isAlwaysOnBottom` | ✓ | ✓ | ✓ |
+| Always on top / bottom | ✓ | ✓ | ✓ |
 | `getLevel` | ✓ | — | — |
-| `setResizable`, `isResizable`, `setClosable`, `isClosable` | ✓ | ✓ | ✓ |
-| `setMinimizable`, `isMinimizable`, `setMaximizable`, `isMaximizable` | ✓ | — | ✓ |
-| `setTitleBarStyle`, `getTitleBarStyle`, `setDecorations`, `hasDecorations`, `setOpacity`, `getOpacity` | ✓ | ✓ | ✓ |
-| `setHasShadow`, `hasShadow`, `invalidateShadow` | ✓ | — | — |
-| `setVibrancy`, `getVibrancy`, `setTrafficLightPosition`, `getTrafficLightPosition` | ✓ | — | — |
-| `setGlass` | ✓ (macOS 26; vibrancy before) | — | — |
-| `getGlass` | ✓ (macOS 26) | — | — |
+| Resizable and closable | ✓ | ✓ | ✓ |
+| Minimizable and maximizable | ✓ | — | ✓ |
+| Title bar style, decorations, opacity | ✓ | ✓ | ✓ |
+| Shadow: `setHasShadow`, `hasShadow`, `invalidateShadow` | ✓ | — | — |
+| Vibrancy and traffic lights | ✓ | — | — |
+| `setGlass`, `getGlass` | ✓ (macOS 26; vibrancy before) | — | — |
 | `setTheme`, `getTheme` | ✓ | — | ✓ |
-| `setMovable`, `isMovable`, `setMovableByWindowBackground`, `isMovableByWindowBackground` | ✓ | — | — |
-| `setIgnoresMouseEvents`, `ignoresMouseEvents` | ✓ | ✓ | ✓ |
-| `setContentProtected`, `isContentProtected` | ✓ | — | ✓ |
-| `setVisibleOnAllWorkspaces`, `isVisibleOnAllWorkspaces`, `setFocusable`, `isFocusable` | ✓ | ✓ | — |
-| `isFocusable`, `setParent`, `getParent`, `getChildren` | ✓ | — | — |
-| `setDocumentEdited`, `setEdited`, `isDocumentEdited` | ✓ | — | partial |
-| `setRepresentedFilename`, `getRepresentedFilename`, `showCharacterPalette` | ✓ | — | — |
-| `onCreated`, `onClosed`, `onWillClose`, service `onCloseRequested` | ✓ | ✓ | ✓ |
-| `onBoundsChanged`, `onFocusChanged`, `onScaleFactorChanged` | ✓ | ✓ | ✓ |
-| Service `on`, `onShown`, `onHidden`, `onMinimized`, `onRestored` | ✓ | — | — |
-| `onFullscreenChanged`, `onMoved`, `onResized`, `onFocus`, `onBlur` | ✓ | — | — |
+| Movable, movable by background | ✓ | — | — |
+| Click-through (`setIgnoresMouseEvents`) | ✓ | ✓ | ✓ |
+| Content protection | ✓ | — | ✓ |
+| `setVisibleOnAllWorkspaces`, `setFocusable` and their getters | ✓ | ✓ | — |
+| Document edited | ✓ | — | partial |
+| Represented filename, `showCharacterPalette` | ✓ | — | — |
 
-Partial: creation options are limited as listed above; Linux tray positioning is unavailable; Linux controls measurements return `null`; Linux/Windows focus replies omit `activated` and occlusion does not detect overlap; Windows document-edited state is stored without a native document indicator.
-
-## Example
-
-Find or open a preferences window, then focus it using the service's explicit target:
-
-```ts
-async function openPreferences() {
-  const existing = await host.windows.get('preferences');
-  const window = existing ?? await host.windows.create({
-    label: 'preferences', path: '/preferences',
-    title: 'Preferences', width: 640, height: 480,
-    minWidth: 480, minHeight: 320,
-  });
-  await host.windows.show(window.windowId);
-  await host.windows.focus(window.windowId);
-}
-```
-
-In a component, use the store for current-window state:
-
-```svelte
-<header>
-  <span>{host.window.title}</span>
-  <button onclick={() => host.window.toggleMaximize()}>
-    {host.window.maximized ? 'Restore size' : 'Maximize'}
-  </button>
-</header>
-```
+Partial: Linux tray positioning is unavailable; Linux controls measurements return `null`; Linux/Windows focus replies omit `activated` and occlusion does not detect overlap; Windows document-edited state is stored without a native document indicator.

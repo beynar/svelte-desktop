@@ -1,0 +1,98 @@
+---
+title: Agent tools (MCP)
+description: Make your app an MCP server with the official SDK and one file, src/mcp.ts. Claude Desktop, Claude Code, Codex and Cursor call it in your running app.
+---
+
+Write an [MCP](https://modelcontextprotocol.io) server with the [official TypeScript SDK](https://ts.sdk.modelcontextprotocol.io/v2/) in `src/mcp.ts`. There's nothing to turn on: when that file exists, your app is that server, built or under `vite dev`. No HTTP code, no extra process to ship.
+
+```sh
+bun add @modelcontextprotocol/server zod
+```
+
+```ts src/mcp.ts
+import { McpServer } from '@modelcontextprotocol/server';
+import { z } from 'zod';
+import { getDb } from '$lib/server/db';
+
+export default () => {
+  const server = new McpServer({ name: 'Notes', version: '1.0.0' });
+
+  server.registerTool(
+    'search_notes',
+    {
+      title: 'Search notes',
+      description: 'Search the notes by text, newest first.',
+      inputSchema: z.object({ query: z.string(), limit: z.number().int().min(1).max(100).default(10) }),
+      annotations: { readOnlyHint: true },
+    },
+    ({ query, limit }) => {
+      const notes = getDb().query('SELECT id, text FROM notes WHERE text LIKE ? LIMIT ?').all(`%${query}%`, limit);
+      return { content: [{ type: 'text', text: JSON.stringify(notes) }] };
+    },
+  );
+
+  return server;
+};
+```
+
+The default export is a function that returns a server, what the SDK calls a [server factory](https://ts.sdk.modelcontextprotocol.io/v2/serving/http). For tools, schemas, errors and cancellation, follow the SDK's [guide to tools](https://ts.sdk.modelcontextprotocol.io/v2/servers/tools).
+
+Tools run in your app's server code: same modules, `$lib`, `$env`, database connection and `host` as your routes.
+
+## Connect a client
+
+Call `install()` from a server route, for example behind a button in your settings. `host` is a global in server code: no import.
+
+```ts src/routes/api/connect/+server.ts
+export const POST = async () => {
+  const results = await host.mcp.install();
+  if (results.length === 0) return Response.json({ error: 'No supported client found' }, { status: 404 });
+  return Response.json(results, { status: results.some((r) => r.error) ? 500 : 200 });
+};
+```
+
+`install()` looks for Claude Desktop, Claude Code, Codex and Cursor on the machine and adds one entry to each one's config file. The result holds only the clients it found: an empty array means none is installed. The other entries stay, and so do the comments in Codex's TOML. A file it can't edit safely is left alone, and that client's result says why in `error`.
+
+Then tell the user to **restart that client**: it reads its config when it starts. It's a one-time step: closing, reopening or updating your app in place changes nothing. If the app moves to another folder, `status()` reports `installed: false` for that client, and `install()` has to run again.
+
+| Method | What it does |
+| --- | --- |
+| `await host.mcp.install()` | Adds the app to every client found. Each result has `client`, `path` and, if it failed, `error` |
+| `await host.mcp.install(client)` | Adds it to `'claude-desktop'` (macOS, Windows), `'claude-code'`, `'codex'` or `'cursor'`, and returns `path`. Throws if that client isn't there or its config can't be edited |
+| `await host.mcp.uninstall(client?)` | Removes it from that client, or from all of them |
+| `await host.mcp.status()` | `available`, `name`, `command`, `args`, `tools` and, for each client, `path`, `available` and `installed` |
+
+Detection checks each client's folder and, for Claude Code and Codex, the user's `PATH`. It follows `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, even in an app opened from the Finder.
+
+For any other client, show `name`, `command` and `args` from `status()` in your settings: they're what its config asks for.
+
+## Try it
+
+1. Start your app with `vite dev`.
+2. Call your route once, from a page of your app. Under `vite dev`, the entry runs from your sources.
+3. Restart the client, then check that your app is listed: `claude mcp list` or `codex mcp list`.
+4. Ask the client to use a tool. Edits to `src/mcp.ts` apply at once.
+5. Call `host.mcp.uninstall()` when you're done, so that the client doesn't keep an entry for your sources.
+
+Calls need `vite dev` to be running: it isn't started for you, and the call says so.
+
+## What the user sees
+
+- **Asking for tools doesn't open the app.** The list comes from a file the app writes to its data folder when it starts. Before the app's first run there's no file, so listing opens it once.
+- **Calling a tool opens the app** if it isn't running, and waits up to 30 seconds for it. Its window appears; on macOS, without taking the focus.
+- **The client asks before a tool runs**, unless the user allowed it. Codex also stops a tool after 60 seconds by default (`tool_timeout_sec` in its config).
+- **A running client may keep the old list** after an update adds tools, until it restarts.
+
+The client starts your executable as a process of its own, with no window. That process forwards each call to the running app, so tools always have the app's state, and two clients can't open the database behind its back.
+
+**Only tools go through, for now.** Resources, prompts and requests from a tool to the client (asking the user, sampling, progress) stop at that process, even if your server registers them.
+
+## Security
+
+- **Arguments come from a model**, and a model can be steered by what it reads: a web page, an email, a note. Treat them like input from the internet, and scope each tool to what it needs. Prefer `archive_note` to `run_sql`.
+- **Annotations are only hints** for the client. For anything you can't undo, ask in your own UI too.
+- **The channel to the app is local:** loopback only, no requests from web pages, and a token only the user can read. Any program running as that user can still call your tools, as it can read the app's data.
+
+## Platforms
+
+Tested end to end on macOS and Linux, built and under `vite dev`. Windows isn't tested yet.

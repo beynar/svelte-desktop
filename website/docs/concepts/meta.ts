@@ -4,5 +4,5 @@ export default defineMeta({
   title: "Core concepts",
   icon: "layers",
   order: 2,
-  pages: ["architecture", "configuration"],
+  pages: ["architecture", "security", "adopting", "configuration"],
 });

@@ -3,7 +3,7 @@ title: host.protocol
 description: Serve custom-scheme web resources from server-side Request handlers.
 ---
 
-`host.protocol` registers custom resource handlers for URLs such as `asset://archive/cover.svg`. Native resource loading is macOS only. All three methods are synchronous and server-only; this service has no reactive state.
+`host.protocol` registers custom resource handlers for URLs such as `asset://archive/cover.svg`. Native resource loading is macOS only. All three methods are synchronous and server-only.
 
 How-to: [Custom resource protocols](/features/protocols).
 
@@ -19,7 +19,7 @@ protocols: ['asset']
 | --- | --- | --- | --- |
 | `protocols` | `string[]` | `[]` | Resource schemes installed on every native web-view configuration at startup. Adding a scheme requires a restart. |
 
-Schemes must match `^[a-z][a-z0-9+.-]*$`. The names `http`, `https`, `file`, `data`, `blob`, `about`, `javascript`, `ws` and `wss` are reserved. Native code also excludes schemes already handled by WebKit.
+Schemes must match `^[a-z][a-z0-9+.-]*$`. The names `http`, `https`, `file`, `data`, `blob`, `about`, `javascript`, `ws` and `wss` are reserved.
 
 This option is separate from `schemes`, which registers [OS deep links](/host/app/deep-link). A resource handler answers a web-view request; it does not register an application URL handler or grant access to the host bridge.
 
@@ -96,16 +96,23 @@ On Linux and Windows, the JavaScript registry methods run, but native custom res
 
 ```ts src/hooks.server.ts
 // desktop.config.ts declares protocols: ['asset'].
+// The guard avoids a duplicate-scheme error when the module reloads in dev.
 if (!host.protocol.isProtocolHandled('asset')) {
-  host.protocol.handle('asset', (request) => {
+  host.protocol.handle('asset', async (request) => {
     const url = new URL(request.url);
     if (url.hostname === 'archive' && url.pathname === '/cover.svg') {
-      return new Response(Bun.file('/path/to/cover.svg'), {
+      const dir = await host.app.getPath('userData');
+      return new Response(Bun.file(`${dir}/cover.svg`), {
         headers: { 'content-type': 'image/svg+xml' }
       });
     }
     return new Response('Not found', { status: 404 });
   });
 }
-// A page can use <img src="asset://archive/cover.svg" alt="Cover" />.
+```
+
+To check that it works, load the URL in a page. An image is the reliable test, because `fetch()` may not work (see above):
+
+```svelte
+<img src="asset://archive/cover.svg" alt="Cover" />
 ```

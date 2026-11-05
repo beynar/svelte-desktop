@@ -5,7 +5,7 @@ description: The user's shell in the app with xterm.js and Bun's pseudo-terminal
 
 ## A terminal in a page
 
-Bun runs a program in a pseudo-terminal (`Bun.spawn` with `terminal`), so it behaves as in a real terminal: colors, prompts, full-screen programs like `vim` or `htop`. Run the user's shell on the app's server, and draw it in the page with [xterm.js](https://xtermjs.org). A [WebSocket](/features/websockets) carries the bytes both ways:
+Bun runs a program in a pseudo-terminal (`Bun.spawn` with `terminal`), so it behaves as in a real terminal: colors, prompts, full-screen programs like `vim` or `htop`. Run the user's shell on the app's server, and draw it in the page with [xterm.js](https://xtermjs.org). A [WebSocket](/features/websockets) carries the bytes both ways. Install the page's dependencies first: `bun add @xterm/xterm @xterm/addon-fit`.
 
 ```ts src/websocket.ts
 import { defineWebSocket } from '@svelte-desktop/shell/websocket';
@@ -55,9 +55,10 @@ export default defineWebSocket<{ id: number }>({
     fit.fit();
     const ws = new WebSocket(`${location.origin.replace('http', 'ws')}/terminal?cols=${term.cols}&rows=${term.rows}`);
     ws.binaryType = 'arraybuffer';
+    const send = (message: object) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(message));
     ws.onmessage = (e) => term.write(new Uint8Array(e.data));
-    term.onData((input) => ws.send(JSON.stringify({ input })));
-    const resize = new ResizeObserver(() => (fit.fit(), ws.send(JSON.stringify({ cols: term.cols, rows: term.rows }))));
+    term.onData((input) => send({ input }));
+    const resize = new ResizeObserver(() => (fit.fit(), send({ cols: term.cols, rows: term.rows })));
     resize.observe(el);
     return () => (resize.disconnect(), ws.close(), term.dispose());
   });
@@ -66,7 +67,7 @@ export default defineWebSocket<{ id: number }>({
 <div bind:this={el} style="height: 300px"></div>
 ```
 
-Only the app's pages reach its sockets, since they carry its session cookie, so only they get a shell. The shell has the user's rights. To run a [coding agent](/features/ai#the-users-coding-agents) or another tool in it instead, find it with `host.which` and spawn that. Pseudo-terminals are POSIX: macOS and Linux. The dashboard example has this terminal on its Modules page.
+In the built app, only the app's pages reach its sockets, since they carry its session cookie, so only they get a shell. Under `vite dev` there is no session cookie: the socket only checks that `Origin` and `Host` name the same local host. A local process can send those headers itself and get a shell, so don't leave a dev server running unattended with this route. The shell has the user's rights. To run a [coding agent](/features/ai#the-users-coding-agents) or another tool in it instead, find it with `host.which` and spawn that. Pseudo-terminals are POSIX: macOS and Linux. The dashboard example has this terminal on its Modules page.
 
 ## The app's command
 

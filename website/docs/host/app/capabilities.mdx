@@ -5,8 +5,6 @@ description: Inspect the native operations registered by the running backend.
 
 `host.capabilities` provides the running backend's operation report. Use it to decide whether to offer a platform feature, then handle errors from the actual call: registration alone cannot guarantee that an operation will succeed with particular arguments or resources.
 
-How-to: [The host global](/host).
-
 ## Reactive state
 
 | Property | Type | Description |
@@ -56,6 +54,8 @@ Load `report` through `describe()`, mark the store ready and resolve the namespa
 | `describe`, `init`, `opStatus` | ✓ | ✓ | ✓ |
 
 ## Example
+
+`host.power.thermal` is macOS only, so the check below hides it elsewhere.
 
 ```svelte
 <script lang="ts">

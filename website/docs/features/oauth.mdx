@@ -90,4 +90,15 @@ A sign-in that doesn't complete rejects with an `OAuthError`, whose `code` is on
 
 `exchange()` refuses an answer without an `access_token` (`invalid_response`) and never follows a redirect, so the code, the verifier and a secret go to that endpoint only. Provider errors keep the provider's code; other unsuccessful HTTP responses use `http_<status>`.
 
+`exchange()` takes `url`, `clientId`, `code`, `codeVerifier`, `redirectUri`, plus `clientSecret` (server code only), `params` (extra form fields) and `signal`.
+
+```ts
+try {
+  await host.oauth.authorize({ url, params });
+} catch (err) {
+  if (err instanceof host.oauth.OAuthError && err.code === 'access_denied') return; // the user refused
+  throw err;
+}
+```
+
 The resolved object also has `params`: everything the provider sent back.

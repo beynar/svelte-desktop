@@ -22,6 +22,7 @@ On macOS 26 with Apple Intelligence on, `host.ai` runs Apple's on-device model. 
 
 ```svelte
 <script lang="ts">
+  let note = $state('');
   let summary = $state('');
   const ready = host.ai.availability();
 
@@ -32,7 +33,8 @@ On macOS 26 with Apple Intelligence on, `host.ai` runs Apple's on-device model. 
 </script>
 
 {#await ready then { available, reason }}
-  {#if available}<button onclick={() => summarize(note)}>Summarize</button>{:else}<p>Unavailable: {reason}</p>{/if}
+  {#if available}<textarea bind:value={note}></textarea>
+    <button onclick={() => summarize(note)}>Summarize</button>{:else}<p>Unavailable: {reason}</p>{/if}
 {/await}
 ```
 
@@ -75,7 +77,7 @@ export const ollama = createOpenAICompatible({ name: 'ollama', baseURL: 'http://
 // generateText({ model: ollama('llama3.2'), prompt })
 ```
 
-The user installs and runs the server, and downloads the models. Check that it answers before offering the feature.
+The user installs and runs the server, and downloads the models. Check that it answers before offering the feature, for example with `fetch('http://localhost:11434/api/tags')` for Ollama.
 
 ## A model shipped with the app
 
@@ -97,6 +99,7 @@ The framework's part is to find them. An app opened from the Finder doesn't get 
 ```ts src/services/agent.ts
 import { spawn } from 'node:child_process';
 // A service runs in a process of its own, without the `host` global: the same helpers, imported.
+import { createInterface } from 'node:readline';
 import { shellEnv, which } from '@svelte-desktop/shell/server';
 
 const agent: HostService<{ cwd: string }> = async ({ cwd }, port) => {
@@ -104,7 +107,8 @@ const agent: HostService<{ cwd: string }> = async ({ cwd }, port) => {
   const codex = await which('codex');
   if (!codex) throw new Error('Codex is not installed');
   const child = spawn(codex, ['app-server'], { cwd, env, stdio: ['pipe', 'pipe', 'inherit'] });
-  child.stdout.on('data', (chunk) => void port.postMessage(String(chunk))); // JSON-RPC lines: parse them
+  // One JSON-RPC message per line: read whole lines, not stream chunks.
+  createInterface({ input: child.stdout }).on('line', (line) => void port.postMessage(line));
   port.onRequest((line) => void child.stdin.write(`${line}\n`));
   return () => void child.kill();
 };

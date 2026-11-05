@@ -3,14 +3,14 @@ title: host.webview
 description: Control page navigation, zoom, find, inspection, media, downloads, printing and native web-view events.
 ---
 
-`host.webview` controls the native web view in a window, popover or embedded view. It is a service with methods and events, without reactive state.
+`host.webview` controls the native web view in a window, popover or embedded view. It is a service with methods and events, plus a few reactive fields (below).
 
 How-to: [Web view](/ui/web-view).
 
 
 ## Reactive fields
 
-`host.webview` has the calling page's settings without `await`: `zoom`, `userAgent`, `fileDrop`, `contextMenu`, `inspectable`, `backgroundThrottling`, `recovery`, `audioMuted` and `contentRules`. Like [`host.window`'s fields](/host/windows/window), each is `null` until it's known or on a platform without it, is read the first time you use it, is up to date once a setter resolves, and follows setters called from other contexts.
+`host.webview` has the calling page's settings without `await`: `zoom`, `userAgent`, `fileDrop`, `contextMenu`, `inspectable`, `backgroundThrottling`, `recovery`, `audioMuted` and `contentRules`. Like [`host.window`'s fields](/host/windows/window), each is `null` until it's known or on a platform without it, is read the first time you use it, is up to date once a setter resolves, and follows setters called from other contexts. If something the shell doesn't see changes a setting (a menu's zoom role, say), call `await host.webview.refresh()` to read the fields again.
 
 ## Targets
 
@@ -20,7 +20,7 @@ Methods with a `target` argument accept `WebviewTarget`, defaulting to `{}`. Opt
 | --- | --- | --- | --- |
 | `viewId` | `string` | Omitted | [Embedded-view](/host/windows/view) identifier. macOS only for these methods. |
 | `popoverId` | `string` | Omitted | [Popover](/host/windows/popover) identifier. |
-| `windowId` | `number` | Omitted | Public [window](/host/windows/window) id; `0` is the main window. |
+| `windowId` | `number` | Omitted | Public [window](/host/windows/windows#finding-windows) id; `0` is the main window. |
 
 On macOS, selection order is `viewId`, `popoverId`, `windowId`, the calling page, then the main window. Linux and Windows resolve `popoverId`, `windowId`, the calling page, then the main window; they do not resolve `viewId` in these methods. Select a window or popover explicitly there. Unknown selected targets reject with `invalid_args`.
 
@@ -104,6 +104,8 @@ Read a snapshot of the web view. `target` is `WebviewTarget`. Resolves `WebviewI
 | `fileDrop` | `boolean` | Native file-path drop enabled. Linux reports `false`; Windows currently omits this declared field. |
 | `contextMenu` | `ContextMenuMode` | Current context-menu mode. Linux reports `default`. |
 | `inspectable` | `boolean`, optional | Inspector access; macOS includes it from 13.3 onward. |
+| `backgroundThrottling` | `boolean`, optional | State set by `setBackgroundThrottling`; macOS only. |
+| `recovery` | `WebviewRecovery`, optional | Policy set by `setRecovery`; macOS only. |
 
 ### `setUserAgent(userAgent, target?)`
 
@@ -121,7 +123,7 @@ Enable or disable Safari Web Inspector access on macOS, WebKit developer extras 
 await host.webview.setInspectable(true);
 ```
 
-`enabled: boolean` is required; `target` is `WebviewTarget`. Resolves `{ inspectable: boolean }`. macOS requires 13.3 or newer, otherwise it rejects with `unsupported`. View creation also accepts `debug`; see [windows](/host/windows/window) and [embedded views](/host/windows/view).
+`enabled: boolean` is required; `target` is `WebviewTarget`. Resolves `{ inspectable: boolean }`. macOS requires 13.3 or newer, otherwise it rejects with `unsupported`. View creation also accepts `debug`; see [windows](/host/windows/windows) and [embedded views](/host/windows/view).
 
 ### `setRecovery(recovery, target?)`
 

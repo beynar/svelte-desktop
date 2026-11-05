@@ -4,33 +4,29 @@ description: File drop with real paths, downloads, print and PDF, find, zoom, co
 ---
 
 :::note
-API reference: [`host.webview`](/host/web/webview), [content rules and scripts](/host/web/web-content), [permissions, auth and certificates](/host/web/web-policy), [`host.sessions`](/host/web/sessions), [`host.downloads`](/host/web/downloads), [`host.files`](/host/os/files).
+API reference: [`host.webview`](/host/web/webview), [content rules and scripts](/host/web/web-content), [permissions, auth and certificates](/host/web/web-policy), [`host.sessions`](/host/web/sessions), [`host.downloads`](/host/web/downloads), [`host.view`](/host/windows/view), [`host.files`](/host/os/files).
 :::
 
-`host.webview` controls windows, popovers and embedded views. On macOS, view-targeted operations resolve, in order: `viewId`, `popoverId`, `windowId` (`0` is the main window), the page that made the call, then the main window. Linux and Windows ignore `viewId`: select a window or popover explicitly there. macOS webview events carry `windowId`, `popoverId`, or `viewId` with its owning `windowId`. App-wide APIs such as content rules, policy and `clearData` have their own scope; they do not use that target selector. See the [webview reference](/host/web/webview) for per-method support.
+`host.webview` controls the web view of a window, popover or embedded view. Unless a section says "server code", the calls below work from page code and from the server. They act on the page that made the call by default; pass a target (`{ windowId }`, `{ popoverId }` or `{ viewId }`) to act on another one. The [webview reference](/host/web/webview) has the target rules and per-method platform support. Most of this page is macOS; Linux and Windows use their web engine's behavior where the shell has no integration.
 
 ## Built-in behavior
 
-The macOS shell integrates these web APIs with native UI. Linux and Windows use their web engine's behavior where no shell integration exists; support varies by feature.
-
 | Web feature | In the app |
 | --- | --- |
-| `alert`, `confirm`, `prompt` | Native sheets; the run loop is never blocked. Each emits `jsDialog`. |
-| `<input type="file">` | A native open panel, shown as a sheet, filtered by `accept` (folders with `webkitdirectory`). |
-| `getUserMedia` | App origin by default; server per-origin policy, then OS consent (camera, microphone). |
-| `navigator.geolocation` | App origin by default; server per-origin policy, then OS location consent. |
-| `SpeechRecognition` | App origin by default; server per-origin policy, then OS speech and microphone consent. |
-| `getDisplayMedia` | Server per-origin `screenRecording` policy, then Screen Recording consent. Capture UI depends on the installed WebKit. |
-| `Notification` | The app's notifications (`host.notifications`): `requestPermission()` shows the OS prompt (a bundled app). |
+| `alert`, `confirm`, `prompt` | Native sheets that never block the run loop. Each emits `jsDialog`. |
+| `<input type="file">` | A native open panel, filtered by `accept` (folders with `webkitdirectory`). |
+| `getUserMedia`, `navigator.geolocation`, `SpeechRecognition` | Allowed on the app origin, then OS consent. Other origins need a [policy](#web-permissions-macos). |
+| `getDisplayMedia` | Allowed on the app origin, then Screen Recording consent: if it's missing, the first attempt is denied while macOS asks. Other origins need a [policy](#web-permissions-macos). |
+| `Notification` | The app's notifications (`host.notifications`). |
 | `window.open`, external links | Open in the default browser. |
-| `window.close()` | Closes the window (respecting the close veto); in a popover it emits `closeRequested`. |
+| `window.close()` | Closes the window, respecting the close veto; in a popover it emits `closeRequested`. |
 | `window.print()` | The native print panel. |
 
-The reasons in those prompts are defaults (camera, microphone, location, speech); set your own — or turn one off with `false` — in [`permissions`](/features/permissions). Location, speech and display capture depend on WebKit permission hooks available in the installed engine; the shell does not supply a separate capture picker.
+The reasons in the OS prompts are defaults; set your own, or turn one off with `false`, in [`permissions`](/features/permissions).
 
 ## File drop
 
-The page keeps its normal DOM drag events with `File` objects; the shell adds the real paths, which the DOM can't expose:
+The page keeps its normal DOM drag events with `File` objects. The shell adds the real paths, which the DOM can't expose (macOS):
 
 ```ts
 host.webview.onFileDrop(({ paths, x, y }) => importFiles(paths)); // x, y in CSS px
@@ -38,11 +34,11 @@ host.webview.onFileDragEnter(({ paths }) => (dragging = true));
 host.webview.onFileDragLeave(() => (dragging = false));
 ```
 
-Call `preventDefault()` on the DOM `drop` event as usual. `host.webview.setFileDrop({ enabled: false })` turns off the native path events, leaving ordinary DOM handling to the page. Native path events are macOS-only.
+Call `preventDefault()` on the DOM `drop` event as usual. `host.webview.setFileDrop({ enabled: false })` turns the native path events off.
 
 ## Downloads
 
-On macOS, `<a download>`, attachments and responses the web view can't display are saved to the download directory (`~/Downloads` by default) under a unique name.
+On macOS, `<a download>`, attachments and responses the web view can't display are saved to the download directory (`~/Downloads` by default) under a unique name. Start one yourself and follow it:
 
 ```ts
 const { id } = await host.webview.download('/export.csv'); // uses the page's cookies
@@ -50,58 +46,44 @@ host.webview.onDownloadProgress(({ id, fraction }) => (progress = fraction));
 host.webview.onDownloadFinished(({ path }) => host.shell.showItemInFolder(path));
 ```
 
-The existing `webview.download`, `setDownloadDirectory(path | null)`, `getDownloadDirectory`, `cancelDownload`, `listDownloads` and download events use the same native download records as `host.downloads` (macOS).
+To choose the destination, install one app-wide handler and return `{ path }`, `'cancel'` or `'default'`. Await the installation before starting a download:
 
 ```ts
-// Await installation before initiating a download. One app-wide handler; latest installation wins.
-const stopChoosing = await host.downloads.onRequested(async ({ url, suggestedFilename, mimeType, size, viewId }) => {
+const stop = await host.downloads.onRequested(async ({ suggestedFilename }) => {
   const { canceled, path } = await host.dialog.showSaveDialog({ suggestedName: suggestedFilename });
   return canceled || !path ? 'cancel' : { path };
 });
-// 'default' uses the explicit webview.download path, otherwise the default directory.
-const { id } = await host.webview.download('/export.csv');
-const paused = await host.downloads.pause(id);
-if (paused.canResume) await host.downloads.resume(id);
-await stopChoosing();
 ```
 
-Destination decisions run before WebKit receives a destination URL. Return an absolute `{ path }`, `'cancel'`, or `'default'`. A chosen explicit path replaces an existing file, as with `webview.download(url, { path })`; default directory names remain unique, including concurrent downloads. A destination in use by an active transfer is refused. A thrown handler or an unanswered request after 30 seconds cancels the request. Call the returned async unsubscribe function when its owner is destroyed.
-
-`host.downloads.get(id)` returns a record or null. `list()` returns newest first, including completed, canceled, paused and interrupted records persisted across launches. Records include `state`, `receivedBytes`, `totalBytes` (-1 if unknown), `fraction` (-1 if unknown), timestamps in milliseconds, `path`, MIME type, `suggestedFilename`, `canResume` and optional opaque `resumeData`. `onChanged(cb)` observes progress and state changes; it returns an unsubscribe function. The `resumeData` string is an opaque native checkpoint reference; WebKit’s bytes and request credentials stay native. Resume through `resume(id, target?)`.
-
-**Pause is cancel-with-resume-data**, not a suspended network connection. Both `pause(id)` and `cancel(id)` wait for WebKit's cancellation callback and preserve resume data when available. Unknown-length transfers cannot safely resume and report `canResume: false`, even if WebKit supplies opaque data. Pause reports `paused` only when resumable, otherwise `interrupted` with `canResume: false`. Cancellation reports `canceled` and may still be resumed. A server may refuse resume or WebKit may provide no data; failure reports `interrupted`, never a successful resume. Resumed output is checked against the known total length before reporting completion. A hidden `.sd-dl-….resume-prefix` checkpoint beside the destination preserves received bytes; it is removed on completion. Checkpoint copies use filesystem cloning when available and run off the main thread. The first checkpoint is retained: WebKit can produce inconsistent offsets when canceling an already resumed transfer. Later resumes restore that checkpoint and may re-download subsequent bytes; `resumeBytes` reports its position, and progress can rewind to it. `finishing` means the completed file is being validated. Resume in the original web session; after relaunch select the same session's view using the target. Running transfers found after an unclean exit become `interrupted`; only previously captured resume data can recover them. Legacy `cancelDownload` still resolves null and emits `downloadFailed`; `listDownloads` now includes history.
+`host.downloads` also lists records (history survives relaunches) and pauses, resumes and cancels transfers: `pause(id)`, `resume(id)`, `cancel(id)`, `list()`. See the [downloads reference](/host/web/downloads) for the record shape, resume behavior and timeouts.
 
 ## Print and PDF
 
 ```ts
 const printers = await host.webview.getPrinters();          // names, possibly []
-await host.webview.print();                                // panel; printFinished follows
+await host.webview.print();                                // the panel
 await host.webview.print({ printer: printers[0], copies: 2, silent: true });
 await host.webview.printToPDF('/Users/me/notes.pdf', {
-  pageRanges: [{ from: 2, to: 3 }],
-  paperSize: { width: 595, height: 842 }, // points (72/inch), approximately A4
+  pageRanges: [{ from: 2, to: 3 }],      // one-based, inclusive
+  paperSize: { width: 595, height: 842 }, // points, about A4
   orientation: 'portrait',
   margins: { top: 36, right: 36, bottom: 36, left: 36 },
 });
 ```
 
-macOS uses public `NSPrinter`, `NSPrintInfo`, `NSPrintOperation` and WebKit's print operation. `printer` is an installed name; omit it for the system default. Copies must be integers from 1 to 9999. Paper dimensions and margins use points; margins must leave printable area. Page ranges are one-based, inclusive, ascending and nonoverlapping. Physical printing accepts one contiguous range. PDF output accepts multiple ranges and rejects ranges beyond the generated page count; PDF copies do not duplicate document pages. Orientation applies after the paper dimensions.
-
-`print` accepts the same options plus `silent` and `pdfPath` (which implies silent). Interactive printing resolves `{ started: true }` while the panel remains open; silent printing and PDF saving resolve after completion. `printToPDF(path, options)` writes a paginated PDF without opening a panel. The targeted view must be attached to a window. Invalid options reject before a job starts; failed or canceled jobs reject with `unavailable`, and so does a PDF page range beyond the page count (checked once the page is paginated). Printer enumeration can return an empty list on machines without configured printers. These extended print options and download controls currently require macOS.
+Omit `printer` for the system default. `pdfPath` on `print` saves a PDF silently. Invalid options reject before a job starts, and failed or canceled jobs reject with `unavailable`. The view must be attached to a window. The extended options need macOS; see the [reference](/host/web/webview#printoptions) for limits on copies, ranges and margins.
 
 ## Find and zoom
 
 ```ts
 const { matchFound } = await host.webview.find({ text: 'todo', caseSensitive: false });
 await host.webview.clearFind();
-await host.webview.setZoom(1.25); // positive values are clamped to 0.25–5
+await host.webview.setZoom(1.25); // clamped to 0.25 to 5
 ```
 
-`find` and `clearFind` are macOS-only; zoom also works on Linux and Windows.
+`find` is macOS only; zoom also works on Linux and Windows.
 
 ## Context menu
-
-The following modes describe macOS:
 
 ```ts
 await host.webview.setContextMenu({ mode: 'custom', items: [{ id: 'paste-plain', label: 'Paste as Plain Text' }] });
@@ -111,32 +93,31 @@ await host.webview.setContextMenu({ mode: 'custom', items: [{ id: 'paste-plain',
 | --- | --- |
 | `none` | The production default: no menu, except Cut, Copy, Paste and spelling suggestions on editable text or a selection (`editMenu: false` removes those too). |
 | `default` | WebKit's own menu (the default in debug views). |
-| `custom` | Your items (they fire `menuAction`), with the edit items above them when editing. |
+| `custom` | Your items, which fire `menuAction`, with the edit items above them when editing. |
 
-`all: true` applies the setting to every current web view; on macOS it also becomes the default for later ones. Whatever the mode, `onContextMenu` reports `{ x, y, linkURL, srcURL, selectionText, editable }`, and a page can `preventDefault()` its own `contextmenu` event and call `host.menu.popup`. Windows supports only `none` and `default`: `none` disables the built-in menu entirely, and `custom` rejects with `unsupported`. Linux does not implement this control.
+Whatever the mode, `onContextMenu` reports `{ x, y, linkURL, srcURL, selectionText, editable }`, and a page can `preventDefault()` its own `contextmenu` event and call `host.menu.popup`. Windows supports only `none` and `default`; Linux doesn't implement this control. See [`setContextMenu`](/host/web/webview#setcontextmenuoptions) for `all`.
 
 ## Sound and media
 
 ```ts
-await host.webview.setAudioMuted(true);  // the page's sound off; it keeps playing
-await host.webview.pauseMedia();         // every audio and video of the page paused
-const media = await host.webview.getMediaState();
-// { audible, muted, playback: 'none' | 'playing' | 'paused' | 'suspended', camera, microphone }
+await host.webview.setAudioMuted(true);  // sound off; the page keeps playing
+await host.webview.pauseMedia();         // every audio and video paused
+const media = await host.webview.getMediaState(); // { audible, muted, playback, camera, microphone }
 ```
 
-`camera` and `microphone` are `'none'`, `'active'` or `'muted'`. macOS only.
+macOS only.
 
 ## Website data
 
-Clear what sites stored in the **default session**: cookies, `localStorage`, `sessionStorage`, IndexedDB, caches, service workers. This operation does not select or clear named profiles.
+Clear what other sites stored in the default session: cookies, `localStorage`, IndexedDB, caches and so on.
 
 ```ts
-await host.webview.clearData();                                  // other sites' (tabs on other sites), everything
+await host.webview.clearData();                                  // everything, other sites only
 await host.webview.clearData({ types: ['cookies'] });            // only their cookies
 const { cleared } = await host.webview.clearData({ app: true }); // the app's own storage too
 ```
 
-Cookies in the app's loopback-host data records are never cleared: they hold its session with its server, and the page would stop working. A "log out" that clears the app's storage still works. Types: `cookies`, `localStorage`, `sessionStorage`, `indexedDB`, `cache`, `serviceWorkers`, `all` (the default). macOS only. Use [`host.sessions.cookies`](/host/web/sessions#cookiesgetfilter) to remove individual app cookies; the shell authentication cookie remains protected.
+The app's own cookies are always kept: they hold its session with its server. Named profiles aren't cleared. To remove individual cookies, use [`host.sessions.cookies`](/host/web/sessions#cookiesgetfilter). macOS only.
 
 ## Scripting and capture
 
@@ -145,11 +126,11 @@ const title = await host.webview.executeJavaScript<string>('document.title'); //
 const { data } = await host.webview.capturePage({ format: 'jpeg', quality: 0.8 }); // base64 image
 ```
 
-Also: `reload({ ignoreCache })`, `stop`, `goBack`, `goForward`, `getInfo`, `setUserAgent` (`''` restores the default), `getUserAgent`, `setInspectable` (macOS 13.3+), and `respondToDialog` / `getDialog` to answer an open JavaScript dialog from automation.
+Also: `reload`, `stop`, `goBack`, `goForward`, `getInfo`, `setUserAgent`, `setInspectable`, and `respondToDialog` / `getDialog` to answer an open JavaScript dialog from automation.
 
 ## Embedded views
 
-`host.view` embeds extra web views in a window (like Electron's `BrowserView`): an app route or any URL, at CSS-pixel bounds from the window content's top-left corner. External content can't call native APIs: the bridge only answers the app origin.
+`host.view` embeds extra web views in a window, like Electron's `BrowserView`: an app route or any URL, at CSS-pixel bounds from the window content's top-left corner. External content can't call native APIs.
 
 ```ts
 await host.view.create({ id: 'preview', url: 'https://svelte.dev', bounds: { x: 240, y: 0, width: 600, height: 400 }, autoresize: 'both' });
@@ -158,48 +139,26 @@ host.view.onTitle(({ id, title }) => {});
 await host.view.destroy('preview');
 ```
 
-Also: `setBounds`, `getBounds`, `show`, `hide`, `reload`, `getInfo`, `executeJavaScript`, `list`, and the `onLoaded`, `onNavigated` and `onFailed` events. `show(id, { seeThrough: true })` puts it in the window still see-through (macOS). An app page loaded in a view comes with an `X-Desktop-View: <id>` request header (macOS). `hidden: true` at `create` loads the view out of sight until `show` — no blank view while its page loads (on macOS it draws meanwhile, see-through, the pointer going to the page under it).
-
-Views belong to their window and are destroyed when it closes. Reusing an `id` replaces the previous view; `hide` keeps it alive and `destroy` releases it. Linux and Windows support `host.view` too, but `host.webview` does not resolve an explicit `viewId` there; use `host.view` methods for embedded views. See the [view reference](/host/windows/view).
+Views belong to their window and are destroyed when it closes. Reusing an `id` replaces the view; `hide` keeps it alive and `destroy` releases it. Pass `hidden: true` at `create` to load a view out of sight until `show`. Linux and Windows support `host.view` too, but `host.webview` doesn't resolve a `viewId` there: use `host.view` methods. See the [view reference](/host/windows/view).
 
 ## Lifecycle and recovery (macOS)
 
-`host.webview.onLifecycle(callback)` returns an unsubscribe function. Events use
-`type: 'navigationStarted' | 'loaded' | 'failed' | 'terminated'`, with the page URL,
-`navigationId`, and a consistent target: `windowId`, `popoverId`, or `viewId` plus
-its owning `windowId`. They cover full WebKit navigations; SvelteKit client-side
-route transitions do not start a new WebKit navigation. `failed` includes NSError
-`domain`, numeric `code`, `message`, and `provisional` (before the document commits).
-HTTP error responses are loaded pages, not WebKit navigation errors.
+`onLifecycle` reports full WebKit navigations (`navigationStarted`, `loaded`, `failed`, `terminated`); SvelteKit client-side route changes don't count. By default a view whose web process dies reloads at its last URL, losing in-memory state. Create it with `recovery: 'manual'` to handle that yourself, from another page or the server, since the dead page can't:
 
 ```ts
-const off = host.webview.onLifecycle((event) => {
+const off = host.webview.onLifecycle(async (event) => {
   if (event.type === 'failed') console.log(event.viewId, event.domain, event.code);
   if (event.type === 'terminated' && event.recovery === 'manual') {
-    // Show your recovery UI in a surviving window or in the server.
+    await host.webview.reload({ viewId: 'preview' });
   }
 });
-await host.view.create({
-  id: 'preview', route: '/', recovery: 'manual',
-  bounds: { x: 0, y: 80, width: 600, height: 400 }
-});
-await host.webview.reload({ viewId: 'preview' });
-off();
 ```
 
-Windows, popovers and views accept `recovery: 'reload' | 'manual'` at creation;
-`reload` is the default. Change it with `host.webview.setRecovery('manual', target)`.
-`terminated` reports `reason: 'unknown'`: public WebKit does not provide the exit
-reason. Manual recovery leaves the dead document stopped. Its JavaScript cannot
-handle its own crash: listen from another page or the server. Existing webview
-controls also accept `{ viewId }`. A recovery reload starts a fresh document at
-the last page URL; in-memory JavaScript state is lost.
+See [`onLifecycle`](/host/web/webview#events) and [`setRecovery`](/host/web/webview#setrecoveryrecovery-target) for the event fields.
 
 ## Sessions and private profiles (macOS)
 
-The `default` persistent store belongs to the shell. New views otherwise keep using
-that default, independently of the caller's profile. Select a profile explicitly
-when constructing a window, popover or view; its store cannot change afterward.
+A named profile gives a window, popover or view its own cookies and storage. Choose it when you create the view; it can't change afterward.
 
 ```ts
 await host.sessions.create({ id: 'account-two', persistent: false });
@@ -207,197 +166,66 @@ await host.view.create({
   id: 'account-preview', session: 'account-two', route: '/',
   bounds: { x: 0, y: 80, width: 600, height: 400 }
 });
-console.log(await host.sessions.list()); // [{ id, persistent }, ...]
+await host.sessions.cookies.set({ session: 'account-two', url: 'https://example.com', name: 'login', value: 'x' });
 await host.view.destroy('account-preview');
 await host.sessions.remove('account-two');
 ```
 
-Private profiles use `nonPersistentDataStore`: their cookies and localStorage are
-separate from the default profile. Persistent named profiles require macOS 14+;
-older versions reject them with `unsupported`. Their identifiers are derived from
-the app identifier and profile id, so recreating the same profile restores its data.
-`list()` lists profiles opened during this app run. `remove(id)` deletes the profile's
-persistent data and rejects while any window, popover or view still references it;
-wait for pending cookie operations before removal too. The default profile cannot
-be removed. Sessions are app-owned, not caller-owned.
-
-Create profiles after the main app authenticates. Creation copies only the shell's
-HttpOnly `__svelte_desktop` gate cookie from the default store, and resolves after
-WebKit installs it. App routes therefore remain authenticated in a private profile;
-other app and third-party cookies and storage are not copied. Creation rejects
-`unavailable` while authentication is not ready. Private profiles still share the
-app's server authority; they are not a sandbox for untrusted app code.
-
-### Cookies
-
-```ts
-const filter = { session: 'account-two', url: 'https://example.com/account', name: 'login' };
-const off = host.sessions.cookies.onChanged(({ session, cookie, removed }) => {
-  console.log(session, cookie.name, removed);
-});
-await host.sessions.cookies.set({ ...filter, value: 'value', secure: true, httpOnly: true });
-console.log(await host.sessions.cookies.get(filter));
-await host.sessions.cookies.remove(filter);
-off();
-```
-
-`session` defaults to `default`. `get` accepts optional `url` and `name` filters;
-URL matching respects domain, path boundaries, and Secure. `set` requires `url`,
-`name`, and `value`, and accepts `domain`, `path` (default `/`), `secure`, `httpOnly`,
-`sameSite` (`Lax`, `Strict`, `None`), and `expires` (seconds since the Unix epoch).
-`remove` requires URL and name and returns `{ removed: count }` for all matching paths.
-
-The shell authentication cookie is omitted from reads and change events; explicitly
-accessing, replacing or removing that name rejects with `denied`. Change events
-come from `WKHTTPCookieStoreObserver` snapshot differences, plus reconciliation
-once per second while a profile has open views and a page listens through `cookies.onChanged` (WebKit can omit callbacks for
-`document.cookie` writes). They may coalesce rapid
-intermediate changes. They are not an audit log. Public WebKit offers no exact
-force-flush completion API.
-
-### Per-session proxy (macOS 14+)
-
-```ts
-await host.sessions.setProxy('account-two', { type: 'http', host: 'proxy.example', port: 8080 });
-await host.sessions.setProxy('account-two', { type: 'socks', host: 'proxy.example', port: 1080 });
-console.log(await host.sessions.getProxy('account-two'));
-await host.sessions.setProxy('account-two', null); // restore system defaults
-console.log(await host.sessions.capabilities());
-```
-
-Uses `WKWebsiteDataStore.proxyConfigurations` and Network.framework HTTP CONNECT
-or SOCKSv5 configurations. Optional `username` and `password` configure proxy
-authentication; `tls: true` encrypts the connection to an HTTP proxy. `getProxy`
-returns host-owned configuration with `authenticated`, never credentials; it does
-not resolve system proxy settings or prove a connection succeeded. Existing
-connections can outlive a configuration change. Direct failover is disabled.
-Proxy configuration does not relax App Transport Security or TLS validation.
-Loopback hosts (`127.0.0.1`, `localhost`, `::1`) always bypass the proxy to preserve
-app-server access. PAC/WPAD and custom bypass rules are unsupported; unknown
-proxy options reject with `unsupported`. Older macOS rejects proxy changes with
-`unsupported`. This controls WebKit networking, independently of Bun fetch/jobs.
-
-These session APIs are macOS-only; Linux and Windows return `unsupported`. See the [sessions reference](/host/web/sessions) for all cookie and proxy options.
+Create profiles after the main app has authenticated: the app's session cookie is copied in so app routes stay authenticated. A profile isn't a sandbox for untrusted app code. Persistent named profiles and per-profile proxies (`host.sessions.setProxy`) need macOS 14. See the [sessions reference](/host/web/sessions) for cookies, proxies and removal rules.
 
 ## Native input policy (macOS)
 
-Declare window-local shortcuts before WebKit and menu key equivalents handle them:
+Declare window-local shortcuts before WebKit and the menu see the keys:
 
 ```ts
 await host.webview.setInputPolicy({
   intercept: [{ key: 'k', modifiers: ['meta', 'shift'] }],
-  menuShortcuts: false,
+  menuShortcuts: false, // menu accelerators off for this window, e.g. while an editor has focus
 });
 const off = host.webview.onBeforeInput((event) => {
   if (event.windowId === 0 && event.type === 'keyDown') openCommandPalette();
 });
-// On editor blur / component cleanup, restore normal menu behavior:
+// On editor blur or component cleanup, restore normal behavior:
 await host.webview.setInputPolicy({});
 off();
 ```
 
-The policy replaces the current window's previous policy; pass a public window id
-as the second argument to target another window. `menuShortcuts` defaults to true;
-false disables menu accelerators for that window, useful while an editor has focus.
-Menu items remain clickable. This does not unregister OS-wide `host.shortcuts`.
-
-`modifiers` are exact combinations of `meta` (Command), `control`, `alt` (Option)
-and `shift`. Keys match layout-dependent characters ignoring modifiers,
-case-insensitively, or named keys `Enter`, `Escape`, `Tab`, `Space`, `Backspace`,
-`Delete` (forward delete), and `ArrowUp` / `ArrowDown` / `ArrowLeft` / `ArrowRight`.
-Intercepted key-down and key-up events are consumed natively. `onBeforeInput`
-receives `{ windowId, key, keyCode, type, modifiers, isAutoRepeat, intercepted }`
-asynchronously; it cannot prevent or resume the event. The UI thread never waits
-for JavaScript. Use normal DOM listeners for ordinary editing.
-
-`getInputPolicy(windowId?)` reports the registered shortcuts, `menuShortcuts`, and
-`monitorInstalled`. Policies belong to native windows and expire when they close.
-Other OS backends currently reject these operations as unsupported.
+Intercepted keys are consumed natively; `onBeforeInput` is told afterwards and can't prevent them. Use normal DOM listeners for ordinary editing. See [input policy](/host/input/input-policy) for key names and modifiers.
 
 ## Web permissions (macOS)
 
-Install a per-origin policy in server code before opening third-party content:
+Pages on other origins can't use the camera, microphone, location or screen unless **server code** allows it:
 
 ```ts src/hooks.server.ts
 host.ready(async () => {
-  await host.webview.setPermissionHandler(({ origin, permission }) => {
-    if (origin === 'https://meet.example' && permission === 'microphone') return 'allow';
-    return 'deny';
-  });
+  await host.webview.setPermissionHandler(({ origin, permission }) =>
+    origin === 'https://meet.example' && permission === 'microphone' ? 'allow' : 'deny'
+  );
 });
 ```
 
-Without a saved decision or handler, only the exact app origin is allowed. Saved decisions take precedence over the handler and persist across launches; handler answers do not. `allow` still requires usage descriptions and OS consent. A handler applies to app-origin requests too, so include any app permissions it should retain. Throws, invalid answers and timeouts deny the request. See the [web policy reference](/host/web/web-policy) for saved decisions, prompting and frame checks.
+Without a handler, only the app origin is allowed. Once installed, a handler answers for your app's own origin too, so allow what your own pages use. `allow` still needs usage descriptions and OS consent. See the [web policy reference](/host/web/web-policy) for saved decisions and frame checks.
 
 ## Authentication challenges and TLS (macOS)
 
-Install `host.webview.onAuthChallenge` in **server code**. The native navigation
-delegates for windows, views, popovers and sheets share it. Challenges and replies
-are delivered only to the Bun server; credentials are not broadcast to pages.
-The app server's own exact loopback origin always keeps WebKit's default handling.
+HTTP authentication and certificate decisions are also server code. Credentials go to the server only, never to pages:
 
 ```ts
 host.ready(async () => {
   await host.webview.onAuthChallenge(async (challenge) => {
-    if (challenge.origin === 'https://intranet.example' && challenge.realm === 'Staff' &&
-        challenge.method === 'basic' && challenge.previousFailures === 0) {
+    if (challenge.origin === 'https://intranet.example' && challenge.method === 'basic' && challenge.previousFailures === 0) {
       return { username: 'alice', password: await readPassword() };
-    }
-    if (challenge.method === 'clientCertificate') {
-      const chosen = challenge.identities.find((item) => item.identity === savedIdentity);
-      return chosen ? { identity: chosen.identity } : 'cancel';
     }
     return 'default';
   });
 });
 ```
 
-Methods: `basic`, `digest`, `ntlm`, `clientCertificate`, `serverTrust`. Other methods
-use system defaults. The request includes `origin`, `host`, `port`, `realm`,
-`proxy`, `previousFailures`, `identities`, and its `windowId`, `viewId` or `popoverId`.
-Check the exact origin and realm and bound retries before supplying credentials.
-`default` uses system handling; `cancel` cancels. Pass `null` to remove the handler.
-Throws, invalid responses and timeouts cancel. The default timeout is 15000 ms;
-pass `{ timeoutMs }` from 50 to 30000 as the second argument. Credentials use
-`NSURLCredentialPersistenceNone` and are not saved by the framework.
-
-### Client identities
-
-`await host.webview.listClientIdentities()` returns Keychain identity choices with
-`identity`, `label` and certificate `fingerprint` (SHA-256 DER, lowercase hex).
-A client-certificate challenge includes the same choices. Return `{ identity }`
-from that challenge; native code accepts only an identity offered for that request.
-The private key stays in Keychain. Enumeration does not request Keychain UI;
-using a selected key may still require OS authorization. No identity is selected
-automatically; apps must choose one suitable for their server.
-
-### Bounded certificate exceptions
-
-Valid system trust keeps normal WebKit behavior. Invalid server trust is refused by
-default. A server-trust callback includes the challenged leaf `fingerprint`.
-To trust a known self-signed certificate, register the expected fingerprint in
-server code before navigation:
-
-```ts
-const pin = { host: 'intranet.example', fingerprint: expectedSha256Hex };
-await host.webview.allowCertificate(pin);
-// Later, or on logout:
-await host.webview.revokeCertificate(pin);
-```
-
-An exception matches **both the exact host and exact leaf certificate**, across
-ports, for this app run only. There is no wildcard host or global ignore-TLS flag.
-The app may register the independently verified expected fingerprint while handling
-a server-trust challenge, then return `default`. Merely returning `default` never
-accepts an invalid certificate. Do not automatically trust whatever fingerprint a
-failed connection presents. Revocation affects later challenges, not existing TLS
-connections. These APIs control WebKit, not Bun's fetch or server TLS settings.
-
-The Dashboard Native page includes local Basic-auth and self-signed TLS probes,
-and an explicit third-party location request. macOS only; other platforms return
-`unsupported`.
+Check the exact origin and bound the retries before you supply credentials. To trust a known self-signed certificate, register its expected SHA-256 fingerprint with `host.webview.allowCertificate({ host, fingerprint })` before navigating; there is no wildcard or global bypass. Client certificates, `revokeCertificate` and the rest are in the [reference](/host/web/web-policy#onauthchallengehandler-options).
 
 ## Declarative request rules (macOS)
+
+Block or modify requests with WebKit content-blocker rules, app-wide and not kept across launches:
 
 ```ts
 await host.webview.setContentRules({
@@ -410,40 +238,12 @@ await host.webview.setContentRules({
 await host.webview.removeContentRules('privacy');
 ```
 
-Rules use WebKit content-blocker JSON and [WebKit’s restricted regular-expression syntax](https://webkit.org/blog/3476/content-blockers-first-look/). Supported actions are `block`, `block-cookies`, `css-display-none` (with `selector`), `make-https`, and `ignore-previous-rules`. WebKit validates the filters and returns `invalid_args` for invalid rules. Reusing an id replaces that list after successful compilation; removal also cancels an in-flight replacement. Rules take effect on subsequent requests, including in existing web views. They are global across all sessions, windows, embedded views and popovers, and are not persisted across launches.
-
-The shell appends exceptions for its own origin and event WebSocket to each list. Rules cannot block the app's own documents, resources or bridge. CSS hiding requires an explicit app-origin exclusion in its trigger because WebKit does not reliably undo it through ignore rules. CSS rules accept `unless-domain` or `unless-top-url` conditions; positive domain/top-URL and frame-URL conditions reject with `invalid_args` because WebKit cannot combine them with that mandatory exclusion. Other actions retain WebKit's normal conditions. CSS hiding is not a security boundary. This is **not full Electron webRequest**: there are no arbitrary per-request callbacks, HTTP header/body rewriting, or complete subresource telemetry.
-
-Server code can add an asynchronous navigation veto:
+The app's own documents and bridge are never blocked. To veto navigations in server code:
 
 ```ts
-await host.webview.setNavigationPolicy(async ({ url, isMainFrame, viewId }) => {
-  return new URL(url).hostname === 'unwanted.example' ? 'cancel' : 'allow';
-});
-// Remove the policy:
-await host.webview.setNavigationPolicy(null);
+await host.webview.setNavigationPolicy(async ({ url }) =>
+  new URL(url).hostname === 'unwanted.example' ? 'cancel' : 'allow'
+);
 ```
 
-The existing shell navigation checks still apply; `allow` cannot bypass them. App-origin navigation is exempt, and exceptions or a ten-second timeout cancel the navigation. This hook covers navigations, not fetches or other subresources. `viewId` is an embedded view id, popover id, or `window:` followed by the public window id. The callback runs in the Bun Worker in a packaged app (the Vite server during development).
-
-## User scripts and content worlds (macOS)
-
-```ts
-await host.webview.scripts.register({
-  id: 'reader',
-  source: 'globalThis.readerInstalled = true',
-  timing: 'start', // 'end' = document end
-  world: 'reader', // 'page' shares page globals
-  mainFrameOnly: true,
-  target: { viewId: 'article' } // omit for every existing and future view
-});
-const scripts = await host.webview.scripts.list();
-const value = await host.webview.executeJavaScript('typeof readerInstalled', {
-  viewId: 'article', world: 'reader'
-});
-await host.webview.scripts.unregister('reader');
-```
-
-Registration applies to future documents, including subsequent navigations in existing views. It does not immediately evaluate the script. Reusing an id replaces it while retaining registration order. `mainFrameOnly` defaults to true. A target may contain `windowId`, `popoverId`, or `viewId`; omitted targets include every session. Unregistering stops future injection and does not undo effects in an already loaded document. The shell preserves its own bridge scripts when updating the registry.
-
-Any nonempty world name other than `page` selects a named `WKContentWorld`. Named worlds share the DOM but cannot see page JavaScript globals, `host`, or the shell's `__shell` bridge. The page likewise cannot read a named world's globals. DOM changes remain visible across worlds, so worlds are not a general sandbox for hostile code. `executeJavaScript` defaults to the page world, awaits promises and returns JSON-serializable results. It executes in the main frame; there is no native subframe-handle API.
+Both are covered in [content rules and scripts](/host/web/web-content), along with user scripts and content worlds (`host.webview.scripts`).

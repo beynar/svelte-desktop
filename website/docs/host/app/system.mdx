@@ -24,7 +24,7 @@ How-to: [System](/ui/platform-services#system).
 
 `AccentColor` is `{ r: number; g: number; b: number; a: number }`, with sRGB channels from 0 to 1. `AccessibilityInfo` contains four booleans: `reduceMotion`, `highContrast`, `differentiateWithoutColor` and `reduceTransparency`.
 
-Accent color and accessibility preferences are snapshots. They have no change subscription on this namespace.
+Accent color and accessibility preferences are snapshots. They have no change subscription on this namespace. To refresh them, call `host.system.init()`.
 
 ## Methods
 
@@ -63,23 +63,15 @@ macOS lists what `NSFontManager` offers, Linux what fontconfig does (`fc-list`),
 
 ### `getAccentColor()`
 
-Resolves `AccentColor`; does not update `accentColor`. Linux uses the GTK theme selection background; Windows uses the DWM colorization color. Rejects with `unavailable` if the native color cannot be obtained.
+Resolves `AccentColor`; does not update `accentColor`. Rejects with `unavailable` if the native color cannot be obtained.
 
 ### `getAccessibility()`
 
-Resolves `AccessibilityInfo`; does not update `accessibility`. Linux reads animation and contrast preferences and reports the other two fields as `false`. Windows reports `differentiateWithoutColor` as `false`.
+Resolves `AccessibilityInfo`; does not update `accessibility`. Linux and Windows report the fields they can't read as `false`.
 
 ### `checkPermission(name)` and `requestPermission(name)`
 
-These are the legacy system permission queries. `checkPermission()` resolves `{ status: PermissionStatus }` without prompting. `requestPermission()` resolves `{ status: PermissionStatus; note?: string }`; on macOS it prompts where supported. Linux and Windows return a query result without a per-app prompt.
-
-| Parameter | Type | Description |
-| --- | --- | --- |
-| `name` | `PermissionName` | Required permission name; see the complete type and current API on [Permissions](/host/os/permissions). |
-
-`PermissionStatus` is `'granted' | 'denied' | 'notDetermined' | 'unknown'`. These legacy macOS methods accept `accessibility`, `screenRecording`, `inputMonitoring`, `notifications`, `fullDiskAccess`, `camera` and `microphone`. Other names reject with `invalid_args` even if they belong to the wider `PermissionName` type. Requesting `fullDiskAccess` rejects with `unsupported`; open Settings instead. Camera and microphone requests reject with `unavailable` when the bundle lacks the usage description. Notifications require the native notification service to be available.
-
-On Linux, camera status reflects `/dev/video0` access, screen recording is granted only under X11, and notifications depend on the notification service; other names resolve granted. A missing Linux notification service currently returns the string `'unavailable'` despite the narrower declared `PermissionStatus` type. Windows checks desktop-app consent for camera, microphone and location, and resolves granted for the other names.
+Legacy system permission queries. Prefer [`host.permissions`](/host/os/permissions), which covers every permission and platform.
 
 ### `openSettings(pane)`
 
@@ -89,7 +81,7 @@ Open the OS settings application. Declared return type: `{ opened: boolean }`.
 | --- | --- | --- |
 | `pane` | `SettingsPane` | Required; one of `'privacy-accessibility'`, `'privacy-screenCapture'`, `'privacy-inputMonitoring'`, `'privacy-fullDiskAccess'`, `'privacy-camera'`, `'privacy-microphone'`, `'notifications'`, `'loginItems'` (the apps that launch at login). |
 
-macOS opens the matching pane and rejects missing or unknown panes with `invalid_args`. Windows maps supported panes and falls back to the privacy page. Linux launches `gnome-control-center`, ignores the requested pane and currently resolves `null`, rather than the declared object; it rejects with `unavailable` when that program cannot launch.
+macOS opens the matching pane and rejects missing or unknown panes with `invalid_args`. Windows maps supported panes and falls back to the privacy page. Linux launches `gnome-control-center`, ignores the requested pane and resolves `{ opened: true }`; it rejects with `unavailable` when that program cannot launch.
 
 ### `init()` and `dispose()`
 

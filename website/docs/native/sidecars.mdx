@@ -25,64 +25,51 @@ export default defineConfig({
 });
 ```
 
-Register cleanup when the desktop API is ready. Keep this module in server code so requests share its set of running children.
+Run it from server code:
+
+```ts src/routes/api/ffmpeg-version/+server.ts
+export async function GET() {
+  const child = await host.sidecar('ffmpeg', ['-version'], {
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  }) as Bun.Subprocess<'ignore', 'pipe', 'pipe'>;
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  if (code !== 0) throw new Error(`ffmpeg exited with ${code}: ${stderr}`);
+  return new Response(stdout, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+}
+```
+
+A page reads the result with `await fetch('/api/ffmpeg-version').then((r) => r.text())`. The endpoint exposes a fixed command rather than accepting arguments from the page. Both output pipes are drained while the child runs, and nonzero exits become server errors.
+
+The subprocess type assertion matches the explicit stdio options. The helper's return type does not infer those options, so TypeScript otherwise includes file descriptors and missing streams in the output types.
+
+### Stop it on quit
+
+Quitting the app does not stop sidecars (see [Lifetime and quit](#lifetime-and-quit)). For a long-running tool, keep the handle and kill it in a server `host.onBeforeQuit` hook:
 
 ```ts src/lib/server/ffmpeg.ts
-type Child = Awaited<ReturnType<typeof host.sidecar>>;
-const running = new Set<Child>();
-let quitting = false;
+const running = new Set<Bun.Subprocess>();
 
 host.ready(() => {
   host.onBeforeQuit(async () => {
-    quitting = true;
     const children = [...running];
     for (const child of children) child.kill('SIGKILL');
     await Promise.all(children.map((child) => child.exited));
   });
 });
 
-export async function ffmpegVersion() {
-  if (quitting) throw new Error('App is quitting');
-  const child = await host.sidecar('ffmpeg', ['-version'], {
-    stdin: 'ignore',
-    stdout: 'pipe',
-    stderr: 'pipe',
-    env: { ...process.env },
-    timeout: 5000,
-    killSignal: 'SIGKILL',
-  }) as Bun.Subprocess<'ignore', 'pipe', 'pipe'>;
+export async function spawnFfmpeg(args: string[]) {
+  const child = await host.sidecar('ffmpeg', args);
   running.add(child);
-  // A spawn may have been awaiting path resolution when quit began.
-  if (quitting) child.kill('SIGKILL');
-  try {
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ]);
-    if (code !== 0) throw new Error(`ffmpeg exited with ${code}: ${stderr}`);
-    return stdout;
-  } finally {
-    child.kill('SIGKILL');
-    await child.exited;
-    running.delete(child);
-  }
+  child.exited.then(() => running.delete(child));
+  return child;
 }
 ```
-
-```ts src/routes/api/ffmpeg-version/+server.ts
-import { ffmpegVersion } from '$lib/server/ffmpeg';
-
-export async function GET() {
-  return new Response(await ffmpegVersion(), {
-    headers: { 'content-type': 'text/plain; charset=utf-8' },
-  });
-}
-```
-
-A page reads the result with `await fetch('/api/ffmpeg-version').then((r) => r.text())`. The endpoint exposes a fixed command rather than accepting arbitrary executable arguments from the page. Both output pipes are drained while the child runs, and nonzero exits become server errors.
-
-The subprocess type assertion matches the explicit stdio options. The helper's return type does not infer those options, so TypeScript otherwise includes file descriptors and missing streams in the output types.
 
 ## Configuration and paths
 
@@ -96,7 +83,7 @@ Names used by `host.sidecar` may contain letters, numbers, dots, underscores and
 | Bundle | `Contents/MacOS/<name>` | Beside the app executable as `<name>` | Beside the app executable as `<name>.exe` |
 | Executable mode | Bundle copy gets `chmod +x` | Bundle copy gets mode `0755` | Copied as an executable; warns if it lacks a PE header |
 
-The Vite plugin resolves dev paths from the project root and exposes them through `SVELTE_DESKTOP_SIDECAR_<NAME>` environment variables, with punctuation in the uppercase name replaced by underscores. Source files must already be executable on macOS/Linux in dev. A bundle build fails if a selected source file is missing. Dependent libraries or companion resource files are not collected automatically.
+The Vite plugin resolves dev paths from the project root and exposes them through `SVELTE_DESKTOP_SIDECAR_<NAME>` environment variables, with punctuation in the uppercase name replaced by underscores. In dev, source files on macOS and Linux must already be executable (`chmod +x`); otherwise `host.sidecar` rejects with a spawn error. A bundle build fails if a selected source file is missing. Dependent libraries or companion resource files are not collected automatically.
 
 Restart Vite after changing the mapping. The framework does not build or hot-reload the sidecar. Replacing an executable does not replace an already running process; stop it and spawn a new one.
 
@@ -114,7 +101,7 @@ Choose the protocol your executable already supports:
 
 ## Threads and processes
 
-The executable runs in its own OS process. In the packaged app, the SvelteKit server starts and controls it from the app's Bun Worker; in `vite dev`, server code runs in the Vite process. Pages cannot call `host.sidecar`. They communicate through your endpoints or remote functions, or directly through a protocol the sidecar exposes. See [Threads and processes](/native/threads).
+The executable runs in its own OS process, started by server code. Pages cannot call `host.sidecar`; they use your endpoints or remote functions, or a protocol the sidecar exposes. See [Threads and processes](/native/threads).
 
 The child receives no `host` global, service port or automatic connection to the native UI thread. A sidecar crash ends that child; it is not restarted automatically. Inspect `exited` and handle failures in the owning server code.
 
@@ -124,13 +111,6 @@ The shell does not register sidecars in its job or service registry. App quit ha
 
 Keep the subprocess handle and register a server `host.onBeforeQuit` callback, as above. Hooks are awaited in registration order; they run before automatic job and service cleanup. If a tool supports graceful shutdown, send its shutdown command first, then force-kill after a bounded wait. Quit cleanup itself has a limited window, and forced termination cannot guarantee it runs. Killing the direct subprocess does not provide process-tree supervision.
 
-Prefer a [service](/native/services) when you control a persistent Bun worker. Services add bounded JSON messaging, request timeouts, optional restart supervision, cleanup on parent disconnect and app-quit cleanup. A sidecar is the thinner wrapper for executables with their own protocol and lifecycle.
-
 ## Signing and distribution
 
-| Packaging step | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| Signing | Each sidecar is signed before the app bundle with the app's identity and runtime setting | No executable-signing step | Bundled `.exe` sidecars join Authenticode signing when configured |
-| Notarization | Included in the app with identity signing and `sign.notaryProfile` or `NOTARY_PROFILE` | Not applicable | Not applicable |
-
-macOS signing defaults to ad-hoc; distribution uses `sign.identity` or `CODESIGN_IDENTITY`. Nested sidecars are signed without the app executable's entitlement file. A sidecar with special runtime entitlement requirements needs its own packaging consideration. Windows uses `sign.windows.certificateFile` or `WINDOWS_CERT_PFX`. See [Distribution](/shipping/distribution) for the full signing setup.
+Sidecars are signed and notarized with the app. See [Distribution](/shipping/distribution).

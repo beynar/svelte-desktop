@@ -5,6 +5,15 @@ description: Register a remote-push target and receive messages through APNs or 
 
 `host.push` registers the address your server sends remote notifications to. It selects APNs on macOS, a configured self-hosted Web Push service on desktop, or browser Web Push. Presentation and click handling belong to [`host.notifications`](/host/os/notifications).
 
+Which provider you get:
+
+| Where | Provider |
+| --- | --- |
+| macOS with `push.server` | Self-hosted Web Push |
+| macOS without it | APNs |
+| Linux and Windows | Self-hosted Web Push; `push.server` is required |
+| Browser page | Web Push |
+
 How-to: [Remote push](/features/notifications#remote-push).
 
 ## Reactive state
@@ -25,6 +34,8 @@ How-to: [Remote push](/features/notifications#remote-push).
 Send the entire target to your server, including any rotated replacement. A token alone is not enough to describe a Web Push target.
 
 ## Configuration
+
+In `defineConfig`:
 
 ```ts desktop.config.ts
 push: { server: 'https://push.example.com' },
@@ -54,7 +65,7 @@ const target = await host.push.register();
 | --- | --- | --- | --- |
 | `vapidPublicKey` | `string` | Omitted | Base64url VAPID public key for browser Web Push. Required when creating a browser subscription, not when reusing one. Ignored by desktop providers. |
 
-Resolves `PushTarget`. APNs and browser registration request notification permission. APNs can still return a token when alert permission is denied, allowing silent pushes. Self-hosted desktop registration establishes its subscription without a notification permission prompt; request notification permission separately if presenting alerts.
+Resolves `PushTarget`. Save it on your server right away; don't rely only on a later `token` event. APNs and browser registration request notification permission. APNs can still return a token when alert permission is denied, allowing silent pushes. Self-hosted desktop registration establishes its subscription without a notification permission prompt; request notification permission separately if presenting alerts.
 
 macOS APNs rejects with `unavailable` if the app lacks a bundle or APNs entitlement, or registration fails. Without `push.server`, Linux and Windows reject with `unsupported`. Self-hosted page calls reject with `unavailable` if the app server fails to answer within 30 seconds or reports a registration error.
 
@@ -113,7 +124,7 @@ const off = host.push.on('token', (target) => {
 | `notification` | `{ title: string; body: string }` (optional) | Visible notification content, when supplied. |
 | `foreground` | `boolean` | Foreground state reported with the message. |
 
-Use `host.notifications.on('click', callback)` for taps, including taps that launch the app. `message` is not a substitute for notification click handling. A `register()` return value should be saved immediately; do not rely only on a later `token` event.
+Use `host.notifications.on('click', callback)` for taps, including taps that launch the app. `message` is not a substitute for notification click handling.
 
 ## Platform support
 
@@ -126,7 +137,7 @@ Linux and Windows require `push.server`; their native push operations are unsupp
 
 ## Example
 
-Register and save the target to an application endpoint, then handle rotations:
+Register and save the target to your own endpoint, then handle rotations. `/api/push-target` is a placeholder: replace it with a route of your app that stores the target next to the user it belongs to.
 
 ```svelte
 <script lang="ts">

@@ -18,9 +18,9 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
     appName: { type: "string", required: true, default: "package.json productName, else name", description: "Display name. The loader errors if no name is available." },
     identifier: { type: "string", required: true, default: "dev.svelte-desktop.<normalized appName>", description: "Reverse-DNS bundle id (`com.example.app`). The loader lowercases appName and removes non-alphanumeric characters for the fallback. Names the bundle and the data directories." },
     version: { type: "string", default: "package.json version, else 0.0.0" },
-    icon: { type: "string | { source: string; background?: string }", default: "icon.png, icon.svg, then static/icon.png", description: "One square image for every target. See App icon." },
+    icon: { type: "string | { source: string; background?: string }", default: "icon.png, icon.svg, then static/icon.png", description: "One square image for every target. See [App icon](/shipping/app-icon)." },
     copyright: { type: "string" },
-    window: { type: "WindowOptions | false", default: "{}", description: "The main window; `false` creates a hidden shell window for menu-bar apps. See Windows." },
+    window: { type: "WindowOptions | false", default: "{}", description: "The main window; `false` creates a hidden shell window for menu-bar apps. See [Windows](/ui/windows)." },
     quitOnLastWindowClosed: { type: "boolean", default: "true", description: "Built app: `false` hides the last window and keeps the app running (jobs, push connection, page state). A Dock click, a notification click or a second launch shows it. The dev shell always uses `true`." },
     trayOnly: { type: "boolean", default: "false", description: "macOS `LSUIElement`: no Dock icon, no app menu." },
     singleInstance: { type: "boolean", default: "true (built app)", description: "A second launch hands its documents and links to the running app (`openFiles` / `openUrls`, `secondInstance`). Linux and Windows; macOS does it natively. Not forwarded to the dev shell, which defaults to `false`." },
@@ -31,18 +31,18 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
     schemes: { type: "string[]", description: "Deep-link URL schemes, delivered as openUrls events." },
     protocols: { type: "string[]", description: "macOS resource schemes handled by `host.protocol` in the Bun Worker. Registered before web views are created; invalid and WebKit-reserved schemes are rejected. Distinct from deep-link `schemes`." },
     fileTypes: { type: "FileTypeConfig[]", description: "Document types the app opens, delivered as openFiles events." },
-    permissions: { type: "PermissionsConfig", description: "OS permissions with the reason shown to the user; see the permissions table below." },
+    permissions: { type: "PermissionsConfig", description: "OS permissions with the reason shown to the user; listed below." },
     usageDescriptions: { type: "Record<string, string>", description: "Deprecated alias for permission usage strings. Explicit `permissions` strings take precedence." },
     notifications: { type: "NotificationsConfig", description: "Foreground banners." },
     push: { type: "PushConfig", description: "APNs or your own push server." },
     native: { type: "string | false", default: '"native" if the folder exists', description: "Native sources directory, relative to the project. Swift, Objective-C, C, C++, Rust crates and Go modules; see Native code. `false` disables discovery." },
-    addons: { type: "Record<string, string>", description: "Prebuilt Node-API addons (`.node`) to ship; sources in `native/addons/` compile automatically. See Native code for platform support." },
+    addons: { type: "Record<string, string>", description: "Prebuilt Node-API addons (`.node`) to ship; sources in `native/addons/` compile automatically. See [Native code](/native) for platform support." },
     sidecars: { type: "Record<string, string | Partial<Record<'macos' | 'linux' | 'windows', string>>>", description: "Executables shipped with the app, started from server code with `host.sidecar(name)` (or `sidecar(name)` imported from `@svelte-desktop/shell/server`). Paths are relative to the project; an omitted platform ships no executable for that entry." },
     bridge: { type: "{ allow?: string[] }", description: "Page-to-native bridge policy; see below." },
     plist: { type: "Record<string, unknown>", description: "Extra Info.plist keys." },
-    update: { type: "UpdateConfig & { privateKey?: string; baseUrl?: string }", description: "Signed self-update feed. See Self-update." },
+    update: { type: "UpdateConfig & { privateKey?: string; baseUrl?: string }", description: "Signed self-update feed. See [Self-update](/shipping/self-update)." },
     build: { type: "BuildConfig", description: "Target, architectures and packaging." },
-    sign: { type: "SignConfig", description: "Code signing for every target. See Distribution." },
+    sign: { type: "SignConfig", description: "Code signing for every target. See [Distribution](/shipping/distribution)." },
   }}
 />
 
@@ -50,7 +50,7 @@ There are no `jobs` or `services` config keys. These are discovered from `src/jo
 
 ### icon
 
-The object form accepts `source: string` (required, relative to the project) and `background?: string` (hex color). `background` defaults to the artwork's corner color for opaque-cornered images, otherwise white. It controls the background of the macOS 26 icon. See [App icon](/shipping/app-icon).
+The image is a PNG, JPEG or WebP of 1024 px or more; SVG works only when building on macOS. The object form accepts `source: string` (required, relative to the project) and `background?: string` (hex color). `background` defaults to the artwork's corner color for opaque-cornered images, otherwise white. It controls the background of the macOS 26 icon. See [App icon](/shipping/app-icon).
 
 ## permissions
 

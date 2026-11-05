@@ -1,9 +1,9 @@
 ---
-title: 'host.webview: permissions, auth and certificates'
+title: host.webview permissions, auth and certificates
 description: Server-owned web permission decisions, HTTP authentication challenges and exact certificate exceptions.
 ---
 
-These members of `host.webview` set policy for web content in windows, embedded views, popovers and sheets. All methods on this page are **server only** and macOS-only; page calls reject with `denied`. Policy is shared across views and [sessions](/host/web/sessions). Requests and credentials travel to the server, not to page event listeners.
+These members of `host.webview` set policy for web content in windows, embedded views, popovers and sheets. All methods on this page are **server only** and macOS-only; page calls reject with `denied`, even if `bridge.allow` permits `webview.*`: that list controls native bridge calls, not a website's access to the camera or location. Policy is shared across views and [sessions](/host/web/sessions). Requests and credentials travel to the server, not to page event listeners. By default, with no saved decision and no handler, a page may use a permission only on the app's own origin; every other origin is denied. To let an external site use the camera or microphone, register a handler or save a decision.
 
 How-to: [Web view](/ui/web-view#authentication-challenges-and-tls-macos).
 
@@ -40,7 +40,7 @@ Resolves `void`. Invalid timeouts reject with `invalid_args`. A thrown/rejected 
 | `windowId` | `number`, optional | Public window id, including the owner of an embedded view. |
 | `popoverId` | `string`, optional | Popover identifier. |
 
-Saved decisions take precedence over the handler. Without a saved decision or handler, the exact app origin is allowed and other origins are denied. Unusable origins and mismatched initiating-frame origins are denied.
+Saved decisions take precedence over the handler. Without a saved decision or handler, the exact app origin is allowed and other origins are denied. A handler also answers for the app's own origin, so allow what your own pages use. Unusable origins and mismatched initiating-frame origins are denied.
 
 `allow` permits the web request to proceed to usage-string and OS consent checks; it does not grant an OS permission. `prompt` asks WebKit to prompt where its delegate supports that distinction. Older boolean location callbacks, speech and screen-capture callbacks cannot express a separate WebKit prompt. Location, speech and display-capture integration depends on WebKit SPI. Camera plus microphone requests check each permission; speech also checks microphone policy. See [OS permissions](/host/os/permissions) for app declarations and system grants.
 
@@ -91,6 +91,7 @@ await host.webview.revokePermissionDecision({
 **Server only.** Register one authentication handler, or pass `null` to remove it. Despite its `on` prefix, this method resolves `void`, not an unsubscribe function.
 
 ```ts
+// `readPassword` is your own function, for example reading from `host.secureStorage`.
 await host.webview.onAuthChallenge(async (challenge) => {
   if (challenge.origin === 'https://intranet.example' &&
       challenge.realm === 'Staff' && challenge.method === 'basic' &&
@@ -158,6 +159,7 @@ No identities gives an empty array. Keychain enumeration errors reject with `una
 **Server only.** Trust one exact host and leaf certificate for this app run.
 
 ```ts
+const expectedSha256Hex = '...64 hex characters, verified out of band...';
 await host.webview.allowCertificate({
   host: 'intranet.example', fingerprint: expectedSha256Hex,
 });
@@ -170,13 +172,14 @@ await host.webview.allowCertificate({
 
 Resolves `null`. An empty host, a host containing `/` or `*`, or a malformed fingerprint rejects with `invalid_args`. The exception matches that host and certificate across ports and sessions, and is not persisted. There is no wildcard or global trust bypass. This controls WebKit, not Bun fetch or server TLS settings.
 
-Register an independently verified expected fingerprint before navigation. A server-trust handler may register that expected fingerprint and then return `default`. Do not derive trust merely from the fingerprint of a failed connection.
+Register an independently verified expected fingerprint before navigation. From an `onAuthChallenge` handler, call `allowCertificate` for that expected fingerprint when `challenge.method` is `serverTrust`, then answer `'default'`. Do not derive trust merely from the fingerprint of a failed connection.
 
 ### `revokeCertificate(pin)`
 
 **Server only.** Remove the exception for an exact host/fingerprint pair.
 
 ```ts
+// Same `expectedSha256Hex` string as passed to `allowCertificate`.
 await host.webview.revokeCertificate({
   host: 'intranet.example', fingerprint: expectedSha256Hex,
 });
@@ -186,14 +189,7 @@ await host.webview.revokeCertificate({
 
 ## Platform support
 
-| Method | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| `setPermissionHandler` | ✓ | — | — |
-| `setPermissionDecision`, `listPermissionDecisions`, `revokePermissionDecision` | ✓ | — | — |
-| `onAuthChallenge`, `listClientIdentities` | ✓ | — | — |
-| `allowCertificate`, `revokeCertificate` | ✓ | — | — |
-
-These are handler registrations and request/reply flows, not page-broadcast events. Use the callbacks above to receive requests.
+All methods are macOS only; on Linux and Windows they return `unsupported`. They do not add WebUSB, HID or serial support. These are handler registrations and request/reply flows, not page-broadcast events. Use the callbacks above to receive requests.
 
 ## Example
 
@@ -201,6 +197,7 @@ Server code can offer an explicit client identity only to a known server:
 
 ```ts
 const choices = await host.webview.listClientIdentities();
+// `savedIdentity`: the identity you stored earlier, for example in `host.store`.
 const chosen = choices.find((item) => item.identity === savedIdentity);
 await host.webview.onAuthChallenge((challenge) => {
   if (challenge.origin !== 'https://intranet.example') return 'default';

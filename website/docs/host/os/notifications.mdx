@@ -5,6 +5,8 @@ description: Show, schedule and manage local notifications, with actions, replie
 
 `host.notifications` presents OS notifications and tracks their permission and responses. Remote delivery uses [`host.push`](/host/os/push); clicks on remote pushes use these same notification events. In a plain browser page, this service also has a Notification API and service-worker fallback.
 
+On macOS, notifications work only from the built app: under `vite dev`, `requestPermission()` resolves `'unavailable'`.
+
 How-to: [Notifications and push](/features/notifications).
 
 ## Reactive state
@@ -32,7 +34,7 @@ const { id, scheduled } = await host.notifications.show({
 });
 ```
 
-Takes `NotificationOptions<D>` and resolves `{ id: string; scheduled: boolean; skipped?: boolean }`. The same `id` replaces an existing delivered or pending notification. With `replace: false`, an existing id is kept and the result has `skipped: true` and `scheduled: false`.
+Only `title` is required; `id`, `body`, `url`, `data`, `actions`, `at` and `delay` are the portable core, and the rest of the table is mostly platform-specific. Takes `NotificationOptions<D>` and resolves `{ id: string; scheduled: boolean; skipped?: boolean }`. The same `id` replaces an existing delivered or pending notification. With `replace: false`, an existing id is kept and the result has `skipped: true` and `scheduled: false`. Under `vite dev` on macOS nothing is shown: the call resolves with `skipped: true` and `scheduled: false`. Test notifications from the built app.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -216,7 +218,7 @@ Like `on()`, but unsubscribe after the first delivery. Returns an unsubscribe fu
 
 ### `onResponse(callback)`
 
-Deprecated raw-event helper. Takes `(data: { tag: string; actionId: string | null }) => void` and returns an unsubscribe function synchronously. Prefer `on('response', callback)` for normalized payloads, retention and page targeting.
+Deprecated: use `on('response', callback)`, which gives normalized payloads, retention and page targeting.
 
 ### `init()`, `refresh()`
 
@@ -224,7 +226,7 @@ Both resolve the namespace. `init()` binds app-activation refresh, applies the c
 
 ### `dispose()`
 
-Currently a synchronous no-op. Use the unsubscribe functions to remove your listeners.
+A no-op. Use the unsubscribe functions to remove your listeners.
 
 ## Events
 
@@ -236,7 +238,7 @@ Currently a synchronous no-op. Use the unsubscribe functions to remove your list
 | `dismiss` | `NotificationEvent` | The user dismisses it. |
 | `response` | `NotificationEvent` | Any of the four response kinds above. |
 | `shown` | `NotificationShownEvent` | The backend reports delivery while running. On macOS this comes from foreground presentation. |
-| `notificationResponse` | `{ tag: string; id: string; actionId: string \| null; kind: string }` | Raw native response; prefer normalized events. |
+| `notificationResponse` | `{ tag: string; id: string; actionId: string \| null; kind: string }` | Deprecated raw native response; use the events above. |
 
 `NotificationEvent<D>` fields:
 
@@ -281,22 +283,28 @@ Browser delays last only while the page stays open. Repeats reject with `unsuppo
 | `on`, `once`, `onResponse` | ✓ | partial | partial |
 | `init`, `refresh`, `dispose` | ✓ | ✓ | ✓ |
 
-Partial support means the option, scheduler, dock, daemon and fallback limits described above. macOS urgency levels require macOS 12+. Windows tray balloons and Linux daemons may provide fewer event kinds than full native toasts.
+Partial entries have the option, scheduler, daemon and fallback limits described above. Windows tray balloons and Linux daemons may provide fewer event kinds than full native toasts.
 
 ## Example
+
+Under `vite dev` on macOS the status is `'unavailable'`, which the example shows instead of staying silent.
 
 ```svelte
 <script lang="ts">
   import { onMount } from 'svelte';
 
   let result = $state('');
+  let note = $state('');
   onMount(() => host.notifications.on('response', (event) => {
     result = `${event.kind}: ${event.id}`;
   }));
 
   async function remind() {
     const { status } = await host.notifications.requestPermission();
-    if (status !== 'granted') return;
+    if (status !== 'granted') {
+      note = `Notifications are ${status}.`;
+      return;
+    }
     await host.notifications.schedule({
       id: 'review-report', title: 'Review the report', delay: 60_000,
       url: '/reports', actions: [{ id: 'open', title: 'Open reports' }],
@@ -308,4 +316,5 @@ Partial support means the option, scheduler, dock, daemon and fallback limits de
 <button onclick={remind}>Remind me in a minute</button>
 <button onclick={() => host.notifications.cancel('review-report')}>Cancel reminder</button>
 <p>{result}</p>
+<p>{note}</p>
 ```

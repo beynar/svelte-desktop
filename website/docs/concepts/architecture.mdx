@@ -18,12 +18,12 @@ main thread: Cocoa run loop (WKWebView)   <->   Worker: Bun.serve (SvelteKit) + 
 
 ## The two threads
 
-- **UI thread.** Bun's main thread becomes the native UI thread (Cocoa on macOS, GTK on Linux, Win32 on Windows). It creates the window and loads native plugins before entering the run loop. While that loop runs, Bun's main-thread JavaScript event loop is blocked. Page JavaScript runs in the web engine, separately from Bun.
+- **UI thread.** Bun's main thread becomes the native UI thread (Cocoa on macOS, GTK on Linux, Win32 on Windows). It creates the window and loads native plugins before entering the run loop. While that loop runs, Bun's main-thread JavaScript event loop is blocked, so put your app code in the Worker (server code) or the page, never on the main thread. Page JavaScript runs in the web engine, separately from Bun.
 - **Worker.** A Bun Worker runs `Bun.serve` with the SvelteKit handler and the server-side desktop API. Load functions, remote functions, hooks and endpoints all run here, with full Bun APIs.
 
-Native plugins share the app process, but their command handlers need not run on the UI thread: Swift handlers use `MainActor`, Rust handlers use new threads, and Go handlers use goroutines. Node-API addons run in the server's Bun runtime; persistent services, background jobs and sidecars run in child processes. See [Threads and processes](/native/threads) for execution and communication details, and [Native code](/native) to choose an approach.
+Native plugins share the app process, but their command handlers need not run on the UI thread: Node-API addons run in the server's Bun runtime; persistent services, background jobs and sidecars run in child processes. On macOS, plugin replies and events are marshaled back to the UI thread, so a blocked UI thread delays results that finished elsewhere. Jobs, services and sidecars are started by the server and talk to it over Bun IPC or their own streams; they have no `host` global. See [Threads and processes](/native/threads) to choose where code runs, and [Native code](/native) to choose an approach.
 
-Quitting runs the Worker's `host.onBeforeQuit` hooks. On macOS this happens during AppKit's asynchronous quit phase; backends that return from the run loop perform cleanup afterward, with a default 3-second shutdown wait. Shutdown force-closes server sockets rather than waiting for every request to finish. Closing the last window keeps the app running when `quitOnLastWindowClosed` is `false`.
+Quitting runs the Worker's `host.onBeforeQuit` hooks, then stops jobs and services (sidecars are yours to stop). On macOS this happens during AppKit's asynchronous quit phase; backends that return from the run loop perform cleanup afterward, with a default 3-second shutdown wait. Shutdown force-closes server sockets rather than waiting for every request to finish. Closing the last window keeps the app running when `quitOnLastWindowClosed` is `false`.
 
 ## The localhost session
 
@@ -52,7 +52,7 @@ Messages flow the other way too: native events (theme changes, menu clicks, noti
 
 ## Built in
 
-- **Logs.** Launched from Finder, both threads log to `~/Library/Logs/<identifier>/app.log`.
+- **Logs.** Launched from Finder on macOS, both threads log to `~/Library/Logs/<identifier>/app.log` (other platforms use the app's log directory). The file rotates at 5 MB. `SVELTE_DESKTOP_LOG=stdout` or `file` forces either destination.
 - **Graceful quit** on signals, Cmd+Q and Dock Quit, with `host.onBeforeQuit(fn)` in server code.
 - **Crash recovery.** If the web content process dies, the page reloads by default; web views can opt into manual recovery. `host.crashInfo()` reports an unclean previous exit and OS crash reports written since that launch (macOS and Windows; no OS report collection on Linux).
 - **Single instance.** On Linux and Windows a second launch hands its arguments (documents, links) to the running app; macOS does this natively.

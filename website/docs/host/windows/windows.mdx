@@ -1,0 +1,170 @@
+---
+title: host.windows
+description: Create, find, parent and manage windows, open sheets and modal children, and listen to window events.
+---
+
+`host.windows` is the service for creating, finding and managing windows by ID. It has no reactive state. For the current window's reactive state and its operations (size, title bar, appearance), see [`host.window`](/host/windows/window).
+
+How-to: [Windows](/ui/windows).
+
+Find or open a preferences window, then focus it. A created window is visible by default, so `create` alone opens it:
+
+```ts
+async function openPreferences() {
+  const existing = await host.windows.get('preferences');
+  const win = existing ?? await host.windows.create({
+    label: 'preferences', path: '/preferences',
+    title: 'Preferences', width: 640, height: 480,
+    minWidth: 480, minHeight: 320,
+  });
+  await host.windows.focus(win.windowId);
+}
+```
+
+## `host.windows`
+
+The per-window operations (`show`, `hide`, `focus`, `close`, `setTitle`, `setSize` and the rest of geometry, state, title bar and appearance) are methods of this service, listed in [`host.window`](/host/windows/window#window-operations). Each accepts a trailing `windowId?: number`. `host.window` forwards each operation here for the current window; the ones with their own store version always target the current window ([store methods](/host/windows/window#store-methods)), and every other method passes its arguments through. With no ID, a page targets its own window; server calls resolve the active/key window, then the primary window. `0` addresses the current primary window. IDs are runtime addresses; closing the primary can change the remaining windows' public IDs. Use labels to find windows again.
+
+Unknown target windows reject `invalid_args`.
+
+### `create(options?)`
+
+Create a window and resolve `{ windowId: number; label: string }`. This starts page loading; it does not wait for the page to load. All fields in `WindowCreateOptions` are optional:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `parentId` | `number` | No parent | macOS parent window ID. |
+| `modal` | `boolean` | `false` | macOS native sheet child; requires a valid parent and focusable window. |
+| `type` | `'normal' \| 'panel'` | `'normal'` | macOS native window class. |
+| `focusable` | `boolean` | `true` | macOS: permit keyboard focus. |
+| `session` | `string` | Default session | macOS [web session](/host/web/sessions). |
+| `recovery` | `WebviewRecovery` | `'reload'` on macOS | `'reload'` or `'manual'` content-process recovery. See [`host.webview`](/host/web/webview). |
+| `label` | `string` | Generated (`'main'` for the first window, otherwise `window-…`) | App-wide unique label; duplicates reject `invalid_args`. |
+| `path` | `string` | `'/'` | App route, loaded with the app's authenticated session. |
+| `url` | `string` | App origin + `path` | Full URL instead of an app route; other origins have no native bridge. |
+| `html` | `string` | None | HTML document instead of a route; `url` takes precedence. |
+| `title` | `string` | Native default; app name on Linux/Windows | Initial title. |
+| `x`, `y` | `number` | Centered | Initial frame position; supply both coordinates. |
+| `width` | `number` | `1024` | Initial content width. |
+| `height` | `number` | `720` | Initial content height. |
+| `minWidth`, `minHeight` | `number` | No explicit minimum | Minimum content size. |
+| `decorations` | `boolean` | `true` | `false` creates a borderless window. |
+| `visible` | `boolean` | `true` | Show on creation; `false` waits for an explicit `show()`. |
+| `alwaysOnTop` | `boolean` | `false` | Float above normal windows. |
+| `resizable` | `boolean` | `true` | Allow resizing. |
+| `movable` | `boolean` | `true` on macOS | macOS movement policy. |
+| `minimizable` | `boolean` | `true` | Allow minimizing; ignored on Linux. |
+| `focus` | `boolean` | `true` on macOS | macOS: request focus when showing. |
+| `animate` | `boolean \| WindowAnimation` | No animation | macOS presentation animation; `true` selects the defaults below. |
+| `transparent` | `boolean` | `false` | Transparent background; page content must paint any desired background. |
+| `opacity` | `number` | `1` | Initial window alpha, intended range `0`–`1`. |
+| `titlebarTransparent` | `boolean` | `false` | macOS: blend the title bar into content. |
+| `vibrancy` | `VibrancyMaterial` | None | macOS material behind the page. |
+| `vibrancyState` | `VibrancyState` | `'followsWindow'` | macOS material activity. |
+| `trafficLightPosition` | `{ x: number; y: number }` | System position | macOS close button's top-left in points from the window frame's top-left. |
+| `aspectRatio` | `number` | Unconstrained | macOS content width/height ratio while resizing. |
+| `backgroundThrottling` | `boolean` | `true` | macOS: `false` keeps the page running at full speed out of sight. |
+| `tabbingIdentifier` | `string` | System default | macOS native tab group identifier. |
+
+Linux and Windows ignore `parentId`, `modal`, `type`, `focusable`, `session`, `recovery`, `movable`, `focus`, `animate`, `titlebarTransparent`, `vibrancy`, `vibrancyState`, `trafficLightPosition`, `aspectRatio`, `backgroundThrottling`, and `tabbingIdentifier`. Do not rely on these options there. `titleBarStyle` belongs to main-window configuration and the runtime setter; it is not a field in the exported `WindowCreateOptions` type.
+
+On macOS, invalid relationship/class/focusability options or an unknown session/recovery policy reject `invalid_args`. Native creation failure rejects `internal`.
+
+#### `WindowAnimation`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `duration` | `number` | `180` | Milliseconds; `0` skips animation. |
+| `easing` | `'easeOut' \| 'easeIn' \| 'easeInOut' \| 'linear' \| [x1: number, y1: number, x2: number, y2: number]` | `'easeOut'` | Timing curve. |
+| `offset` | `{ x?: number; y?: number }` | `{ x: 0, y: -10 }` | Starting offset in points, y down. Within a supplied object, omitted axes become `0`. |
+| `scale` | `number` | `1` | Starting size around the center; page layout resizes during animation. |
+| `opacity` | `number` | `0` | Starting alpha. |
+
+### Finding windows
+
+| Method | Resolves | Description |
+| --- | --- | --- |
+| `getInfo(windowId?)` | `WindowInfo` | Info for the target window. |
+| `list()` | `WindowInfo[]` | Every open window. |
+| `get(label: string)` | `WindowInfo \| null` | Find by label; `null` when absent. |
+
+`WindowInfo` has these fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `windowId` | `number` | Current public ID. |
+| `label` | `string` | Window label. |
+| `focused` | `boolean` | Native focus state. |
+| `visible` | `boolean` | Native visibility observation; semantics differ by backend. |
+| `bounds` | `WindowBounds` | Outer frame: `{ x: number; y: number; width: number; height: number }`. |
+| `parentId` | `number \| null` (optional) | macOS parent, or `null`. |
+| `modal` | `boolean` (optional) | macOS modal-child policy. |
+| `type` | `'normal' \| 'panel'` (optional) | macOS native class. |
+| `focusable` | `boolean` (optional) | macOS focus policy. |
+| `sheetAttached` | `boolean` (optional) | Whether AppKit has actually presented the modal as a sheet. |
+
+### Parents, sheets and modal children
+
+macOS only. Normal children follow parent movement; `modal: true` presents a native sheet and blocks the parent until hidden or closed. Panels can become key when focusable but do not become the app's main document window. Closing a parent closes its descendants. Attach a child with `parentId` at creation or `setParent` later; `setParent(null)` detaches a nonmodal child.
+
+| Method, before optional `windowId` | Resolves | Description |
+| --- | --- | --- |
+| `setParent(parentId: number \| null)` | `null` | Reparent; `null` detaches a nonmodal child. |
+| `getParent()` | `WindowInfo \| null` | Current parent. |
+| `getChildren()` | `WindowInfo[]` | Direct children. |
+
+Missing parents, cycles, a second attached sheet, or detaching a modal reject `invalid_args`. Hide an attached modal before reparenting it. Modal children must stay focusable: `setFocusable(false)` rejects `invalid_args` for them. For a route dialog that returns a result, use [`host.dialog.sheet()`](/host/windows/dialog).
+
+```ts
+const parent = await host.windows.getInfo();
+const child = await host.windows.create({
+  parentId: parent.windowId, modal: true,
+  label: 'confirmation', path: '/confirm', width: 420, height: 260,
+});
+await host.windows.close(child.windowId);
+```
+
+### Events
+
+Subscriptions are app-wide; filter payloads by `windowId` for a particular window. Typed helpers and `host.on(event, fn)` return synchronous unsubscribe functions. `host.windows.onCloseRequested()` is an alias for `onWillClose()`; it subscribes without arming a veto; `host.window.onCloseRequested()` arms it and subscribes.
+
+| Event | Service helper | Payload | When |
+| --- | --- | --- | --- |
+| `created` | `onCreated(fn)` | `{ windowId?: number; label?: string }` | A service-created window exists. |
+| `closed` | `onClosed(fn)` | `{ windowId?: number }` | Window closed; its native root binding is gone. |
+| `willClose` | `onWillClose(fn)`, `onCloseRequested(fn)` | `{ windowId?: number }` | A close request was suppressed because a veto is armed (`setCloseVeto(true)`, see [`host.window`](/host/windows/window#store-methods)). |
+| `boundsChanged` | `onBoundsChanged(fn)` | `WindowBounds & { windowId?: number }` | Frame moved/resized. |
+| `focusChanged` | `onFocusChanged(fn)` | `{ focused: boolean; windowId?: number }` | Focus changed. |
+| `scaleFactorChanged` | `onScaleFactorChanged(fn)` | `{ scaleFactor: number; windowId?: number }` | Display backing scale changed. |
+
+macOS also emits completed transitions defined by `WindowTransitionEvents`. `host.windows.on(event, callback)` accepts these nine names; named helpers are equivalent:
+
+| Event | Helper | Payload | When |
+| --- | --- | --- | --- |
+| `shown` | `onShown(fn)` | `WindowTransition` | Visibility changed to shown. |
+| `hidden` | `onHidden(fn)` | `WindowTransition` | Visibility changed to hidden, including application hide. |
+| `minimized` | `onMinimized(fn)` | `WindowTransition` | Window miniaturized. |
+| `restored` | `onRestored(fn)` | `WindowTransition` | Window deminiaturized; not general `restore()` completion. |
+| `fullscreenChanged` | `onFullscreenChanged(fn)` | `WindowFullscreenTransition` | Native Spaces transition completed. |
+| `moved` | `onMoved(fn)` | `WindowTransition & WindowBounds` | Frame moved. |
+| `resized` | `onResized(fn)` | `WindowTransition & WindowBounds` | Frame resized. |
+| `focus` | `onFocus(fn)` | `WindowTransition` | Became key. |
+| `blur` | `onBlur(fn)` | `WindowTransition` | Resigned key. |
+
+`WindowTransition` is `{ windowId: number }`. `WindowFullscreenTransition` adds `fullscreen: boolean` and `transition: 'entered' | 'exited'`. Covering a window alone does not count as hiding it. Linux and Windows do not emit these nine platform transition events.
+
+## Platform support
+
+`—` means the option or call is ignored or rejects.
+
+| Operations | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `create` | ✓ | partial | partial |
+| `getInfo`, `list`, `get` | ✓ | ✓ | ✓ |
+| `setParent`, `getParent`, `getChildren`, `parentId`, `modal`, `type` | ✓ | — | — |
+| `onCreated`, `onClosed`, `onWillClose`, `onCloseRequested` | ✓ | ✓ | ✓ |
+| `onBoundsChanged`, `onFocusChanged`, `onScaleFactorChanged` | ✓ | ✓ | ✓ |
+| `on` with transition names, `onShown`, `onHidden`, `onMinimized`, `onRestored` | ✓ | — | — |
+| `onFullscreenChanged`, `onMoved`, `onResized`, `onFocus`, `onBlur` | ✓ | — | — |
+
+`create` is partial on Linux and Windows because they ignore the macOS-only options listed under it. The geometry, state and appearance operations are listed in [`host.window`](/host/windows/window#platform-support).

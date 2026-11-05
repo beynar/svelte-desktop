@@ -1,5 +1,5 @@
 ---
-title: 'host.webview: content rules and scripts'
+title: host.webview content rules and scripts
 description: Declarative request blocking, user scripts, content worlds and server navigation policy.
 ---
 
@@ -58,9 +58,11 @@ Resource types are `document`, `image`, `style-sheet`, `script`, `font`, `raw`, 
 
 CSS hiding needs an app-origin exclusion directly in its trigger: WebKit cannot reliably undo it with `ignore-previous-rules`. For `css-display-none`, positive `if-domain` and `if-top-url` conditions reject with `invalid_args`. Native validation also rejects frame-URL conditions. Use either `unless-domain` or `unless-top-url`, not both; when supplied, the array must be nonempty. CSS domain exclusions must be nonempty lowercase ASCII or punycode. The shell converts domain exclusions to top-URL exclusions and adds its own origin. CSS hiding is not a security boundary.
 
-Other actions retain WebKit's normal condition validation. This API has no arbitrary per-request callback or HTTP header/body rewriting.
+Other actions retain WebKit's normal condition validation. This is not Electron's `webRequest`: the API has no arbitrary per-request callback, no HTTP header/body rewriting and no complete subresource telemetry.
 
-`listContentRules()` resolves `{ id, rules }[]`: the lists in place, with the rules as given.
+### `listContentRules()`
+
+Resolves `{ id, rules }[]`: the lists in place, with the rules as given. The reactive field `host.webview.contentRules` holds the same list and updates when you set or remove one. macOS only.
 
 ### `removeContentRules(id)`
 
@@ -130,6 +132,7 @@ Resolves `UserScript[]`, with the fields described above. Native records include
 **Server only.** Install one asynchronous navigation veto, or pass `null` to remove it.
 
 ```ts
+// src/hooks.server.ts
 await host.webview.setNavigationPolicy(({ url }) =>
   new URL(url).hostname === 'unwanted.example' ? 'cancel' : 'allow'
 );
@@ -153,7 +156,7 @@ macOS only.
 
 Named `WKContentWorld` instances share the DOM but have separate JavaScript globals. A named world cannot see page globals, `host` or the shell bridge; the page cannot read its globals. DOM changes remain visible across worlds, so this is not a general sandbox for hostile code.
 
-Use [`executeJavaScript(code, target)`](/host/web/webview#executejavascriptcode-target) with `world` to run code in the same world. It defaults to `page` and executes in the main frame; there is no native subframe-handle API. Named-world execution is macOS-only.
+To run code in a named world, pass `world` to [`executeJavaScript(code, target)`](/host/web/webview#executejavascriptcode-target). It defaults to `page` and executes in the main frame. Named-world execution is macOS only.
 
 ## Platform support
 
@@ -165,7 +168,7 @@ Use [`executeJavaScript(code, target)`](/host/web/webview#executejavascriptcode-
 
 ## Example
 
-Register before navigation so the next document receives the script.
+Register before navigation so the next document receives the script. This assumes a view created with `id: 'article'` (see [`host.view.create`](/host/windows/view)).
 
 ```ts
 await host.webview.scripts.register({

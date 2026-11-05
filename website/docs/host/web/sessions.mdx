@@ -22,11 +22,11 @@ const profile = await host.sessions.create({ id: 'work', persistent: true });
 | `id` | `string` | Required | Unique, nonempty profile id, at most 200 characters. Cannot be `'default'`. |
 | `persistent` | `boolean` | Required | Keep website data across launches, or use a private in-memory store. |
 
-`SessionInfo` has `id: string` and `persistent: boolean`. The shell owns the persistent `'default'` profile. Select a profile with the `session` option when creating a [window](/host/windows/window), [view](/host/windows/view) or [popover](/host/windows/popover). New views use `'default'` unless explicitly configured; they do not inherit the caller's profile. A view's profile cannot change after construction.
+`SessionInfo` has `id: string` and `persistent: boolean`. The shell owns the persistent `'default'` profile. Select a profile with the `session` option when creating a [window](/host/windows/windows), [view](/host/windows/view) or [popover](/host/windows/popover). New views use `'default'` unless explicitly configured; they do not inherit the caller's profile. A view's profile cannot change after construction.
 
 Persistent named profiles require macOS 14+. Recreating the same id with the same app identifier opens its existing data. Private profiles keep their cookies and storage separate from other profiles.
 
-In the packaged app, creation copies only the shell authentication cookie and waits for WebKit to retain it. Other cookies and storage are not copied. Rejects with `invalid_args` for an invalid or duplicate id, `unsupported` for persistent named profiles before macOS 14, or `unavailable` when app authentication is not ready or WebKit does not retain it. Profiles still share the app's server authority.
+Other cookies and storage are not copied from the default profile, and the app's own server still works in a named profile. Rejects with `invalid_args` for an invalid or duplicate id, `unsupported` for persistent named profiles before macOS 14, or `unavailable` when app authentication is not ready or WebKit does not retain it. Profiles still share the app's server authority.
 
 ### `list()`
 
@@ -170,26 +170,20 @@ Subscribes to cookie changes across profiles and returns `() => void` to unsubsc
 
 `CookieChangedEvent` contains `session: string`, `cookie: SessionCookie` and `removed: boolean`. Additions and updates have `removed: false`; removals carry the previous cookie and `removed: true`. The shell authentication cookie is excluded.
 
-WebKit observer snapshots may coalesce short-lived intermediate values. Native cookie mutations trigger a refresh immediately. To catch `document.cookie` changes that WebKit omits from observer callbacks, native code also polls profiles with open views once per second **only while someone listens through `cookies.onChanged`**. The first listener enables polling; the last unsubscribe disables it. Page unload removes that page's polling subscription.
+`onChanged` can miss very short-lived changes, so it is not an audit log. To catch `document.cookie` changes that WebKit does not report, the shell polls profiles with open views once per second, only while someone listens through `cookies.onChanged`. `host.on('sessionCookieChanged', callback)` does not enable that polling; use `cookies.onChanged`.
 
-`host.on('sessionCookieChanged', callback)` also returns an unsubscribe function, but does not itself enable polling. Use the typed helper for polling-backed observation. These events are not an audit log.
-
-## Platform support
-
-| Method | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| `create` | partial | — | — |
-| `list`, `remove` | ✓ | — | — |
-| `setProxy` | ✓ (14+) | — | — |
-| `getProxy`, `capabilities` | ✓ | — | — |
-| `cookies.get`, `cookies.set`, `cookies.remove`, `cookies.onChanged` | ✓ | — | — |
-
-`create` supports private profiles on macOS; `persistent: true` requires macOS 14+.
+All methods are macOS only. Private profiles work on any supported macOS; `persistent: true` and `setProxy` need macOS 14+.
 
 ## Example
 
+Cookies only exist once a view has loaded a site in the profile. Open a view in the session with the `session` option, then work with its cookies:
+
 ```ts
 await host.sessions.create({ id: 'preview', persistent: false });
+await host.view.create({
+  id: 'preview-view', session: 'preview', url: 'https://example.com/',
+  bounds: { x: 0, y: 0, width: 800, height: 600 },
+});
 const off = host.sessions.cookies.onChanged(({ session, cookie, removed }) => {
   if (session === 'preview') console.log(cookie.name, removed);
 });
@@ -206,6 +200,7 @@ try {
   });
 } finally {
   off();
+  await host.view.destroy('preview-view');
   await host.sessions.remove('preview');
 }
 ```

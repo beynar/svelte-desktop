@@ -19,8 +19,18 @@ Whether the model can run now. Resolves `AIAvailability`: `{ available: boolean,
 | `deviceNotEligible` | The Mac can't run the model. |
 | `modelNotReady` | The model is still downloading. |
 | `unsupported` | No on-device model on this system: before macOS 26, Linux, Windows. |
+| `unavailable` | The model isn't usable for another reason. |
 
 Check it before offering a feature that needs the model, and again later for `modelNotReady`.
+
+Guard calls with it and fall back when the model isn't there:
+
+```ts
+const { available, reason } = await host.ai.availability();
+const summary = available
+  ? await host.ai.respond(`Summarize in one sentence: ${text}`)
+  : text.slice(0, 140); // fallback; `reason` says why
+```
 
 ### `respond(prompt, options?)`
 
@@ -62,6 +72,12 @@ for await (const piece of host.ai.stream('Write a haiku about autumn')) text += 
 
 An `AsyncIterable<Partial<T>>`: each fuller version of the object as the model writes it, the last one complete. It takes the same options as `generate`, plus `signal`.
 
+```ts
+for await (const partial of host.ai.streamObject<{ title: string }>(`Name this: ${text}`, { schema })) {
+  console.log(partial.title);
+}
+```
+
 ### `session(options?)`
 
 A conversation: each call sees the turns before it. Resolves an `AISession`, which has `id`, `respond`, `generate`, `stream`, `streamObject` and `close()`. Its `instructions` are set once, here. Close it when done.
@@ -90,7 +106,7 @@ The model is small, about 3 billion parameters. It does well at summarizing, ext
 
 ## Threads and events
 
-The model runs in system processes, outside the app. The shell's handlers wait for it on the main actor without blocking the UI thread. Streamed pieces travel as `ai.stream` events, which every page of the app receives and filters by stream id. The service name `ai` is the shell's: an app plugin can't register `ai.*` commands.
+The model runs in system processes outside the app, so calls never block the UI thread. Streamed pieces travel as `ai.stream` events, which every page of the app receives and filters by stream id.
 
 ## Platform support
 

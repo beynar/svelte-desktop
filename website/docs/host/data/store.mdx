@@ -12,11 +12,13 @@ How-to: [Dialogs, clipboard and services](/ui/platform-services#key-value-store)
 | Property | Type | Description |
 | --- | --- | --- |
 | `data` | `Record<string, unknown>` | This context's in-memory record. Updated by `set`, `delete`, `clear` and `load`. |
-| `path` | `string \| null` | `null` until loaded, then the filename `svelte-desktop-store.json`, not an absolute path. |
+| `path` | `string \| null` | `null` until loaded, then the filename `svelte-desktop-store.json`. Only a "loaded" marker: it is not a usable path. |
 | `ready` | `boolean` | `true` after successful initialization. |
 | `error` | `Error \| null` | Initialization failure, or `null`. Later `load` and `flush` failures reject their promises. |
 
-The file is in the directory returned by [`host.app.getPath('appData')`](/host/app/app). This is the OS app-data root, not the app-specific `host.paths.data` directory. In-memory records are local to each context: writes do not automatically refresh another window's record. Use [`host.broadcast`](/host/data/events) and `load()` when coordinating changes.
+The file is in your app's own data directory, [`host.app.getPath('userData')`](/host/app/app), so other apps don't see it. In-memory records are local to each context: writes do not automatically refresh another window's record. Each write replaces the whole file with that context's record, so a window that has not called `load()` since another window's `set()` overwrites that key. Call `load()` before `set()` when several windows write, or use [`host.broadcast`](/host/data/events) to coordinate.
+
+Writes made before the store has loaded are lost: `load()` replaces `data`, and nothing is persisted until a load has succeeded. `get()` returns `undefined` until then. In a page, wait for `host.store.ready` first. In server code, which has no awaitable `ready`, call `await host.store.load()` before the first read or write.
 
 ## Methods
 

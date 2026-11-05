@@ -3,11 +3,11 @@ title: Server code
 description: Server-only host members and the explicit desktop API for hooks, endpoints and remote functions.
 ---
 
-App server code can use the usual `host` services plus the members below. Use them in hooks, server loads, endpoints and remote functions. App modules may evaluate before the shell is ready; register startup work with `host.ready` or `onDesktopReady`.
+App server code can use the usual `host` services plus the members below. Use them in hooks, server loads, endpoints and remote functions. App modules may evaluate before the shell is ready (and `vite build` evaluates them with no shell at all), so register startup work with `host.ready` or `onDesktopReady`; reading `host.paths` at module scope throws.
 
 In server code, `host.available` reads `isDesktop()`: it becomes `true` when the desktop API is installed.
 
-How-to: [Persistent services](/native/services), [background jobs](/native/jobs) and [native code](/native).
+How-to: [Persistent services](/native/services), [`host.services`](/host/data/services), [background jobs](/native/jobs) and [native code](/native).
 
 ## Server-only host members
 
@@ -22,7 +22,7 @@ Server only. A synchronous, lazy property with type `{ data: string; cache: stri
 | `home` | User's home directory. |
 | `logs` | Per-user app log directory. File logging creates it when needed. |
 
-The runtime creates `data` and `cache` at startup. It does not create every returned directory unconditionally.
+The runtime creates `data` and `cache` at startup; `logs` is created when file logging starts.
 
 | OS | `data` | `cache` | `logs` |
 | --- | --- | --- | --- |
@@ -99,7 +99,7 @@ const codex = await host.which('codex');
 if (codex) Bun.spawn([codex, 'app-server'], { env, stdin: 'pipe', stdout: 'pipe' });
 ```
 
-On macOS and Linux, it runs `$SHELL` as an interactive login shell (`-i -l -c`, as a terminal opens it) with `TERM=dumb` and no input, and reads `env -0` between markers, so whatever the rc files print is ignored. It takes about 100 ms. On Windows, GUI apps get the user's environment from the registry, so it resolves the app's own. If the shell fails or times out, it resolves the app's own environment.
+On macOS and Linux, it runs `$SHELL` as an interactive login shell, as a terminal opens it, and ignores whatever the rc files print. On Windows, GUI apps get the user's environment from the registry, so it resolves the app's own. If the shell fails or times out, it resolves the app's own environment.
 
 ### `which(command, options?)`
 
@@ -125,63 +125,40 @@ In packaged macOS apps these hooks run in the final `willQuit` phase. For a deci
 
 Server only. Alias of `onDesktopReady`. Accepts `(desktop: DesktopApi) => void` and returns `void`. Runs immediately if the desktop API is installed; otherwise queues the callback for installation. It never runs outside the shell. Returned promises are not awaited: handle asynchronous startup failures within the callback.
 
+### `mcp`
+
+Server only. Your app as an MCP server (`src/mcp.ts`) in an agent's client: status, install and uninstall. See [MCP](/features/mcp).
+
 ### `jobs.start()`, `jobs.wait()`
 
 Server only. Start finite child-process tasks and await their terminal records. Their arguments, return types, events and page-facing methods are documented at [`host.jobs`](/host/data/jobs).
 
-### `services.start(name, args?, options?)`
+### `services`
 
-Server only. Starts `src/services/<name>.ts` or `.js` as a persistent Bun child. Resolves `ServiceHandle` after the service initializes. Each call creates a separate child.
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `name` | `string` | Required | Source name without extension; letters, numbers, underscores and hyphens only. |
-| `args` | `unknown` | `null` | JSON-serializable startup data. |
-| `options` | `ServiceOptions` | `{}` | Bounds, timeout and restart policy below. |
-
-| `ServiceOptions` field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `capacity` | `number` | `64` | Positive safe integer; bounds unacknowledged messages and pending requests. |
-| `maxMessageBytes` | `number` | `1048576` | Positive safe integer; maximum JSON message/envelope size. |
-| `startupTimeoutMs` | `number` | `10000` | Finite positive startup timeout in milliseconds. |
-| `restart` | `{ maxRestarts: number; delayMs?: number }` | Omitted | Unexpected-exit restart policy. |
-| `restart.maxRestarts` | `number` | `0` | Nonnegative safe integer; restart limit over the handle's lifetime. |
-| `restart.delayMs` | `number` | `100` | Finite nonnegative delay before restarting. |
-
-Invalid arguments, absent sources, startup failure and timeout reject with ordinary errors. Pending messages reject on exit and are never replayed. App shutdown stops services and disables restarts.
-
-#### `ServiceHandle`
-
-| Member | Type / result | Description |
-| --- | --- | --- |
-| `name` | `readonly string` | Service name. |
-| `pid` | `readonly number \| undefined` | Current child pid, absent between processes. |
-| `state` | `'running' \| 'restarting' \| 'stopped'` (readonly) | Current lifecycle state. |
-| `send(data)` | `Promise<void>` | `data: unknown`; resolves when the child consumes the JSON message. |
-| `request<T = unknown>(data, options?)` | `Promise<T>` | `data: unknown`; options are `{ timeoutMs?: number }`, default `{}`. Timeout defaults to `30000` ms and must be finite and positive. Timing out does not cancel child work. |
-| `on('message', fn)` | `() => void` | `fn(data: unknown)`; unsolicited child messages. |
-| `on('exit', fn)` | `() => void` | `fn(exit: ServiceExit)`; `exit` has `code: number`, `signal: string \| number \| null`, `restarting: boolean`. |
-| `stop()` | `Promise<void>` | Disables restarts, requests abort/cleanup and force-kills after 500 ms. Repeated calls share completion. |
-
-Sends and requests reject for full queues, oversized or nonserializable data, exit, or a non-running service. See [Persistent services](/native/services) for the child-side `ServicePort` and lifetime model.
+Server only. `services.start()` runs `src/services/<name>.ts` as a persistent Bun child and resolves a `ServiceHandle` with `send`, `request`, `on` and `stop`. Options, handle members and errors are in [`host.services`](/host/data/services).
 
 ### `diagnostics.collect(options?)`
 
-Server only. Resolves a `string` path to a local `.tar.gz` support archive in `host.paths.cache/support/`. Nothing is uploaded automatically.
-
-| `CollectOptions` field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `logs` | `boolean` | `true` | Include `app.log` and rotations when present. |
-| `crashes` | `boolean` | `true` | Include previous-run state and up to 20 recent OS reports. |
-| `metadata` | `boolean` | `true` | Include app, OS, architecture and Bun version information. |
-
-Omitted options default to `{}`. Missing or unreadable source files are recorded in the archive's manifest; metadata lookup and archive-write failures reject. Text masking is best effort; review archives before sharing. Linux has no automatic OS crash-report discovery. See [local support bundles](/native/services#local-support-bundles) and the other [`host.diagnostics` methods](/host/app/diagnostics).
+Server only. Resolves the path of a local `.tar.gz` support archive. Options and contents are in [`host.diagnostics`](/host/app/diagnostics#collectoptions).
 
 Server-owned operations on otherwise shared services have their own references: [protocol handlers](/host/web/protocol), [navigation policy](/host/web/web-content) and [web permission/authentication policy](/host/web/web-policy).
 
 ## The explicit desktop object
 
 `@svelte-desktop/shell/server` exports `desktop`, `isDesktop`, `onDesktopReady`, `sidecar`, `loadAddon`, `jobs`, `services` and `diagnostics`. The last six are the explicit counterparts of the host APIs above (`onDesktopReady` is `host.ready`).
+
+`desktop.window`, `desktop.dialog` and `desktop.menu` are older, shorter wrappers. Prefer the `host.*` members: they return results and errors, which these wrappers swallow.
+
+| `desktop` | Use instead |
+| --- | --- |
+| `desktop.window.*` (primary window: `setTitle`, `setSize`, `show`, `hide`, `focus`, `close`, `eval`) | [`host.windows`](/host/windows/windows) |
+| `desktop.dialog.open`, `save`, `message` | [`host.dialog`](/host/windows/dialog) |
+| `desktop.menu.set(spec)` | [`host.menu`](/host/input/menu) |
+| `desktop.openExternal(url)` (`http:`, `https:` and `mailto:` only) | [`host.shell`](/host/os/shell) |
+| `desktop.quit()`, `desktop.onBeforeQuit(fn)`, `desktop.crashInfo()` | [`host.app.quit()`](/host/app/app), `host.onBeforeQuit`, `host.crashInfo` |
+| `desktop.paths`, `desktop.appName`, `desktop.origin` | `host.paths`; the app name and server origin have no `host` equivalent |
+
+What only the `desktop` object offers is below.
 
 ### `isDesktop()` and `onDesktopReady(fn)`
 
@@ -195,79 +172,9 @@ onDesktopReady((desktop) => {
 });
 ```
 
-### Properties
-
-| Property | Type | Description |
-| --- | --- | --- |
-| `appName` | `readonly string` | Configured app name. |
-| `origin` | `readonly string` | App server origin. |
-| `paths` | `readonly DesktopApi['paths']` | Same directory record as `host.paths`. |
-
-### Main window
-
-These methods target the primary window (`windowId: 0`). All return `void` and dispatch without awaiting results. The wrapper swallows native failures; use [`host.windows`](/host/windows/window) when the caller needs the operation's result or error.
-
-| Method | Parameters | Description |
-| --- | --- | --- |
-| `desktop.window.setTitle(title)` | `title: string` | Change the title. |
-| `desktop.window.setSize(width, height)` | `width: number`, `height: number` | Resize the window. |
-| `desktop.window.show()` | None | Show the window. |
-| `desktop.window.hide()` | None | Hide the window. |
-| `desktop.window.focus()` | None | Focus the window. |
-| `desktop.window.close()` | None | Close the window. |
-| `desktop.window.eval(js)` | `js: string` | Execute page JavaScript without returning its value. Use messaging for a reply. |
-
-### Dialogs
-
-These shorter wrappers call the native [dialog service](/host/windows/dialog).
-
-| Method | Options type | Resolves |
-| --- | --- | --- |
-| `desktop.dialog.open(opts?)` | `OpenDialogOptions`, default `{}` | `string[] \| null`; `null` on cancellation. |
-| `desktop.dialog.save(opts?)` | `SaveDialogOptions`, default `{}` | `string \| null`; `null` on cancellation. |
-| `desktop.dialog.message(opts)` | `MessageOptions`, required | `number`; selected button index. |
-
-| `OpenDialogOptions` field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `title` | `string` | Native default | Dialog title. |
-| `multiple` | `boolean` | `false` | Select multiple entries. |
-| `directories` | `boolean` | `false` | Allow directories. |
-| `files` | `boolean` | `true` | Allow files. |
-| `extensions` | `string[]` | No filter | Converted to a native filter named `Files`. |
-| `defaultPath` | `string` | Native default | Initial path. |
-
-| `SaveDialogOptions` field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `title` | `string` | Omitted | Declared in the type, but this wrapper does not forward it. |
-| `defaultName` | `string` | Native default | Forwarded as `suggestedName`. |
-| `extensions` | `string[]` | No filter | Converted to a native filter named `Files`. |
-| `defaultPath` | `string` | Native default | Initial path. |
-
-| `MessageOptions` field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `message` | `string` | Required | Main message. |
-| `detail` | `string` | Omitted | Additional text. |
-| `style` | `'info' \| 'warning' \| 'critical'` | `'info'` | Forwarded as native `type`. |
-| `buttons` | `string[]` | Native default | Button labels; the native default is `['OK']`. |
-
-### `desktop.menu.set(spec)`
-
-Takes `MenuItemSpec[]` and returns `void`. Each top-level item supplies a menu `label` and `submenu`; nested items are actions or `{ type: 'separator' }`. Native failures are logged, not returned. See [Menus](/host/input/menu).
-
-| Action/menu field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `label` | `string` | Required | Display text. |
-| `id` | `string` | Omitted | Action id delivered to the `menu` listener. |
-| `role` | `MenuItemSpec` role union | Omitted | Native role, listed below. |
-| `accelerator` | `string` | Omitted | Keyboard shortcut. |
-| `enabled` | `boolean` | `true` | `false` becomes native `disabled: true`. |
-| `submenu` | `MenuItemSpec[]` | Omitted | Child items. |
-
-Roles are `undo`, `redo`, `cut`, `copy`, `paste`, `selectAll`, `minimize`, `zoom`, `close`, `hide`, `hideOthers`, `unhide`, `about`, `toggleFullScreen`, `front`, `quit` and `reload`. The wrapper maps `toggleFullScreen` to the platform spelling `toggleFullscreen`. Native role behavior varies by OS.
-
 ### `desktop.on(type, fn)`
 
-Subscribes to a legacy `ShellEvent` type and returns `() => void`. The callback receives the complete event, including `type`. For platform event names such as `appearanceChanged`, use [`host.on`](/host/data/events).
+Subscribes to a `ShellEvent` type and returns `() => void`. The callback receives the complete event, including `type`. For platform event names such as `appearanceChanged`, use [`host.on`](/host/data/events).
 
 | Type | Other event fields |
 | --- | --- |
@@ -276,8 +183,6 @@ Subscribes to a legacy `ShellEvent` type and returns `() => void`. The callback 
 | `signal` | `signal: 'SIGINT' \| 'SIGTERM' \| 'SIGHUP'`. |
 | `menu` | `id: string`; native `menuAction` is also adapted to this event. |
 | `quit-requested`, `wake` | None. |
-
-The `ShellEvent` union also declares transport envelopes `dialog`, `platform` and `platformResult`. They are not forwarded to page `native:*` listeners; use the corresponding dialog/platform APIs rather than their transport fields.
 
 ### Messages to pages
 
@@ -296,15 +201,6 @@ const off = onDesktopEvent('menu', (id) => {
 
 For messages that also need server listeners or sender identity, use [`host.broadcast` and `host.onBroadcast`](/host/data/events).
 
-### Other desktop methods
-
-| Method | Parameters / result | Description |
-| --- | --- | --- |
-| `openExternal(url)` | `url: string`; `Promise<void>` | Validates with `URL` and permits only `http:`, `https:` or `mailto:`. Invalid URLs and refused schemes reject; native failures also reject. |
-| `quit()` | `void` | Requests shell shutdown. Use the app lifecycle reference for [quit coordination](/host/app/app). |
-| `onBeforeQuit(fn)` | `fn: () => void \| Promise<void>`; `void` | Same server cleanup registration as `host.onBeforeQuit`. |
-| `crashInfo()` | `CrashInfo` | Same synchronous previous-run snapshot as `host.crashInfo`. |
-
 ## Platform support
 
 These server helpers use Bun or wrap registered native operations. Native event and menu-role availability follows the owning reference.
@@ -320,10 +216,6 @@ These server helpers use Bun or wrap registered native operations. Native event 
 | `host.jobs.start`, `host.jobs.wait` | ✓ | ✓ | ✓ |
 | `host.services.start` and `ServiceHandle` methods | ✓ | ✓ | ✓ |
 | `host.diagnostics.collect` | ✓ | partial | ✓ |
-| `desktop.window.setTitle`, `setSize`, `show`, `hide`, `focus`, `close`, `eval` | ✓ | ✓ | ✓ |
-| `desktop.dialog.open`, `save`, `message` | ✓ | ✓ | ✓ |
-| `desktop.menu.set` | ✓ | ✓ | ✓ |
 | `desktop.on`, `desktop.publish`, `onDesktopEvent` | ✓ | ✓ | ✓ |
-| `desktop.openExternal`, `desktop.quit` | ✓ | ✓ | ✓ |
 
 Linux's partial entries mean no automatic OS crash-report discovery. Addons and sidecars must be built for the target OS. Startup and cleanup callbacks execute in the server; `onDesktopEvent` executes in pages.

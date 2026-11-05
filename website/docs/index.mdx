@@ -13,6 +13,7 @@ import { desktop } from '@svelte-desktop/shell/vite';
 import { defineConfig } from 'vite';
 
 // SvelteKit's own plugin, wired with the desktop adapter and dev mode.
+// `remoteFunctions` is SvelteKit's option for `.remote.ts` files.
 export default defineConfig({ plugins: [desktop({ experimental: { remoteFunctions: true } })] });
 ```
 
@@ -29,8 +30,10 @@ export default defineConfig({
 ```sh
 bunx --bun vite dev     # the real native window on the Vite server: HMR, Web Inspector, native APIs live
 bunx --bun vite build   # macOS: .desktop/dist/<App>.app + .zip + .dmg (+ release/ for the auto-updater)
-bun test                # drive the real window from tests
+bun run test:desktop    # drive the real window from tests (against a build; `bun run test` in a `create` project)
 ```
+
+New here? Start with the [quick start](/quickstart).
 
 ## Why
 
@@ -42,7 +45,7 @@ bun test                # drive the real window from tests
 
 ## Compared
 
-Hello-world app on macOS 26.5 (M4 Pro), all processes counted. Numbers from the repository's benchmark.
+Hello-world app on macOS 26.5 (M4 Pro), all processes counted. Numbers from the [repository's benchmark](https://github.com/beynar/svelte-desktop/tree/main/packages/shell/bench): `bun bench.ts` in `packages/shell/bench`, results in `RESULTS.md`.
 
 | | Bundle | Zip | Ready | Memory |
 | --- | --- | --- | --- | --- |

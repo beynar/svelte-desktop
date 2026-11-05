@@ -42,12 +42,8 @@ bunx svelte-desktop icon art/logo.png --background '#0b1020'
 bunx svelte-desktop icon art/logo.png --out icons/
 ```
 
-The command generates the icons now, into `.desktop/icons` (what the build uses) or `--out`, and prints each target's files. Passing an image that isn't the configured one only previews it: set `icon` in the config to ship it.
-
-## Caching
-
-The build writes the icons to `.desktop/icons` and redoes them only when the image or the options change.
+The command generates the icons now, into `.desktop/icons` (what the build uses) or `--out`, and prints each target's files. Passing an image that isn't the configured one only previews it: set `icon` in the config to ship it. Generated icons are cached in `.desktop/icons` until the image or the options change.
 
 ## In development
 
-Under `vite dev` the app runs as `bun`, but the Dock shows the app's icon instead of Bun's. Edit the image and the icon is regenerated and updated in the Dock live, without restarting.
+On macOS, under `vite dev` the app runs as `bun`, but the Dock shows the app's icon instead of Bun's. Edit the image and the icon is regenerated and updated in the Dock live, without restarting.

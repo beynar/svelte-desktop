@@ -12,14 +12,10 @@ One API, `host.notifications`, on macOS, Linux, Windows and in a plain browser t
 ```ts
 await host.notifications.show({
   id: 'msg-42',                 // dedupe: the same id replaces, never duplicates
-  title: 'Alice', subtitle: '#general', body: 'Lunch?',
+  title: 'Alice', body: 'Lunch?',
   url: '/chat/42',              // a click opens it in the window that showed it
   data: { chat: 42 },           // handed back in events and lists
-  group: 'chat', image: '/avatars/alice.png', urgency: 'critical',
-  actions: [
-    { id: 'reply', title: 'Reply', input: { placeholder: 'Message' } },
-    { id: 'mute', title: 'Mute', foreground: false, destructive: true },
-  ],
+  actions: [{ id: 'reply', title: 'Reply', input: { placeholder: 'Message' } }],
 });
 
 host.notifications.on('click', (e) => { /* e.id, e.data, e.url; e.preventDefault() skips the navigation */ });
@@ -37,9 +33,9 @@ host.notifications.on('reply', (e) => send(e.data.chat, e.input));
 
 ## Behavior
 
-- **Dedupe.** An `id` replaces a local delivered or pending notification (`replace: false` keeps the existing one). `renotify: false` suppresses the replacement sound on Linux and the popup on Windows; macOS ignores it. Self-hosted pushes use the local notification path and share its ids. APNs uses `id` as a collapse key, but visible APNs notifications use the OS request identifier; replacing one with a local notification of the same application id is not guaranteed.
+- **Dedupe.** An `id` replaces a local delivered or pending notification (`replace: false` keeps the existing one). `renotify: false` suppresses the replacement sound on Linux and the popup on Windows; macOS ignores it. Self-hosted pushes share these ids; replacing an APNs notification with a local one of the same id is not guaranteed.
 - **Deep links.** `url` (or an action's `url`) navigates with the SvelteKit router; the app's own scheme goes through `host.deepLink`; http(s) opens in the browser.
-- **Cold start.** A click that launched the app is kept until the page starts, then navigates; recent responses wait for their first listener. Server code also receives responses (`host.notifications.on('response', fn)` in a `+server.ts` or hook), with the recent native response ring replayed at start.
+- **Cold start.** A click that launched the app is kept until the page starts, then navigates; recent responses wait for their first listener. Server code receives responses too, with `host.notifications.on('response', fn)`.
 - **Several windows.** Listeners and navigation run in one page: the window that showed it, else the focused one, which comes to the front.
 - **Foreground.** On macOS, banners show while the app is frontmost (config `notifications.foreground`, default `true`; per notification `foreground`). Linux and Windows do not implement foreground suppression.
 
@@ -105,7 +101,7 @@ await host.notifications.show({ title: 'Tea is ready', delay: 4 * 60_000 });
 
 ```ts
 const target = await host.push.register();
-await saveTarget(target); // send it to your server
+await saveTarget(target); // your own helper: send it to your server
 host.push.on('message', (m) => { /* a push received while the app runs */ });
 host.push.on('token', (t) => saveTarget(t)); // rotations
 ```
@@ -125,7 +121,8 @@ const push = createPush({
 });
 
 const results = await push.sendMany(targets, { id: 'msg-42', title: 'Alice', body: 'Lunch?', url: '/chat/42' });
-// results[i].expired: the target is gone (uninstalled, unsubscribed), delete it
+// a failed result with expired: true means the target is gone (uninstalled, unsubscribed): delete it
+const gone = results.filter((r) => !r.ok && r.expired);
 ```
 
 `push.send(target, notification)` sends one. `generateVapidKeys()` from the same module creates the Web Push keys. A notification also takes `subtitle`, `data`, `badge`, `sound`, `silent`, `group`, `image`, `ttl`, `priority` and `background` (data-only, delivered to `host.push.on('message')`). APNs images need a notification service extension; passing `image` alone only supplies the image for Web Push.
@@ -139,8 +136,10 @@ Run the server anywhere with Bun:
 ```ts push-server.ts
 import { servePush } from '@svelte-desktop/shell/push-server';
 
-servePush({ port: 47123, db: 'push.sqlite' }); // db defaults to ':memory:'
+servePush({ port: 47123, publicUrl: 'https://push.example.com', db: 'push.sqlite' }); // db defaults to ':memory:'
 ```
+
+`publicUrl` is the origin clients reach the server at. It builds the endpoints and the VAPID audience; without it they come from the request's origin, which is wrong behind a proxy that terminates TLS. `db` defaults to `:memory:`, where queued messages are lost on restart: use a file in production.
 
 Or deploy `packages/push-worker` from the repository on Cloudflare (`bunx wrangler deploy`): one Durable Object per device with hibernatable WebSockets.
 

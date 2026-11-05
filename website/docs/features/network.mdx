@@ -25,6 +25,6 @@ A proxy auto-configuration script (PAC, WPAD) can't be followed by Bun. The app 
 network: { systemCertificates: false, systemProxy: false },
 ```
 
-`systemCertificates: false` keeps only Bun's certificates, and `systemProxy: false` ignores the system's proxy. Variables set in the environment still apply.
+`systemCertificates: false` keeps only Bun's certificates, and `systemProxy: false` ignores the system's proxy. Variables set in the environment still apply. To check the proxy, read `process.env.HTTPS_PROXY` in server code.
 
 In `vite dev`, the same settings apply to the Vite process, which runs the app's server code there.

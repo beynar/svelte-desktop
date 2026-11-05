@@ -5,7 +5,7 @@ description: Persistent Bun children with bounded messaging, request/reply, opti
 
 A service keeps state, accepts commands and emits messages in a separate Bun process until stopped. Pick it for an indexer, language server or long-lived worker that you control. Use a [job](/native/jobs) for work that finishes with one result, or a [sidecar](/native/sidecars) for an existing executable with its own protocol.
 
-API reference: [server code](/host/data/server). For finite work and its page-facing state, see [`host.jobs`](/host/data/jobs).
+API reference: [`host.services`](/host/data/services). For finite work and its page-facing state, see [`host.jobs`](/host/data/jobs).
 
 ## Define and start a service
 
@@ -25,31 +25,43 @@ const counter: HostService<{ initial: number }> = ({ initial }, port) => {
 export default counter;
 ```
 
-Start it from server code (an endpoint, remote function or server hook):
+Start it once from a server module and reuse the handle in your endpoints. `host.ready` runs its callback only inside the desktop app, so under a browser-only `vite dev` the service never starts:
 
-```ts
-const counter = await host.services.start('counter', { initial: 0 }, {
-  restart: { maxRestarts: 3, delayMs: 250 },
+```ts src/lib/server/counter.ts
+let counter: Awaited<ReturnType<typeof host.services.start>> | undefined;
+
+host.ready(() => {
+  host.services
+    .start('counter', { initial: 0 }, { restart: { maxRestarts: 3, delayMs: 250 } })
+    .then((handle) => {
+      counter = handle;
+      handle.on('message', (data) => console.log(data));
+      handle.on('exit', ({ code, signal, restarting }) => console.log(code, signal, restarting));
+    })
+    .catch((err) => console.error('counter failed to start', err));
 });
-const off = counter.on('message', (data) => console.log(data));
-counter.on('exit', ({ code, signal, restarting }) => console.log(code, signal, restarting));
-try {
-  await counter.send({ inspect: true });
+
+export async function increment() {
+  if (!counter) throw new Error('Counter service is not running');
   const next = await counter.request<{ count: number }>('increment', { timeoutMs: 5000 });
-  console.log(next.count); // 1
-} finally {
-  off();
-  await counter.stop();
+  return next.count;
 }
 ```
 
-This example stops the child after use. For a persistent service, keep the handle in a server module and reuse it across requests. Every `start` creates a separate child; there is no automatic singleton per service name. `HostService` is a global type supplied by the app's generated host declarations. You can instead import `ServiceFunction` as a type from `@svelte-desktop/shell/server`.
+```ts src/routes/api/increment/+server.ts
+import { json } from '@sveltejs/kit';
+import { increment } from '$lib/server/counter';
+
+export async function POST() {
+  return json({ count: await increment() });
+}
+```
+
+`counter.send(data)` delivers a message to the child's `message` handler. The app stops running services when it quits; call `await counter.stop()` to stop one earlier. Every `start` creates a separate child; there is no automatic singleton per service name. `HostService` is a global type supplied by the app's generated host declarations. You can instead import `ServiceFunction` as a type from `@svelte-desktop/shell/server`.
 
 ## Threads and processes
 
-The service's default export and message handlers run in the child process, not on the UI thread or in the SvelteKit server. In a packaged app, the parent is the app's Bun Worker that hosts SvelteKit. In `vite dev`, the parent is the Vite server process. The parent and child use Bun IPC with JSON envelopes and acknowledgements. See [Threads and processes](/native/threads).
-
-The child has no page `host` global and does not share JavaScript memory with the server. Pages call your endpoint or remote function; the server validates the command and uses the service handle. Return replies through the endpoint, or forward unsolicited messages using server broadcast or WebSocket APIs. Other services and jobs do not share this port; route their messages through the server or use an application-owned protocol. Native UI operations also go through the server.
+A service runs in its own Bun child process with no `host` global; pages reach it through your endpoints or remote functions, with the server holding the handle. See [Threads and processes](/native/threads).
 
 A child crash does not terminate the parent app. Pending sends and requests reject on exit. Restarts are optional and start fresh child state; they do not replay work. On normal app quit, the server runs its `host.onBeforeQuit` hooks, then stops services and disables restarts. The child also runs its shutdown path when the IPC parent disconnects, including when a dev parent disappears. Forced termination cannot guarantee cleanup completes.
 
@@ -57,17 +69,11 @@ A child crash does not terminate the parent app. Pending sends and requests reje
 
 `start` resolves after the service's default export initializes. Its optional return value is a cleanup callback. `port.on('message', fn)` accepts async handlers and returns an unsubscribe function; one `port.onRequest(fn)` handles requests, with its return value sent back automatically. Registering another request handler replaces the previous one. Exceptions in a request handler reject that request. Exceptions in message handlers stop the child. `port.postMessage` emits an unsolicited message to the parent; await it when streaming.
 
-| Handle | Behavior |
-| --- | --- |
-| `name`, `pid`, `state` | Current process identity; state is `running`, `restarting` or `stopped`. |
-| `send(data)` | Resolves when the child has consumed the message. |
-| `request(data, { timeoutMs })` | Request/reply with internal IDs; rejects after 30 seconds by default. |
-| `on('message', fn)`, `on('exit', fn)` | Parent listeners; return unsubscribe functions. Exit events include `code`, `signal`, `restarting`. |
-| `stop()` | Disables restarts, aborts `port.signal`, runs cleanup, and force-kills after 500 ms if needed. Repeated calls are safe. |
+The handle's members (`send`, `request`, `on`, `stop`, `state`) and the `start` options (`capacity`, `maxMessageBytes`, `startupTimeoutMs`, `restart`) with their defaults are in the [`host.services` reference](/host/data/services).
 
-Messages use JSON values, without transferable ports or handles. Each direction allows one message in flight and at most 64 unacknowledged messages including queued ones; at most 64 requests can await replies. `start` options `capacity` and `maxMessageBytes` change these bounds. The default maximum JSON envelope is 1 MiB. Full queues and oversized/nonserializable messages reject; callers should await sends and handle failures. Child handlers run serially. A blocked handler can stall later commands: use request timeouts and stop the service if recovery requires it. A timeout stops waiting; it does not cancel work already sent. Request type parameters describe expected replies without validating them.
+Messages are JSON values, without transferable ports or handles. Full queues and oversized or nonserializable messages reject, so await sends and handle failures. Child handlers run serially: a blocked handler stalls later commands, so use request timeouts and stop the service if recovery requires it. A timeout stops waiting; it does not cancel work already sent. Request type parameters describe expected replies without validating them.
 
-Startup times out after 10 seconds (`startupTimeoutMs`). Restarts are off by default. With a restart policy, each unexpected exit, including exit code zero, can restart with the original arguments, up to `maxRestarts` over the handle's lifetime. Initialization failure ends supervision. State inside the child starts fresh. Pending messages and requests reject on exit and are never replayed; requests during a restart reject. The app owns any durable state or retry decisions. App quit stops and reaps all children, including children awaiting restart. Child stdout/stderr inherit the launching process's output.
+Restarts are off by default. With a restart policy, each unexpected exit, including exit code zero, can restart with the original arguments, up to `maxRestarts` over the handle's lifetime. Initialization failure ends supervision. State inside the child starts fresh. Pending messages and requests reject on exit and are never replayed; requests during a restart reject. The app owns any durable state or retry decisions. App quit stops and reaps all children, including children awaiting restart. Child stdout/stderr inherit the launching process's output.
 
 ## Development and packaging
 
@@ -77,23 +83,4 @@ In a packaged app, the adapter embeds each service and its IPC runner, then star
 
 Children inherit the parent's current environment and working directory. Service options configure messaging, startup timeout and restarts; they do not expose custom `env` or `cwd` options. Pass application-specific startup values as `args`.
 
-| Behavior | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| Separate Bun child and IPC | Supported | Supported | Supported |
-| Embedded runner in the packaged executable | Supported | Supported | Supported |
-| Optional restarts and quit cleanup | Supported | Supported | Supported |
-
-Libraries or executables used by a service must also support the target platform.
-
-## Local support bundles
-
-In server code:
-
-```ts
-const path = await host.diagnostics.collect({ logs: true, crashes: true, metadata: true });
-// Ask the user before sharing. Upload with your application's own transport,
-// or return the path to a page and reveal it:
-await host.shell.showItemInFolder(path);
-```
-
-All three switches default to `true`. Collection creates a private local `.tar.gz` file in `host.paths.cache/support/`; it does not upload it. The application owns review, retention, deletion and upload. Text masking is best effort, so review the archive before sharing. See [the server reference](/host/data/server) for collection options and failures.
+Services work on macOS, Linux and Windows. Libraries or executables a service uses must support the target platform too.

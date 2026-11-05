@@ -7,6 +7,8 @@ description: Store credentials in the OS credential store and confirm sensitive 
 
 How-to: [Secure storage](/ui/platform-services#secure-storage).
 
+By default any page can call these methods. If you store real secrets, limit them to server code with [`bridge.allow`](/host#restricting-pages).
+
 ## Methods
 
 ### `setPassword(service, account, password)`
@@ -33,10 +35,7 @@ Read one credential.
 const token = await host.secureStorage.getPassword('com.example.notes', 'api-token');
 ```
 
-| Parameter | Type | Description |
-| --- | --- | --- |
-| `service` | `string` | Nonempty service namespace. |
-| `account` | `string` | Entry key. |
+`service` and `account` are as in `setPassword`.
 
 Resolves `string | null`: `null` means no entry exists. Invalid keys reject with `invalid_args`. On macOS a stored value that is not UTF-8 rejects with `internal`.
 
@@ -48,10 +47,7 @@ Delete one credential; an absent entry is harmless.
 await host.secureStorage.deletePassword('com.example.notes', 'api-token');
 ```
 
-| Parameter | Type | Description |
-| --- | --- | --- |
-| `service` | `string` | Nonempty service namespace. |
-| `account` | `string` | Entry key. Required by the public TypeScript signature. |
+`service` and `account` are as in `setPassword`; both are required.
 
 Resolves `null`. Invalid keys reject with `invalid_args`.
 

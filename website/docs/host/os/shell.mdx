@@ -31,11 +31,7 @@ Open an existing file or directory in its default application.
 await host.shell.openPath('/Users/me/report.pdf');
 ```
 
-| Parameter | Type | Description |
-| --- | --- | --- |
-| `path` | `string` | Filesystem path. |
-
-Resolves `null`. A missing file rejects with `invalid_args`; a launch failure rejects with `internal`.
+Resolves `null`. Opening a file runs its default application, which can launch an executable, so don't pass paths you didn't choose or check. A missing file rejects with `invalid_args`; a launch failure rejects with `internal`.
 
 ### `showItemInFolder(path)`
 
@@ -44,10 +40,6 @@ Reveal an existing item in Finder or the platform file manager.
 ```ts
 await host.shell.showItemInFolder('/Users/me/report.pdf');
 ```
-
-| Parameter | Type | Description |
-| --- | --- | --- |
-| `path` | `string` | Filesystem path to select. |
 
 Resolves `null`. A missing item rejects with `invalid_args`. On Linux, if `org.freedesktop.FileManager1` is unavailable, opens the parent folder instead of selecting the item.
 
@@ -58,10 +50,6 @@ Move a file or directory to the OS trash.
 ```ts
 await host.shell.trashItem('/Users/me/old-draft.txt');
 ```
-
-| Parameter | Type | Description |
-| --- | --- | --- |
-| `path` | `string` | Item to move to the trash. |
 
 Resolves `null`. Missing paths reject with `invalid_args`. Trash failures use `invalid_args` on macOS and Linux, and `internal` on Windows.
 
@@ -92,7 +80,7 @@ const { service } = await host.shell.share({ text: 'Q3 report', files: [reportPa
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `windowId` | `number` | Optional target [window](/host/windows/window); otherwise the calling or default window. |
+| `windowId` | `number` | Optional target [window](/host/windows/windows); otherwise the calling or default window. |
 
 Resolves `{ service: string | null }`: the chosen service's title, or `null` when dismissed. This reports the choice, not completion of the service's work. Rejects with `invalid_args` for a missing window, a relative URL, missing files, or no content.
 
@@ -113,9 +101,16 @@ const { dropped } = await host.shell.startDrag({ files: [reportPath] });
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `windowId` | `number` | Optional target [window](/host/windows/window); otherwise the calling or default window. |
+| `windowId` | `number` | Optional target [window](/host/windows/windows); otherwise the calling or default window. |
 
 Call while the left mouse button is down: in `ondragstart` after `preventDefault()`, or in `onmousedown`. Resolves `{ dropped: boolean }` when the drag ends. Abandoning it resolves `false`. Rejects with `not_dragging` when the button is no longer down, or `invalid_args` for a missing window, missing files or an empty list.
+
+```svelte
+<div draggable="true" ondragstart={(event) => {
+  event.preventDefault();
+  host.shell.startDrag({ files: [reportPath] });
+}}>Report</div>
+```
 
 macOS only. The call can come from server code, but still requires a target page and the active mouse gesture.
 

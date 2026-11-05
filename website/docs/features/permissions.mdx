@@ -30,9 +30,7 @@ permissions: {
 
 ## Web APIs
 
-On macOS, the shell connects these page APIs to OS consent:
-
-Page code written for the browser asks the system the same way, the first time it's used:
+On macOS, page code written for the browser asks the system the first time it uses one of these APIs. On Windows and Linux see [Other platforms](#other-platforms).
 
 | API | Permission | |
 | --- | --- | --- |
@@ -87,7 +85,7 @@ Statuses refresh when the app comes back to the front, since the user may have t
 
 | Platform | Runtime behavior |
 | --- | --- |
-| macOS | The seven checks listed above; prompts for camera, microphone and notifications; guided Settings flow for the other four |
+| macOS | `status` for `camera`, `microphone`, `notifications` and the four Settings-only permissions; prompts for camera, microphone and notifications; guided Settings flow for the other four |
 | Windows | `status` and `request` read camera, microphone and location consent from the registry without prompting; other names return `granted`. Use `host.notifications.permission` for notification availability. `openSettings()` opens Windows privacy settings. |
 | Linux | No per-app consent prompts. Camera checks `/dev/video0`; screen recording requires X11; notifications check the notification backend (which can report `unavailable`). Other names return `granted`. |
 
@@ -99,48 +97,14 @@ The dev window runs from `bun`, not from your app's bundle: macOS asks on behalf
 
 ## Per-origin web policy (macOS)
 
-Install policy in **server code**, for example in a server initialization module
-using `host.ready`. Pages cannot install handlers or change decisions, even if
-`permissions.pages` / `bridge.allow` permits `webview.*`. That allowlist controls
-native bridge calls; it does not grant websites camera or location access.
+Other origins are denied by default. To let an external site use the camera or microphone, install a handler in **server code**; a page can't install one.
 
-```ts
+```ts src/hooks.server.ts
 host.ready(async () => {
-  await host.webview.setPermissionHandler(async ({ origin, frame, permission, viewId, windowId }) => {
-    if (origin === 'https://calls.example.com' && frame?.main && permission === 'microphone') return 'allow';
-    return 'deny';
-  }, { timeoutMs: 15000 });
+  await host.webview.setPermissionHandler(({ origin, permission }) =>
+    origin === 'https://calls.example.com' && permission === 'microphone' ? 'allow' : 'deny'
+  );
 });
 ```
 
-Permissions are `camera`, `microphone`, `location`, `speech`, `screenRecording`.
-`frame` contains `origin`, `url`, and `main`; speech's older WebKit SPI supplies
-no frame, so it is `null`. A camera-and-microphone request checks both permissions.
-Origin and frame checks run natively before the callback; opaque origins and
-mismatched frames are denied. Each request belongs to its originating view and
-challenge. Another page cannot answer it. Requests do not block the UI thread;
-exceptions, invalid answers, navigation away and timeouts deny. The timeout is
-15 seconds by default (configurable from 50 to 30000 ms).
-
-`allow` permits the request to proceed through the existing usage-description and
-OS consent checks. It cannot bypass TCC or missing required usage descriptions.
-`prompt` asks WebKit to prompt when the callback supports its three-way decision;
-older boolean SPI callbacks proceed to their normal OS permission flow. Screen
-capture still needs OS consent and the system picker. No handler means app-origin
-behavior is preserved and all other origins are denied. Pass `null` to remove it.
-
-Decisions persist **only when the app explicitly saves them**. Saved decisions take
-precedence over the handler, are scoped to the exact normalized origin and
-permission, and belong to the app across launches (and across its website profiles):
-
-```ts
-await host.webview.setPermissionDecision({ origin: 'https://calls.example.com', permission: 'microphone', decision: 'allow' });
-const decisions = await host.webview.listPermissionDecisions();
-await host.webview.revokePermissionDecision({ origin: 'https://calls.example.com', permission: 'microphone' });
-```
-
-Revocation changes future requests; it does not stop an already active capture.
-Camera/microphone use the public WKUIDelegate callback. Location, speech and display
-capture rely on existing private WebKit SPI: the engine invokes supported delegate
-selectors; their availability can vary with macOS/WebKit. This is not WebUSB, HID
-or serial support. These policy APIs return `unsupported` on Linux and Windows.
+Once installed, a handler answers for your app's own origin too, so allow what your own pages use. `allow` still goes through the usage descriptions and OS consent. Decisions you save with `setPermissionDecision` persist across launches and take precedence over the handler. Handler answers, timeouts, saved decisions and the frame checks are in the [web policy reference](/host/web/web-policy).

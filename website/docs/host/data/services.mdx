@@ -1,0 +1,58 @@
+---
+title: host.services
+description: Start persistent Bun child processes from server code and message them, with bounded queues and optional restarts.
+---
+
+`host.services` runs the files in `src/services/` as persistent Bun children. A service keeps state, accepts commands and emits messages until you stop it. Server only; for finite work with one result, use [jobs](/host/data/jobs).
+
+How-to: [Persistent services](/native/services), including the child-side `ServicePort` and a full example.
+
+## Methods
+
+### `start(name, args?, options?)`
+
+Starts `src/services/<name>.ts` or `.js` as a Bun child. Resolves a `ServiceHandle` after the service initializes. Each call creates a separate child; there is no singleton per name.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | Required | Source name without extension; letters, numbers, underscores and hyphens only. Bundled at build time in a packaged app. |
+| `args` | `unknown` | `null` | JSON-serializable startup data. |
+| `options` | `ServiceOptions` | `{}` | Bounds, timeout and restart policy below. |
+
+| `ServiceOptions` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `capacity` | `number` | `64` | Positive safe integer; bounds unacknowledged messages and pending requests. |
+| `maxMessageBytes` | `number` | `1048576` | Positive safe integer; maximum JSON message size. |
+| `startupTimeoutMs` | `number` | `10000` | Finite positive startup timeout in milliseconds. |
+| `restart` | `{ maxRestarts: number; delayMs?: number }` | Omitted | Restart policy for unexpected exits. |
+| `restart.maxRestarts` | `number` | `0` | Nonnegative safe integer; restart limit over the handle's lifetime. |
+| `restart.delayMs` | `number` | `100` | Finite nonnegative delay before restarting. |
+
+```ts
+const indexer = await host.services.start('indexer', { root }, { restart: { maxRestarts: 3 } });
+```
+
+Invalid arguments, a missing source, startup failure and timeout reject with ordinary errors, not `NativeApiError` codes. Pending messages reject on exit and are never replayed. App shutdown stops every service and disables restarts.
+
+## `ServiceHandle`
+
+| Member | Type / result | Description |
+| --- | --- | --- |
+| `name` | `readonly string` | Service name. |
+| `pid` | `readonly number \| undefined` | Current child pid; absent between processes. |
+| `state` | `'running' \| 'restarting' \| 'stopped'` (readonly) | Current lifecycle state. |
+| `send(data)` | `Promise<void>` | `data: unknown`. Resolves when the child consumes the JSON message. |
+| `request<T = unknown>(data, options?)` | `Promise<T>` | `data: unknown`; `options` is `{ timeoutMs?: number }`. The timeout defaults to `30000` ms and must be finite and positive. Timing out does not cancel the child's work. |
+| `on('message', fn)` | `() => void` | `fn(data: unknown)` receives unsolicited child messages. Returns an unsubscribe function. |
+| `on('exit', fn)` | `() => void` | `fn(exit: ServiceExit)`, where `exit` has `code: number`, `signal: string \| number \| null` and `restarting: boolean`. Returns an unsubscribe function. |
+| `stop()` | `Promise<void>` | Disables restarts, asks the child to abort and clean up, and force-kills it after 500 ms. Repeated calls share one completion. |
+
+`send` and `request` reject when the queue is full, the data is oversized or not serializable, the service exits, or its state isn't `running`.
+
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `start` and `ServiceHandle` methods | ✓ | ✓ | ✓ |
+
+Services are Bun processes with IPC, so they don't depend on native operations.

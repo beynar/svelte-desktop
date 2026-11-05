@@ -17,7 +17,7 @@ export default defineConfig({
 });
 ```
 
-macOS then shows the app in the user's language among these. That's the first of their preferred languages (System Settings › General › Language & Region) that the app has, or `language` when it has none of them. An app with no `locales` stays in `language` everywhere, as AppKit's own menus do.
+An app that only wants its menus translated still lists the language, with nothing to override: `es: {}`. The Simplified Chinese key is `zh-Hans`. macOS then shows the app in the user's language among these. That's the first of their preferred languages (System Settings › General › Language & Region) that the app has, or `language` when it has none of them. An app with no `locales` stays in `language` everywhere, as AppKit's own menus do.
 
 | What | Translated by |
 | --- | --- |

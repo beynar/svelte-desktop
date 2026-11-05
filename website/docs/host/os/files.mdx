@@ -23,7 +23,7 @@ const { bookmark } = await host.files.createBookmark('/Users/me/Documents/Report
 
 Resolves `{ bookmark: string }`, a base64-encoded bookmark suitable for persistent storage. Rejects with `invalid_args` for a non-absolute path, or `unavailable` if macOS cannot create the bookmark. Creating a bookmark cannot grant new sandbox access.
 
-macOS only.
+macOS only. These methods aren't available on Linux or Windows.
 
 ### `openBookmark(bookmark)`
 
@@ -73,7 +73,7 @@ Outside the sandbox, the same API creates and resolves ordinary bookmarks. No ex
 
 ## Example
 
-Save a selected folder in [`host.store`](/host/data/store), then refresh a stale bookmark before releasing access:
+The first time, ask the user for a folder and save its bookmark in [`host.store`](/host/data/store), refreshing it if it is stale. This runs in a page or in server code; the flush makes sure the bookmark is written to disk before the app quits.
 
 ```ts
 const selection = await host.dialog.showOpenDialog({
@@ -90,7 +90,26 @@ if (!selection.canceled && selection.bookmarks?.[0]) {
     }
     host.store.set('reports-folder', bookmark);
     await host.store.flush();
-    await host.shell.showItemInFolder(access.path);
+  } finally {
+    await access.release();
+  }
+}
+```
+
+On a later launch, open the saved bookmark and use the folder while the handle is open. This one runs in server code (for example a `+server.ts` endpoint or `src/hooks.server.ts`), because it reads the folder with `node:fs`:
+
+```ts
+import { readdir } from 'node:fs/promises';
+
+const saved = host.store.get<string>('reports-folder');
+if (saved) {
+  const access = await host.files.openBookmark(saved);
+  try {
+    if (access.stale) {
+      const { bookmark } = await host.files.createBookmark(access.path);
+      host.store.set('reports-folder', bookmark);
+    }
+    console.log(await readdir(access.path));
   } finally {
     await access.release();
   }

@@ -65,6 +65,8 @@ Installs one app-wide destination handler. The latest installation wins. Await i
 | --- | --- | --- |
 | `handler` | `(request: DownloadRequest) => DownloadDecision \| Promise<DownloadDecision>` | Chooses a destination before WebKit receives its destination URL. |
 
+Both `onRequested` and `onChanged` work from page or server code. Install them in server code (for example `hooks.server.ts`) so they survive page navigation: a page-side handler is gone after a navigation, and a request without a handler is cancelled after 30 seconds.
+
 ```ts
 const stopChoosing = await host.downloads.onRequested(() => 'default');
 // Later, when the owner is destroyed:
@@ -110,13 +112,7 @@ Restores a checkpoint and starts a new transfer. Resolves `DownloadRecord` when 
 | `id` | `string` | Required | Saved download id with `canResume: true`. |
 | `target` | `WebviewTarget` | `{}` | View in the original web session. |
 
-Every field of [`WebviewTarget`](/host/web/webview):
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `viewId` | `string` | Omitted | Embedded view; takes precedence over other target fields. |
-| `popoverId` | `string` | Omitted | Popover, if no `viewId` is given. |
-| `windowId` | `number` | Calling page, then primary window | Window, if no view or popover is selected. `0` selects the primary window. |
+`WebviewTarget` is described under [targets](/host/web/webview#targets).
 
 The target must be attached to a window. Resume in the original [session](/host/web/sessions); after relaunch, create or open that session's view and pass its target explicitly. A saved history entry does not restore its source view automatically.
 
@@ -136,7 +132,7 @@ Rejects with `invalid_args` for an unknown id, or `unavailable` if the download 
 
 WebKit resume bytes and request credentials stay native. `resumeData` is an opaque reference: resume with the record's `id`, not by decoding or passing that string.
 
-A hidden `.sd-dl-….resume-prefix` checkpoint beside the destination preserves the captured bytes. Completion removes the checkpoint. The first durable checkpoint is retained across later pauses, so progress can rewind to `resumeBytes` and download subsequent bytes again.
+A hidden `.sd-dl-….resume-prefix` checkpoint beside the destination preserves the captured bytes. Completion removes the checkpoint. The first checkpoint is kept across later pauses, so progress can rewind to `resumeBytes` and download those bytes again.
 
 Records and captured resume data survive relaunches. Previously active transfers are loaded as `interrupted`; the app does not restart them automatically. Recovery requires previously captured resume data, a known total length and the checkpoint file. History alone does not make a transfer resumable.
 
@@ -149,7 +145,6 @@ Subscribes to progress and state changes with `(download: DownloadRecord) => voi
 | Event | Payload | When |
 | --- | --- | --- |
 | `downloadChanged` | `DownloadRecord` | Progress or state changes; also delivered by `onChanged`. |
-| `downloadRequested` | `DownloadRequest` plus `handlerId: string` | A destination decision is needed. Use `onRequested` to answer it. |
 | `downloadStarted` | `DownloadRecord` | A destination is accepted and the transfer starts. |
 | `downloadProgress` | `DownloadRecord` | Received bytes increase. |
 | `downloadFinished` | `WebviewSource & { id: string; url: string; path?: string; bytes: number }` | The saved file passes completion checks. |
@@ -159,24 +154,28 @@ Subscribes to progress and state changes with `(download: DownloadRecord) => voi
 
 ## Platform support
 
-| Method | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| `onRequested`, `get`, `list` | ✓ | — | — |
-| `pause`, `resume`, `cancel`, `onChanged` | ✓ | — | — |
+All methods are macOS only.
 
 ## Example
 
 ```ts
-const stopChoosing = await host.downloads.onRequested(() => 'default');
+// Ask where to save: put every download in ~/Downloads/Exports.
+// An answer must arrive within 30 seconds, or the download is canceled.
+const downloads = await host.app.getPath('downloads');
+const stopChoosing = await host.downloads.onRequested(({ suggestedFilename }) => ({
+  path: `${downloads}/Exports/${suggestedFilename}`,
+}));
 const stopChanges = host.downloads.onChanged((record) => {
   console.log(record.id, record.state, record.fraction);
 });
 
+// download() resolves { id, url }; keep the id for the controls below.
 async function startExport() {
-  return await host.webview.download('/export.csv');
+  const { id } = await host.webview.download('/export.csv');
+  return id;
 }
 
-// Call from Pause and Resume controls, using the id returned by startExport.
+// Call from Pause and Resume controls, with the id returned by startExport.
 async function pauseExport(id: string) {
   return await host.downloads.pause(id);
 }

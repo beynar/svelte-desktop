@@ -69,7 +69,7 @@ export function GET({ url }: { url: URL }) {
 }
 ```
 
-A page can call `fetch('/api/add?a=2&b=3')` and read `{ result: 5 }`. It cannot call `host.loadAddon` itself. See the [server API reference](/host/data/server).
+Run `bun run dev` and open `/api/add?a=2&b=3` to get `{ "result": 5 }`; a page can `fetch` the same URL. A name that matches no addon throws `addon "x" is not bundled`. `host.loadAddon` is server-only: pages reach the addon through your endpoints. See the [server API reference](/host/data/server).
 
 ## Source compilation
 
@@ -77,14 +77,10 @@ Each top-level `native/addons/*.c`, `*.cc` or `*.cpp` file becomes a separate ad
 
 The build includes the vendored C Node-API headers from the shell package's `native/vendor/node-api/include/`. Include `node_api.h`; Bun provides the `napi_*` functions at load time. This is not a `node-gyp` build and does not install the C++ `node-addon-api` wrapper.
 
-| Build detail | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| Compiler | `clang` | `cc` for C; `c++` for C++ | LLVM-MinGW `clang`/`clang++` in Docker |
-| Link and optimization flags | `-bundle -undefined dynamic_lookup -O2` | `-shared -fPIC -O2` | `-shared -static -s -O2`; delay-loads `node.exe` through a hook to the running Bun executable |
-| Language flags | C++: `-std=c++17 -lc++` | C++: `-std=c++17` | C: `-std=c17`; C++: `-std=c++17`; defines `NODE_GYP_MODULE_NAME` |
-| Target | `-arch arm64` or `-arch x86_64`; both for `build.universal` | Matching Linux host architecture only | `build.targetArch`: `x64` or `arm64` |
-| Minimum OS flag | `-mmacosx-version-min`, from `build.minimumSystemVersion` (default `12.0`) | No equivalent flag | No equivalent flag |
-| Other sources | `.m` and `.mm` also compile, with `-fobjc-arc -fmodules` | Objective-C is skipped with a warning | Only `.c`, `.cc`, `.cpp` are scanned |
+- **macOS:** compiled with `clang`; `.m` and `.mm` files also compile. Both architectures are built for `build.universal`, and `build.minimumSystemVersion` (default `12.0`) sets the minimum OS.
+- **Linux:** compiled with the host's `cc` or `c++`, for the host architecture only. Objective-C files are skipped with a warning.
+- **Windows:** compiled in Docker with LLVM-MinGW, for `build.targetArch` (`x64` or `arm64`). Only `.c`, `.cc` and `.cpp` are scanned.
+- C++ is built as C++17 on every platform.
 
 Linux source addons are skipped with a warning when the build is not on a Linux host of the target architecture. Windows source addons are skipped with a warning when Docker is unavailable. Supply a matching prebuilt addon when source compilation is unavailable.
 
@@ -120,7 +116,7 @@ At Vite startup, source addons build into `.desktop/dev/addons/`; prebuilt entri
 
 Restart Vite after editing addon sources or replacing prebuilt files. Addon preparation runs at server startup. The native-file watcher can restart the window, but that does not rerun addon preparation or reload a library already loaded into the server process.
 
-Windows source compilation is a packaging path. Vite's addon preparation has no Windows-specific source compiler; its non-Linux branch uses macOS `clang` flags. For Windows dev, use prebuilt addons without discoverable addon source files.
+Windows source compilation only happens when packaging. For Windows development, use prebuilt addons.
 
 | Bundle detail | macOS | Linux | Windows |
 | --- | --- | --- | --- |

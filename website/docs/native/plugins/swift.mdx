@@ -3,13 +3,13 @@ title: Swift
 description: Call Apple APIs from main-actor Swift commands, with generated TypeScript and progress events.
 ---
 
-Swift plugins run inside the shell process on macOS. Use them for Apple frameworks and AppKit work that needs the main thread. For portable native code, use [Rust or Go](/native/plugins); for work that needs its own process, use a [sidecar](/native/sidecars) or [service](/native/services).
+Swift plugins run inside the shell process, on macOS only. Use them for Apple frameworks and AppKit work that needs the main thread. For portable native code, use [Rust or Go](/native/plugins); for work that needs its own process, use a [sidecar](/native/sidecars) or [service](/native/services). Keep Swift files under `native/macos/`: other platforms skip or fail on them (see [Platforms](/native/plugins/platforms)). Shared rules (names, errors, events, `bridge.allow`, dev restarts) are on [Plugins](/native/plugins).
 
-## Setup and an OS API call
+## Quick start
 
-Create `native/Commands.swift`. The build supplies `Desktop` alongside your sources; there is no SDK module to import. Define exactly one `desktopSetup()` across your Swift files and register commands there.
+Create `native/macos/Commands.swift`. The build supplies `Desktop` alongside your sources, so there is no SDK module to import. Define exactly one `desktopSetup()` across your Swift files and register commands there.
 
-```swift native/Commands.swift
+```swift native/macos/Commands.swift
 import AppKit
 
 struct FindAppArgs: Codable {
@@ -41,56 +41,59 @@ func desktopSetup() {
 }
 ```
 
-Call these commands from a page or SvelteKit server code:
+Call these from a page or SvelteKit server code:
 
 ```ts
 import { native } from '@svelte-desktop/shell/native';
 
 const app = await native.os.findApp({ bundleId: 'com.apple.TextEdit' });
 // { name: string; path: string } | null
-console.log(app?.path);
 
 const title = await native.os.windowTitle(); // string | null
 ```
 
-`host.native` exposes the same commands without an import. Calls cross the native bridge; they do not execute Swift inside the page or the Bun server Worker. Results return through the command promise. Swift sends unsolicited messages with `Desktop.emit`; pages and server code receive them with [`host.on`](/host/data/events).
+`host.native` is the same without an import. Swift sends events with `Desktop.emit`; pages and server code receive them with [`host.on`](/host/data/events).
 
-## Commands
+### Commands
 
-All three `Desktop.command` overloads accept an `@MainActor` closure that may be `async` and may `throw`. Synchronous, nonthrowing closures work too.
+All three `Desktop.command` overloads take an `@MainActor` closure that may be `async` and may `throw`:
 
 | Registration | Arguments and result |
 | --- | --- |
-| `Desktop.command("service.op") { (args: Args) in … }` | `Args` must be `Decodable`; the result must be `Encodable`. JSON decoding failures reject with `invalid_args`. |
-| `Desktop.command("service.op") { () -> Result in … }` | No arguments; the result must be `Encodable`. Incoming arguments are ignored. |
-| `Desktop.command("service.op") { (args: [String: Any]) -> Any? in … }` | Raw dictionary arguments and a JSON-compatible result. Generated TypeScript takes an optional `Record<string, unknown>` and returns `Promise<unknown>`. |
+| `Desktop.command("service.op") { (args: Args) in … }` | `Args` is `Decodable`, the result `Encodable`. Decoding failures reject with `invalid_args`. |
+| `Desktop.command("service.op") { () -> Result in … }` | No arguments (incoming ones are ignored); the result is `Encodable`. |
+| `Desktop.command("service.op") { (args: [String: Any]) -> Any? in … }` | Raw dictionary arguments and a JSON-compatible result. TypeScript gets `Record<string, unknown>` and `Promise<unknown>`. |
 
-Use `Codable` for both argument and result models to enable type discovery. An `Encodable`-only result is valid at runtime but becomes `unknown` in TypeScript. Return a JSON value, such as `Bool`, rather than `Void` from a typed command.
+Return a JSON value such as `Bool`, not `Void`, from a typed command. A name without `service.op` form fails a Swift precondition.
 
-For example, this registration can go inside `desktopSetup()` when a command needs arbitrary keys:
+## Type mapping
 
-```swift
-Desktop.command("os.echo") { (args: [String: Any]) -> Any? in
-  args
-}
-```
+During dev and macOS packaging, the build reads the commands in a subprocess and writes `src/native.d.ts`. Swift shapes are found by running `Decodable.init(from:)` against a recording decoder, so use `Codable` models for both arguments and results.
 
-```ts
-const echoed = await host.native.os.echo({ label: 'draft', count: 2 });
-// unknown: narrow or validate the result before using it.
-```
+| Swift model | Generated TypeScript |
+| --- | --- |
+| `String`, `URL`, `UUID` | `string` |
+| `Bool` | `boolean` |
+| Integer and floating-point types | `number` |
+| `Date` | `number`, with the default `JSONEncoder` date strategy |
+| A synthesized `Codable` struct | An inline object |
+| `let name: String?` property | `name?: string \| null` |
+| `String?` result | `string \| null` |
+| `[String]` | `string[]` |
+| `[String: Int]` | `Record<string, number>` |
+| A string-backed `Codable, CaseIterable` enum | A union of its raw values |
+| An `Encodable`-only result | `unknown` |
+| The raw dictionary overload | `Record<string, unknown>` arguments; `unknown` result |
 
-Command names must have the form `service.op`. A name without the separator fails a Swift precondition. If the shell or an earlier plugin already registered a name, registration is skipped and logged. Keep names unique across plugins.
+Custom decoding, validation that rejects placeholder values, recursive models (nesting stops at depth 12) and other enums can give `unknown` or incomplete shapes. Check `src/native.d.ts` for such models. A JavaScript `number` can't hold every 64-bit integer.
 
 ## Slow work without freezing the window
 
-Command bodies execute as main-actor tasks. Synchronous file I/O, CPU loops and sleeps in those bodies block AppKit. Adding `async` alone does not move that work to another thread. A `Task { … }` created inside the handler normally inherits its actor too.
+Command bodies run as main-actor tasks. File I/O, CPU loops and sleeps in them block AppKit, and `async` alone doesn't move them off the main thread; a `Task { … }` inside the handler inherits the actor too. Await APIs that suspend. Move blocking work into `Task.detached` with value data, and use `await MainActor.run` to touch AppKit again. See [threads and processes](/native/threads).
 
-Await asynchronous APIs for operations that can suspend. Move blocking I/O and computation into `Task.detached`, pass it value data, and use `await MainActor.run` when it needs to touch AppKit again. After awaiting the detached task's result, the command resumes on the main actor. See [threads and processes](/native/threads).
+This example hashes a file in chunks and broadcasts progress. Add it as a second file, then call `registerHashCommands()` from your `desktopSetup()`.
 
-This example hashes a file in chunks and broadcasts progress. Add the call `registerHashCommands()` inside the existing `desktopSetup()`, then add this second file:
-
-```swift native/Hash.swift
+```swift native/macos/Hash.swift
 import Foundation
 import CryptoKit
 
@@ -141,7 +144,7 @@ func registerHashCommands() {
 }
 ```
 
-The matching TypeScript subscribes before starting the command and removes the listener even if the read fails:
+Subscribe before starting the command, and remove the listener even if it fails:
 
 ```ts
 import { native } from '@svelte-desktop/shell/native';
@@ -168,25 +171,19 @@ if (!selection.canceled && selection.paths[0]) {
 }
 ```
 
-`jobId` separates concurrent requests because events are broadcast. Event payload types are supplied by the listener, not generated from Swift. Removing a listener does not cancel the task. The command API has no cancellation parameter; a detached task remains in the shell process and is lost when that process exits. Native crashes are not isolated from the app. Use a [background job](/native/jobs) or [sidecar](/native/sidecars) when the work needs that separation.
+`jobId` separates concurrent requests, because events are broadcast. Removing a listener doesn't cancel the task, and there is no cancellation parameter. Use a [background job](/native/jobs) or [sidecar](/native/sidecars) when work must survive a crash or be cancelled.
 
-## Events and logging
+## Events, logging and errors
 
-`Desktop.emit(_ event: String, _ data: Any? = nil)` broadcasts to app-origin pages and server listeners. It can be called from any thread; the host dispatches delivery to the main queue. The hash example explicitly hops to `MainActor`, which is also where any accompanying AppKit updates belong.
-
-Use JSON-compatible dictionaries, arrays and scalar values. A dictionary becomes the event payload directly. Other values, including arrays and `nil`, become `{ value: … }` (`nil` becomes `null`). This API uses Foundation JSON serialization, not `JSONEncoder`: passing an arbitrary `Codable` struct does not encode its fields. Non-JSON values fall back to their string description.
+`Desktop.emit(_ event: String, _ data: Any? = nil)` can be called from any thread; delivery is dispatched to the main queue. It uses Foundation JSON serialization, not `JSONEncoder`: pass dictionaries, arrays and scalars, not `Codable` structs. A dictionary is the payload; anything else, including `nil`, arrives as `{ value: … }`.
 
 ```swift
 Desktop.emit("sync.progress", ["completed": 3, "total": 10])
 Desktop.emit("sync.finished") // listener receives { value: null }
-Desktop.log("Sync finished")
+Desktop.log("Sync finished")    // NSLog, prefixed [native plugin]
 ```
 
-`Desktop.log(_ message: String)` writes through the host logger. On macOS it uses `NSLog` with the prefix `[native plugin]`.
-
-## Errors
-
-Throw a `DesktopError` with a message to reject the JavaScript promise. The bridge exposes the code through `NativeApiError.code`.
+Throw a `DesktopError` to reject the promise:
 
 | Swift error | JavaScript error code |
 | --- | --- |
@@ -195,96 +192,16 @@ Throw a `DesktopError` with a message to reject the JavaScript promise. The brid
 | `DesktopError.unavailable(message)` | `unavailable` |
 | `DesktopError.denied(message)` | `denied` |
 | `DesktopError.failed(message)` | `internal` |
-| Any other thrown `Error`, including result-encoding errors | `internal`, with `String(describing: error)` as its message |
+| Any other thrown `Error` | `internal`, with `String(describing: error)` as the message |
 
-Typed argument-decoding errors are converted to `DesktopError.invalidArgs`. Framework errors do not automatically become `denied` or `unavailable`; translate them explicitly if callers need those distinctions. Swift traps and precondition failures are not thrown errors.
+Framework errors don't become `denied` or `unavailable` on their own: translate them if callers need that. Swift traps and precondition failures aren't thrown errors.
 
-## Generated TypeScript
+## AppKit windows and permissions
 
-During dev startup and packaging, the build reads `sd_plugin_describe` in a separate Bun subprocess and writes the command signatures to `src/native.d.ts`. Keep this generated file in version control. It augments `NativeModules` in `@svelte-desktop/shell/native`; all command results are promises.
+`@MainActor Desktop.window(_ id: Int = 0) -> NSWindow?` returns a shell-owned window, or `nil`. `0` is the main window (the first remaining one); a positive value is that public window ID. It doesn't pick the caller's window, so pass a window ID in your arguments for multi-window commands. Fetch the window when you need it, especially after an `await`: it may have closed. For the web view, use the [webview Host API](/host/web/webview).
 
-Swift discovers shapes by running `Decodable.init(from:)` against a recording decoder with placeholder values. It does not parse declarations or generate a general Swift schema.
+A plugin is privileged native code: validate paths and sizes inside it. OS consent is separate from `bridge.allow`: declare protected capabilities under `permissions` in [`desktop.config.ts`](/reference/config) and request access through the Apple API or [`host.permissions`](/host/os/permissions).
 
-| Swift model | Generated TypeScript |
-| --- | --- |
-| `String`, `URL`, `UUID` | `string` |
-| `Bool` | `boolean` |
-| Integer and floating-point types | `number` |
-| `Date` | `number`, using the default `JSONEncoder` / `JSONDecoder` date strategy |
-| A normally synthesized `Codable` struct | An inline object using its decoded keys and field types |
-| An optional property, such as `let name: String?` | `name?: string \| null` |
-| An optional result, such as `String?` | `string \| null` |
-| An array, such as `[String]` | `string[]` |
-| A dictionary, such as `[String: Int]` | `Record<string, number>` |
-| A string-backed `Codable, CaseIterable` enum | A union of its raw string values |
-| An `Encodable` result that is not `Decodable` | `unknown` |
-| The raw command overload | Optional `Record<string, unknown>` arguments; `unknown` result |
+## Build
 
-For example:
-
-```swift
-enum IndexMode: String, Codable, CaseIterable {
-  case quick, full
-}
-
-struct IndexArgs: Codable {
-  let mode: IndexMode
-  let paths: [String]
-  let label: String?
-}
-```
-
-Used as command arguments, `IndexArgs` produces:
-
-```ts
-{ mode: "quick" | "full"; paths: string[]; label?: string | null }
-```
-
-Other enums do not have a guaranteed union mapping. Custom decoding, validation that rejects placeholders, recursive models and custom container handling can produce `unknown` or incomplete shapes. Discovery stops nesting beyond depth 12 and retains what it recorded. Custom encoding can also differ from the discovered decoding shape. Inspect `src/native.d.ts` for such models; plain `Codable` structs and `CaseIterable` string enums are the predictable path. JavaScript `number` also cannot preserve every 64-bit integer exactly.
-
-## AppKit, windows and permissions
-
-`@MainActor Desktop.window(_ id: Int = 0) -> NSWindow?` returns the shell-owned window, or `nil` when no window matches. `0` selects the main window (the first remaining shell window); a positive value selects that public window ID. It does not automatically select the caller's window. For multi-window commands, include a window ID in your argument model and pass it to `Desktop.window`.
-
-Access AppKit only on the main actor. Fetch the window when needed, especially after an `await`, because it may have closed while work was suspended. The shell owns its lifecycle; use the window for the required AppKit operation rather than replacing shell-managed delegates or content.
-
-The underlying C ABI exposes `sd_host.webview(window_id)` as a borrowed `WKWebView` pointer, also for main-thread use. The public Swift `Desktop` API has no `webview` or caller-window accessor. Use the [webview Host API](/host/web/webview) for supported operations, or the [Objective-C and C layer](/native/plugins/objective-c-and-c) when an extension needs the raw ABI. Do not assume the window's content view is the web view.
-
-Page calls to plugins pass the same app-origin, main-frame and `bridge.allow` checks as built-in operations. Rules accept names such as `os.findApp` or `files.*`; server code is not restricted by that page allowlist. A command remains privileged native code: validate paths, sizes and other application rules inside it.
-
-OS consent is separate from bridge access. Declare protected capabilities under `permissions` in [`desktop.config.ts`](/reference/config), then request access through the relevant Apple API or [`host.permissions`](/host/os/permissions) where supported. Swift does not bypass consent or automatically request it. The hash example still needs filesystem access to the selected file; the app-lookup example does not request a protected capability.
-
-## Build and development
-
-The default source directory is `native/` when it exists. Set `native: 'another/path'` to change it or `native: false` to disable plugins. Discovery is recursive. On macOS it includes `.swift`, `.m`, `.mm`, `.c`, `.cc` and `.cpp` files, including files under `native/macos/`. It excludes other platforms' folders, `addons/`, `sidecars/`, `target/`, `node_modules/`, hidden directories and Rust/Go project folders.
-
-All selected Swift files and the shipped `SvelteDesktop.swift` compile together as one `AppNative` module, linked with any selected C-family objects into one library. The Swift link command uses:
-
-```sh
-swiftc -emit-library -module-name AppNative -swift-version 5 -O \
-  -target <arch>-apple-macos<minimumSystemVersion> \
-  -import-objc-header <sdk>/svelte_desktop.h \
-  <swift-sources> <sdk>/SvelteDesktop.swift <objects> \
-  -framework Cocoa \
-  -Xlinker -install_name -Xlinker @rpath/libapp-native.dylib \
-  -o <output>
-```
-
-`build.minimumSystemVersion` defaults to macOS `12.0`. The compiler uses Swift 5 language mode; that flag is not a pinned minimum Swift compiler release. A Swift toolchain and Apple SDK must be installed. Framework modules imported by Swift autolink; `Cocoa` is also linked explicitly. The hash example's `import CryptoKit` needs no separate framework list. Each requested architecture is compiled separately, and universal builds combine the slices with `lipo`.
-
-In dev, the library lives at `.desktop/dev/native/libapp-native-<arch>.dylib`. Changes to existing files under the configured native directory trigger a shell restart: the old shell process is terminated, the plugin is rebuilt, types are regenerated, and a new shell process and window start. This resets native state and in-flight tasks; it is not an in-place plugin reload. The native watcher handles `change` events; adding or deleting a source is not wired to that restart handler. For added or removed sources, stop dev, remove the generated `.desktop/dev/native/` directory, then start dev again to avoid reusing a cached library. With `noWindow` or `SVELTE_DESKTOP_NO_WINDOW`, this shell-launch and watcher path is skipped.
-
-The build caches the library by source/SDK modification times and architecture set. Swift uses `-O` in dev as well as packaging. A dev compilation error is logged and startup can continue without the failed plugin; packaging throws on compilation failure. The packaged library is `Contents/Frameworks/libapp-native.dylib`.
-
-At runtime, `src/main.ts` creates the initial window and loads plugins on the UI thread **before** calling `shell_run()`. Initialization calls `desktopSetup()` synchronously, before the native run loop starts. Command bodies run later as main-actor tasks. Keep setup short and limited to registration: type discovery also calls it in a subprocess without a host, window or running app. Setup must not depend on those resources or perform application work.
-
-The SDK exports two public C entry points for this machinery: `sdPluginInit` as `sd_plugin_init`, which checks the host ABI and registers commands, and `sdPluginDescribe` as `sd_plugin_describe`, which returns the command descriptions and TypeScript shapes. They are supplied by the SDK; applications define `desktopSetup()` rather than calling or replacing them.
-
-## Platforms
-
-| | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| Swift plugin | Built and loaded in the shell process | Swift sources skipped with a notice | Swift sources cause the combined C-family plugin build to be skipped with a notice |
-| `Desktop.window` | `NSWindow?`, main actor | Unavailable | Unavailable |
-
-This integration is Apple-only even where a Swift compiler exists on another OS. Put Swift under `native/macos/` when sharing the folder with portable C/C++: Windows currently skips the entire combined plugin if its selected sources include Swift or Objective-C. A command that is not registered on the current platform rejects with `unknown`; generated declarations are not proof of runtime availability. See [platform-specific plugins](/native/plugins/platforms).
+All Swift files plus the shipped `SvelteDesktop.swift` compile together as one `AppNative` module (Swift 5 language mode), linked with any C-family objects into `libapp-native`. You need a Swift toolchain and the Apple SDK. Imported framework modules autolink. `desktopSetup()` runs on the UI thread before the run loop starts and also when the build reads the commands, with no window or app: keep it to registration. A command not registered on the current platform rejects with `unknown`.

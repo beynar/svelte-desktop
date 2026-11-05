@@ -1,0 +1,66 @@
+---
+title: Troubleshooting
+description: Symptoms, causes and fixes for logs, crashes, blank windows, builds and dev-versus-built differences.
+---
+
+Release-pipeline failures (CI, signing, notarization, the update feed) have their own table: [Release troubleshooting](/shipping/release#troubleshooting).
+
+## I can't find the logs
+
+Built apps started from Finder, a launcher or Explorer have no terminal, so output goes to `app.log` in `host.paths.logs`:
+
+| OS | Folder |
+| --- | --- |
+| macOS | `~/Library/Logs/<identifier>` |
+| Linux | `$XDG_STATE_HOME/<identifier>/logs` (default `~/.local/state`) |
+| Windows | `%LOCALAPPDATA%\<identifier>\Logs` |
+
+The file rotates at 5 MB and keeps one previous file, `app.log.1`. Uncaught errors from both threads are written there. `vite dev` and a build started from a terminal print to the terminal; set `SVELTE_DESKTOP_LOG=file` or `stdout` to force either. See [Architecture](/concepts/architecture#built-in).
+
+## The app crashed
+
+In server code, `host.crashInfo()` reports whether the previous run exited uncleanly and lists OS crash reports written since (macOS `.ips`/`.crash`, Windows `.dmp`). Linux has no report discovery. Dev always returns an empty result. See [`crashInfo()`](/host/data/server#crashinfo).
+
+## I need to inspect a page or server code
+
+Pages: the Web Inspector is on in `vite dev`. In a built app, set `debug: true` in the window config, then right-click and choose Inspect Element ([Windows](/ui/windows), [config](/reference/config)). Server code runs in the Vite process in dev, so its output is in your terminal; in a built app it is in `app.log`.
+
+## The window is blank
+
+- Open `app.log` first: a server that failed to start or a startup exception is written there.
+- On Windows, the WebView2 runtime must be installed; it is not bundled ([Limitations](/shipping/limitations#windows)).
+- If the web content process dies, the page reloads by default.
+- Opening the app's loopback URL in a normal browser returns 403: requests need the window's session cookie ([Architecture](/concepts/architecture#the-localhost-session)).
+
+## `vite dev` or `vite build` fails to start
+
+The desktop plugin runs on Bun. Start Vite through Bun: `bunx --bun vite dev` (or `bun run dev`), not plain `vite` or `node`.
+
+## `doctor` reports a failure
+
+[`bunx svelte-desktop doctor`](/reference/cli#doctor) checks Bun, the host toolchain, the config and, on macOS, the signing identities and notary profile. Fix the item it names. A failed check does not change the exit status, and warnings are fine for a first build.
+
+## A native plugin doesn't build
+
+Plugin toolchains differ per target ([Platforms](/native/plugins/platforms)). Objective-C and Swift are skipped on Linux; Rust and Go plugins are skipped when cross-building Windows from another OS; Windows cross-builds need a running Docker, without which native plugins and addons are skipped with a warning ([Distribution](/shipping/distribution#windows)). Only one Go module is allowed ([Go](/native/plugins/go)). Python commands don't work in universal macOS builds ([Python](/native/plugins/python)).
+
+## It works in `vite dev` but not built
+
+- Server code is not the same process: services are built as standalone modules, so SvelteKit aliases are not available in them ([Services](/native/services#development-and-packaging)).
+- A built app does not read `.env` or `bunfig.toml` at runtime ([Architecture](/concepts/architecture#built-in)).
+
+## It works built but not in `vite dev`
+
+The dev window runs from `bun`, not your app bundle. Features that need a bundle identifier are the usual cause; see below.
+
+## A feature returns `unavailable` in `vite dev`
+
+Notifications, location and speech recognition need a bundled app on macOS, and login items do nothing outside a packaged app. Test them in the build in `.desktop/dist`. See [Permissions](/features/permissions#in-vite-dev), [Capabilities](/host/app/capabilities) and [Errors](/host#errors).
+
+## Gatekeeper blocks a downloaded app
+
+Builds without a signing identity are ad-hoc signed: they run on your machine but Gatekeeper blocks them once downloaded. Sign and notarize ([Distribution](/shipping/distribution#macos)), or release from your Mac ([Releasing without CI](/shipping/release#releasing-from-your-mac-without-ci)).
+
+## Support bundles
+
+`host.diagnostics.collect()` packs logs, crash reports and metadata into a local archive. Nothing is uploaded: review it before sharing. See [`host.diagnostics`](/host/app/diagnostics).

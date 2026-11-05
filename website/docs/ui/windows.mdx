@@ -4,7 +4,7 @@ description: The main window, title bar styles and drag regions, multiple window
 ---
 
 :::note
-API reference: [`host.window, host.windows`](/host/windows/window), [`host.windowState`](/host/windows/window-state), [`host.view`](/host/windows/view).
+API reference: [`host.window`](/host/windows/window), [`host.windows`](/host/windows/windows), [`host.windowState`](/host/windows/window-state), [`host.view`](/host/windows/view).
 :::
 
 The main window is described by `window` in `desktop.config.ts` and controlled at run time through `host.window`.
@@ -23,10 +23,11 @@ window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 
     autosaveName: { type: "string", description: "Persist and restore the window frame under this name (NSUserDefaults on macOS)." },
     titleBarStyle: { type: '"default" | "transparent" | "hidden" | "hiddenInset"', default: '"default"', description: "See Title bar styles below." },
     vibrancy: { type: '"sidebar" | "titlebar" | "window" | "underWindow" | "hud" | "menu" | "popover" | …', description: "The system's translucent material behind the page (macOS). See Vibrancy and Liquid Glass below." },
+    vibrancyState: { type: '"followsWindow" | "active" | "inactive"', description: "Whether the material stays active when the window loses focus (macOS)." },
     trafficLightPosition: { type: "{ x: number; y: number }", description: "The traffic lights at your own place (macOS, titleBarStyle hidden or hiddenInset). See Traffic lights below." },
     aspectRatio: { type: "number", description: "Width / height kept while the user resizes (16 / 9, 1 for a square)." },
     backgroundThrottling: { type: "boolean", default: "true", description: "false disables WebKit background throttling on macOS. See Running out of sight below." },
-    visible: { type: "boolean", default: "true", description: "Shown at launch. false creates it hidden." },
+    visible: { type: "boolean", default: "true", description: "Shown at launch. false creates it hidden (it still loads)." },
     hiddenUntilReady: { type: "boolean", default: "true", description: "Keep the window invisible until DOMContentLoaded, to avoid a white flash." },
     readyTimeoutMs: { type: "number", default: "3000", description: "How long hiddenUntilReady waits for the page before showing the window anyway (8000 in dev)." },
     animate: { type: "boolean | WindowAnimation", description: "Come in animated when it shows (macOS). See Animation below." },
@@ -34,7 +35,9 @@ window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 
   }}
 />
 
-`window: false` creates the main window hidden, for [menu-bar apps](/ui/menu-bar-and-popovers). It can still load your app and be shown with `host.window.show()`. `quitOnLastWindowClosed` defaults to `true`. Set it to `false` to hide the last visible window instead of quitting: its page keeps its state, background work and push connections go on, and a Dock click, a notification click or a second launch shows it again.
+`window: false` is the same as `window: { visible: false }` without waiting for the page (`hiddenUntilReady` off): the main window is created hidden, for [menu-bar apps](/ui/menu-bar-and-popovers). It still loads your app and can be shown with `host.window.show()`.
+
+`quitOnLastWindowClosed` is a top-level key of `desktop.config.ts`, not part of `window`. It defaults to `true`. Set it to `false` to hide the last visible window instead of quitting: its page keeps its state, background work and push connections go on, and a Dock click, a notification click or a second launch shows it again.
 
 ## At run time
 
@@ -45,19 +48,9 @@ window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 
 <button onclick={() => host.window.setTitle('Untitled')}>Rename</button>
 ```
 
-`host.window` exposes reactive state (`title`, `focused`, `maximized`, `fullscreen`, `bounds`, `size`, `position`, `state`, `scaleFactor`) and window operations. Use `host.windows` when targeting another window by id; the reactive `host.window` wrappers act on the calling window. See the [window reference](/host/windows/window) for signatures and platform support:
+`host.window` exposes reactive state (`title`, `focused`, `maximized`, `fullscreen`, `bounds`, `size`, `position`, `state`, `scaleFactor`) and window operations. Use `host.windows` when targeting another window by id; the reactive `host.window` wrappers act on the calling window.
 
-| Group | Ops |
-| --- | --- |
-| Geometry | `setSize`, `setPosition`, `setBounds`, `center`, `positionTo(preset)`, `setMinSize`, `setMaxSize`, `getBounds`, `innerSize`, `outerSize` |
-| State | `minimize`, `unminimize`, `maximize`, `unmaximize`, `toggleMaximize`, `restore`, `show`, `hide`, `focus`, `blur`, `close` |
-| Full screen | `setFullscreen`, `toggleFullscreen`, `setSimpleFullscreen` (macOS, non-native) |
-| Chrome | `setTitle`, `setTitleBarStyle`, `setDecorations`, `setResizable`, `setClosable`, `setMinimizable`, `setMaximizable`, `setHasShadow`, `setOpacity`, `setTheme`, `setVibrancy`, `setGlass`, `setTrafficLightPosition`, `setAspectRatio` |
-| Behavior | `setAlwaysOnTop`, `setAlwaysOnBottom`, `setVisibleOnAllWorkspaces`, `setMovable`, `setMovableByWindowBackground`, `setIgnoresMouseEvents`, `setContentProtected`, `setFocusable` |
-| macOS document | `setDocumentEdited` (the dot in the close button), `setRepresentedFilename` (title bar document icon) |
-| Misc | `requestAttention`, `showCharacterPalette`, `getControlsArea`, `setCursorHidden`, `setCursorPosition` |
-
-`positionTo` presets: `center`, `trayCenter`, `trayLeft`, `trayRight`, `trayTop`, `trayBottom`, `cursorTopLeft`, `cursorBottomLeft`.
+The operations cover geometry (`setSize`, `setBounds`, `center`, `positionTo`), state (`minimize`, `maximize`, `show`, `hide`, `focus`, `close`), full screen, window chrome (`setTitleBarStyle`, `setOpacity`, `setTheme`, `setVibrancy`), behavior (`setAlwaysOnTop`, `setIgnoresMouseEvents`, `setContentProtected`) and macOS extras such as `setDocumentEdited`, which shows the dot in the close button. The [window reference](/host/windows/window) lists them all.
 
 ## Title bar styles
 
@@ -148,7 +141,7 @@ Materials are drawn behind the window's page only, not behind a kept-alive tab's
 
 ### With Tailwind
 
-```css app.css
+```css src/app.css
 @import 'tailwindcss';
 @plugin '@svelte-desktop/shell/tailwind';
 ```
@@ -235,28 +228,9 @@ host.windows.onClosed(({ windowId }) => console.log('closed', windowId));
 
 Window-targeted operations on `host.windows` take an optional trailing `windowId`; without it they target the calling page's window (the main window from server code). `0` is the main window. `host.windows.list()` returns `{ windowId, label, focused, visible, bounds }` rows, `host.windows.getInfo()` the calling window's own row, and `host.windows.get(label)` finds one.
 
-<TypeTable
-  type={{
-    label: { type: "string", description: "Unique per app; a duplicate rejects invalid_args." },
-    path: { type: "string", description: "The app route to open.", default: '"/"' },
-    url: { type: "string", description: "A full URL instead; another origin gets no native bridge." },
-    title: { type: "string" },
-    "x, y, width, height": { type: "number" },
-    "minWidth, minHeight": { type: "number" },
-    decorations: { type: "boolean", description: "false: borderless window." },
-    visible: { type: "boolean", default: "true" },
-    focus: { type: "boolean", default: "true" },
-    alwaysOnTop: { type: "boolean" },
-    "resizable, movable, minimizable": { type: "boolean" },
-    transparent: { type: "boolean", description: "Transparent background; the page paints its own chrome." },
-    opacity: { type: "number", description: "0 to 1, applied before the first frame." },
-    titlebarTransparent: { type: "boolean", description: "Title bar blends into the content (macOS)." },
-    tabbingIdentifier: { type: "string", description: "Windows with the same id group as native tabs (macOS)." },
-    animate: { type: "boolean | WindowAnimation", description: "Come in animated when it shows (macOS). See Animation below." },
-  }}
-/>
+Common options: `label` (unique per app, so you can find the window with `host.windows.get(label)`), `path` (the app route, default `"/"`) or `url` (another origin gets no native bridge), `title`, `x`, `y`, `width`, `height`, `decorations: false` for a borderless window, `transparent`, `alwaysOnTop`, `visible` and `focus`. On macOS also `animate` (see [Animation](#animation)) and `parentId`, `modal`, `type` and `focusable` (see [Parents, modal children and panels](#parents-modal-children-and-panels-macos)). The full list, with defaults, is in the [`create` reference](/host/windows/windows#createoptions).
 
-Window events: `onCreated`, `onClosed`, `onFocusChanged`, `onBoundsChanged`, `onScaleFactorChanged`, `onWillClose`. Use [`host.broadcast`](/host/data/events#broadcast-between-contexts) to message between windows.
+Windows emit events such as `onCreated`, `onClosed` and `onBoundsChanged`. Use [`host.broadcast`](/host/data/events#broadcast-between-contexts) to message between windows.
 
 ### Parents, modal children and panels (macOS)
 

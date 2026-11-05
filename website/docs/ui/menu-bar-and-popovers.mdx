@@ -17,7 +17,7 @@ A popover is **a route of your SvelteKit app** shown in a native macOS popover (
 
 ## 1. Write the route
 
-Keep popover routes in their own group so they don't inherit the window's layout:
+Put the popover routes in their own group, apart from the window's layout:
 
 <FileTree>
 
@@ -27,7 +27,6 @@ Keep popover routes in their own group so they don't inherit the window's layout
     - +layout.svelte
     - +page.svelte
   - (popover)/
-    - +layout.svelte
     - quick/
       - +page.svelte
 
@@ -49,7 +48,7 @@ Keep popover routes in their own group so they don't inherit the window's layout
 </PopoverContent>
 ```
 
-`PopoverContent` props: `fit` (`height`, the default, keeps the given width and follows the content height; `both` also uses the content width; `none`), `padding` (default `12px`), `class`. Route groups still inherit the root layout: keep that layout minimal, and put window chrome in `(app)/+layout.svelte`.
+`PopoverContent` props: `fit` (`height`, the default, keeps the given width and follows the content height; `both` also uses the content width; `none`), `padding` (default `12px`), `class`. A route group does not replace the root `+layout.svelte`: the popover renders inside it too. Keep the root layout minimal and put the window chrome in `(app)/+layout.svelte`, such as a sidebar or header. [`<WindowTabs>`](/ui/tabs) in the root layout renders only the page inside a popover, so it is safe there.
 
 ## 2. Open it
 
@@ -88,7 +87,7 @@ Keep popover routes in their own group so they don't inherit the window's layout
 
 On macOS, clicks toggle the popover natively, with no round trip through the page, and a click that just dismissed a transient popover is suppressed. `StatusItem` owns the app's single tray slot and removes it on unmount. Mount it once in the owner layout; do not also mount it inside each popover or kept-alive view.
 
-A menu-bar-only app on macOS sets `trayOnly: true` (no Dock icon, no app menu) and `window: false` or `window: { visible: false }` in `desktop.config.ts`. The main page still loads hidden, so it can own the status item. Set `quitOnLastWindowClosed: false` too if closing a visible window should keep the app running.
+A menu-bar-only app sets `trayOnly: true` (macOS only: no Dock icon, no app menu) and `window: false` or `window: { visible: false }` in `desktop.config.ts`. The main page still loads hidden, so it can own the status item. Set `quitOnLastWindowClosed: false` too if closing a visible window should keep the app running.
 
 ### Anchored to an element
 
@@ -101,6 +100,8 @@ A menu-bar-only app on macOS sets `trayOnly: true` (no Dock icon, no app menu) a
 <button bind:this={button} onclick={() => (open = !open)}>Emoji</button>
 <Popover route="/emoji" anchor={button} bind:open width={260} height={120} edge="bottom" />
 ```
+
+`<Popover>` takes the [popover options](#popover-options) below as props, plus `anchor` (an element, `'cursor'` or a rect), `shortcut` (a global hotkey that toggles it), `onShow` and `onHide`, and `bind:open`. `id` defaults to one derived from the route and style.
 
 ### A panel on a global shortcut
 
@@ -156,11 +157,6 @@ Each popover is a separate page. Share state through:
 
 Inside a popover, `host.currentPopover()` returns `{ id }`, `host.closePopover()` closes it, and every `host.popover` op that takes an `id` defaults to the current popover (`create()` and `list()` don't).
 
-## Built in
-
-- **Kept warm.** By default, the web view starts loading at `create` and stays alive when hidden. Creation does not await readiness; `onReady` reports it. `preload: false` defers loading until the first show, with a readiness timeout.
-- **Sized to content.** `PopoverContent` reports its size; the popover follows.
-- **Native background.** A transparent page reveals the native material on macOS. Windows ignores `transparent`.
-- **Light dismiss.** Transient popovers close on an outside click; nonmanual panels also close when they lose focus. `behavior: 'manual'` disables light dismiss. Escape closes the focused popover unless `closeOnEscape: false`.
+## Lifetime
 
 Use distinct `id` values for independently owned popovers. Reusing an id replaces and destroys the old one. Hiding preserves page state; `destroy` releases the web view. See the [popover reference](/host/windows/popover) for platform details and all options.

@@ -1,9 +1,11 @@
 ---
-title: 'host.webview: input policy'
+title: host.webview input policy
 description: Intercept window-local shortcuts before WebKit and control native menu accelerators.
 ---
 
 These `host.webview` methods declare native input rules for one window on macOS. Use them to reserve shortcuts before WebKit or the menu handles them, or to disable menu accelerators while an editor has focus. They are part of the service-only [`host.webview`](/host/web/webview), with no reactive store.
+
+A consumed key never reaches the page's DOM listeners, so an editor can keep, say, Command+K for itself.
 
 How-to: [Native input policy](/ui/web-view#native-input-policy-macos).
 
@@ -22,7 +24,7 @@ Each call replaces the window's whole policy; it does not merge with earlier set
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `key` | `string` | Required | Nonempty character or named key. Matching is case-insensitive and uses layout-dependent characters ignoring modifiers. |
+| `key` | `string` | Required | Nonempty character or named key. Matched case-insensitively against the character the key produces in the active keyboard layout, ignoring Shift and Option variations. |
 | `modifiers` | `InputModifier[]` | `[]` | Exact combination of the four supported modifiers. |
 
 `InputModifier` is `'meta' | 'control' | 'alt' | 'shift'`. `meta` means Command, and `alt` means Option. Extra or missing modifiers prevent a match; Caps Lock and other flags are not part of the comparison.
@@ -108,9 +110,11 @@ Unsubscribing does not clear the input policy. Restore it explicitly with `setIn
 | `setInputPolicy`, `getInputPolicy` | ✓ | — | — |
 | `onBeforeInput` | ✓ | — | — |
 
-Linux and Windows do not register the policy operations or emit `beforeInput`. A listener alone does not install interception rules.
+Linux and Windows do not implement the policy operations or emit `beforeInput`, so `setInputPolicy` and `getInputPolicy` reject there (the shell's convention for an operation a platform does not implement is the `unsupported` code). Check the platform before calling, or catch the rejection. A listener alone does not install interception rules.
 
 ## Example
+
+The minimal use is the call shown under `setInputPolicy`, plus `onBeforeInput` to react to the key. The component below adds the restore-on-unmount pattern.
 
 Reserve Command+Shift+K and turn off [menu shortcuts](/host/input/menu) while an editor has focus. This macOS component runs in the primary window (`0`), owns its policy while mounted and restores the previous one when it leaves.
 

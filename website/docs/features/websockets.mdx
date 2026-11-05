@@ -60,4 +60,4 @@ In `vite dev`, the `Origin` header must name the same host and port as the reque
 
 A page can also open WebSockets to other servers: `wss://` services, or a local server of your own, such as a [sidecar](/native/sidecars) listening on `127.0.0.1`. Such a server sees the app's origin in the `Origin` header (`http://127.0.0.1:<port>`); check it, and listen on `127.0.0.1` only. Server code can also be a WebSocket client: `new WebSocket('wss://…')` is Bun's.
 
-For messages between the app's windows and popovers, [`host.broadcast`](/host) needs no socket.
+For messages between the app's windows and popovers, [`host.broadcast`](/host/data/events#broadcast-between-contexts) needs no socket.

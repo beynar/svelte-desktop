@@ -13,9 +13,7 @@ How-to: [Permissions](/features/permissions).
 
 | Property | Type | Description |
 | --- | --- | --- |
-| `camera`, `microphone`, `location`, `contacts`, `calendars`, `reminders`, `photos`, `bluetooth` | `PermissionStatus` | One reactive status for each permission name. |
-| `speech`, `appleEvents`, `notifications`, `screenRecording`, `accessibility`, `inputMonitoring` | `PermissionStatus` | One reactive status for each permission name. |
-| `fullDiskAccess`, `desktopFolder`, `documentsFolder`, `downloadsFolder` | `PermissionStatus` | One reactive status for each permission name. |
+| `camera`, `microphone`, `location`, `contacts`, `calendars`, `reminders`, `photos`, `bluetooth`, `speech`, `appleEvents`, `notifications`, `screenRecording`, `accessibility`, `inputMonitoring`, `fullDiskAccess`, `desktopFolder`, `documentsFolder`, `downloadsFolder` | `PermissionStatus` | One reactive status per permission name. |
 | `ready` | `boolean` | Initialization completed; initially `false`. |
 | `error` | `Error \| null` | Initialization error captured by automatic store initialization. |
 
@@ -39,11 +37,11 @@ permissions: {
 | Entry | Type | Default | Description |
 | --- | --- | --- | --- |
 | `camera`, `microphone`, `location`, `speech` | `string \| false` | App-specific reason | Default reasons allow page web APIs to work. A string replaces the reason; `false` removes the default. |
-| All other `PermissionName` entries | `string \| false` | Undeclared | Declare the reason for the capability the app uses. |
+| All other `PermissionName` entries | `string \| false` | Undeclared | Declare the reason for the capability the app uses. See the list below for which calls require it. |
 | Raw usage-description keys, such as `NSCameraUsageDescription` | `string` | Omitted | Passed through to Info.plist. |
 | `pages` | `string[]` | Omitted | Deprecated bridge allowlist; use `bridge.allow`. This is not OS consent or per-origin web policy. |
 
-`request()` and `guide()` require a named declaration for `camera`, `microphone`, `location`, `contacts`, `calendars`, `reminders`, `photos`, `bluetooth`, `speech`, `appleEvents`, `desktopFolder`, `documentsFolder` and `downloadsFolder`. Missing declarations reject with `undeclared`, before calling native code. The check applies on every platform. Use the named entry for these calls; a raw Info.plist key alone does not satisfy the named declaration check.
+`request()` and `guide()` require a named declaration for `camera`, `microphone`, `location`, `contacts`, `calendars`, `reminders`, `photos`, `bluetooth`, `speech`, `appleEvents`, `desktopFolder`, `documentsFolder` and `downloadsFolder`. Four of these, `camera`, `microphone`, `location` and `speech`, are declared for you with a default reason, so they work without configuration unless you set `false`; every other name in the list must have an entry in `desktop.config.ts`. `notifications`, `screenRecording`, `accessibility`, `inputMonitoring` and `fullDiskAccess` need no declaration for these calls. Missing declarations reject with `undeclared`, before calling native code. The check applies on every platform. Use the named entry for these calls; a raw Info.plist key alone does not satisfy the named declaration check.
 
 ## Methods
 
@@ -93,7 +91,7 @@ const { status, canceled } = await host.permissions.guide('screenRecording');
 | --- | --- | --- | --- |
 | `open` | `boolean` | `true` | Open Settings as well as showing the panel. |
 
-Resolves `{ status: PermissionStatus; canceled: boolean }`. macOS supports guides for `screenRecording`, `accessibility`, `inputMonitoring`, `fullDiskAccess`, `camera` and `microphone`; other names reject with `invalid_args`. The panel displays the configured reason and live status. Eligible panes let the user drag the app icon into the list. Starting another guide cancels the previous one. A permission already granted resolves immediately with `canceled: false`.
+Resolves `{ status: PermissionStatus; canceled: boolean }`. macOS supports guides for `screenRecording`, `accessibility`, `inputMonitoring`, `fullDiskAccess`, `camera` and `microphone`; other names reject with `invalid_args`. The panel displays the configured reason and live status. Eligible panes let the user drag the app icon into the list. Starting another guide cancels the previous one. A permission already granted resolves immediately with `canceled: false`. For Settings-only permissions such as Screen Recording, the user may need to relaunch the app before the grant applies.
 
 Linux and Windows have no guide panel. The wrapper attempts to open Settings for mapped names unless `open: false`, then reads the current status and returns `canceled: false`. That fallback returns `'unknown'` if the check fails and ignores errors opening Settings. It does not wait for a user decision.
 
@@ -125,7 +123,7 @@ Open the permission's mapped settings pane.
 await host.permissions.openSettings('camera');
 ```
 
-Typed to resolve `{ opened: boolean }`. macOS maps camera, microphone, notifications and the four Settings-only names; an unmapped name rejects with `invalid_args`. Windows opens its privacy settings, falling back to the general privacy page when no specific pane is mapped. Linux launches `gnome-control-center`, rejects with `unavailable` when it cannot launch, and currently returns `null` rather than the typed object.
+Typed to resolve `{ opened: boolean }`. macOS maps camera, microphone, notifications and the four Settings-only names; an unmapped name rejects with `invalid_args`. Windows opens its privacy settings, falling back to the general privacy page when no specific pane is mapped. Linux launches `gnome-control-center`, rejects with `unavailable` when it cannot launch. On Linux the resolved value is `null`, so don't rely on `opened`.
 
 ### `get(name)`
 

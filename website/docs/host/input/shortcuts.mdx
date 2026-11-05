@@ -5,6 +5,8 @@ description: Register operating-system shortcuts that work while the app is in t
 
 `host.shortcuts` registers global hotkeys and reports presses. It combines a local registration list with the shortcut service. Use [menu accelerators](/host/input/menu) for application commands, or [input policy](/host/input/input-policy) for shortcuts intercepted within one native window.
 
+On Linux, global shortcuts need an X11 session; on Wayland `register` rejects with `unsupported`.
+
 How-to: [Global shortcuts](/ui/platform-services#global-shortcuts) and [a panel on a global shortcut](/ui/menu-bar-and-popovers#a-panel-on-a-global-shortcut).
 
 ## Reactive state
@@ -19,7 +21,7 @@ The list is local bookkeeping, not a query of all registrations from other windo
 
 ## Accelerator syntax
 
-An accelerator combines modifiers and one key with `+`, for example `'CmdOrCtrl+Shift+K'` or `'Ctrl+Alt+Space'`. `CmdOrCtrl` / `CommandOrControl` maps to Command on macOS and Control on Linux and Windows. `Ctrl` / `Control`, `Alt` / `Option` and `Shift` are supported modifiers. `Super` / `Meta` means Command on macOS and the Super/Windows key elsewhere. `Cmd` / `Command` maps to Command on macOS, Super on Linux and Control on Windows.
+An accelerator combines modifiers and one key with `+`, for example `'CmdOrCtrl+Shift+K'` or `'Ctrl+Alt+Space'`. `CmdOrCtrl` / `CommandOrControl` maps to Command on macOS and Control on Linux and Windows. `Ctrl` / `Control`, `Alt` / `Option` and `Shift` are supported modifiers. Prefer `CmdOrCtrl`: `Cmd` / `Command` and `Super` / `Meta` are platform-specific (Command, Super or Control depending on the platform).
 
 Letters, digits and named keys such as `Space`, `Enter`, `Tab`, `Escape`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`, `Plus` and function keys are supported. The exact key vocabulary is backend-specific. For example, macOS global `Delete` means backward delete; use `ForwardDelete` for forward delete there. macOS supports `F1` through `F20`, Windows through `F24`, and Linux resolves function keys through GDK. An unknown modifier or key rejects with `invalid_args`.
 
@@ -40,7 +42,7 @@ const { id } = await host.shortcuts.register({ accelerator: 'Ctrl+Alt+Space', id
 
 Resolves `{ id: string }`. Duplicate ids or combinations in this app reject with `invalid_args`. An OS refusal, including a collision with another app or system shortcut, rejects with `denied`. macOS can reject with `internal` if the native event handler cannot be installed. Its Carbon hotkeys need no Accessibility permission.
 
-Linux registration requires X11; on Wayland it rejects with `unsupported`. A key absent from the active X11 keyboard mapping rejects with `invalid_args`.
+On Linux, a key absent from the active X11 keyboard mapping rejects with `invalid_args`.
 
 ### `unregister(options)`
 
@@ -54,7 +56,7 @@ await host.shortcuts.unregister({ id: 'quick-note' });
 | --- | --- | --- | --- |
 | `id` | `string` | Required | Registration id returned by `register`. |
 
-Resolves `void`. The `host` store wrapper discards the service's `{ unregistered: boolean }` result. An unknown id is harmless; a missing id rejects with `invalid_args`.
+Resolves `void`. An unknown id is harmless; a missing id rejects with `invalid_args`.
 
 ### `unregisterAll()`
 
@@ -64,7 +66,7 @@ Remove all native global shortcuts in the app and clear the local list.
 await host.shortcuts.unregisterAll();
 ```
 
-Resolves `void`; the store wrapper discards the service's count. This also removes registrations created by other contexts in the same app.
+Resolves `void`. This also removes registrations created by other contexts in the same app.
 
 ### `isRegistered(id)`
 

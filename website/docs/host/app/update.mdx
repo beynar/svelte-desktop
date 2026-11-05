@@ -3,7 +3,7 @@ title: host.update
 description: Check the signed update feed and install an available release.
 ---
 
-`host.update` is the reactive update store backed by the `updater` service. Checking is opt-in: initialization does not contact the network. The same signed updater serves page and server calls.
+`host.update` is the reactive update store backed by the `updater` service. Checking is opt-in: initialization does not contact the network. `check()` rejects with `unavailable` when the app has no update feed configured (see [Self-update](/shipping/self-update)), so under `vite dev` expect that error.
 
 How-to: [Self-update](/shipping/self-update) for feed configuration, signing, publishing and rollback setup.
 
@@ -23,7 +23,7 @@ Failed checks retain the previous `available` and `checkedAt` values. Starting a
 
 ## Methods
 
-### `check(currentVersion?, options?)`
+### `check()`
 
 Fetch and verify the configured signed feed. Resolves `AvailableUpdate | null`; `null` means no newer applicable release was selected. The store sets `checking` while waiting, records successful results and timestamps, and records and rethrows failures.
 
@@ -32,23 +32,7 @@ const update = await host.update.check();
 if (update) console.log(update.currentVersion, update.version);
 ```
 
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `currentVersion` | `string` | Omitted | Compatibility argument; ignored. The shell uses the installed app version. |
-| `options` | `UpdateEndpoints` | Omitted | Compatibility argument; ignored. Configure the signed feed in `desktop.config.ts`. |
-
-`UpdateEndpoints` remains accepted for source compatibility. Every field below is optional and ignored by this updater; none overrides shell configuration:
-
-| Field | Type | Default |
-| --- | --- | --- |
-| `endpoints` | `string[]` | Omitted |
-| `pubkey` | `string` | Omitted |
-| `headers` | `{ name: string; value: string }[]` | Omitted |
-| `timeoutMs` | `number` | Omitted |
-| `installerArgs` | `string[]` | Omitted |
-| `installMode` | `'passive' \| 'quiet' \| 'basicUi'` | Omitted |
-
-The standalone service's `updater.check()` has the same signature and result, but does not update reactive state. There is no `host.update.updater` member.
+`check()` takes no arguments. It still accepts `(currentVersion, options)` from an older API; both are ignored, and the feed comes from `desktop.config.ts`.
 
 Rejects with `unavailable` when the shell updater is absent or no update configuration exists. Feed errors include `manifest_fetch_failed`, `manifest_invalid`, `signature_invalid`, `name_mismatch` and `channel_mismatch`. Page calls reject with `NativeApiError` carrying the updater's code; in-process server calls propagate updater errors directly. Check results are not native capability-registry operations.
 

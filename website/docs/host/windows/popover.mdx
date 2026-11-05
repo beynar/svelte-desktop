@@ -33,7 +33,7 @@ All fields in `PopoverCreateOptions` are optional:
 | `cornerRadius` | `number` | `12` on macOS | macOS panel material corner radius. Ignored on Linux and Windows. |
 | `debug` | `boolean` | `false` | Enable inspection. macOS `inspectable` requires 13.3+. |
 | `tray` | `boolean` | `false` | Bind immediately to the [tray](/host/input/tray) button for native click-to-toggle. |
-| `preload` | `boolean` | `true` | Load at creation; `false` defers loading until first show. |
+| `preload` | `boolean` | `true` | Load at creation, so the first show is instant; costs one WebKit content process per popover (about 30-40 MB) on macOS. `false` defers loading until first show. |
 | `session` | `string` | Default session | macOS [session](/host/web/sessions) identifier. Ignored on Linux and Windows. |
 | `recovery` | `WebviewRecovery` | `'reload'` on macOS | `'reload'` or `'manual'` after content-process termination. Ignored on Linux and Windows. See [webview lifecycle](/host/web/webview). |
 
@@ -56,7 +56,7 @@ Show a popover and resolve `PopoverInfo`. For a lazy page, loading starts on fir
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `anchor` | `PopoverAnchor` | `'tray'` | Anchor for popover style. An explicit tray anchor needs a tray item. |
+| `anchor` | `PopoverAnchor` | `'tray'` | Anchor for popover style. The default needs a tray item; without one, pass `anchor: 'cursor'` or a rectangle. |
 | `position` | `PanelPosition` | Stored creation position | Placement for panel style. |
 
 `PopoverAnchor` accepts:

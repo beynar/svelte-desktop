@@ -3,13 +3,20 @@ title: Distribution
 description: Build, sign and package for macOS, Windows and Linux.
 ---
 
-`bunx --bun vite build` compiles the server into one executable and packages it for the target. Output goes to `.desktop/dist` (`build.outDir`). The target is the host OS unless `build.target` or `SVELTE_DESKTOP_TARGET` says otherwise; Linux and Windows can be built from macOS. The environment variables override the config. Building macOS requires macOS and its Apple toolchain.
+`bunx --bun vite build` compiles the server into one executable and packages it for the target. Output goes to `.desktop/dist` (`build.outDir`). The target is the host OS unless `build.target` (`macos`, `linux` or `windows`) or `SVELTE_DESKTOP_TARGET` says otherwise; Linux and Windows can be built from macOS. The environment variables override the config. Building macOS requires macOS and its Apple toolchain.
 
 ```sh
 bunx --bun vite build                               # macOS, the host
 SVELTE_DESKTOP_TARGET=linux bunx --bun vite build   # cross-build
 SVELTE_DESKTOP_TARGET=windows SVELTE_DESKTOP_TARGET_ARCH=arm64 bunx --bun vite build
 ```
+
+## Pick your path
+
+- Sharing a build by hand from a Mac: [Releasing from your Mac, without CI](/shipping/release#releasing-from-your-mac-without-ci), or [macOS](#macos) below.
+- CI releases: [Release](/shipping/release).
+- Self-update: [Self-update](/shipping/self-update).
+- Linux and Windows builds: [Windows](#windows) and [Linux](#linux) below.
 
 ## macOS
 
@@ -30,7 +37,20 @@ The pipeline:
 2. **Signing.** Nested code first, then the bundle, with the hardened runtime and the entitlements Bun's JIT needs, plus device entitlements derived from `permissions`. `sign.entitlements` adds more; `sign.provisioningProfile` embeds a profile (needed for APNs).
 3. **Notarization.** When an identity and a notary profile are set, a local pre-flight runs, then the app and the DMG are submitted with `notarytool` and stapled.
 
-Without an identity, builds are ad-hoc signed: they run on your machine, but Gatekeeper blocks them once downloaded.
+Bundled sidecars and addons are nested code. On macOS each sidecar is signed before the app with the app's identity and the hardened runtime, but without the app's entitlement file, so a sidecar that needs an entitlement (JIT, camera, microphone) does not get it under the hardened runtime. The packager has no per-sidecar entitlements, so keep such work in the app process or in a binary that needs none. Notarization covers them. On Windows, bundled `.exe` sidecars and addons are included in Authenticode signing; on Linux there is no signing step.
+
+Without an identity, builds are ad-hoc signed: they run on your machine, but Gatekeeper blocks them once downloaded. To check a signed build:
+
+```sh
+codesign --verify --deep --strict .desktop/dist/<App>.app
+xcrun stapler validate .desktop/dist/<Exe>-<version>-darwin-<arch>.dmg
+```
+
+The same options can live in the config:
+
+```ts desktop.config.ts
+sign: { identity: 'Developer ID Application: You (TEAMID)', notaryProfile: 'notary' },
+```
 
 <Steps>
   <Step title="Get a Developer ID certificate">
@@ -46,7 +66,7 @@ Without an identity, builds are ad-hoc signed: they run on your machine, but Gat
 
 **Universal builds.** `build: { universal: true }` builds both arm64 and x64 slices (Bun cross-compiles the other executable slice) and lipos the executable, `libshell`, the plugins and compiled addons into one app. Prebuilt addons must already contain the slices you need; sidecars are copied without merging architectures.
 
-**Smaller builds.** The packager checks `bun build --help` for `--trim` and `--aot`. When available, `trim` is on by default; `trim: false` opts out. Set `build: { aot: true }` to opt into AOT on a supported host build. `build.bun` or `SVELTE_DESKTOP_BUN` chooses the compiler. If a target runtime rejects trimming, the packager retries without it. AOT is skipped for the other architecture in a universal build and for Windows builds.
+**Smaller builds.** `build.trim` drops the Bun APIs your app never calls (about 45 MB), and `build.aot` compiles to machine code at build time, which uses less memory. Both need a Bun that supports `--trim` and `--aot`: today that is canary, not stable, so default builds are larger. Point `build.bun` or `SVELTE_DESKTOP_BUN` at a canary binary; `bunx svelte-desktop doctor` reports whether yours qualifies. When available, `trim` is on by default (`trim: false` opts out, and the packager retries without it if the target runtime rejects it); `aot` is opt-in with `build: { aot: true }`, and is skipped for the other slice of a universal build and for Windows builds.
 
 ## Windows
 
@@ -61,7 +81,7 @@ SVELTE_DESKTOP_TARGET=windows bunx --bun vite build
 | NSIS installer | Per-user, with URL schemes and file associations |
 | `release/` | Update archives, when `update` is set |
 
-Cross-builds run the native toolchain (llvm-mingw, the WebView2 SDK, NSIS, osslsigncode) in Docker. Authenticode signing is on when a certificate is given:
+Cross-builds run the native toolchain (llvm-mingw, the WebView2 SDK, NSIS, osslsigncode) in Docker, so a running Docker is required; the first build creates the toolchain image, which takes a few minutes. Without Docker the build fails if `shell.dll` has to be built, and skips the installer, native plugins and addons with a warning. Authenticode signing is on when a certificate is given:
 
 ```ts desktop.config.ts
 sign: { windows: { certificateFile: 'cert.pfx', password: process.env.CERT_PASSWORD } }, // or $WINDOWS_CERT_PFX + $WINDOWS_CERT_PASSWORD
@@ -72,7 +92,7 @@ Rust and Go plugins are skipped when cross-building Windows from another OS; bui
 `timestampUrl` defaults to `http://timestamp.digicert.com`. Data lives in `%APPDATA%\<identifier>`, caches and logs in `%LOCALAPPDATA%`. `build.targetArch` is `x64` (default) or `arm64`.
 
 :::warning
-The Windows native layer and installer have Wine smoke tests, but those do not validate Bun and WebView2 together. Validate the installer and app on a real Windows desktop. See [Limitations](/shipping/limitations).
+The Windows native layer and installer have Wine smoke tests, but those do not validate Bun and WebView2 together. Validate the installer and app on a real Windows desktop. Unsigned Windows builds also trigger SmartScreen warnings. See [Limitations](/shipping/limitations).
 :::
 
 ## Linux
@@ -87,7 +107,7 @@ SVELTE_DESKTOP_TARGET=linux bunx --bun vite build
 | `<exe>-<version>-linux-<arch>.tar.gz` | The directory |
 | `<exe>-<version>-linux-<arch>.AppImage` | When `appimagetool` is on the PATH |
 
-GTK 3 and WebKitGTK 4.1 come from the system, like the system WebKit on macOS; libnotify, appindicator and libsecret are optional. `fileTypes` become the `.desktop` MimeType entry (plus a shared-mime-info package for custom types). C/C++ plugins and source addons need a Linux host of the target architecture; run the build there or in a matching Linux container. The packager skips those source builds when cross-building from macOS, even when Docker builds `libshell.so`. Prebuilt `addons` are copied. Rust and Go plugins also build on a host of the target OS. See [plugin platforms](/native/plugins/platforms).
+GTK 3 and WebKitGTK 4.1 come from the system, like the system WebKit on macOS; libnotify, appindicator and libsecret are optional. `fileTypes` become the `.desktop` MimeType entry (plus a shared-mime-info package for custom types). C/C++ plugins and source addons need a Linux host of the target architecture; run the build there or in a matching Linux container. Prebuilt `addons` are copied. Rust and Go plugins need a host of the target OS. See [plugin platforms](/native/plugins/platforms).
 
 The generated Linux updater archive currently has a layout mismatch with the installer. Distribute the `.tar.gz` or `.AppImage` for manual installation; see [Self-update](/shipping/self-update#platform-support).
 

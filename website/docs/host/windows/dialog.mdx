@@ -84,7 +84,7 @@ Windows uses `TaskDialogIndirect` when available. Its `MessageBox` fallback uses
 
 ### `sheet<T = unknown>(route, options?)`
 
-macOS only. Open an app route as a dialog on the current window. Resolves the value from that page's `host.dialog.close(result)` as `T`, or `undefined` on cancellation. A `null` result also becomes `undefined`.
+macOS only; on Linux and Windows, open a window with [`host.windows.create()`](/host/windows/windows) instead. Open an app route as a dialog on the current window. Resolves the value from that page's `host.dialog.close(result)` as `T`, or `undefined` on cancellation. A `null` result also becomes `undefined`.
 
 `route` is a `string` app route. Pass input data in its query string.
 
@@ -116,11 +116,11 @@ Close that dialog and resolve its opener's `sheet()` call. `result` has type `un
 await host.dialog.close({ name: 'Project notes' });
 ```
 
-For a regular modal child created with [`host.windows.create()`](/host/windows/window#parents-and-modal-children), use `host.windows.close(windowId)` instead; it has no route-dialog result contract. For a popover, use [`host.closePopover()`](/host/windows/popover#closepopover).
+For a regular modal child created with [`host.windows.create()`](/host/windows/windows#parents-sheets-and-modal-children), use `host.windows.close(windowId)` instead; it has no route-dialog result contract. For a popover, use [`host.closePopover()`](/host/windows/popover#closepopover).
 
 ## Short server form
 
-Server code can use `desktop.dialog.open(options)`, `desktop.dialog.save(options)`, and `desktop.dialog.message(options)`. These resolve paths or `null`, one path or `null`, and a button index respectively. Their option names differ from `host.dialog` (for example, `extensions` and `defaultName`). See [Server code](/host/data/server) for the exact server API.
+`host.dialog` also works in server code. Prefer it: it reports errors and returns the full results. The older `desktop.dialog.open`, `save` and `message` wrappers resolve paths or `null`, one path or `null`, and a button index, with different option names (`extensions`, `defaultName`) and swallowed errors. See [Server code](/host/data/server).
 
 ## Platform support
 

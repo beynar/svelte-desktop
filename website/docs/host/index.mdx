@@ -6,7 +6,7 @@ sidebar:
   icon: code
 ---
 
-Everything native is on one global, `host`. There is nothing to import, it is the same object in page and server code (like `Bun`), and its members are reactive in components. It is typed through the one-line `src/host.d.ts` the Vite plugin writes.
+Everything native is on one global, `host`. There is nothing to import, it is the same object in page and server code (like `Bun`), and its members are reactive in components. It is typed through the one-line `src/host.d.ts` the Vite plugin writes on the first dev run. Commit it.
 
 ```svelte
 <p>{host.app.name} · {host.theme.dark ? 'dark' : 'light'}</p>
@@ -30,7 +30,7 @@ The guides show how to build things with it ([windows](/ui/windows), [menus](/ui
 
 **Native operations are async.** They return a promise, and when one fails it rejects with a `NativeApiError` whose `code` says why (see [Errors](#errors)). A few helpers are synchronous: subscriptions such as `host.on()` return their unsubscribe function directly, and server helpers such as `host.jobs.start()` return at once. Each page says which.
 
-**Page and server code.** The same calls work in a component and in a load function, a remote function, an endpoint or a hook. A few members exist only in server code (`host.paths`, `host.sidecar()`, `host.jobs.start()`...): see [Server code](/host/data/server).
+**Page and server code.** The same calls work in a component and in a load function, a remote function, an endpoint or a hook. A few members exist only in server code (`host.paths`, `host.sidecar()`, `host.jobs.start()`, `host.mcp`...): see [Server code](/host/data/server).
 
 **Outside the app.** In a plain browser tab, or a server running outside the app, `host.available` is `false` and calls reject.
 
@@ -41,11 +41,11 @@ The guides show how to build things with it ([windows](/ui/windows), [menus](/ui
 | Area | Members |
 | --- | --- |
 | [App and system](/host/app/app) | [`app`](/host/app/app), [`system`](/host/app/system), [`theme`](/host/app/theme), [`power`](/host/app/power), [`screen`](/host/app/screen), [`deepLink`](/host/app/deep-link), [`capabilities`](/host/app/capabilities), [`diagnostics`](/host/app/diagnostics), [`update`](/host/app/update) |
-| [Windows and dialogs](/host/windows/window) | [`window`, `windows`](/host/windows/window), [`windowState`](/host/windows/window-state), [`view`](/host/windows/view), [`popover`, `currentPopover()`, `closePopover()`](/host/windows/popover), [`dialog`](/host/windows/dialog) |
+| [Windows and dialogs](/host/windows/window) | [`window`](/host/windows/window), [`windows`](/host/windows/windows), [`windowState`](/host/windows/window-state), [`view`](/host/windows/view), [`popover`, `currentPopover()`, `closePopover()`](/host/windows/popover), [`dialog`](/host/windows/dialog) |
 | [Web content](/host/web/webview) | [`webview`](/host/web/webview) (with its [content rules and scripts](/host/web/web-content), [web permissions and certificates](/host/web/web-policy) and [input policy](/host/input/input-policy)), [`sessions`](/host/web/sessions), [`protocol`](/host/web/protocol), [`downloads`](/host/web/downloads), [`oauth`](/host/web/oauth) |
 | [Menus and input](/host/input/menu) | [`menu`](/host/input/menu), [`tray`](/host/input/tray), [`shortcuts`](/host/input/shortcuts), [`clipboard`](/host/input/clipboard) |
-| [Files and the OS](/host/os/shell) | [`shell`](/host/os/shell), [`files`](/host/os/files), [`secureStorage`](/host/os/secure-storage), [`permissions`](/host/os/permissions), [`notifications`](/host/os/notifications), [`push`](/host/os/push), [`capture`](/host/os/capture) |
-| [Data, events and server](/host/data/store) | [`store`](/host/data/store), [`on()`, `events`, `broadcast()`, `onBroadcast()`](/host/data/events), [`jobs`](/host/data/jobs), [`native`](/host/data/native), [server-only members](/host/data/server) |
+| [Files and the OS](/host/os/shell) | [`shell`](/host/os/shell), [`files`](/host/os/files), [`secureStorage`](/host/os/secure-storage), [`permissions`](/host/os/permissions), [`notifications`](/host/os/notifications), [`push`](/host/os/push), [`capture`](/host/os/capture), [`ai`](/host/os/ai) |
+| [Data, events and server](/host/data/store) | [`store`](/host/data/store), [`on()`, `events`, `broadcast()`, `onBroadcast()`](/host/data/events), [`jobs`](/host/data/jobs), [`services`](/host/data/services), [`native`](/host/data/native), [server-only members](/host/data/server), including `mcp` ([MCP](/features/mcp)), `shellEnv()`, `which()` and `command` |
 
 ## Errors
 
@@ -63,7 +63,7 @@ The guides show how to build things with it ([windows](/ui/windows), [menus](/ui
 try {
   await host.window.setSimpleFullscreen(true);
 } catch (e) {
-  if (e.code === 'unsupported') { /* not on this platform */ }
+  if ((e as { code?: string }).code === 'unsupported') { /* not on this platform */ }
 }
 ```
 
@@ -72,14 +72,28 @@ try {
 By default pages may call every operation. `bridge.allow` limits them, enforced natively; server code is never restricted:
 
 ```ts desktop.config.ts
-bridge: { allow: ['window.*', 'clipboard.readText', 'notifications.*'] },
+bridge: { allow: ['window.*', 'clipboard.readText', 'notifications.*', 'events.emit', 'app.getInfo', 'app.getPath'] },
 ```
 
-A refused call rejects with `denied`.
+A refused call rejects with `denied`. Rules are `service.op`, `service.*` or `*`, and apply to plugin commands too (`text.*`). Only calls the page makes are checked: events the native side pushes to the page (window events, broadcasts from the server) still arrive.
+
+The list is checked against every operation behind a `host` member, including ones you don't call directly. Several page features go through `events.emit`, so a list without it breaks them silently or with `denied`:
+
+- `host.broadcast`, and everything built on it: `host.jobs` (its first call asks the server for a snapshot), and the refresh of one window's state when another window changes it.
+- `host.store`, `host.windowState` and other app files: a page reads and writes them by asking the app server over `events.emit`. Without it they time out after ten seconds, and `host.windowState` also needs `app.getPath`.
+- `host.notifications`, which also asks the server over `events.emit`.
+- `host.app.info` (and `host.app.name`, `version`...) needs `app.getInfo`.
+
+Add the operations for each member the page uses, or test the page with the list on. Server code is unaffected, so the same members work from an endpoint or remote function.
 
 ## Imports instead of the global
 
-The same API is available as modules, for those who prefer imports: `@svelte-desktop/shell/platform` (services, `broadcast`), `@svelte-desktop/shell/native` (`native`), `@svelte-desktop/shell/stores` (reactive stores), `@svelte-desktop/shell/server` and `@svelte-desktop/shell/client`.
+The same API is available as modules, for those who prefer imports:
+
+- `@svelte-desktop/shell/stores`: the reactive stores.
+- `@svelte-desktop/shell/platform`: the services and `broadcast`. `NativeApiError` is exported from here too.
+- `@svelte-desktop/shell/native`: `native`.
+- `@svelte-desktop/shell/server` and `@svelte-desktop/shell/client`: server-only and page-only helpers.
 
 ```ts
 import { theme, window } from '@svelte-desktop/shell/stores';

@@ -3,7 +3,7 @@ title: host.app
 description: Read app identity, control application and Dock behavior, and participate in the quit lifecycle.
 ---
 
-`host.app` combines reactive app state with identity, lifecycle and Dock operations. Its macOS quit coordinator lets every page and the server protect unsaved work before any window is destroyed.
+`host.app` combines reactive app state with identity, lifecycle and Dock operations. On macOS, `onQuitRequested()` lets every page and the server protect unsaved work before any window is destroyed.
 
 How-to: [App and Dock](/ui/platform-services#app-and-dock).
 
@@ -15,8 +15,8 @@ How-to: [App and Dock](/ui/platform-services#app-and-dock).
 | `name` | `string \| null` | `info.name`. |
 | `version` | `string \| null` | `info.version`. |
 | `packaged` | `boolean \| null` | Whether the app is packaged, from `info`. |
-| `platform` | `string \| null` | Platform from `info`: `'darwin'`, `'linux'` or `'windows'`. |
-| `active` | `boolean` | Starts `true`; macOS activation events keep it current. No initial focus query is made. |
+| `platform` | `string \| null` | Platform from `info`: `'darwin'`, `'linux'` or `'win32'` (unlike `host.system.os`, which says `'windows'`). |
+| `active` | `boolean` | Starts `true`; macOS activation events keep it current. |
 | `reopenCount` | `number` | Reopen events received; initially `0`. |
 | `lastReopenedAt` | `number \| null` | Local Unix milliseconds of the last reopen event. |
 | `quitting` | `boolean` | Set to `true` on `willQuit`; a quit request alone does not set it. |
@@ -31,7 +31,7 @@ How-to: [App and Dock](/ui/platform-services#app-and-dock).
 | `ready` | `boolean` | Whether initialization completed. |
 | `error` | `Error \| null` | Initialization failure, if any. |
 
-`AppInfo` has `name: string`, `version: string`, `identifier: string`, `appPath: string | null`, `packaged: boolean`, `platform: string` and `arch: string`. `appPath` is `null` for an unpackaged app. Setters do not reload `info`; call `init()` to reload that snapshot after changing identity. `quitting` and `restarting` are event latches, not a promise that the process has exited.
+`AppInfo` has `name: string`, `version: string`, `identifier: string`, `appPath: string | null`, `packaged: boolean`, `platform: string` and `arch: string`. `appPath` is `null` for an unpackaged app. Setters do not reload `info`; call `init()` to reload that snapshot after changing identity. `quitting` and `restarting` only record that the event fired; they don't mean the process has exited.
 
 ## Methods
 
@@ -96,7 +96,7 @@ macOS and Windows only.
 
 ### `setDockBadge(text)`
 
-Set the Dock badge on macOS, or the taskbar overlay on Windows. `text` is `string | null`; `null` clears it. The host store resolves `void` and then mirrors the argument into `dockBadge`. Windows uses a generic overlay icon with the text as its description, rather than drawing arbitrary badge text.
+Set the Dock badge on macOS, or the taskbar overlay on Windows. `text` is `string | null`; `null` clears it. Resolves `boolean` and mirrors the argument into `dockBadge`. Windows uses a generic overlay icon with the text as its description, rather than drawing arbitrary badge text.
 
 ```ts
 await host.app.setDockBadge('3');
@@ -158,9 +158,7 @@ Launch at login: whether it's on, and whether this launch came from it. Resolves
 | `requiresApproval` | `boolean` | The user turned it off in the system's settings, and only they can turn it on again: show a link to [`host.system.openSettings('loginItems')`](/host/app/system#opensettingspane). macOS and Windows. |
 | `launchedAtLogin` | `boolean` | This launch came from the login item. On Linux and Windows, an entry written by an earlier version of the app isn't recognized until `setLoginItem(true)` writes it again. |
 
-It never rejects because the app isn't packaged, so a settings page runs the same in dev:
-
-`host.app.loginItem` gives the same object without `await`, reactive. It's `null` for a moment after the first read, and it's read again when the app comes back to the front, in case the user changed it in the system's settings:
+It never rejects because the app isn't packaged, so a settings page runs the same in dev. `host.app.loginItem` gives the same object without `await`, reactive. It's `null` for a moment after the first read, and it's read again when the app comes back to the front, in case the user changed it in the system's settings:
 
 ```svelte
 <label>
@@ -177,7 +175,7 @@ It never rejects because the app isn't packaged, so a settings page runs the sam
 {/if}
 ```
 
-To start out of the way at login, create the main window hidden (`window: { visible: false }`) and show it for the other launches:
+To start out of the way at login, create the main window hidden (`window: { visible: false }` in `desktop.config.ts`) and show it for the other launches:
 
 ```ts
 const { launchedAtLogin } = await host.app.getLoginItem();
@@ -192,13 +190,11 @@ When the user turned it off in the system's settings, `setLoginItem(true)` doesn
 
 ### `setActivationPolicy(policy)`
 
-Set `ActivationPolicy`, one of `'regular'`, `'accessory'` or `'prohibited'`. Resolves `boolean`, the native policy setter's result. `'accessory'` hides the Dock icon; `'prohibited'` prevents activation. An unknown policy rejects with `invalid_args`.
+Set `ActivationPolicy`, one of `'regular'`, `'accessory'` or `'prohibited'`. Resolves `boolean`: `false` if macOS refused the change. `'accessory'` hides the Dock icon; `'prohibited'` prevents activation. An unknown policy rejects with `invalid_args`.
 
 ### `getActivationPolicy()`
 
 Resolves the current `ActivationPolicy`. Always `'regular'` on Linux and Windows.
-
-macOS only.
 
 ### `requestSingleInstanceLock()`
 
@@ -246,28 +242,19 @@ WebKit's networking and GPU processes are shared with the system and not counted
 
 ### `init()` and `dispose()`
 
-`init()` reloads app info, awaits native readiness, marks the store ready and installs internal event subscriptions; resolves the namespace. Store startup normally calls it. `dispose()` synchronously removes those internal listeners without resetting state or removing your listeners and quit guards.
+`init()` reloads the `info` snapshot and resolves the namespace. The store calls it at startup; call it again after `setName()` or `setIdentity()`. `dispose()` removes the store's internal listeners, not yours or your quit guards.
 
 ## Cancellable quit (macOS)
 
-Register a guard in a page or server module. Return `'cancel'` to keep the app and all its windows alive, or `'quit'` to allow the attempt:
+Register a guard in a page or server module. Return `'cancel'` to keep the app and all its windows alive, or `'quit'` to allow the attempt (see the [example](#example)). Each phase has a 10-second timeout, so a stuck guard can't block quitting.
 
-```ts
-const off = host.app.onQuitRequested(async (request) => {
-  if (!editor.hasChanges) return 'quit';
-  const { response } = await host.dialog.showMessageBox({
-    message: 'Discard unsaved changes?', buttons: ['Discard', 'Cancel'],
-  });
-  return response === 0 ? 'quit' : 'cancel';
-});
-// Remove the subscription when its owner goes away, for example with onDestroy(off).
-```
+On Linux and Windows there is no quit guard. To protect unsaved work there, guard the window instead with [`host.window.onCloseRequested()`](/host/windows/window): it stops the user closing the window, but not a quit from elsewhere (`host.app.quit()`, a signal).
 
 Cmd+Q, Quit in the app or Dock menu, `host.app.quit()`, the last window closing when `quitOnLastWindowClosed` is enabled, and macOS logout/shutdown all enter the same native coordinator. Repeated requests during an attempt join the active attempt rather than starting another vote.
 
 ### `onQuitRequested(callback)`
 
-Register `(request: QuitRequest) => QuitDecision | Promise<QuitDecision>`. Every registered page and server guard participates. Any `'cancel'`, invalid decision or thrown guard error cancels the attempt. With no guards it proceeds. Each phase snapshots its participants, so a late registration does not add a participant to a phase already running.
+Register `(request: QuitRequest) => QuitDecision | Promise<QuitDecision>`. Every registered page and server guard participates. Any `'cancel'`, invalid decision or thrown guard error cancels the attempt. With no guards it proceeds.
 
 ### `onBeforeQuit(callback)`
 
@@ -299,19 +286,19 @@ All three methods synchronously return an unsubscribe function. Explicit unsubsc
 | `'system'` | Another external application-termination request. |
 | `'signal'` | Termination signal handled by the native shell. |
 
-The phases run in order: `quitRequested` → `beforeQuit` → `willQuit` → affirmative AppKit termination reply. Each phase has its own **10-second native timeout**. When the deadline expires, unanswered participants are allowed to continue and `quitTimedOut` reports the phase. A stuck page or server cannot block quitting indefinitely. Force quit and `host.app.exit(code)` bypass these hooks.
+The phases run in order: `quitRequested` → `beforeQuit` → `willQuit` → affirmative AppKit termination reply. When a phase's 10-second deadline expires, unanswered participants are allowed to continue and `quitTimedOut` reports the phase. A stuck page or server cannot block quitting indefinitely. Force quit and `host.app.exit(code)` bypass these hooks.
 
-AppKit will not consult its termination delegate with an attached sheet. Modal windows created with [`host.windows.create()`](/host/windows/window) are temporarily withdrawn for the decision, with their pages and state intact. On cancellation they are restored before `quitCancelled` is delivered. A handler that explicitly hides or closes one keeps that change.
+Modal windows created with [`host.windows.create()`](/host/windows/windows) are hidden while the decision is made and restored if it is cancelled.
 
 The separate server-only [`host.onBeforeQuit(fn)`](/host/data/server) remains a cleanup hook. On macOS it runs in the final `willQuit` phase, before AppKit's affirmative reply, including menu and system quits. Use `host.app.onQuitRequested()` for decisions and `host.app.onBeforeQuit()` for work requiring live windows.
 
-Linux and Windows do not register the cancellable protocol. Subscription registration errors are logged by these helpers rather than returned as rejected promises. Existing parameterless `onWillQuit()` listeners retain observational behavior there; their asynchronous work is not an awaited native phase.
+Linux and Windows do not register the cancellable protocol (see above). Subscription registration errors are logged by these helpers rather than returned as rejected promises. Existing parameterless `onWillQuit()` listeners retain observational behavior there; their asynchronous work is not an awaited native phase.
 
 ## Events
 
 | Event | Payload | Typed helper | Platforms |
 | --- | --- | --- | --- |
-| `reopened` | `{}` (typed callback) | `onReopen(fn)` | macOS |
+| `reopened` | `{ hasVisibleWindows: boolean }` | `onReopen(fn)` | macOS |
 | `openUrls` | `{ urls: string[] }` | `onOpenUrls(fn)` | All; also see [deep links](/host/app/deep-link). |
 | `willRestart` | `{}` | `onWillRestart(fn)` | All |
 | `secondInstance` | `{ argv: string[]; cwd: string }` | `onSecondInstance(fn)` | All |

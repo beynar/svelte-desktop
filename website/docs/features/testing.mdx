@@ -29,10 +29,13 @@ test('native plugin', async () => {
 ```
 
 ```sh
+bunx --bun vite build
 bun test --timeout 30000 tests/
 ```
 
-App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without options, `launch()` runs the first built app in `.desktop/dist`, so build first.
+App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without options, `launch()` runs the first built app in `.desktop/dist`, so build first. `DESKTOP_TEST_DEV` is this example's own convention for choosing `{ dev: true }`, not a framework variable. The `greeter` test calls an op of your own native plugin.
+
+`launch()` opens a real window, which takes input focus while the tests run. In CI the machine needs a display: a logged-in session on macOS, a virtual one such as Xvfb on Linux.
 
 ## launch(options)
 
@@ -53,7 +56,7 @@ App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without o
 | --- | --- |
 | `click(selector)`, `fill(selector, value)`, `press(selector, key)` | DOM interactions |
 | `text(selector?)` | Text content |
-| `waitFor(selectorOrPredicate, { timeout })` | Wait for a selector, or a page function returning truthy |
+| `waitFor(selectorOrPredicate, { timeout })` | Wait for a selector, or a page function returning truthy (default timeout 10 s) |
 | `eval(code or fn, ...args)` | Evaluate in the main window's page; promises awaited, JSON result |
 | `goto(path)` | Navigate (client-side when SvelteKit handles the link) |
 | `platform(service, op, args)` | Any native op |

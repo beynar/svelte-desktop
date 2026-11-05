@@ -3,20 +3,11 @@ title: Release with CI
 description: Build and publish installers for macOS, Windows and Linux, plus signed macOS and Windows update feeds, through GitHub Actions and R2.
 ---
 
-This page takes you from nothing to a pipeline where pushing a tag like `v1.4.0` builds the app for every platform, signs it, uploads the installers and the update archives to a [Cloudflare R2](https://developers.cloudflare.com/r2/) bucket, and publishes a signed `update.json` that installed macOS and Windows apps pick up through [self-update](/shipping/self-update). Linux installers are published for manual installation: the generated Linux update archive is not currently compatible with the installer.
+Releasing means building the app, signing it, uploading the installers and the update archives to a [Cloudflare R2](https://developers.cloudflare.com/r2/) bucket, and publishing a signed `update.json` that installed apps pick up through [self-update](/shipping/self-update). You can do it from your Mac with a handful of commands, or from GitHub Actions for every platform at once. Both start with the same one-time setup.
 
 Follow it in order. Every step ends with a **Check**: don't go on until it passes.
 
 ## What you end up with
-
-```
-git tag v1.4.0 && git push origin v1.4.0
-        │
-        ▼  GitHub Actions (.github/workflows/release.yml)
-  check ──► macos (sign + notarize) ─┐
-        ├─► linux (x64 + arm64) ─────┼─► publish: merge + sign update.json, upload to R2
-        └─► windows (cross-built) ───┘
-```
 
 The bucket, and the public URLs:
 
@@ -53,6 +44,8 @@ Pick these and use them **exactly** everywhere this page shows them:
 In what follows, `UPDATES_URL` means `https://updates.example.com` with your domain, without a trailing slash.
 
 ## One-time setup
+
+This part is shared by both ways of releasing.
 
 <Steps>
   <Step title="Create the update signing key">
@@ -93,7 +86,7 @@ In what follows, `UPDATES_URL` means `https://updates.example.com` with your dom
     - Keep `{channel}` literally in `manifestUrl`: the app replaces it.
     - If the app has an icon, use PNG, JPEG or WebP for this cross-platform workflow. SVG icon generation requires macOS and fails on the Linux and Windows jobs.
 
-    **Check:** `bunx --bun vite build` still succeeds on your machine, and prints a `release` line ending in `update.unsigned.json`.
+    **Check:** `bunx --bun vite build` still succeeds on your machine, and prints a `release` line mentioning `update.unsigned.json`.
   </Step>
 
   <Step title="Add a way to update in the app">
@@ -102,12 +95,13 @@ In what follows, `UPDATES_URL` means `https://updates.example.com` with your dom
     ```svelte
     <script lang="ts">
       import { onMount } from 'svelte';
-      onMount(() => void host.update.check());
+      onMount(() => host.update.check().catch(() => {}));
     </script>
 
     {#if host.update.available}
-      <button onclick={() => host.update.available.downloadAndInstall()}>
-        Update to {host.update.available.version} and relaunch
+      {@const update = host.update.available}
+      <button onclick={() => update.downloadAndInstall()}>
+        Update to {update.version} and relaunch
       </button>
     {/if}
     ```
@@ -135,7 +129,7 @@ In what follows, `UPDATES_URL` means `https://updates.example.com` with your dom
     You need an Apple Developer Program membership.
 
     1. **Developer ID Application certificate.** In Xcode → **Settings** → **Accounts** → your team → **Manage Certificates** → **+** → **Developer ID Application**.
-    2. **Export it.** Open **Keychain Access** → **login** → **My Certificates**. Right-click **Developer ID Application: …** → **Export** → format `.p12`, and set a password. Then:
+    2. **Export it (for CI).** Open **Keychain Access** → **login** → **My Certificates**. Right-click **Developer ID Application: …** → **Export** → format `.p12`, and set a password. Then:
        ```sh
        base64 -i Certificates.p12 | pbcopy   # the base64 is now in the clipboard
        ```
@@ -145,9 +139,72 @@ In what follows, `UPDATES_URL` means `https://updates.example.com` with your dom
        base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy
        ```
 
-    **Check:** you have six values: the `.p12` base64, its password, the identity name, the `.p8` base64, the Key ID and the Issuer ID.
+    **Check:** for CI, you have six values: the `.p12` base64, its password, the identity name, the `.p8` base64, the Key ID and the Issuer ID. From your Mac, you only need the certificate in your keychain, the identity name, the `.p8` file, the Key ID and the Issuer ID.
   </Step>
+</Steps>
 
+## Releasing from your Mac, without CI
+
+The simple path, for a first release or a hotfix. It builds only for your Mac, so the manifest lists macOS only. It needs the setup above: the signing key, `desktop.config.ts`, the R2 bucket and the Developer ID certificate in your keychain.
+
+Store the notarization key once as a `notarytool` profile (the `.p8` file, Key ID and Issuer ID from the Apple step):
+
+```sh
+xcrun notarytool store-credentials notary --key AuthKey_XXXXXXXXXX.p8 --key-id KEY_ID --issuer ISSUER_ID
+```
+
+Then, for each release, after bumping `version` in `package.json`. The script needs the AWS CLI v2 and `jq`; set `BUCKET`, `APP_SLUG`, `CHANNEL` and your R2 account id to your own values:
+
+```sh
+BUCKET=releases APP_SLUG=myapp CHANNEL=stable
+export CODESIGN_IDENTITY="Developer ID Application: Acme Inc (AB12CD34EF)"
+export NOTARY_PROFILE=notary
+VERSION=$(jq -r .version package.json)
+
+bunx svelte-desktop release fetch-previous https://updates.example.com/$APP_SLUG/$CHANNEL/update.json --platform darwin-arm64 --platform darwin-x64 --public-key "$(cat updater.key.pub)"
+bunx --bun vite build
+bunx svelte-desktop release merge .desktop/dist/release/update.unsigned.json --key updater.key --out update.json
+
+# R2 credentials for the aws CLI (the R2 API token from the setup)
+export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… AWS_DEFAULT_REGION=auto
+export AWS_REQUEST_CHECKSUM_CALCULATION=when_required AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+R2="https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com"
+aws s3 cp ".desktop/dist/release/$VERSION" "s3://$BUCKET/$APP_SLUG/$CHANNEL/$VERSION/" --recursive --endpoint-url $R2 \
+  --cache-control "public, max-age=31536000, immutable"
+
+# The installers, for your download links
+for file in .desktop/dist/*.dmg .desktop/dist/*.zip; do
+  name=$(basename "$file")
+  aws s3 cp "$file" "s3://$BUCKET/$APP_SLUG/downloads/$VERSION/$name" --endpoint-url $R2 --cache-control "public, max-age=31536000, immutable"
+  aws s3 cp "$file" "s3://$BUCKET/$APP_SLUG/downloads/latest/${name/-$VERSION-/-latest-}" --endpoint-url $R2 --cache-control "public, max-age=300"
+done
+
+aws s3 cp update.json s3://$BUCKET/$APP_SLUG/$CHANNEL/update.json --endpoint-url $R2 \
+  --cache-control "no-cache, max-age=0" --content-type application/json
+```
+
+`update.json` goes last, as in [the rules](#rules) below.
+
+:::warning
+A Mac-only `update.json` replaces a feed that also lists Windows: Windows users stop seeing updates until the next release that includes Windows. Once you ship Windows too, release from CI.
+:::
+
+## Releasing from CI
+
+Pushing a tag like `v1.4.0` builds the app for every platform, signs it, uploads everything to the bucket and publishes a signed `update.json` that installed macOS and Windows apps pick up. Linux installers are published for manual installation: the generated Linux update archive is not currently compatible with the installer (see [platform support](/shipping/self-update#platform-support)), so Linux is left out of the update feed.
+
+```
+git tag v1.4.0 && git push origin v1.4.0
+        │
+        ▼  GitHub Actions (.github/workflows/release.yml)
+  check ──► macos (sign + notarize) ─┐
+        ├─► linux (x64 + arm64) ─────┼─► publish: merge + sign update.json, upload to R2
+        └─► windows (cross-built) ───┘
+```
+
+CI setup, on top of the shared setup above:
+
+<Steps>
   <Step title="Windows signing (optional)">
     Without a certificate, Windows builds are unsigned, and SmartScreen warns users the first time. To sign, get an Authenticode code-signing certificate as a `.pfx` file from a certificate authority, then:
 
@@ -203,9 +260,11 @@ Copy this file as is for a project at the repository root, using the default `.d
 
 :::warning
 The Windows job cross-builds C/C++ plugins and addons, but skips Rust and Go plugins. If the Windows app needs Rust or Go plugins, it needs a native Windows build job instead of this cross-build job. Swift and Objective-C plugins are macOS only. See [plugin platforms](/native/plugins/platforms).
-
-The publish job deliberately excludes Linux updater manifests because of the [archive-layout limitation](/shipping/self-update#platform-support). Linux still gets manual installers.
 :::
+
+The first Windows run builds the Docker image of the toolchain, which takes a few minutes. The Linux upload step accepts either installer if the other is missing: to require `.AppImage` output, add a shell check after the build, since `appimagetool` failures are warnings in the packager.
+
+<Expandable title="release.yml">
 
 ```yaml .github/workflows/release.yml
 name: Release
@@ -430,24 +489,11 @@ jobs:
           fi
 ```
 
-What each job does:
-
-- **check** stops everything if the tag doesn't match the `version` in `package.json`.
-- **macos**:
-  - imports the certificate into a temporary keychain and stores the notarization key as the `notary` profile;
-  - downloads the previously published macOS archive, so the build can make a delta patch;
-  - runs `vite build`, which builds the universal app, signs it with the hardened runtime, notarizes and staples it, makes the `.dmg` and `.zip`, and writes `release/<version>/` with an unsigned partial manifest.
-- **linux** builds natively on x64 and arm64 runners and uploads `.tar.gz` and `.AppImage` installers. Its generated updater output is left out of publication.
-- **windows** cross-builds from Linux (the toolchain runs in Docker; the first run builds the image, which takes a few minutes): the folder `.zip`, the per-user NSIS installer and `release/`.
-- **publish**:
-  - merges the partial manifests into one `update.json` and signs it with the private key, which only this job sees;
-  - checks the signature against the public key;
-  - uploads the archives, then the installers, then `update.json` last, so a client never reads a manifest pointing at missing files;
-  - reads the published file back.
-
-The Linux upload step accepts either installer if the other is missing. To require `.AppImage` output, add a shell check after the build; `appimagetool` failures are warnings in the packager.
+</Expandable>
 
 ## Cutting a release
+
+With CI. From your Mac, [the commands above](#releasing-from-your-mac-without-ci) are the whole release.
 
 <Steps>
   <Step title="Bump the version">
@@ -468,7 +514,7 @@ The Linux upload step accepts either installer if the other is missing. To requi
     ```sh
     curl -s https://updates.example.com/myapp/stable/update.json | jq '{version, artifacts: (.artifacts | keys)}'
     ```
-    It must show the new version and the keys `darwin-arm64`, `darwin-x64` and `windows-x64`. Linux installers must be present under `downloads/`; Linux keys are deliberately absent from the update feed. An installed older macOS or Windows version offers the update the next time it calls `host.update.check()`.
+    It must show the new version and the keys `darwin-arm64`, `darwin-x64` and `windows-x64`. Linux installers must be present under `downloads/`. An installed older macOS or Windows version offers the update the next time it calls `host.update.check()`.
   </Step>
 </Steps>
 
@@ -499,37 +545,13 @@ Users on `beta` get beta builds. Users on `stable` never see them, because a man
 
 `RELEASE_CHANNEL` sets the channel baked into those builds (`desktop.config.ts` reads it), and the update files go to `myapp/beta/`. Beta installers go to `myapp/downloads/beta/` with the extra change above.
 
-## Releasing from your Mac, without CI
-
-For a first test, or a hotfix. This builds only for your Mac, and the manifest then lists macOS only:
-
-```sh
-export CODESIGN_IDENTITY="Developer ID Application: Acme Inc (AB12CD34EF)"
-export NOTARY_PROFILE=notary   # once: xcrun notarytool store-credentials notary
-VERSION=$(jq -r .version package.json)
-
-bunx svelte-desktop release fetch-previous https://updates.example.com/myapp/stable/update.json --platform darwin-arm64 --platform darwin-x64 --public-key "$(cat updater.key.pub)"
-bunx --bun vite build
-bunx svelte-desktop release merge .desktop/dist/release/update.unsigned.json --key updater.key --out update.json
-
-# R2 credentials for the aws CLI (an R2 API token, as in the setup)
-export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… AWS_DEFAULT_REGION=auto
-R2="https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com"
-aws s3 cp ".desktop/dist/release/$VERSION" "s3://releases/myapp/stable/$VERSION/" --recursive --endpoint-url $R2
-aws s3 cp update.json s3://releases/myapp/stable/update.json --endpoint-url $R2 --cache-control "no-cache, max-age=0"
-```
-
-:::warning
-A Mac-only `update.json` replaces the feed listing macOS and Windows: Windows users stop seeing updates until the next full release. Use CI for real releases.
-:::
-
 ## Rules
 
 - **Never reuse a version.** Clients only take a strictly newer version, and the archives are cached for a year.
 - **`update.json` is uploaded last**, always.
-- **To pull a bad release,** publish a fixed one with a higher version. Re-uploading an older `update.json` does nothing: installed apps never downgrade. To mark the fix as mandatory, publish it with `minimumVersion` (`release merge --minimum-version 1.4.1`). This sets `mandatory: true` for older installs; your app decides how to enforce it.
+- **To pull a bad release,** publish a fixed one with a higher version. Re-uploading an older `update.json` does nothing: installed apps never downgrade. To mark the fix as mandatory, publish it with `minimumVersion` (`release merge --minimum-version 1.4.1`; in CI, add the flag to the `release merge` line of the workflow). This sets `mandatory: true` for older installs; your app decides how to enforce it.
 - **CI only needs the private key in the publish job**, through `UPDATE_PRIVATE_KEY`. Keep local `updater.key` files ignored and backed up in your password manager. Builds do not need the key.
-- **This workflow makes delta patches for macOS** against the previous published version. Windows always downloads the full archive. macOS clients on older versions also get the full archive. Linux updater archives and patches are excluded until the layout limitation is fixed.
+- **This workflow makes delta patches for macOS** against the previous published version. Windows always downloads the full archive. macOS clients on older versions also get the full archive.
 
 ## Troubleshooting
 
@@ -540,7 +562,7 @@ A Mac-only `update.json` replaces the feed listing macOS and Windows: Windows us
 | macOS: notarization `Invalid` | The build prints the `xcrun notarytool log <id> --keychain-profile notary` command. Run it on your Mac with the same API key to see Apple's reasons. Run `bunx svelte-desktop preflight .desktop/dist/MyApp.app` locally first. |
 | macOS: `notarytool` can't find the profile `notary` | Check the credential-import step, the selected keychain and `APPLE_API_KEY_P8_BASE64`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID`. |
 | linux: `Package gtk+-3.0 was not found` | The apt step didn't run or failed: it must come before the build. |
-| linux: no `.AppImage` | The build prints `AppImage: appimagetool failed …`. The `.tar.gz` still ships; check that the appimagetool download step succeeded. Linux updates are excluded from this workflow. |
+| linux: no `.AppImage` | The build prints `AppImage: appimagetool failed …`. The `.tar.gz` still ships; check that the appimagetool download step succeeded. |
 | windows: Docker errors | This cross-build job needs Docker. On the configured Ubuntu runner, check `docker info` and the native toolchain build output. A native Windows job uses a different toolchain setup. |
 | publish: `merge: … is 1.4.0, … is 1.3.9` | A job built from another commit. Re-run all jobs of the workflow. |
 | publish: `verify` fails | `UPDATE_PUBLIC_KEY` isn't the public half of `UPDATE_PRIVATE_KEY`. Run `cat updater.key.pub` and fix the variable. |

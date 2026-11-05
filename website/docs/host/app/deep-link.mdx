@@ -19,6 +19,12 @@ How-to: [Deep links and documents](/ui/platform-services#deep-links-and-document
 
 ## Methods
 
+Declare the schemes your app handles in `desktop.config.ts`. They go into the bundle (macOS), the desktop entry (Linux) and the registry (Windows) when you package the app:
+
+```ts desktop.config.ts
+schemes: ['svelte-notes'],
+```
+
 ### `register(scheme)`
 
 Make the packaged app a URL-scheme handler. Resolves `{ scheme: string; registered: boolean }` with the normalized lowercase scheme. In `vite dev`, it does nothing and resolves `registered: false`.
@@ -31,7 +37,7 @@ Make the packaged app a URL-scheme handler. Resolves `{ scheme: string; register
 await host.deepLink.register('svelte-notes');
 ```
 
-On macOS, the bundle must already declare the scheme in `CFBundleURLTypes`; configure `schemes` in `desktop.config.ts`. The OS may ask the user to confirm the handler change. On Windows, registration writes a per-user URL association for the packaged executable.
+On macOS, the bundle must already declare the scheme (the `schemes` config above). The OS may ask the user to confirm the handler change. On Windows, registration writes a per-user URL association for the packaged executable.
 
 On Linux, registration writes the app's entry to `~/.local/share/applications`, with the app's current path and the scheme in `MimeType`, and sets it as the default in `~/.config/mimeapps.list`. The app then appears in the desktop's application list.
 
@@ -59,7 +65,7 @@ It resolves `false` in `vite dev`. An invalid scheme rejects with `invalid_args`
 
 `host.deepLink.onOpen(fn)`, `host.deepLink.on('openUrls', fn)` and `host.on('openUrls', fn)` return unsubscribe functions. `host.deepLink.once('openUrls', fn)` listens once and also returns an unsubscribe function. [`host.app.onOpenUrls()`](/host/app/app) observes the same event.
 
-Incoming URLs work on all three platforms. On Linux and Windows, packaged launch arguments and later launches forwarded through the single-instance mechanism supply the URLs. Register listeners early in the app's lifetime.
+Incoming URLs work on all three platforms. On Linux and Windows, packaged launch arguments and later launches forwarded through the single-instance mechanism supply the URLs. Register listeners early in the app's lifetime. `host.deepLink.urls` and `last` collect the URLs this window received while its store was running (the 100 most recent). A window opened later starts empty and doesn't query earlier URLs, so handle a launch URL from a listener registered at startup.
 
 ## Platform support
 
@@ -87,3 +93,5 @@ Incoming URLs work on all three platforms. On Linux and Windows, packaged launch
 
 <p>Last link: {host.deepLink.last ?? 'none'}</p>
 ```
+
+To try it in a packaged app, run `open svelte-notes://note/1` on macOS. Deep links need a packaged app, not `vite dev`.

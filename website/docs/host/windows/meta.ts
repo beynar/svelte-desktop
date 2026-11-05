@@ -4,5 +4,5 @@ export default defineMeta({
   title: "Windows and dialogs",
   icon: "app-window",
   order: 2,
-  pages: ["window", "window-state", "view", "popover", "dialog"],
+  pages: ["window", "windows", "window-state", "view", "popover", "dialog"],
 });

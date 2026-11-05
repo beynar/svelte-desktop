@@ -50,7 +50,7 @@ Query whether the backend supports capture-source enumeration.
 const { supported } = await host.capture.isSupported();
 ```
 
-Resolves `{ supported: boolean }`. macOS returns `true` from 12.3 onward, including versions that cannot capture stills. Linux returns `true` only on X11; Windows returns `true`. This query does not request permission or update the reactive `supported` field.
+Resolves `{ supported: boolean; stills?: boolean }`. macOS returns `supported: true` from 12.3 onward, and `stills` says whether `captureSource` works: it needs macOS 14, and rejects with `unavailable` before that. Linux returns `true` only on X11; Windows returns `true`. This query does not request permission or update the reactive `supported` field.
 
 ### `getSources(options?)`
 
@@ -104,7 +104,7 @@ await host.capture.refresh();
 
 On macOS, request Screen Recording through [`host.permissions`](/host/os/permissions). Its default guided flow opens System Settings; the user may need to relaunch before a grant applies. Enumeration and still capture enforce consent independently of the `supported` flag.
 
-Linux support is X11 only. Windows uses native display/window capture without a permission prompt from this API. None of these methods starts a media stream; page display sharing and its per-origin checks are covered by [web permissions](/host/web/web-policy).
+Windows uses native display/window capture without a permission prompt from this API. None of these methods starts a media stream; page display sharing and its per-origin checks are covered by [web permissions](/host/web/web-policy).
 
 ## Platform support
 
@@ -115,11 +115,11 @@ Linux support is X11 only. Windows uses native display/window capture without a 
 | `captureSource` | partial (14+) | partial | partial |
 | `init`, `refresh` | partial | partial | ✓ |
 
-Linux listing and capture require X11. Linux and Windows enumerate displays and windows, not applications. Every still backend captures displays and windows only; macOS's application listings cannot be passed to still capture. `init()` and `refresh()` inherit the underlying enumeration requirements.
+Linux listing and capture require X11. Linux and Windows enumerate displays and windows, not applications, and no platform captures application stills. `init()` and `refresh()` inherit the enumeration requirements.
 
 ## Example
 
-Capture the primary display after the user has granted any required OS consent:
+On macOS, first declare the reason in `desktop.config.ts` (`permissions: { screenRecording: 'Capture screenshots' }`) and request consent with `await host.permissions.request('screenRecording')`; the user may need to relaunch afterwards. Without consent, `getSources` rejects with `denied`, which the example below shows as its message. Then capture the primary display:
 
 ```svelte
 <script lang="ts">

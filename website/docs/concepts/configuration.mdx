@@ -16,11 +16,11 @@ export default defineConfig({
 });
 ```
 
-`desktop(kitOptions, options)` is SvelteKit's own plugin with the desktop adapter set (don't pass `adapter`). The first argument takes SvelteKit's plugin options; the second takes:
+`desktop(kitOptions, options)` is SvelteKit's own plugin with the desktop adapter set (don't pass `adapter`). Svelte compiler options go in `kitOptions.compilerOptions`; for example, the `create` template turns on `experimental.async` to use `await` in markup. The first argument takes SvelteKit's plugin options; the second takes:
 
 <TypeTable
   type={{
-    config: { type: "Partial<DesktopConfig>", description: "Override desktop.config.ts inline. Top-level keys replace the file's values; nested objects are not deep-merged." },
+    config: { type: "Partial<DesktopConfig>", description: "Override desktop.config.ts inline. Top-level keys replace the file's values; nested objects are not deep-merged: `config: { window: { width: 800 } }` drops the file's other `window` keys, such as `autosaveName`." },
     exitOnClose: { type: "boolean", default: "true", description: "Stop vite dev when the app window is closed." },
     noWindow: { type: "boolean", default: "false", description: "Don't open the native window in dev (browser-only dev). Any non-empty `SVELTE_DESKTOP_NO_WINDOW` also skips the shell, even if this option is `false`." },
   }}
@@ -49,7 +49,7 @@ export default defineConfig({
 });
 ```
 
-`defineConfig` requires `appName` and `identifier`; everything else is optional. The loader can fill in missing identity fields: `appName` falls back to `productName` or `name` in `package.json`, `identifier` to `dev.svelte-desktop.` followed by the lowercased app name with non-alphanumeric characters removed, and `version` to the `package.json` version or `0.0.0`. `identifier` must be reverse-DNS (`com.example.app`): it names the bundle and the data directories.
+Set `appName` and `identifier`: `defineConfig` requires them. If you omit them (a plain object, or a `.js` file), the loader falls back: `appName` falls back to `productName` or `name` in `package.json`, `identifier` to `dev.svelte-desktop.` followed by the lowercased app name with non-alphanumeric characters removed, and `version` to the `package.json` version or `0.0.0`. `identifier` must be reverse-DNS (`com.example.app`): it names the bundle and the data directories.
 
 The plugin loads the first file it finds (`desktop.config.ts`, `.js`, then `.mjs`) for both `vite dev` (window, native plugins) and `vite build` (bundle, signing, release). Editing it during windowed `vite dev` restarts the dev server and the shell. Browser-only mode skips this watcher.
 
@@ -62,7 +62,7 @@ The plugin loads the first file it finds (`desktop.config.ts`, `.js`, then `.mjs
 | OS integration | `schemes`, `protocols`, `fileTypes`, `permissions`, `plist` | [Permissions](/features/permissions), [Host API](/host) |
 | Notifications | `notifications`, `push` | [Notifications and push](/features/notifications) |
 | Native code | `native`, `addons`, `sidecars` | [Native code](/native) |
-| Security | `bridge.allow` | [The host API](/host) |
+| Security | `bridge.allow` | [Architecture](/concepts/architecture#the-bridge) |
 | Release | `build`, `sign`, `update` | [Distribution](/shipping/distribution) |
 
 Every key is listed in the [configuration reference](/reference/config).

@@ -3,7 +3,7 @@ title: Events and broadcast
 description: Listen to native events, dispatch local events and send messages between pages and server code.
 ---
 
-Use `host.on` for native notifications, `host.events` for local application events, and `host.broadcast` to reach other contexts. Subscriptions return synchronous unsubscribe functions; dispose them when their owner goes away.
+Use `host.broadcast` to send messages between pages and server code ([below](#broadcast-between-contexts)), `host.on` for native notifications, and `host.events` for events inside one context. Subscriptions return synchronous unsubscribe functions; dispose them when their owner goes away.
 
 How-to: [Menus](/ui/menus) and [menu bar and popovers](/ui/menu-bar-and-popovers).
 
@@ -24,23 +24,23 @@ Most services also offer typed helpers such as `host.theme.onChange`, `host.menu
 
 ### Event index
 
-These are page-visible native event names from the macOS backend's `platform_emit` calls and notification maps, including its included download implementation. Links identify the reference that owns each event's details and platform availability. A name in this index does not imply that every backend emits it. Events go to app-origin pages; embedded views showing other sites do not receive them.
+Page-visible native event names. Each link goes to the page that owns the event's details and platform availability; a name here does not mean every platform emits it. Events go to app-origin pages; embedded views showing other sites do not receive them.
 
 | Owner | Event names | Payload / trigger |
 | --- | --- | --- |
 | [App](/host/app/app) | `reopened` | `{ hasVisibleWindows: boolean }`; app reopened. |
 | [App](/host/app/app) | `appActivated`, `appDeactivated`, `willRestart` | `{}`; activation changes or restart requested. |
 | [App](/host/app/app) | `secondInstance` | `{ argv: string[]; cwd: string }`; another launch. |
-| [App lifecycle](/host/app/app) | `quitRequested`, `beforeQuit`, `willQuit` | Quit request: `requestId`, `reason`, `deadline`, plus native participant `tokens`. Use the typed lifecycle helpers to participate. |
+| [App lifecycle](/host/app/app) | `quitRequested`, `beforeQuit`, `willQuit` | Quit request: `requestId`, `reason`, `deadline`. Use the typed lifecycle helpers to participate. |
 | [App lifecycle](/host/app/app) | `quitCancelled`, `quitTimedOut` | `requestId`, `reason`; timeout also carries `phase`. |
 | [Deep links](/host/app/deep-link) | `openUrls` | `{ urls: string[] }`; URLs opened with the app. |
 | [Files](/host/os/files) | `openFiles` | `{ paths: string[] }`; files opened with the app. |
-| [Windows](/host/windows/window) | `created` | `{ windowId: number; label: string }`; secondary window created. |
-| [Windows](/host/windows/window) | `willClose`, `closed`, `shown`, `hidden`, `minimized`, `restored`, `focus`, `blur` | `{ windowId: number }`; window lifecycle, visibility or focus. |
-| [Windows](/host/windows/window) | `focusChanged` | `{ windowId: number; focused: boolean }`. |
-| [Windows](/host/windows/window) | `boundsChanged`, `moved`, `resized` | `{ windowId: number; x: number; y: number; width: number; height: number }`. |
-| [Windows](/host/windows/window) | `scaleFactorChanged` | `{ windowId: number; scaleFactor: number }`. |
-| [Windows](/host/windows/window) | `fullscreenChanged` | `{ windowId: number; fullscreen: boolean; transition: 'entered' \| 'exited' }`. |
+| [Windows](/host/windows/windows) | `created` | `{ windowId: number; label: string }`; secondary window created. |
+| [Windows](/host/windows/windows) | `willClose`, `closed`, `shown`, `hidden`, `minimized`, `restored`, `focus`, `blur` | `{ windowId: number }`; window lifecycle, visibility or focus. |
+| [Windows](/host/windows/windows) | `focusChanged` | `{ windowId: number; focused: boolean }`. |
+| [Windows](/host/windows/windows) | `boundsChanged`, `moved`, `resized` | `{ windowId: number; x: number; y: number; width: number; height: number }`. |
+| [Windows](/host/windows/windows) | `scaleFactorChanged` | `{ windowId: number; scaleFactor: number }`. |
+| [Windows](/host/windows/windows) | `fullscreenChanged` | `{ windowId: number; fullscreen: boolean; transition: 'entered' \| 'exited' }`. |
 | [Popovers](/host/windows/popover) | `popoverReady`, `popoverShown`, `popoverHidden` | `{ id: string }`; popover lifecycle. |
 | [Popovers](/host/windows/popover) | `popoverResized` | `{ id: string; width: number; height: number }`. |
 | [Views](/host/windows/view) | `viewTitle` | `{ id: string; title: string }`. |
@@ -101,15 +101,7 @@ Calls local listeners synchronously. `name` is a `string`, `payload` is `unknown
 
 ### `emitTo(windowId, name, payload?)`
 
-Returns `Promise<void>`. `windowId` and `name` are strings; `payload` is optional `unknown`.
-
-| `windowId` | Delivery |
-| --- | --- |
-| `'main'` or `'0'` | Calls `host.events.emit` in this context. |
-| A string converting to a positive integer, such as `'2'` | Dispatches on this context's platform bus with a numeric `windowId`. Receive with `host.on` or the platform module's `onWindow(id, name, fn)`. Object payloads gain `windowId`; other supplied values become `{ windowId, data }`. |
-| Anything else | Rejects with `invalid_args`. |
-
-Despite its name, `emitTo` does not send to another process or page. Use `host.broadcast` for cross-context messages.
+Local only, despite its name: it does not reach another page or process, so use `host.broadcast` for that. Returns `Promise<void>`. `'main'` or `'0'` calls `host.events.emit` in this context; a string holding a positive integer does not reach `host.events.on` listeners. It dispatches on the platform event bus, so `host.on(name, fn)` and `onWindow(id, name, fn)` (from `@svelte-desktop/shell/platform`) receive it, with `windowId` added to the payload (object payloads gain `windowId`, other values become `{ windowId, data }`); anything else rejects with `invalid_args`.
 
 ### `init()`
 

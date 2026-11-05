@@ -3,9 +3,7 @@ title: host.diagnostics
 description: Read native process diagnostics and collect a local support archive from server code.
 ---
 
-`host.diagnostics` holds a native process snapshot. In server code it also exposes `collect()` for local support archives. For a running backend's operation report, use [`host.capabilities`](/host/app/capabilities).
-
-How-to: [Local support bundles](/native/services#local-support-bundles).
+`host.diagnostics.collect()` builds a local support archive (logs, crash reports, metadata) from server code. The members on a page are a small native process snapshot. For a running backend's operation report, use [`host.capabilities`](/host/app/capabilities).
 
 ## Reactive state
 
@@ -62,7 +60,7 @@ await host.shell.showItemInFolder(path);
 
 The archive contains `logs/`, `crashes/previous-run.json`, discovered crash reports, `metadata.json` and a `manifest.json` describing omissions. Disabled sections are absent. OS report discovery covers matching macOS `.ips`/`.crash` reports and Windows `.dmp` files; Linux has no automatic system crash-report discovery. Development runs normally have no file logs or tracked previous-run crash state.
 
-Source files are limited to 10 MiB each and 50 MiB overall. Collection skips non-regular files, including symlinks, and records unreadable or oversized files as omissions. Missing log directories are allowed. Metadata lookup, directory creation and archive writes can reject; an unreadable log or report alone does not fail the whole collection. The archive is created with mode `0600` in a directory created with mode `0700`.
+Source files are limited to 10 MiB each and 50 MiB overall; symlinks and anything unreadable or oversized are skipped and recorded in `manifest.json`. The archive is readable by the current user only.
 
 Included text logs and crash reports, plus previous-run state, receive best-effort masking of common authorization, token and code fields. Metadata and binary dumps are not masked. Arbitrary application data can still contain sensitive information. The application owns consent, review, upload, retention and deletion. Collection snapshots logs while the app continues running.
 

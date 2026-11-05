@@ -100,11 +100,9 @@ The default export can be synchronous or asynchronous. `HostJob` is supplied by 
 
 ## Threads and processes
 
-Each running job has its own OS process and Bun runtime. In the packaged app, the parent registry runs in the app's Bun Worker alongside SvelteKit. In `vite dev`, it runs in the Vite server process. The parent sends startup arguments and cancellation through Bun IPC; the child sends progress, logs, custom events and its final result through the same connection. No JavaScript memory is shared. See [Threads and processes](/native/threads).
+Each running job is its own OS process with its own Bun runtime, started by the server and connected over Bun IPC. It has no `host` global; report back with `ctx.progress`, `ctx.log` and `ctx.emit`. See [Threads and processes](/native/threads).
 
-Jobs do not receive the server's `host` global or a direct UI-thread bridge. Use `ctx.progress`, `ctx.log` and `ctx.emit` to report back. The server publishes job snapshots and custom events on the native `jobs` broadcast channel; pages receive them through `host.jobs`. For privileged operations, have the parent server act on the job's messages. Route communication with other jobs or services through server code or an application-owned protocol.
-
-A thrown error marks the job `failed`. If the process exits before reporting completion, the registry records a failure with its exit code; a child crash does not terminate the parent app. There is no automatic retry. Cancellation is cooperative: a CPU-bound function must yield to let the child receive its abort message, and must check `ctx.signal`. If a canceled job returns normally before the kill attempt, it can still finish as `done`.
+A thrown error marks the job `failed`, unless cancellation was already requested: then it ends as `canceled`. If the process exits before reporting completion, the registry records a failure with its exit code; a child crash does not terminate the parent app. There is no automatic retry. Cancellation is cooperative: a CPU-bound function must yield to let the child receive its abort message, and must check `ctx.signal`. If a canceled job returns normally before the kill attempt, it can still finish as `done`.
 
 On normal app quit, server cleanup kills tracked running jobs and records them as `canceled` with `error: 'app quit'`. It does not wait for cooperative job cleanup or send an abort first. Do not rely on a job's `finally` block to run during app quit or forced termination. Queued work is not a durable queue and is not resumed on the next launch.
 
@@ -116,10 +114,4 @@ Entry names may contain letters, numbers, underscores and hyphens, and end in `.
 
 Packaged apps keep up to 200 ended jobs in `jobs.json` inside `host.paths.data`. They restore with `restored: true`. Results, errors and recent log lines are retained, but jobs are not restarted. Writes during a run are delayed by 200 ms; normal shutdown flushes ended records. Read/write failures are swallowed, so history is best effort. Dev does not bind a history file.
 
-| Behavior | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| Separate Bun child and IPC | Supported | Supported | Supported |
-| Embedded runner in the packaged executable | Supported | Supported | Supported |
-| Page progress, events and cancellation | Supported | Supported | Supported |
-
-Native libraries or tools used by a job must also support the target platform. See the [jobs reference](/host/data/jobs) for the full API and the [server reference](/host/data/server) for server-only members.
+Jobs work on macOS, Linux and Windows. Native libraries or tools a job uses must support the target platform too. See the [jobs reference](/host/data/jobs) for the full API and the [server reference](/host/data/server) for server-only members.

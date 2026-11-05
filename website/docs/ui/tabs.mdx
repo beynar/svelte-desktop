@@ -1,20 +1,19 @@
 ---
 title: Tabs
-description: The window's tabs (SvelteKit routes in the title bar, kept alive, dragged between windows) with <WindowTabs>, and tabs inside a page with <Tabs> — each one configured by its props and drawn with snippets.
+description: The window's tabs (SvelteKit routes in the title bar, kept alive, dragged between windows) with <WindowTabs>, configured by its props and drawn with snippets.
 ---
 
 :::note
-API reference: [`host.view`](/host/windows/view), [`host.windows`](/host/windows/window), [`host.menu`](/host/input/menu).
+API reference: [`host.view`](/host/windows/view), [`host.windows`](/host/windows/windows), [`host.menu`](/host/input/menu).
 :::
 
-Two components, each configured by its props and drawn with snippets:
+`<WindowTabs>` is the window's tabs, in the title bar, configured by its props and drawn with snippets. Its tabs are your SvelteKit routes: you write links as usual, and the tabs follow. With [`split`](#split-panes), the window divides into panes the user arranges by dragging.
 
-- **`<WindowTabs>`** — the window's tabs, in the title bar. Its tabs are your SvelteKit routes: you write links as usual, and the tabs follow.
-- **`<Tabs>`** — tabs inside a page, on your own items: boards, documents, a segmented control.
+Tabs inside a page need no component: they are plain Svelte, and [`host.store`](/host/data/store) can save them for the next launch.
 
 ## The window's tabs
 
-One declaration, in the root layout. `page` is the layout's `children`; `layout` puts the bar in the title bar and the content where the page goes:
+One declaration, in the root layout (`Sidebar`, `AppShell` and `RouteIcon` in the snippets below stand for your own components). `page` is the layout's `children`; `layout` puts the bar in the title bar and the content where the page goes:
 
 ```svelte src/routes/+layout.svelte
 <script lang="ts">
@@ -46,6 +45,8 @@ Each page names its tab with its `<title>`, like in a browser:
 <svelte:head><title>Invoice {data.invoice.number}</title></svelte:head>
 ```
 
+In a [popover](/ui/menu-bar-and-popovers), `<WindowTabs>` renders the page alone, with no tab bar.
+
 From there, it's links:
 
 ```svelte
@@ -64,9 +65,19 @@ From there, it's links:
 | Drag a tab | Reorder. A regular route tab can move to another window's bar; with at least two tabs, dragging it outside opens a new window. Kept-alive and external tabs stay in their window |
 | Back / Forward | The browser's history, shared by the tabs |
 
-You never create a tab by hand: a route that must keep running is declared once, in `keepAlive`, with SvelteKit's route ids (`/terminal/[id]`, `/docs/[...rest]`), and every link to it follows. Each kept-alive tab uses another web view and consumes more memory: keep it for pages that need to stay mounted. Hidden views can still be throttled, and suspension or a process crash loses in-memory state. Put work that must outlive a page in [background jobs](/native/jobs) or [services](/native/services). While one is shown, the window takes its address without navigating there — no `load`, no page code in the window (the view runs the page) — and `page.url`, your sidebar's active link, Back and Forward follow. A link followed from your layout while it's shown (the sidebar) goes to a tab of the page: the one already at that address, else the last one shown.
+You never create a tab by hand. A route that must keep running is declared once, in `keepAlive`, with SvelteKit's route ids (`/terminal/[id]`, `/docs/[...rest]`), and every link to it follows.
 
-The main window's tabs are restored at the next launch. For a regular active tab, the window opens on its page. For a kept-alive active tab, it opens on the last regular page, then shows the tab's view when ready. Restored kept-alive tabs start after the window page hydrates, subject to `maxViews`; the window title follows the active tab; a native **Tab** menu has ⌘T ⌘W ⇧⌘T ⌃⇥ and ⌘1–9 (in its **Select Tab** submenu), and wins over the page — and over a kept-alive tab's view; only the focused window acts on it. These Command shortcuts use Ctrl on Linux and Windows, and ⌘9 / Ctrl+9 selects the last tab. With `titleBarStyle: 'hiddenInset'` the bar sits next to the traffic lights: tabs and buttons stay clickable, the empty parts of the strip move the window.
+- Each kept-alive tab uses another web view and consumes more memory: keep it for pages that need to stay mounted. Hidden views can still be throttled, and suspension or a process crash loses in-memory state. Put work that must outlive a page in [background jobs](/native/jobs) or [services](/native/services).
+- While one is shown, the window takes its address without navigating there (no `load`, no page code in the window: the view runs the page), and `page.url`, your sidebar's active link, Back and Forward follow.
+- A link followed from your layout while it's shown (the sidebar) goes to a tab of the page: the one already at that address, else the last one shown.
+
+The main window's tabs are restored at the next launch:
+
+- A regular active tab: the window opens on its page.
+- A kept-alive active tab: the window opens on the last regular page, then shows the tab's view when ready. Restored kept-alive tabs start after the window page hydrates, subject to `maxViews`.
+- The window title follows the active tab.
+- A native **Tab** menu has ⌘T ⌘W ⇧⌘T ⌃⇥ and ⌘1–9 (in its **Select Tab** submenu). It wins over the page and over a kept-alive tab's view, and only the focused window acts on it. On Linux and Windows these use Ctrl, and Ctrl+9 selects the last tab.
+- With `titleBarStyle: 'hiddenInset'` the bar sits next to the traffic lights: tabs and buttons stay clickable, the empty parts of the strip move the window.
 
 ### Snippets
 
@@ -96,17 +107,20 @@ The main window's tabs are restored at the next launch. For a regular active tab
 
 - `tab` draws each tab (default: its title and a close button).
 - `layout` gets `bar` (the tab bar: `class`, `label`, `start`, `end`), `content` (the page, and each kept-alive tab's view in the same place) and `api`; without it, the bar goes above the content.
-- `embedded`: a kept-alive tab's view runs your app again, layout included — there `<WindowTabs>` renders the page alone (or this snippet), on the server too (the view's request says so), so the view shows at its first paint. Your own code can test `embedded` from `@svelte-desktop/shell/tabs` (in the page).
+- `embedded`: a kept-alive tab's view runs your app again, layout included — there, and in a popover, `<WindowTabs>` renders the page alone (or this snippet), on the server too (the view's request says so), so the view shows at its first paint. Your own code can test `embedded` from `@svelte-desktop/shell/tabs` (in the page).
 
-`api` (also `bind:api`, set in the browser: on the server, `layout`'s `api`): `items`, `active`, `open(path | url, { background, reuse })` (`reuse: false`: another tab on a kept-alive route already open), `close(id?)`, `activate(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`. `api.open('https://…')` shows another site in a tab of its own (external links keep opening the browser); it can't call native APIs and receives none of the app's events. A tab is `{ id, path?, url?, title? }`. Reuse of a kept-alive tab matches the pathname, ignoring query and hash; it activates the existing tab without changing its URL. Use `reuse: false` to open a separate tab with different parameters.
+`api` is available as `bind:api` in the browser, and as the `api` argument of the `layout` snippet on the server. It has: `items`, `active`, `open(path | url, { background, reuse })` (`reuse: false`: another tab on a kept-alive route already open), `close(id?)`, `activate(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`. `api.open('https://…')` shows another site in a tab of its own (external links keep opening the browser); it can't call native APIs and receives none of the app's events. A tab is `{ id, path?, url?, title? }`. Reuse of a kept-alive tab matches the pathname, ignoring query and hash; it activates the existing tab without changing its URL. Use `reuse: false` to open a separate tab with different parameters.
 
-A view is drawn over the page: your page's popovers and dialogs can't cover a kept-alive tab or another site. A kept-alive tab's view is see-through: where its page paints nothing, the background of your layout around `content` shows — give the `embedded` page no background of its own and it blends in. It waits for its page-ready signal (or a load failure or three-second timeout); until then the tab you were on stays. A link to a kept-alive route makes its view ahead when SvelteKit would preload it — `data-sveltekit-preload-data="hover"` (in the default `app.html`) once the pointer rests on it, `"tap"` when pressed, `"false"` never — so the click shows it at once (unused, it's dropped after 5 s); at launch, restored kept-alive tabs start once your page is up.
+A view is drawn over the page: your page's popovers and dialogs can't cover a kept-alive tab or another site. A kept-alive tab's view is see-through: where its page paints nothing, the background of your layout around `content` shows — give the `embedded` page no background of its own and it blends in. It waits for its page-ready signal (or a load failure or three-second timeout); until then the tab you were on stays. A link to a kept-alive route starts loading that tab's view when SvelteKit would preload the link, so the click shows it at once: `data-sveltekit-preload-data="hover"` (the default in `app.html`) preloads once the pointer rests on the link, `"tap"` when it is pressed, `"false"` never. A preloaded view that goes unused is dropped after 5 s; at launch, restored kept-alive tabs start once your page is up.
 
 <TypeTable
   type={{
     page: { type: "Snippet", description: "The page: your layout's children.", required: true },
     newTab: { type: "string", description: "The page ⌘T and + open. Without it, no new tab." },
     keepAlive: { type: "string[]", description: "Routes that keep running when their tab isn't shown, as SvelteKit route ids." },
+    split: { type: "boolean", default: "false", description: "Divide the window into panes the user arranges by dragging, every tab in its own web view: see [Split panes](#split-panes). Set once, at start." },
+    minPaneSize: { type: "number", default: "180", description: "The smallest a pane gets when resized or when the window gets smaller, while there's room (px)." },
+    resizeLabel: { type: "string", default: "'Resize panes'", description: "Accessible name of the line between two panes." },
     restore: { type: "boolean", default: "true", description: "Restore the tabs at the next launch." },
     detachable: { type: "boolean | (tab) => boolean", default: "true", description: "Move regular route tabs between windows. Kept-alive and external tabs cannot detach; opening a new window requires at least two tabs." },
     windowAnimation: { type: "boolean | WindowAnimation", default: "true", description: "How the window a tab is dragged into comes in (macOS): see [Animation](/ui/windows#animation)." },
@@ -117,83 +131,133 @@ A view is drawn over the page: your page's popovers and dialogs can't cover a ke
     value: { type: "string", description: "The active tab's id (bindable)." },
     api: { type: "TabGroup", description: "The tabs, for your code (bindable)." },
     tab: { type: "Snippet<[{ tab, active, closable, close, index }]>", description: "Each tab." },
-    layout: { type: "Snippet<[{ bar, content, api }]>", description: "Where the bar and the content go." },
+    layout: { type: "Snippet<[{ bar, content, api }]>", description: "Where the bar and the content go. With `split`, `content` takes `bar` for the panes' bars." },
     embedded: { type: "Snippet<[{ page }]>", description: "The page in a kept-alive tab's own view." },
   }}
 />
 
-## Tabs in a page
+## Split panes
 
-`<Tabs>` takes your items and renders a bar and a panel per tab. An item is a string, or `{ value, label }` plus `pinned`, `closable` and your own fields. Give each item a unique, stable `value`. `pinned` hides its close button and excludes it from `closeOthers`; use `closable: false` too if it must not close through the API or a middle click:
+`split` turns the window's tabs into panes, each with its own bar. The user drags a tab to a side of a pane to split it, and the window shows several pages side by side. Every tab runs in its own web view, in its own process on macOS and Linux. On Windows they share one WebView2 environment, which may run several of them in one renderer process, so a page that hangs can take others along:
 
-```svelte
+```svelte src/routes/+layout.svelte
 <script lang="ts">
-	import { Tabs } from '@svelte-desktop/shell/tabs';
+	import { WindowTabs } from '@svelte-desktop/shell/tabs';
+	import Sidebar from '#lib/Sidebar.svelte';
 
-	let boards = $state([
-		{ value: 'current', label: 'Current sprint', pinned: true },
-		{ value: 'backlog', label: 'Product backlog' }
-	]);
-	let active = $state('current');
+	let { children } = $props();
 </script>
 
-<Tabs
-	bind:items={boards}
-	bind:value={active}
-	mount="once"
-	persist="board-tabs"
-	closable={(b) => !b.pinned}
-	reorderable
-	onAdd={() => ({ value: crypto.randomUUID(), label: 'New board' })}
-	beforeClose={({ item }) => confirm(`Close ${item.label}?`)}
->
-	{#snippet children({ item })}<Board id={item.value} />{/snippet}
-</Tabs>
+<WindowTabs page={children} newTab="/" split>
+	{#snippet layout({ content })}
+		<div class="shell">
+			<Sidebar />
+			{@render content({ class: 'panes', bar: { class: 'pane-bar', label: 'Open pages' } })}
+		</div>
+	{/snippet}
+
+	{#snippet embedded({ page })}
+		<main class="page">{@render page()}</main>
+	{/snippet}
+</WindowTabs>
 ```
 
-`beforeClose` is synchronous: return `false` to veto a close; a promise is not awaited. Adding (the + button, with `onAdd`), closing and dragging write back to `bind:items`; your array changing is what the bar shows. Persisted items must be JSON-serializable. In-page groups save only in the main window. A fixed segmented control is just items:
+`content` draws the panes, bars included: `bar` passes the bars' `class`, `label`, `start` and `end`. There's no `bar` to place in `layout`. `embedded` is what each tab's web view shows, since your app runs again in it, so your sidebar isn't drawn there.
+
+The panes fill the box they're given and have no look of their own, so give them a height, and the bars theirs. Inside a layout that sizes to its content, like a page shell, its content has to pass a height down: without one no page shows, and a warning says so in dev. In a global stylesheet (a component's `<style>` would remove these as unused):
+
+```css src/app.css
+.shell { display: flex; height: 100vh; }
+.panes { flex: 1; min-width: 0; }
+.pane-bar { height: 34px; padding: 0 6px; gap: 2px; }
+[data-sd-pane][data-top] > .pane-bar { --app-region: drag; } /* the top row moves the window */
+/* Without a sidebar, with `titleBarStyle: 'hiddenInset'`: clear the traffic lights. */
+[data-sd-pane][data-top][data-left] > .pane-bar { padding-left: max(var(--desktop-controls-width, 0px), 6px); }
+```
+
+| The user | What happens |
+| --- | --- |
+| Drags a tab to a side of a pane | A new pane on that side. The pane's view makes room while the tab is over it, showing where the new pane goes |
+| Drags a tab to the middle of a pane, or onto its bar | The tab joins that pane |
+| Drags a tab along the bottom, left or right edge of the panes | A new pane along that whole side of the window |
+| Drags a tab out of the window | An app route opens in a new window, its page starting again |
+| Presses Escape while dragging | Nothing moves |
+| Drags the line between two panes | Resizes those two, down to `minPaneSize`; Escape puts them back. With the focus on it: the arrow keys, Home and End. A double click makes the two equal |
+| Clicks in a pane | That pane has the focus: the window's title and address are its active tab's |
+| ⌘\\ / ⇧⌘\\ | Split right / down, on `newTab` |
+| ⌘⌥] / ⌘⌥[ | The next / previous pane |
+| ⌘T, ⌘W, ⌃⇥, ⌘1–9 | As usual, within the pane in focus. A pane goes with its last tab, and its room goes back where it came from: the pane it was split from, or all of them for a whole side |
+
+Every tab runs your app again, so three things change for a page in a pane. A module's state is its own: use `host.broadcast` or your server to share it with the other tabs and the window's sidebar. A page that scrolls in its own element instead of the document doesn't get its position back on Back, as in any SvelteKit app. `100vh` is the pane's height, not the window's: a page that subtracts the window's chrome from it needs a minimum. The window's own things (its material, its title bar) are in the window's page: ask it with `host.broadcast`.
+
+A tab moved to another pane keeps its page: it's still running, with what the user typed, its timers and its sockets. Only where its web view is changes, so the page can't tell it moved.
+
+Links work as they do with one pane:
 
 ```svelte
-<Tabs items={['Day', 'Week', 'Month']} bind:value={range} class="segmented">
-	{#snippet children({ item })}<Agenda {range} />{/snippet}
-</Tabs>
+<a href="/reports">Reports</a>                 <!-- the active tab of the pane in focus goes there -->
+<a href="/reports" target="_blank">Reports</a> <!-- a new tab in that pane (⌘-click: in the background) -->
+<a href="/chat">Chat</a>                       <!-- a keepAlive route: its open tab, wherever it is -->
 ```
 
-`tab` draws each tab and `layout` places the bar and the panels — a bar in a card's header, say:
+In the window's page, a handler can still cancel a link with `preventDefault()`, `data-sveltekit-replacestate` and `data-sveltekit-reset` reach the tab, and `data-sveltekit-reload`, `rel="external"` or `target="_self"` loads the tab alone. A link to where the tab already is runs its `load` functions again.
 
-```svelte
-<Tabs items={lists}>
-	{#snippet tab({ item, closable, close })}
-		<span>{item.label}</span>
-		{#if closable}<button onclick={close}>✕</button>{/if}
-	{/snippet}
-	{#snippet layout({ bar, content })}
-		<header><h2>This week</h2>{@render bar()}</header>
-		{@render content({ class: 'p-4' })}
-	{/snippet}
-	{#snippet children({ item })}…{/snippet}
-</Tabs>
+If the tab's page cancels a navigation of the window's page in `beforeNavigate`, the window's history goes back to what it was.
+
+A link out of the app in a tab's page opens in the browser or the mail client, and the page stays. A full load to another site (`location.assign`) takes the tab there.
+
+A `goto()` in the window's page reaches the tab with its options: `replace`, `state` (a `Date` stays one) and `shallow`. A tab opened or loading for it gets the state once it's hydrated, unless another navigation or its closing comes first. In a tab's page, `host.*` is about that page: `host.webview.reload()` reloads it alone, a rect given to `host.popover.show()` is in it, and a click on a notification it showed comes back to it, with its tab on screen and its window in front. The menu's Edit, Reload and Zoom items are about the page with the keyboard.
+
+The same goes for links in a tab's own page, which stay in its pane, except a link or `goto()` to a `keepAlive` route, which goes to that route's tab: the navigation is canceled, and the page stays as it is. Three cases can't be canceled in time, so the tab itself goes to the new page: a full load (`location.assign`), a redirect from a `load` function, and a link or `goto()` while another page of that tab is still loading. `keepAlive` only says which routes get one tab: all of them keep running. To keep memory down, set `maxViews`: tabs not on screen beyond it are suspended, and a tab on screen never is. So `maxViews={2}` with two panes on screen runs nothing in the background.
+
+From your code, `api` has the tabs as usual, and `api.panes` the panes:
+
+```ts
+api.open('https://svelte.dev/docs', { split: 'right' }); // a new pane beside the one in focus
+api.open('/reports', { pane: api.panes.panes[0].id });   // in a given pane
+api.split('bottom');                                      // `newTab`, in a new pane below
+api.focus(paneId);
+api.focusPane(1);                                         // the next pane
+api.panes.root;                                           // the tree, reactive: panes and splits
+api.panes.focused;                                        // { id, tabs, active }
 ```
 
-<TypeTable
-  type={{
-    items: { type: "Item[]", description: "Your tabs (bindable: adding, closing, reordering write back).", required: true },
-    value: { type: "string", description: "The active tab's value (bindable). Default: the first tab's." },
-    mount: { type: "'lazy' | 'once' | 'eager'", default: "'lazy'", description: "When a panel is made: when shown (gone when left), kept after its first showing, or all at once. Inactive panels are hidden." },
-    onAdd: { type: "() => Item", description: "A new tab (the + button). Without it, no +." },
-    beforeClose: { type: "({ item, index }) => boolean | void", description: "A tab is closing: return false to keep it." },
-    closable: { type: "boolean | (item) => boolean", default: "false", description: "A close button (or per item; an item's own `closable` wins)." },
-    reorderable: { type: "boolean", default: "false", description: "Drag a tab to another place (a line shows where it lands)." },
-    persist: { type: "string", description: "Save the tabs and the active one under this name, restored at the next launch." },
-    onValueChange: { type: "({ value, item, index, reason }) => void", description: "The active tab changed: 'user' or 'missing'." },
-    label: { type: "string", description: "Accessible name of the bar." },
-    class: { type: "string", description: "The bar's class." },
-    api: { type: "TabGroup", description: "Your code's handle (bindable): activate, close, new…" },
-    tab: { type: "Snippet<[{ item, index, active, closable, close }]>", description: "Each tab." },
-    children: { type: "Snippet<[{ item, index, api }]>", description: "A tab's panel." },
-    layout: { type: "Snippet<[{ bar, content, api }]>", description: "Where the bar and the panels go." },
-  }}
-/>
+The layout is saved with the tabs, and comes back at the next launch.
+
+### Styling panes
+
+The panes only lay out: style them with these attributes, or `class` on `content`:
+
+```css
+[data-sd-pane] { background: var(--surface); border-radius: 8px; }
+[data-sd-pane][data-focused] { box-shadow: 0 0 0 1px var(--accent); }
+:root {
+	--sd-pane-gap: 6px;                     /* the room between panes, where the line is grabbed */
+	--sd-pane-splitter: transparent;        /* the line, at rest */
+	--sd-pane-splitter-hover: #5f62ef80;    /* under the pointer, or with the keyboard's focus */
+	--sd-pane-splitter-active: #5f62ef;     /* being dragged */
+	--sd-pane-drop: #5f62ef59;              /* where a dragged tab will land */
+}
+```
+
+| Attribute | On |
+| --- | --- |
+| `[data-sd-panes]` | All the panes |
+| `[data-sd-pane]`, with `[data-focused]`, `[data-top]`, `[data-right]`, `[data-bottom]`, `[data-left]` (the sides of the panes it touches) | A pane |
+| `[data-sd-pane-body]` | Where its tab's view goes: give it a background for while a page loads |
+| `[data-sd-splitter]` (`row` or `column`), with `[data-dragging]` | The line between two panes |
+| `[data-sd-pane-drop]` | Where a dragged tab will land |
+| `[data-sd-tab-ghost]` | The tab following the pointer |
+| `html[data-sd-pane-dragging]`, `html[data-sd-pane-resizing]` | While dragging, while resizing |
+
+### Limits
+
+- A web view is drawn over the page. A dialog or menu from your window's page can't cover a pane, and the tab following the pointer shows over the bars and between panes, not over a web view. The zone it would land in does show, since the view makes room for it.
+- Each tab is a web process, about 40 MB and more with its page. Compare with [`maxViews`](#the-windows-tabs) and `prewarm` (a tab opens without starting a process).
+- A tab dragged out of the window opens in a new window with its page starting again, and it can't join another window's panes.
+- The line between two panes can only be grabbed in the gap between them, `--sd-pane-gap`: a web view takes every press on it, so the page can't reach over a pane. A gap under about 4px is hard to grab.
+- When the window is too small for every pane at `minPaneSize`, panes keep their proportions and go under it. The system slows the timers of a tab not on screen.
+- `split` is set once, at start. The window's own route isn't rendered: its server `load` still runs at launch, so keep the root route light.
 
 ## Styling
 
@@ -206,6 +270,5 @@ The bar only lays out (zero-specificity styles): style it with `class` and the s
 | `[data-sd-tab-drop]` | The line where a dragged tab lands (`--sd-tab-drop-color`, default `Highlight`) |
 | `[data-sd-tab-title]`, `[data-sd-tab-close]` | The default content |
 | `[data-sd-tab-new]` | The + button |
-| `[role=tabpanel]` (`data-sd-tabpanel`) | A panel (`hidden` when inactive) |
 
-The drag is native drag and drop ([pragmatic-drag-and-drop](https://atlassian.design/components/pragmatic-drag-and-drop/)): the system's drag image follows the pointer, beside it, out of the window and over other windows. The [dashboard example](https://github.com/beynar/svelte-desktop/tree/bun-webview-shell/examples/dashboard) has the window's tabs (with a kept-alive `/activity`), boards with rename, and a segmented control.
+The drag is native drag and drop ([pragmatic-drag-and-drop](https://atlassian.design/components/pragmatic-drag-and-drop/)): the system's drag image follows the pointer, beside it, out of the window and over other windows. The [dashboard example](https://github.com/beynar/svelte-desktop/tree/main/examples/dashboard) has the window's tabs, with a kept-alive `/activity`.

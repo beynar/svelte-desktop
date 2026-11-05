@@ -1,0 +1,36 @@
+---
+title: Security
+description: Who can reach your app's server, what the page bridge protects, and what remains your job.
+---
+
+Your app is a local web server plus a window. Most of the protection is on by default; this page says what it covers and what you still decide.
+
+## What you should do
+
+- **Treat server code as fully privileged.** Remote functions, endpoints and hooks run with all of Bun's APIs and the whole `host` API. Nothing restricts them. Validate every argument as you would on a public server.
+- **Narrow the page bridge** with [`bridge.allow`](/reference/config#bridge) if your pages don't need every native operation. It lists the operations pages may call (`window.*`, `clipboard.readText`, `*`), enforced natively. It does not limit server code, and it does not make a page's own JavaScript trustworthy: whatever your pages are allowed to do, a script injected into them can do too. Keep dependencies and rendered HTML (`{@html}`) under control.
+- **Don't load untrusted content into app pages.** Use a [web view](/ui/web-view) for third-party sites. The native bridge answers only the app's own origin, so external content can't call `host`.
+- **Check origins on servers you add.** A [sidecar](/native/sidecars) or other local server listening on `127.0.0.1` has no cookie gate; see [Other servers](/features/websockets#other-servers).
+
+## Who can reach the server
+
+In the built app the server listens on `127.0.0.1` on a random port, behind a gate:
+
+1. A request whose `Host` header isn't the server's own gets a 421 (DNS rebinding). Static assets and prerendered pages are served before this check and without the cookie, so don't put anything private in them.
+2. The first navigation trades a one-time secret for an `HttpOnly`, `SameSite=Strict` session cookie. Every other request needs that cookie or gets a 403. Other processes and browser tabs never see the cookie.
+3. [WebSocket](/features/websockets#security) upgrades also need the cookie, and an `Origin` header, when present, must be the app's own.
+
+Not behind the cookie: immutable build assets, including prerendered pages, and the single-use callback URL of a system-browser [OAuth](/host/web/oauth) sign-in. Don't put secrets in prerendered pages.
+
+## What is not protected
+
+- **`vite dev` has no cookie gate.** The server is Vite's, on `localhost`; Vite's host checks apply, and WebSockets require a matching `Origin`. Anything on the machine that can reach that port can request your app. Don't develop against real credentials you wouldn't expose to local processes. The native bridge in dev is a separate WebSocket on `127.0.0.1` guarded by a random token.
+- **Other programs running as the same user.** They can read the app's data folder and, with the right permissions, drive the machine anyway. The gate keeps out other web pages and unrelated processes, not the user's own account. The [MCP](/features/mcp#security) channel has the same limit.
+- **Your own server code.** See above.
+
+## Related
+
+- [Permissions](/features/permissions): OS permissions, and what third-party origins are denied by default.
+- [Web content policy](/host/web/web-policy): per-origin permission and authentication handlers.
+- [MCP](/features/mcp#security): tool arguments come from a model.
+- [Self-update](/shipping/self-update): signed manifests; what a build without a key produces.

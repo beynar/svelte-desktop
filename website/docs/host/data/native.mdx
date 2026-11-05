@@ -5,7 +5,7 @@ description: Call your app's typed native plugin commands from pages and server 
 
 `host.native` exposes the commands your app registers in Rust, Go, Python, Swift, Objective-C or C plugins. It is the same API in pages and server code.
 
-How-to: [Native code](/native).
+How-to: [Native code](/native). Write the commands in a [plugin](/native/plugins) (Rust, Go, Python, Swift, Objective-C or C); the dev launcher builds it and generates the typed `src/native.d.ts`.
 
 ## Calling a command
 
@@ -19,10 +19,6 @@ const stats = await host.native.text.stats({ text: 'Hello from a page' });
 Plugin failures reject through the platform bus. A missing operation rejects with `unknown`, or with `unsupported` on macOS when its service exists but the operation doesn't. Plugin events are received with [`host.on(name, fn)`](/host/data/events).
 
 ## Platform support
-
-| Method | macOS | Linux | Windows |
-| --- | --- | --- | --- |
-| App-defined commands | partial | partial | partial |
 
 Support depends on which plugins the app builds and registers on that OS. Rust, Go and the C ABI work across all three targets; Swift and Objective-C sources are Apple-only; Python commands are packaged for macOS for now. Check the app's command definitions and [`host.capabilities.describe()`](/host/app/capabilities).
 

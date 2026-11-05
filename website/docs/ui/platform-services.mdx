@@ -1,285 +1,118 @@
 ---
 title: Dialogs, clipboard and services
-description: Dialogs, clipboard, shell, theme, system, power, screens, secure storage, global shortcuts, deep links, the app and Dock, and a key-value store.
+description: "A tour of the native services on host: dialogs, clipboard, shell, theme, system, power, screens, secure storage, global shortcuts, deep links, the app and Dock, and a key-value store."
 ---
 
-:::note
-API reference: [`host.dialog`](/host/windows/dialog), [`host.clipboard`](/host/input/clipboard), [`host.shell`](/host/os/shell), [`host.theme`](/host/app/theme), [`host.system`](/host/app/system), [`host.power`](/host/app/power), [`host.screen`](/host/app/screen), [`host.secureStorage`](/host/os/secure-storage), [`host.shortcuts`](/host/input/shortcuts), [`host.deepLink`](/host/app/deep-link), [`host.app`](/host/app/app), [`host.store`](/host/data/store), [`host.files`](/host/os/files), [`host.capture`](/host/os/capture).
-:::
-
-All of these are on `host`, from page and server code. Ops a platform can't provide reject with `unsupported`; `host.capabilities.describe()` lists what the running build supports. In server startup code, register native work with `host.ready(() => { /* native calls */ })`. Pages use the shell bridge; a packaged app's server runs in a Bun Worker (the Vite server during development). See [threads and processes](/native/threads).
+All of these are on `host`, from page and server code. Ops a platform can't provide reject with `unsupported`; `host.capabilities.describe()` lists what the running build supports. In server startup code, register native work with `host.ready(() => { /* native calls */ })`; see [threads and processes](/native/threads). Each section links to the reference page with every option.
 
 ## Dialogs
 
-```ts
-const { canceled, paths } = await host.dialog.showOpenDialog({
-  multiple: true,
-  filters: [{ name: 'Text', extensions: ['txt', 'md'] }],
-});
-const { path } = await host.dialog.showSaveDialog({ suggestedName: 'notes.md' });
-const { response } = await host.dialog.showMessageBox({
-  type: 'warning', message: 'Delete all notes?', detail: 'This cannot be undone.', buttons: ['Delete', 'Cancel'], cancelId: 1,
-});
-```
-
-| Op | Options | Resolves |
-| --- | --- | --- |
-| `showOpenDialog` | `files`, `directories`, `multiple`, `prompt`, `filters`, `securityScoped` (macOS) | `{ canceled, paths, bookmarks? }` |
-| `showSaveDialog` | `defaultPath`, `suggestedName`, `filters` | `{ canceled, path }` |
-| `showMessageBox` | `type` (`info`, `warning`, `critical`), `title`, `message`, `detail`, `buttons`, `cancelId`; or a string | `{ response, canceled }` |
-| `sheet(route, { width, height, style, top, title })` | a route of your app, shown alone in a dialog on the window (macOS) — `style`: `'sheet'` (default, the system's sheet: centered over a dimmed window on macOS 26), `'attached'` (slides down from under the title bar, or `top` px down, the window left as it is), `'window'` (a small titled window centered on yours, `title` or the page's; its close button cancels) | what its page passes to `host.dialog.close(result)`; `undefined` if canceled (Escape, ⌘.) |
-
-Your own dialog is a route of your app: it loads out of sight and shows once drawn, with your components and styles; the window behind isn't clickable meanwhile. Use a layout that renders only the dialog content. Pass it data in the URL, get the result back from `close`:
+Open, save and message dialogs, plus `sheet(route)` to show a route of your app as a dialog and get a result back. [`host.dialog`](/host/windows/dialog)
 
 ```ts
+const { canceled, paths } = await host.dialog.showOpenDialog({ multiple: true });
 const board = await host.dialog.sheet<{ name: string }>('/sheets/new-board', { width: 420, height: 230 });
-// src/routes/sheets/new-board/+page.svelte: <form onsubmit={() => host.dialog.close({ name })}>
+// the sheet's page ends with: host.dialog.close({ name })
 ```
-
-On macOS, dialogs are sheets on the calling window, or parentless when it is not visible. The JavaScript call is asynchronous; await its result. A route dialog renders the page alone when its layout uses `<WindowTabs>`; other layouts must hide their own chrome. Returning `null` from `host.dialog.close` also resolves as `undefined`. Server code also has a shorter form on the `desktop` object:
-
-```ts src/lib/notes.remote.ts
-import { command } from '$app/server';
-import { desktop } from '@svelte-desktop/shell/server';
-
-export const importNotes = command(async () => {
-  const paths = await desktop.dialog.open({ title: 'Import notes', multiple: true, extensions: ['txt', 'md'] });
-  if (!paths) return { imported: 0 };
-  // read the files with Bun.file(path)...
-});
-```
-
-`desktop.dialog.open({ title, multiple, directories, files, extensions, defaultPath })` resolves the paths or `null`; `save({ title, defaultName, extensions, defaultPath })` a path or `null`; `message({ message, detail, style, buttons })` the button index.
 
 ### Security-scoped file bookmarks (macOS)
 
+For sandboxed builds: ask the open dialog for `securityScoped: true`, keep the returned bookmark, and reopen it on a later launch with [`host.files`](/host/os/files).
+
 ```ts
-const { canceled, paths, bookmarks } = await host.dialog.showOpenDialog({
-  directories: true, files: false, securityScoped: true,
-});
-if (!canceled && bookmarks?.[0]) {
-  // Persist the opaque string in app storage for a later launch.
-  const access = await host.files.openBookmark(bookmarks[0]);
-  try {
-    await useFolder(access.path);
-    if (access.stale) {
-      const { bookmark } = await host.files.createBookmark(access.path);
-      await saveReplacementBookmark(bookmark);
-    }
-  } finally { await access.release(); }
-}
+const { bookmarks } = await host.dialog.showOpenDialog({ directories: true, files: false, securityScoped: true });
+const access = await host.files.openBookmark(bookmarks![0]);
+try { await useFolder(access.path); } finally { await access.release(); }
 ```
-
-With `securityScoped: true`, open-dialog results include `bookmarks`, aligned one-to-one with `paths` (empty on cancellation). Bookmark creation failures reject instead of returning incomplete grants. `host.files.createBookmark(path)` also creates a bookmark directly for an absolute path the app can already access; it cannot grant new sandbox permissions. `openBookmark(bookmark)` resolves `{ path, stale, release() }`. Each open acquires its own handle. Release is asynchronous and idempotent, and balances native `startAccessingSecurityScopedResource` / `stopAccessingSecurityScopedResource` calls. Keep access open for the full native/server operation that needs the file; release it afterwards. Stale bookmarks should be recreated while access is held.
-
-Security scopes matter for **App Sandbox builds**, such as Mac App Store apps, with appropriate user-selected file entitlements. A bookmark does not bypass those entitlements. Outside the sandbox these APIs create and resolve ordinary file bookmarks, and release is harmless; no additional access is needed. Invalid bookmarks reject. The dialog remains interactive; direct bookmark creation/resolution needs no dialog. These APIs are currently macOS-only.
 
 ## Clipboard
 
+Read and write text, HTML, RTF, images and file paths, or several representations in one copy. [`host.clipboard`](/host/input/clipboard)
+
 ```ts
 await host.clipboard.writeText('Hello');
-const text = await host.clipboard.readText();
 ```
-
-`readText`, `writeText`, `readHtml`, `writeHtml`, `readRtf`, `writeRtf`, `readImage` (`{ bytes, format }` or `null`, with base64 PNG in `bytes`), `writeImage(pngBase64)`, `readPaths` (copied files), `has(format)`, `availableFormats`, `clear`. The store keeps local snapshots in `text`, `html`, `rtf`, `formats` and `hasText`. They are not an OS clipboard subscription. Use `await host.clipboard.refresh()` to refresh the full snapshot after an external change; individual read/write methods update only the fields they wrap.
-
-### Several representations in one copy (macOS)
-
-```ts
-const { changeCount } = await host.clipboard.write({
-  text: 'Hello', html: '<strong>Hello</strong>',
-  formats: { 'com.example.document': btoa('document-v1') },
-});
-const copy = await host.clipboard.read({
-  formats: ['text/plain', 'text/html', 'com.example.document'], maxBytes: 1024 * 1024,
-});
-console.log(changeCount, atob(copy.formats['com.example.document']!));
-```
-
-`write` accepts optional `text`, `html`, `rtf` strings, `image` (base64 PNG), `files`
-(absolute paths), and `formats` (native pasteboard UTI or standard MIME name to
-base64 bytes). All representations are prepared before replacing the clipboard,
-then published together with one ownership change. File URLs occupy separate
-pasteboard items; text and other representations accompany the first file.
-The result includes `previousChangeCount` observed on entry to the native write
-and the resulting `changeCount`; compare these to inspect this write.
-The system clipboard is shared, so observations made in separate calls can also
-include another application's changes.
-At least one representation is required. Invalid base64, duplicate representations,
-relative paths and payloads over 16 MiB reject before changing the clipboard.
-
-`read({ formats, maxBytes? })` returns `{ changeCount, formats }`, with each requested
-format mapped to base64 bytes or `null` when absent. Standard names include
-`text/plain`, `text/html`, `text/rtf`, `image/png`, `image/tiff` and `files` (the first
-file URL's UTF-8 bytes; use `readPaths()` for every path). Custom native types pass
-through unchanged and appear in `availableFormats()`. The combined decoded result
-is capped at `maxBytes` (default and maximum 16 MiB); an oversized result rejects
-with `invalid_args`. A clipboard ownership change during reading rejects with
-`unavailable`, so the caller can retry. Other OS backends currently reject these
-multi-format operations as unsupported; the existing single-format APIs remain available.
 
 ## Shell
 
+Open links and files in their default app, reveal or trash items, share, drag files out of the page, and Quick Look previews. [`host.shell`](/host/os/shell)
+
 ```ts
-await host.shell.openExternal('https://svelte.dev');   // http(s), mailto, tel, sms, facetime, maps
-await host.shell.openPath('/Users/me/report.pdf');      // default app
+await host.shell.openExternal('https://svelte.dev');
 await host.shell.showItemInFolder('/Users/me/report.pdf');
-await host.shell.trashItem('/Users/me/old.txt');
-await host.shell.beep();
 ```
-
-Links to other origins clicked in the page open in the default browser.
-
-### Share
-
-The system share menu (AirDrop, Mail, Messages, Notes…), for text, a URL and files, anchored on an element:
-
-```svelte
-<button onclick={async (e) => {
-  const { service } = await host.shell.share({ text: 'Q3 report', files: [reportPath], anchor: e.currentTarget.getBoundingClientRect() });
-  // service: the one chosen, or null when dismissed
-}}>Share</button>
-```
-
-Without `anchor`, the menu opens at the pointer. macOS only.
-
-### Drag files out
-
-A real file dragged from the page to the Finder, the desktop, a mail or another app. Start it from `dragstart`, after cancelling the page's own drag, while the mouse button is still down:
-
-```svelte
-<div draggable="true" ondragstart={(e) => {
-  e.preventDefault();
-  host.shell.startDrag({ files: [reportPath] }).then(({ dropped }) => console.log(dropped));
-}}>report.pdf</div>
-```
-
-`icon` (an image path) replaces the file's own icon under the pointer. Called without the button down, it rejects with `not_dragging`. macOS only. For files dropped *into* the page, see [File drop](/ui/web-view#file-drop).
-
-### Quick Look
-
-The Finder's space-bar preview, on files of the app: images, PDFs, videos, documents.
-
-```ts
-await host.shell.previewFile('/Users/me/report.pdf');
-await host.shell.previewFile([photo1, photo2, photo3]); // the arrows go through them
-```
-
-macOS only.
 
 ## Theme
 
+Follow or set the light and dark theme; `host.theme.dark` is reactive. [`host.theme`](/host/app/theme)
+
 ```svelte
 <div class:dark={host.theme.dark}>...</div>
-<button onclick={() => host.theme.set('dark')}>Dark</button>
 ```
-
-`host.theme.dark` and `host.theme.name` (`light`, `dark`, `vibrantLight`, `vibrantDark`) follow the system. `set` takes those names or `system`. `host.theme.onChange(fn)` fires on changes. A single window can override it with `host.window.setTheme('light' | 'dark' | 'system')`.
 
 ## System
 
-`host.system` exposes `os`, `arch`, `layout` (keyboard layout), `accentColor` (`{ r, g, b, a }`, 0 to 1) and `accessibility` (`reduceMotion`, `highContrast`, `differentiateWithoutColor`, `reduceTransparency`). Permissions have their own page: [Permissions](/features/permissions).
-
-### Touch ID
-
-`host.system.biometrics()` tells whether Touch ID can be asked, and which biometry the Mac has: `{ available, type: 'touchID' | 'faceID' | 'opticID' | 'none', enrolled }`. The prompt itself is [`secureStorage.authenticate`](#secure-storage). macOS only.
+The OS, architecture, keyboard layout, accent color, accessibility settings and Touch ID availability. [`host.system`](/host/app/system). Permissions have their own page: [Permissions](/features/permissions).
 
 ## Power
 
+Keep the Mac awake during long work, read the battery, and react to sleep, wake, lock and shutdown. [`host.power`](/host/app/power)
+
 ```ts
 await using blocker = await host.power.acquireSleepBlocker({ type: 'display', reason: 'Exporting' });
-// the display stays awake until the block ends
 ```
-
-`blockSleep({ type: 'system' | 'display' | 'idle', reason })` and `unblockSleep(id)` do the same without `await using`. The store has `battery` (`percent`, `charging`, `external`), `thermal` and `idleSeconds`. Events: `onSystemSleep`, `onSystemWake`, `onScreenLocked`, `onScreenUnlocked`, `onThermalStateChange`, `onMemoryPressure` (`{ level: 'warning' | 'critical' }`, macOS: the system short of memory), `onPowerSourceChange` (`{ onBattery }`, when the Mac is plugged in or unplugged) and `onShutdown` (shutting down, restarting or logging out: save what must be saved, now).
 
 ## Screens
 
-`host.screen.displays` lists displays (`id`, `bounds`, `workArea`, `isPrimary`), with `primary`, `nearestWindow` and `scaleFactor`. `getCursorScreenPoint()` returns the global cursor position. `onDisplaysChanged(fn)` fires when displays are attached or reconfigured.
+The attached displays, their bounds and scale, and the cursor position. [`host.screen`](/host/app/screen)
 
 ## Secure storage
 
-Secrets go to the Keychain on macOS, libsecret on Linux and the Credential Manager on Windows; there is never a plaintext fallback.
+Secrets in the system keychain, never a plaintext fallback, and a Touch ID or password prompt before sensitive actions. [`host.secureStorage`](/host/os/secure-storage)
 
 ```ts
 await host.secureStorage.setPassword('com.example.notes', 'api-token', token);
-const saved = await host.secureStorage.getPassword('com.example.notes', 'api-token'); // or null
-await host.secureStorage.deletePassword('com.example.notes', 'api-token');
-const { authenticated } = await host.secureStorage.authenticate('Unlock your notes'); // Touch ID or password
+const { authenticated } = await host.secureStorage.authenticate('Unlock your notes');
 ```
-
-`authenticate(reason, { biometricsOnly: true })` is macOS-only. `authenticate(reason)` also confirms a sensitive action (a payment, revealing a secret). `reason` completes the prompt's "… is trying to" sentence, after the app's name. `{ biometricsOnly: true }` asks for Touch ID only, without the account password as a fallback.
 
 ## Global shortcuts
 
-OS-wide hotkeys that work while the app is in the background:
+Hotkeys that work while the app is in the background. [`host.shortcuts`](/host/input/shortcuts)
 
 ```ts
 await host.shortcuts.register({ accelerator: 'CmdOrCtrl+Shift+K', id: 'quick' });
 host.shortcuts.onPressed(({ id }) => { if (id === 'quick') host.window.show(); });
-await host.shortcuts.unregister({ id: 'quick' });
 ```
-
-`acquire(options)` returns a handle for `await using`; `unregisterAll`, `isRegistered(id)` and `onReleased` complete the set. `host.shortcuts.registered` is reactive. On Linux, global shortcuts need X11. Windows has no key-up notification, so `onReleased` never fires there.
 
 ## Deep links and documents
 
-Declare URL schemes and document types in `desktop.config.ts`:
-
-```ts desktop.config.ts
-schemes: ['svelte-notes'],
-fileTypes: [{ name: 'Markdown', extensions: ['md'], role: 'Viewer' }],
-```
+URLs for your scheme and documents of your file types, delivered to a running or cold-launched app. Declare `schemes` and `fileTypes` in [`desktop.config.ts`](/reference/config). [`host.deepLink`](/host/app/deep-link) for URLs, [`host.webview`](/host/web/webview) for `onOpenFiles` and `getOpenedFiles`.
 
 ```ts
 host.deepLink.onOpen(({ urls }) => { /* svelte-notes://... */ });
-host.webview.onOpenFiles(({ paths }) => { /* documents opened with the app */ });
-const { paths } = await host.webview.getOpenedFiles(); // documents from a cold launch, read once
 ```
-
-`host.deepLink.urls` and `host.deepLink.last` are reactive. `fileTypes` entries take `name`, `extensions`, `role` (`Editor`, `Viewer`, `Shell`, `None`), `rank` (`Owner`, `Default`, `Alternate`), `utis` and `mimeTypes` (Linux); they become macOS document types, a Linux `.desktop` MimeType entry and Windows installer associations.
 
 ## App and Dock
 
-| Op | |
-| --- | --- |
-| `host.app.quit()`, `relaunch()`, `hide()`, `show()` | Lifecycle |
-| `host.app.setDockBadge(text)` | Dock badge text; `null` clears it |
-| `host.app.bounceDock('critical' \| 'informational')` | Bounce the Dock icon: once (informational) or until the app is activated (critical) |
-| `host.app.setDockIcon(icon)` | Change the Dock icon on the fly: an image file path, a native icon or an SF Symbol; `null` restores the bundle's |
-| `host.app.setDockProgress({ status, completed, total })` | Progress bar on the Dock icon; `status: 'none'` clears it |
-| `host.app.setLoginItem(enabled)` | Launch at login |
-| `host.app.getLoginItem()` | Whether it's on, and whether this launch came from it (`launchedAtLogin`) |
-| `host.app.setActivationPolicy('accessory')` | Hide the Dock icon at run time |
-| `host.app.aboutPanel(options)` | The standard About panel |
-| `host.app.getPath(name)` | `home`, `appData`, `userData`, `logs`, `caches`, `documents`, `downloads`, `desktop`, `temp`, ... |
+Quit and relaunch, Dock badge, bounce, icon and progress, launch at login, the About panel and standard folders. Server code also has `host.paths` for databases and files. [`host.app`](/host/app/app)
 
-Events: `onReopen` (Dock click), `onOpenUrls`, `onSecondInstance`, `onActivated`, `onDeactivated`, `onWillQuit`.
-
-Server code has `host.paths` (`data`, `cache`, `home`, `logs`) for databases and files. The runtime creates `data` and `cache` at startup; create the `logs` directory before writing there if needed. Dock icon changes and activation policy are macOS-only. Windows maps badge, bounce and progress calls to its taskbar button (an overlay marker, flashing, and a progress bar). See the [app reference](/host/app/app) for lifecycle guards and platform support.
+```ts
+host.app.setDockBadge('3');
+```
 
 ## Status item from code
 
-The [`StatusItem` component](/ui/menu-bar-and-popovers) covers most needs. `host.tray.set({ title, tooltip, icon, imagePath, badgeColor, menu: { items }, popover })` sets the item directly, `host.tray.remove()` removes it and `host.tray.onClick(fn)` reports clicks with the icon's screen rect.
+The [`StatusItem` component](/ui/menu-bar-and-popovers) covers most needs. To drive the menu bar item directly, use [`host.tray`](/host/input/tray).
 
 ## Key-value store
 
-`host.store` persists a flat JSON record to `svelte-desktop-store.json` in the app data directory (writes debounced by 250 ms). It reads and writes with Bun's file API in the app server; pages can use it too, their calls go through the server:
+A small persisted JSON record, kept in your app's own data folder. For anything relational, use `bun:sqlite` in server code with `host.paths.data`. [`host.store`](/host/data/store)
 
 ```ts
 host.store.set('lastOpened', '/Users/me/notes.md');
 const last = host.store.get<string>('lastOpened');
-await host.store.flush(); // write now
 ```
-
-`host.store.data` is reactive within the current page or server realm; it is not synchronized between windows. Each realm loads and writes the whole JSON record. Choose one writer for shared state, and use the server or [broadcast](/host/data/events#broadcast-between-contexts) to share updates. `delete(key)`, `clear()` and `load()` complete it. Debounced write errors are swallowed; await `flush()` when a write must be confirmed. For anything relational, use `bun:sqlite` in server code with `host.paths.data`.
 
 ## Screen capture
 
-`host.capture.getSources({ types: ['display', 'window'] })` lists capturable sources; `host.capture.captureSource(id, type)` grabs a base64 PNG still. Check `await host.capture.isSupported()` before offering capture.
-
-| Platform | Capture support |
-| --- | --- |
-| macOS | Screen Recording [permission](/features/permissions); still capture requires macOS 14+. Can also list `application` sources, but cannot capture them as stills |
-| Linux | Display and window stills on X11; Wayland returns `unsupported` |
-| Windows | Display and window stills |
+List displays and windows and grab a still image, after checking `host.capture.isSupported()`. Needs the Screen Recording [permission](/features/permissions) on macOS. [`host.capture`](/host/os/capture)

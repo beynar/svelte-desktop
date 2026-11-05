@@ -24,7 +24,7 @@ const { id } = await host.view.create({
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `id` | `string` | Generated `view-…` | App-wide view identifier. |
-| `windowId` | `number` | Native default target | Parent window; `0` addresses the primary window. See [window targeting](/host/windows/window#hostwindows). |
+| `windowId` | `number` | Native default target | Parent window; `0` addresses the primary window. See [window targeting](/host/windows/windows#hostwindows). |
 | `url` | `string` | None | Full URL; takes precedence over `route`. |
 | `route` | `string` | None | App route. Supply `url` or `route`. |
 | `bounds` | `ViewBounds` | Required | `{ x: number; y: number; width: number; height: number }`. |
@@ -73,6 +73,10 @@ Show the view. Resolves `null`.
 
 Hide the view without destroying its page. Resolves `null`. On macOS it removes the view from the window and returns keyboard focus to the main page if needed. Use `show(id, { seeThrough: true })` for an attached, drawing view on macOS.
 
+### `focus(id)`
+
+Give the view the keyboard. Resolves `null`.
+
 ### `reload(id)`
 
 Reload the current page. Resolves `null` when requested, before loading finishes.
@@ -102,9 +106,11 @@ Destroy the view and its page. Resolves `{ destroyed: boolean }`. Methods target
 | Event | Typed helper | Payload | When |
 | --- | --- | --- | --- |
 | `viewLoaded` | `onLoaded(fn)` | `{ id: string; url: string }` | Page navigation finishes loading. |
-| `viewNavigated` | `onNavigated(fn)` | `{ id: string; url: string }` | Main-frame navigation is accepted/starts. |
+| `viewNavigated` | `onNavigated(fn)` | `{ id: string; url: string }` | A new document is there (the main frame's navigation committed). Not for a download, nor for a change within a document: see `viewUrl`. |
 | `viewFailed` | `onFailed(fn)` | `{ id: string; error: string }` | Navigation fails. |
 | `viewTitle` | `onTitle(fn)` | `{ id: string; title: string }` | Document title changes. |
+| `viewFocused` | `onFocused(fn)` | `{ id: string }` | The user pressed in the view (macOS), or it got the keyboard (Linux, Windows). |
+| `viewUrl` | `onUrl(fn)` | `{ id: string; url: string }` | The page's URL changed, within a document too (a site's own router). |
 
 Listen with `host.view.onLoaded(fn)` or `host.on('viewLoaded', fn)`. Every helper takes the callback shown by its payload type and returns an unsubscribe function. Events cover all views: filter by `id`.
 
@@ -113,11 +119,13 @@ Listen with `host.view.onLoaded(fn)` or `host.on('viewLoaded', fn)`. Every helpe
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
 | `create` | ✓ | partial | partial |
-| `setBounds`, `getBounds`, `navigate` | ✓ | ✓ | ✓ |
+| `setBounds`, `getBounds`, `navigate`, `focus` | ✓ | ✓ | ✓ |
 | `show` | ✓ | partial | partial |
 | `hide`, `reload`, `getInfo` | ✓ | ✓ | ✓ |
 | `executeJavaScript`, `list`, `destroy` | ✓ | ✓ | ✓ |
-| `onLoaded`, `onNavigated`, `onFailed`, `onTitle` | ✓ | ✓ | ✓ |
+| `onLoaded`, `onNavigated`, `onFailed`, `onTitle`, `onFocused`, `onUrl` | ✓ | ✓ | ✓ |
+
+On macOS, an app page loaded in a view comes with an `X-Desktop-View: <id>` request header. External content in a view can't call native APIs: the bridge only answers the app origin.
 
 Partial: Linux and Windows ignore `session`, `recovery`, `backgroundThrottling`, and `seeThrough`. On macOS, the transparent under-page background refinement requires macOS 12+, and inspection uses `inspectable` on macOS 13.3+.
 
