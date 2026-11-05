@@ -3,7 +3,7 @@ import { resolveConfig } from "../config.ts";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { nsisScript, signWithCommand, toastActivatorClsid } from "./package-windows.ts";
+import { nsisScript, signedWith, signWithCommand, toastActivatorClsid } from "./package-windows.ts";
 
 test("NSIS: Start Menu shortcut named after the app (shell.dll stamps its AUMID), uninstall drops the toast identity", () => {
   const c = resolveConfig("/tmp", { appName: "Notes", identifier: "dev.x.notes" });
@@ -39,4 +39,9 @@ test("signing with the app's own tool: each file, in place; a failure stops the 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the build's log names what signed it, with a tool or a certificate", () => {
+  expect(signedWith({ command: ["AzureSignTool", "sign", "{file}"] })).toBe("AzureSignTool");
+  expect(signedWith({ pfx: "/a/b/cert.pfx", password: "", timestamp: "" })).toBe("cert.pfx");
 });

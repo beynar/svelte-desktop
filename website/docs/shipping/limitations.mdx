@@ -34,7 +34,7 @@ These are shell API limits. The page still has the web APIs its installed web en
 
 ## Windows
 
-- **Not yet tested on a real WebView2 desktop:** title-bar dragging, Bun FFI callbacks, background jobs and toasts. The native layer and installer only have Wine smoke tests, so test your installer on a real PC.
+- **Only partly tested on real Windows:** CI runs the app and its notifications on a Windows runner. Title-bar dragging, background jobs, views, printing and high-DPI setups aren't covered, so test your app on a real PC.
 - The WebView2 runtime must be installed. The shell offers an Evergreen download link when it is missing; it does not bundle the runtime.
 - Rust and Go plugins need a Windows host. See [Distribution](/shipping/distribution#windows).
 - Windows repeating notifications queue at most 128 occurrences over the next 30 days, topped up while the app runs. They do not repeat indefinitely while closed.

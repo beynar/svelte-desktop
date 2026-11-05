@@ -497,6 +497,9 @@ function signSetup(c: ResolvedConfig): SignSetup | null {
   return { pfx: abs, password: c.sign?.windows?.password ?? process.env.WINDOWS_CERT_PASSWORD ?? "", timestamp: c.sign?.windows?.timestampUrl ?? "http://timestamp.digicert.com" };
 }
 
+/** What signed the build, for its log. */
+export const signedWith = (s: SignSetup) => ("command" in s ? s.command[0]! : basename(s.pfx));
+
 /** Signs each file with the app's tool. Its output stays out of the build's log unless it fails. */
 export async function signWithCommand(files: string[], command: string[]): Promise<void> {
   for (const file of files) {
@@ -821,9 +824,9 @@ export async function packageWindows(c: ResolvedConfig, stage: string): Promise<
       ...Object.keys(addons).map((n) => join(appDir, "addons", `${n}.node`)),
       ...readdirSync(appDir).filter((f) => f.endsWith(".exe") && f !== exe).map((f) => join(appDir, f))];
     await signFiles(pes, sign, c.appName);
-    log(`authenticode: ${pes.length} files signed (${basename(sign.pfx)})`);
+    log(`authenticode: ${pes.length} files signed (${signedWith(sign)})`);
   } else {
-    log("authenticode: unsigned (set sign.windows.certificateFile or $WINDOWS_CERT_PFX to sign)");
+    log("authenticode: unsigned (set sign.windows.command or certificateFile, or $WINDOWS_CERT_PFX, to sign)");
   }
 
   // 5. archives
