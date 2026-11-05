@@ -26,8 +26,8 @@ async function local(op: 'read' | 'write', dir: AppDir, name: string, text?: str
 		const temp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
 		try {
 			await Bun.write(temp, text ?? '');
-			const { rename } = await import('node:fs/promises');
-			await rename(temp, path);
+			// Through the process: this module is in pages too, which never come here.
+			process.getBuiltinModule('node:fs').renameSync(temp, path);
 		} catch (err) {
 			await Bun.file(temp).delete().catch(() => {});
 			throw err;

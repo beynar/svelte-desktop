@@ -61,6 +61,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      # For the example's plugins. Rust comes with the runner.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: astral-sh/setup-uv@v6
       - name: Install
         run: |
           (cd packages/shell && bun install)
