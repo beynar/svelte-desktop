@@ -143,7 +143,7 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
   if (options.dev) {
     const d = typeof options.dev === "object" ? options.dev : {};
     cwd = resolve(d.cwd ?? process.cwd());
-    env.KITOP_TARGET ??= hostTarget(); // with an adapter, the project is a website otherwise
+    (env as Record<string, string | undefined>).KITOP_TARGET ??= hostTarget(); // with an adapter, the project is a website otherwise
     cmd = ["bunx", "--bun", "vite", "dev", "--port", String(d.port ?? 5000 + Math.floor(Math.random() * 3000)), "--strictPort"];
   } else {
     const app = resolve(options.app ?? findApp(cwd));

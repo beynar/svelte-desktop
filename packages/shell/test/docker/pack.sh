@@ -73,24 +73,20 @@ DESKTOP_TEST_DEV=1 bun test --timeout 180000 tests/
 
 step "a website too: desktop({ adapter })"
 rm -rf .desktop build site
-cat > vite.config.ts <<'CONFIG'
-import { desktop } from '@kitop/shell/vite';
-import { defineConfig } from 'vite';
-const adapter = { name: 'pack-test', adapt: (b) => { b.writeClient('site/client'); b.writeServer('site/server'); } };
-export default defineConfig({ plugins: [desktop({ adapter })] });
-CONFIG
+sed -i "s/desktop({/desktop({ adapter: { name: 'pack-test', adapt: (b) => { b.writeClient('site\/client'); b.writeServer('site\/server'); } },/" vite.config.ts
+grep -q pack-test vite.config.ts
 mkdir -p src/routes/where
 cat > src/routes/where/+page.svelte <<'PAGE'
 <p>host is {host.available ? 'the desktop' : 'a website'}</p>
 PAGE
-bunx kitop build 2>&1 | tail -1
+bunx kitop build 2>&1 | grep -vE "gzip|^\s*$" | tail -3 | cut -c1-120
 [ -d site/server ] || { echo "the project's adapter didn't build the website"; exit 1; }
 [ ! -e .desktop/dist ] || { echo "the website's build packaged a desktop app"; exit 1; }
-bunx kitop dev --port 4188 --strictPort >/dev/null 2>&1 &
+bunx kitop dev --port 4188 --strictPort >dev.log 2>&1 &
 dev=$!
 for i in $(seq 1 40); do curl -sf http://localhost:4188/where -o where.html && break; sleep 1; done
-kill "$dev"
-grep -q "a website" where.html || { echo "the website's page didn't render:"; cat where.html; exit 1; }
+kill "$dev" 2>/dev/null || true
+grep -q "a website" where.html 2>/dev/null || { echo "the website's page didn't render:"; cat where.html dev.log; exit 1; }
 if bunx kitop dev --mac 2>/dev/null; then echo "kitop dev --mac ran on Linux"; exit 1; fi
 bunx kitop build --linux 2>&1 | grep -E " error|✓ /" | tail -1
 ls .desktop/dist/*.tar.gz >/dev/null

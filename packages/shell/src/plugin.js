@@ -28,11 +28,16 @@ async function appKit(root) {
 // The site's own `host`, ahead of SvelteKit's runtime on both sides.
 function websiteHost() {
   const file = fileURLToPath(new URL("./host/website.js", import.meta.url));
+  const shellRoot = fileURLToPath(new URL("..", import.meta.url));
   return {
     name: "kitop:website-host",
-    config: () => ({ server: { fs: { allow: [dirname(file)] } } }),
+    config: () => ({
+      server: { fs: { allow: [shellRoot] } },
+      // Installed, the package is TypeScript and runes sources the dep optimizer can't read, should a page import it.
+      ...(/[\\/]node_modules[\\/]/.test(shellRoot) ? { optimizeDeps: { exclude: ["@kitop/shell"] } } : {}),
+    }),
     transform(code, id) {
-      if (/@sveltejs[\\/]kit[\\/]src[\\/]runtime[\\/](client[\\/]client|server[\\/]index)\.js/.test(id)) return `import ${JSON.stringify(file)};\n${code}`;
+      if (/@sveltejs[\\/]kit[\\/]src[\\/]runtime[\\/](client[\\/]client|server[\\/]index)\.js/.test(id)) return { code: `import ${JSON.stringify(file)};\n${code}`, map: null };
     },
   };
 }
