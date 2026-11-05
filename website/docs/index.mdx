@@ -37,7 +37,7 @@ New here? Start with the [quick start](/quickstart).
 
 ## Why
 
-- **Your app, unchanged.** No SPA rewrite and no IPC layer to design: load functions, remote functions and `+server.ts` endpoints keep working, served on a random loopback port behind a session-cookie gate.
+- **Your app, unchanged.** No SPA rewrite and no IPC layer to design: load functions, remote functions and `+server.ts` endpoints keep working, served on a loopback port of its own behind a session-cookie gate.
 - **Bun on the server side.** Server code has Bun's APIs, `bun:sqlite` and Node-API addons. Sidecars, persistent services and background jobs run in child processes.
 - **The system web view.** No bundled Chromium. Menus, windows, dialogs and popovers are the OS's own.
 - **One global for native features.** `host.clipboard.writeText()`, `host.notifications.show()`, `host.window.setTitle()`: the same object in page and server code, reactive in components.
@@ -88,4 +88,4 @@ Hello-world app on macOS 26.5 (M4 Pro), all processes counted. Numbers from the 
 | --- | --- | --- | --- |
 | macOS 12+ | WKWebView | `.app`, zip, DMG, notarization, universal | Primary target, full test suites |
 | Linux | WebKitGTK 4.1 (GTK 3) | App directory, tar.gz, AppImage | Verified in Docker under Xvfb |
-| Windows | WebView2 | Folder, zip, NSIS installer, Authenticode | Cross-compiled and smoke-tested under Wine; not yet run on real Windows |
+| Windows | WebView2 | Folder, zip, NSIS installer, Authenticode | Cross-compiled; end-to-end tests on a real Windows runner in CI, mostly notifications so far |

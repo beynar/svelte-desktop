@@ -184,7 +184,7 @@ Every field of `WindowAnimation` is optional. These defaults apply when animatio
     hardenedRuntime: { type: "boolean", default: "true unless ad-hoc" },
     entitlements: { type: "Record<string, boolean | string | string[]>", description: "Merged into the defaults Bun needs (JIT)." },
     provisioningProfile: { type: "string", description: "macOS .provisionprofile embedded in the bundle." },
-    windows: { type: "{ certificateFile?: string; password?: string; timestampUrl?: string }", description: "Authenticode (`osslsigncode`); enabled when a certificate file is configured, including through the environment." },
+    windows: { type: "{ command?: string[]; certificateFile?: string; password?: string; timestampUrl?: string }", description: "Authenticode: your own tool through `command`, or a certificate file through `osslsigncode`, including through the environment." },
   }}
 />
 
@@ -192,6 +192,7 @@ Every field of `WindowAnimation` is optional. These defaults apply when animatio
 
 <TypeTable
   type={{
+    command: { type: "string[]", description: "Your signing tool, run once per file, which it signs in place. `{file}` is that file. Takes precedence over `certificateFile`." },
     certificateFile: { type: "string", default: "$WINDOWS_CERT_PFX", description: "PKCS#12 certificate path, relative to the project." },
     password: { type: "string", default: '$WINDOWS_CERT_PASSWORD, else ""' },
     timestampUrl: { type: "string", default: '"http://timestamp.digicert.com"' },

@@ -9,7 +9,7 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 
 - **Smaller builds need a canary Bun.** `build.trim` and `build.aot` are unavailable on stable Bun. See [Distribution](/shipping/distribution#macos).
 - **Ops vary by platform.** Many window and app ops are macOS-only and answer `unsupported` elsewhere. `host.capabilities.describe()` lists the operations registered in the running build; a registered operation can still reject because the OS, permission or runtime is unavailable.
-- **Self-update has platform and recovery gaps**: no Linux support, no delta patches or automatic rollback on Windows, no recovery from an executable that cannot start. See [Self-update](/shipping/self-update#platform-support).
+- **Self-update has platform and recovery gaps**: no Linux support, no delta patches on Windows, no recovery from an executable the OS can't launch at all. See [Self-update](/shipping/self-update#platform-support).
 
 | Feature | macOS | Linux | Windows |
 | --- | --- | --- | --- |
@@ -48,6 +48,6 @@ These are shell API limits. The page still has the web APIs its installed web en
 
 ## Tooling
 
-- `kitop doctor` has macOS, Linux and Windows tool checks, but still runs the shared macOS keychain/signing checks on every platform. It is not a complete cross-platform readiness check.
+- `kitop doctor` checks each OS's tools, and signing on macOS only. It is not a complete cross-platform readiness check.
 - SVG icon sources require macOS (`sips`); use a PNG source when building the same app in Linux or Windows CI.
 - Swift and Objective-C plugins are macOS-only. Only one Go plugin runtime is allowed per app process; consolidate Go code into one module. See [Native code](/native).

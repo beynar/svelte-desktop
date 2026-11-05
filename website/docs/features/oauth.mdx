@@ -38,7 +38,7 @@ Call `authorize()` in the page: its loopback flow uses `location` and relative H
 
 ## Where the browser comes back
 
-**Loopback (the default).** The browser comes back to `http://127.0.0.1:<port>/__desktop/oauth/callback`, on the app's own server. The port changes at each launch; the path doesn't.
+**Loopback (the default).** The browser comes back to `http://127.0.0.1:<port>/__desktop/oauth/callback`, on the app's own server. The port normally stays the same across launches, but changes if it's taken, so don't rely on it in a provider's settings; the path doesn't change.
 - **What to register at your provider:** `http://127.0.0.1/__desktop/oauth/callback`. Loopback redirects may use any port (RFC 8252 §7.3), and most providers follow that; check yours.
 - **In `vite dev`**, register `http://localhost:<vite port>/__desktop/oauth/callback` too.
 - **How a return is matched:** the app's server matches it to its sign-in by `state`. A return with a `state` nobody started completes nothing, and each sign-in completes once.

@@ -27,7 +27,7 @@ Quitting runs the Worker's `host.onBeforeQuit` hooks, then stops jobs and servic
 
 ## The localhost session
 
-The server listens on a random loopback port. A gate in front of SvelteKit keeps other local processes and web pages out:
+The server listens on a loopback port that comes from the app's identifier. It stays the same across launches, because web views keep `localStorage` and IndexedDB per origin, port included. If it's taken, the app uses another one for that launch, and doesn't see what's stored on the usual one. A gate in front of SvelteKit keeps other local processes and web pages out:
 
 1. **Host check** against DNS rebinding.
 2. **One-time secret.** The UI thread generates it and the window's first navigation trades it for an `HttpOnly`, `SameSite=Strict` session cookie. App requests without the cookie get a 403. Immutable build routes (including prerendered pages) bypass the cookie gate, as do single-use OAuth callback URLs.

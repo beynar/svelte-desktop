@@ -14,7 +14,7 @@ Your app is a local web server plus a window. Most of the protection is on by de
 
 ## Who can reach the server
 
-In the built app the server listens on `127.0.0.1` on a random port, behind a gate:
+In the built app the server listens on `127.0.0.1` behind a gate, on a port derived from the app's identifier, so the port isn't a secret:
 
 1. A request whose `Host` header isn't the server's own gets a 421 (DNS rebinding). Static assets and prerendered pages are served before this check and without the cookie, so don't put anything private in them.
 2. The first navigation trades a one-time secret for an `HttpOnly`, `SameSite=Strict` session cookie. Every other request needs that cookie or gets a 403. Other processes and browser tabs never see the cookie.

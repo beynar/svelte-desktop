@@ -63,7 +63,7 @@ The updater fetches a signed `update.json` from any static host (S3, R2, GitHub 
 | Platform | Current behavior |
 | --- | --- |
 | macOS | Full `.app` replacement and delta patches; the parent install directory must be writable |
-| Windows | Full-archive file replacement through a PowerShell helper; no delta application. Automatic startup confirmation and rollback are not wired for Windows-style compiled paths. Real Windows validation remains required. |
+| Windows | Full-archive file replacement through a PowerShell helper; no delta application. Confirmation and rollback work as on macOS, but haven't been run through a real failed update on Windows. |
 | Linux | The packager archives the enclosing app directory, while the installer expects executable-level entries or one replacement file. This can replace the executable or AppImage with a directory. Do not install the generated Linux feed; use manual downloads until the archive layout is fixed. |
 
 ## Security
@@ -79,7 +79,7 @@ With a previous release in `release/`, `vite build` also writes a `.sdpatch`: pe
 
 ## Install and rollback
 
-The install is swapped by a helper after the app exits, and the previous copy is kept as `.old`. If the new version starts twice without confirming it started, the shell restores the previous copy and skips that version in future checks. The confirmation happens when the shell's worker starts, so it is not a check that your pages or app logic work. If the new executable cannot start at all, nothing is restored.
+The install is swapped by a helper after the app exits, and the previous copy is kept as `.old`. Each launch of a new version counts before anything else runs, and the version is confirmed once its first page has stayed up for 5 seconds, or at a clean quit after that page. If it doesn't get there twice, the shell restores the previous copy, starts it, and skips that version in future checks. So a version that crashes in its native layer or never shows a page is replaced. A page that loads but misbehaves counts as healthy: the shell can't tell, so test your releases. If the executable can't be launched by the OS at all, nothing of it runs, so nothing is restored.
 
 Applications that call `createUpdater()` directly own the timing of `rollbackIfNeeded()`, `confirm()` and the restart: see `src/updater/README.md`.
 

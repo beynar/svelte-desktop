@@ -81,7 +81,13 @@ KITOP_TARGET=windows bunx --bun vite build
 | NSIS installer | Per-user, with URL schemes and file associations |
 | `release/` | Update archives, when `update` is set |
 
-Cross-builds run the native toolchain (llvm-mingw, the WebView2 SDK, NSIS, osslsigncode) in Docker, so a running Docker is required; the first build creates the toolchain image, which takes a few minutes. Without Docker the build fails if `shell.dll` has to be built, and skips the installer, native plugins and addons with a warning. Authenticode signing is on when a certificate is given:
+Cross-builds run the native toolchain (llvm-mingw, the WebView2 SDK, NSIS, osslsigncode) in Docker, so a running Docker is required; the first build creates the toolchain image, which takes a few minutes. Without Docker the build fails if `shell.dll` has to be built, and skips the installer, native plugins and addons with a warning. Authenticode signing is on when you give a signing tool or a certificate. Certificate authorities have only issued keys on hardware or in cloud services since 2023, so a new certificate usually needs your own tool. It runs once per file and signs it in place:
+
+```ts desktop.config.ts
+sign: { windows: { command: ['AzureSignTool', 'sign', '--azure-key-vault-url', vaultUrl, '{file}'] } },
+```
+
+The tool has to be on the machine that builds. The build signs before it makes the installer and the update archive, so what's published is what was signed. With an older exportable certificate, `osslsigncode` signs it for you:
 
 ```ts desktop.config.ts
 sign: { windows: { certificateFile: 'cert.pfx', password: process.env.CERT_PASSWORD } }, // or $WINDOWS_CERT_PFX + $WINDOWS_CERT_PASSWORD
@@ -120,6 +126,6 @@ The generated Linux updater archive currently has a layout mismatch with the ins
     hardenedRuntime: { type: "boolean", default: "true unless ad-hoc", description: "Required for notarization." },
     entitlements: { type: "Record<string, boolean | string | string[]>", description: "Merged into the defaults Bun needs." },
     provisioningProfile: { type: "string", description: "macOS .provisionprofile embedded in the bundle (Push Notifications)." },
-    windows: { type: "{ certificateFile, password, timestampUrl }", description: "Authenticode." },
+    windows: { type: "{ command, certificateFile, password, timestampUrl }", description: "Authenticode." },
   }}
 />

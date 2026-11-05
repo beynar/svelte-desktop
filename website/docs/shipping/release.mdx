@@ -206,7 +206,7 @@ CI setup, on top of the shared setup above:
 
 <Steps>
   <Step title="Windows signing (optional)">
-    Without a certificate, Windows builds are unsigned, and SmartScreen warns users the first time. To sign, get an Authenticode code-signing certificate as a `.pfx` file from a certificate authority, then:
+    Without a certificate, Windows builds are unsigned, and SmartScreen warns users the first time. This workflow signs with an exportable `.pfx` file. New certificates mostly come on hardware or in a cloud service instead: use [`sign.windows.command`](/shipping/distribution) with your provider's tool, and install it in the job. With a `.pfx`:
 
     ```sh
     base64 -i certificate.pfx | pbcopy

@@ -33,7 +33,7 @@ bunx --bun vite build
 bun test --timeout 30000 tests/
 ```
 
-App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without options, `launch()` runs the first built app in `.desktop/dist`, so build first. `DESKTOP_TEST_DEV` is this example's own convention for choosing `{ dev: true }`, not a framework variable. The `greeter` test calls an op of your own native plugin.
+App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without options, `launch()` runs the first built app in `.desktop/dist`, so build first. A build signed to be distributed (a real macOS identity, or Windows signing) can't be driven this way, so no other program can use the app's identity: to test one, build it with `KITOP_TEST_BUILD=1`, and don't ship that build. `DESKTOP_TEST_DEV` is this example's own convention for choosing `{ dev: true }`, not a framework variable. The `greeter` test calls an op of your own native plugin.
 
 `launch()` opens a real window, which takes input focus while the tests run. In CI the machine needs a display: a logged-in session on macOS, a virtual one such as Xvfb on Linux.
 
