@@ -41,6 +41,9 @@ const env = (how?: string, extra: Record<string, string> = {}) => ({ ...process.
 /** `launch` follows an app that restarts itself, but a call made as it goes never comes back. */
 const answers = (app: AppHandle, code: string) => Promise.race([app.eval(code).then(() => true).catch(() => false), Bun.sleep(1000).then(() => false)]);
 
+/** The app's page, not the blank one a window starts on, whose relative URLs don't work. */
+const hasPage = (app: AppHandle) => Promise.race([app.eval<boolean>(`!!document.querySelector('#counter')`).catch(() => false), Bun.sleep(1000).then(() => false)]);
+
 const crashInfo = (app: AppHandle) => app.eval<{ uncleanExit: boolean; lastError: { message: string; time: number } | null }>(`fetch('/api/crash').then((r) => r.json())`);
 
 /** The message box of an app that has stopped restarting. */
@@ -64,7 +67,7 @@ test('a thrown error: the app restarts on its own, working, on the same origin, 
 
 	writeFileSync(`${dir}/go`, '');
 	await until('a second start', () => starts() === 2);
-	await until('the new process to answer', () => answers(app, 'location.origin'));
+	await until('the new process to answer', () => hasPage(app));
 	await app.waitFor('#counter');
 
 	const { pid: after } = await app.platform<{ pid: number }>('diagnostics', 'info');
@@ -142,7 +145,7 @@ test('process.exit(3) in server code counts as a crash', async () => {
 	const app = await launch({ env: env('exit3', { CRASH_ONCE: '1', CRASH_ON_GO: '1' }) });
 	writeFileSync(`${dir}/go`, '');
 	await until('a second start', () => starts() === 2);
-	await until('the new process to answer', () => answers(app, 'location.origin'));
+	await until('the new process to answer', () => hasPage(app));
 	expect((await crashInfo(app)).lastError?.message).toContain('code 3');
 	await app.close();
 }, 60_000);
