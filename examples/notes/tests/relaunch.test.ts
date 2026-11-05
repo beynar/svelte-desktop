@@ -31,7 +31,14 @@ test.skipIf(!!process.env.DESKTOP_TEST_DEV)('localStorage and IndexedDB are stil
 	try {
 		await second.waitFor('#counter');
 		expect(await second.eval('location.origin')).toBe(origin);
-		expect(await second.eval(`localStorage.getItem('relaunch')`)).toBe(stamp);
+		const kept = await second.eval(`localStorage.getItem('relaunch')`);
+		// It has failed rarely, for a reason not found yet: what's needed to find it, when it does.
+		if (kept !== stamp) {
+			const data = await second.platform<string>('app', 'getPath', { name: 'userData' });
+			const show = (command: string) => Bun.spawnSync(['sh', '-c', command]).stdout.toString();
+			console.error(`localStorage lost. Origin ${origin}.\n${show(`ls -la "${data}/localstorage" 2>&1; ps -eo pid,etime,args | grep -E 'WebKit|otes' | grep -v grep | cut -c1-100`)}`);
+		}
+		expect(kept).toBe(stamp);
 		expect(
 			await second.eval(`(async () => {
 				const db = await ${openDb};

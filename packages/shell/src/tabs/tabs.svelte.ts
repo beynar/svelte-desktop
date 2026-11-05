@@ -1192,8 +1192,17 @@ export class TabGroup<T extends TabLike = TabLike> {
 					// In panes no route of the window's page gives it a <title>: it names the document too.
 					if (title && this.panes && isPage) document.title = title;
 				});
-				// Disconnected: a save still waiting goes out now.
-				return () => (clearTimeout(timer), save?.());
+				// The window closing or the app quitting: a save still waiting goes out now.
+				const flush = () => {
+					clearTimeout(timer);
+					save?.();
+					save = undefined;
+				};
+				if (isPage) addEventListener('pagehide', flush);
+				return () => {
+					if (isPage) removeEventListener('pagehide', flush);
+					flush();
+				};
 			}),
 		);
 

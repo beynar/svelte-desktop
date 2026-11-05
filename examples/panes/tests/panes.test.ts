@@ -1657,7 +1657,7 @@ test('the keyboard: next tab and next pane stay within what shows', async () => 
 test('the layout comes back at the next launch', async () => {
 	const before = await panes();
 	const paths = await items();
-	await Bun.sleep(600); // saved
+	await Bun.sleep(1500); // saved, also on a busy machine
 	await app.close();
 	await start();
 	await until(async () => (await panes()).length === before.length, 'the panes back');
