@@ -195,9 +195,13 @@ switch ($Mode) {
     foreach ($h in Hosts) { '== host'; Dump $h 0 14 }
   }
   'dnd-off' { # the runner session starts with Do Not Disturb on (only priority banners pop up)
-    [SdInput]::Chord(0x5B, 0x4E); Start-Sleep -Milliseconds 1500
-    $btn = Find (Hosts) { param($e) $e.Current.AutomationId -eq 'DoNotDisturbButton' }
-    if (-not $btn) { 'no DND button'; exit 0 }
+    # The panel can take seconds to open on a busy runner. Left on, every popup test fails.
+    $btn = $null
+    for ($try = 0; $try -lt 3 -and -not $btn; $try++) {
+      [SdInput]::Chord(0x5B, 0x4E)
+      for ($i = 0; $i -lt 32 -and -not $btn; $i++) { Start-Sleep -Milliseconds 250; $btn = Find (Hosts) { param($e) $e.Current.AutomationId -eq 'DoNotDisturbButton' } }
+    }
+    if (-not $btn) { throw 'no Do Not Disturb button' }
     $tp = $null; [void]$btn.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$tp)
     $before = "$($tp.Current.ToggleState)"
     if ($before -eq 'On') { $tp.Toggle(); Start-Sleep -Milliseconds 500 }
