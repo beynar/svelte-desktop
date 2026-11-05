@@ -545,6 +545,7 @@ NSString *platform_window_set_glass(NSWindow *w, int nativeId, NSDictionary *opt
   NSString *tintSpec = [opts[@"tint"] isKindOfClass:NSString.class] ? opts[@"tint"] : nil;
   NSColor *tint = tintSpec ? parse_hex_color(tintSpec) : nil;
   if (tintSpec && !tint) return [NSString stringWithFormat:@"tint `%@` is not a #rgb, #rrggbb or #rrggbbaa color", tintSpec];
+#ifdef __MAC_26_0 // Built with the macOS 26 SDK (Xcode 26). Older: no Liquid Glass in this build.
   if (@available(macOS 26.0, *)) {
     platform_window_set_vibrancy(w, nativeId, nil, nil);
     NSGlassEffectView *g = (NSGlassEffectView *)existing;
@@ -562,6 +563,7 @@ NSString *platform_window_set_glass(NSWindow *w, int nativeId, NSDictionary *opt
     if (glass) *glass = YES;
     return nil;
   }
+#endif
   if (glass) *glass = NO;
   return platform_window_set_vibrancy(w, nativeId, @"underWindow", nil);
 }
@@ -612,9 +614,11 @@ static NSString *apply_material_regions(NSWindow *w, int nativeId, NSArray *regi
     [seen addObject:rid];
     NSView *v = views[rid];
     BOOL useGlass = NO;
+#ifdef __MAC_26_0
     if (glass) {
       if (@available(macOS 26.0, *)) useGlass = YES;
     }
+#endif
     Class want = useGlass ? NSClassFromString(@"NSGlassEffectView") : NSVisualEffectView.class;
     if (v && ![v isKindOfClass:want]) {
       [v removeFromSuperview];
@@ -629,12 +633,14 @@ static NSString *apply_material_regions(NSWindow *w, int nativeId, NSArray *regi
     }
     if (!NSEqualRects(v.frame, frame)) v.frame = frame;
     if (useGlass) {
+#ifdef __MAC_26_0
       if (@available(macOS 26.0, *)) {
         NSGlassEffectView *g = (NSGlassEffectView *)v;
         g.style = [material isEqual:@"glass-clear"] ? NSGlassEffectViewStyleClear : NSGlassEffectViewStyleRegular;
         g.cornerRadius = radius;
         g.tintColor = tintSpec ? parse_hex_color(tintSpec) : nil;
       }
+#endif
       anyGlass = YES;
     } else {
       NSVisualEffectView *fx = (NSVisualEffectView *)v;
@@ -1219,6 +1225,7 @@ void platform_register_window(void) {
     [c ok:nil];
   });
   reg(@"getGlass", ^(PlatformCall *c, NSWindow *w, int) {
+#ifdef __MAC_26_0
     if (@available(macOS 26.0, *)) {
       for (NSView *v in w.contentView.subviews) {
         if (![v.identifier isEqual:kGlassId]) continue;
@@ -1228,6 +1235,7 @@ void platform_register_window(void) {
         return [c ok:d];
       }
     }
+#endif
     [c ok:nil];
   });
 }

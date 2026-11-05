@@ -22,9 +22,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
-      - name: Install (examples/notes)
-        working-directory: examples/notes
-        run: bun install
+      - name: Install (the shell, examples/notes)
+        run: |
+          (cd packages/shell && bun install)
+          (cd examples/notes && bun install)
       - name: Build the Windows app (shell.dll, addon and installer through the Docker toolchain)
         working-directory: examples/notes
         run: KITOP_TARGET=windows bunx --bun vite build

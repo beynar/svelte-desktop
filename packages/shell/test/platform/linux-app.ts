@@ -39,7 +39,7 @@ export default async (t: Harness) => {
   const ev = await second;
   t.check("secondInstance {argv, cwd} delivered to the holder", Array.isArray(ev?.argv) && ev.argv.some((a: string) => a.endsWith("_second-instance.ts")) && ev.cwd === "/tmp", ev);
   const login = await t.call("app", "setLoginItem", { enabled: false });
-  t.check("setLoginItem unpackaged → unavailable", login.error?.code === "unavailable", login);
+  t.check("setLoginItem unpackaged: it doesn't reject, and says it's not available", login.ok && login.value?.available === false, login);
   t.check("setName", (await t.call("app", "setName", { name: "Harness Renamed" })).ok && (await t.call("app", "getName")).value === "Harness Renamed");
   t.check("setIdentity", (await t.call("app", "setIdentity", { identifier: "dev.kitop.harness2" })).ok && (await t.call("app", "getInfo")).value.identifier === "dev.kitop.harness2");
   await t.call("app", "setIdentity", { identifier: "dev.kitop.harness" });

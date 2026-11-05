@@ -1,6 +1,9 @@
 // isolated.ts on a mock platform: what goes to the native side, in what order.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mockPlatform, PlatformTransport } from "../platform/bus";
+// Loaded here, outside a page: it works out once whether it's in one, for every test file of this
+// process, and what's below makes the globals look like a page.
+import "./tabs.svelte.ts";
 
 const saved: Record<string, unknown> = {};
 let t: PlatformTransport;
@@ -30,7 +33,10 @@ beforeEach(() => {
   stub("innerWidth", 800);
 });
 afterEach(() => {
-  for (const [k, v] of Object.entries(saved)) (globalThis as any)[k] = v;
+  for (const [k, v] of Object.entries(saved)) {
+    if (v === undefined) delete (globalThis as any)[k];
+    else (globalThis as any)[k] = v;
+  }
 });
 
 const load = () => import("./isolated.ts");
