@@ -194,6 +194,7 @@ switch ($Mode) {
     '== probed'; ProbeWindows | ForEach-Object { $f = $_.Split('|'); $p = (Get-Process -Id $f[3] -ErrorAction SilentlyContinue).ProcessName; "$_|$p" }
     foreach ($h in Hosts) { '== host'; Dump $h 0 14 }
   }
+  'popup' { $t = Find (Hosts) { param($e) $e.Current.ClassName -eq 'FlexibleToastView' -and $e.Current.Name -like ('*' + $s.title + '*') }; if ($t) { 'shown' } else { 'none' } }
   'dnd-off' { # the runner session starts with Do Not Disturb on (only priority banners pop up)
     # The panel can take seconds to open on a busy runner. Left on, every popup test fails.
     $btn = $null
@@ -258,7 +259,7 @@ switch ($Mode) {
 }
 `;
 
-async function uia(mode: 'shot' | 'dump' | 'act' | 'dnd-off', spec?: object) {
+async function uia(mode: 'shot' | 'dump' | 'act' | 'dnd-off' | 'popup', spec?: object) {
 	const file = join(tmp, `u${Math.random().toString(36).slice(2)}.json`);
 	writeFileSync(file, JSON.stringify(spec ?? {}));
 	const r = await ps(UIA_PS1, mode, file);
@@ -418,9 +419,23 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		expect(rs.filter((r) => r.id === id && r.kind === kind)).toHaveLength(1);
 	};
 
+	/** After Do Not Disturb, toasts can go straight to the notification center for a while, with no banner. */
+	const bannersOn = async () => {
+		for (let i = 0; i < 20; i++) {
+			await show({ id: 'banner-check', title: 'Banner check', body: 'Are banners back?' });
+			await Bun.sleep(3000);
+			const shown = await uia('popup', { title: 'Banner check' });
+			await app.eval(`host.notifications.dismissAll()`);
+			if (shown.includes('shown')) return log('banners back after', i + 1, 'tries');
+			await Bun.sleep(2000);
+		}
+		throw new Error('no banner within 100 s of leaving Do Not Disturb');
+	};
+
 	test('real click on the toast (UI Automation + mouse) → page navigates to its url', async () => {
 		await home();
 		log(await uia('dnd-off'));
+		await bannersOn();
 		await app.eval(`host.notifications.dismissAll()`); // one toast on screen at a time
 		await Bun.sleep(1000);
 		await show({ id: 'u1', title: 'Real click', body: 'Opens About', url: '/about', requireInteraction: true });
