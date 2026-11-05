@@ -6,6 +6,8 @@
 // Not here (unsupported): kind `auth`, certificates and client identities.
 #include "win.hpp"
 
+#include <set>
+
 namespace sd::win {
 
 static bool g_permission_handler = false;
@@ -173,13 +175,39 @@ void web_screen_capture_starting(View *v, ICoreWebView2ScreenCaptureStartingEven
 static bool g_navigation_policy = false;
 static std::map<std::string, std::function<void(bool)>> g_navigations;
 
-// NavigationStarting doesn't hold the request: it reaches the server while the answer is awaited. A
-// handler on document requests does, because WebView2 waits for it and keeps it until the
-// navigation's handler has returned, by which time a refusal has cancelled the request.
+// What the policy refused, by view and address, for the request that comes after. See web_policy_attach.
+static std::map<int, std::set<std::string>> g_refused;
+
+static std::string without_fragment(const std::string &url) { return url.substr(0, url.find('#')); }
+
+// NavigationStarting doesn't hold the request: it reaches the server while the answer is awaited,
+// and cancelling doesn't stop it either. A handler on document requests holds it, because WebView2
+// waits for that handler and keeps it until the navigation's has returned. So it runs knowing the
+// answer, and a refused request gets a response of its own instead of going out.
 void web_policy_attach(View *v) {
   if (!g_navigation_policy || v->browserView.empty() || !v->webview || v->holdsRequests) return;
   auto *onRequest = new Cb<ICoreWebView2WebResourceRequestedEventHandler, ICoreWebView2 *, ICoreWebView2WebResourceRequestedEventArgs *>(
-      IID_ICoreWebView2WebResourceRequestedEventHandler, [](ICoreWebView2 *, ICoreWebView2WebResourceRequestedEventArgs *) -> HRESULT { return S_OK; });
+      IID_ICoreWebView2WebResourceRequestedEventHandler, [id = v->id](ICoreWebView2 *sender, ICoreWebView2WebResourceRequestedEventArgs *args) -> HRESULT {
+        ICoreWebView2WebResourceRequest *request = nullptr;
+        LPWSTR uri = nullptr;
+        if (FAILED(args->get_Request(&request)) || !request) return S_OK;
+        request->get_Uri(&uri);
+        request->Release();
+        std::string url = utf8(uri);
+        if (uri) CoTaskMemFree(uri);
+        if (!g_refused[id].erase(without_fragment(url))) return S_OK;
+        auto *wv2 = query<ICoreWebView2_2>(sender, IID_ICoreWebView2_2);
+        if (!wv2) return S_OK;
+        ICoreWebView2Environment *env = nullptr;
+        ICoreWebView2WebResourceResponse *response = nullptr;
+        if (SUCCEEDED(wv2->get_Environment(&env)) && env && SUCCEEDED(env->CreateWebResourceResponse(nullptr, 403, L"Refused", L"", &response)) && response) {
+          args->put_Response(response);
+          response->Release();
+        }
+        if (env) env->Release();
+        wv2->Release();
+        return S_OK;
+      });
   v->webview->add_WebResourceRequested(onRequest, &v->tokens[11]);
   onRequest->Release();
   v->webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT);
@@ -219,7 +247,13 @@ void web_navigation_policy(View *v, const std::string &url, bool main_frame, ICo
     }
   }
   g_navigations.erase(ident);
-  if (!allow) args->put_Cancel(TRUE);
+  auto &refused = g_refused[v->id];
+  if (allow) {
+    refused.erase(without_fragment(url));
+    return;
+  }
+  refused.insert(without_fragment(url));
+  args->put_Cancel(TRUE);
 }
 
 // ---------------------------------------------------------------------------
