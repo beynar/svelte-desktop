@@ -30,7 +30,8 @@ Adds desktop support to the SvelteKit project in the current directory:
 - writes `desktop.config.ts` (left alone if it exists), with `appName` and `identifier` derived from `package.json`;
 - rewrites `sveltekit(` to `desktop(` in `vite.config.ts` and removes the adapter, which the desktop plugin sets;
 - sets the scripts `dev` (`bunx --bun vite dev`), `build` (`bunx --bun vite build`) and `test:desktop` (`bun test --timeout 30000 tests/`), replacing any existing values;
-- adds `.desktop` to `.gitignore`.
+- adds `.desktop` to `.gitignore`;
+- writes a first test, `tests/app.test.ts`, if there's no `tests` folder.
 
 It ends by printing the install to run if you ran it before installing: `bun add -d @kitop/shell@<version> @sveltejs/adapter-bun@1.0.0-next.2 @types/bun && bun run dev`.
 

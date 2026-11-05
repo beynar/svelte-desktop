@@ -13,7 +13,7 @@ import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import shell from "../package.json";
-import { removeAdapterOption } from "../src/build/init-edit.ts";
+import { removeAdapterOption, STARTER_TEST, stringifyLike } from "../src/build/init-edit.ts";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const root = process.cwd();
@@ -31,7 +31,8 @@ const adapter = `@sveltejs/adapter-bun@${peers["@sveltejs/adapter-bun"]}`;
 async function init() {
   const pkgPath = join(root, "package.json");
   if (!existsSync(pkgPath)) throw new Error("run `kitop init` in a SvelteKit project (no package.json here)");
-  const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+  const pkgText = readFileSync(pkgPath, "utf8");
+  const pkg = JSON.parse(pkgText);
   const name = pkg.productName ?? String(pkg.name ?? "App").replace(/(^|[-_ ])(\w)/g, (_: string, s: string, c: string) => (s ? " " : "") + c.toUpperCase());
   const id = `com.example.${String(pkg.name ?? "app").toLowerCase().replace(/[^a-z0-9]+/g, "")}`;
 
@@ -52,7 +53,7 @@ async function init() {
         .replace(/import\s*\{\s*sveltekit\s*\}\s*from\s*['"]@sveltejs\/kit\/vite['"];?/, "import { desktop } from '@kitop/shell/vite';")
         .replace(/\bsveltekit\(/g, "desktop(");
       // the desktop plugin sets the adapter itself
-      src = removeAdapterOption(src).replace(/import adapter from ['"][^'"]+['"];?\n?/g, "");
+      src = removeAdapterOption(src).replace(/import adapter from ['"][^'"]+['"];?\n?/g, "").replace(/\bdesktop\(\s*\{\s*\}\s*\)/g, "desktop()");
       writeFileSync(viteConfig, src);
       ok(`${viteConfig}: sveltekit(…) → desktop(…)`);
     } else warn(`add desktop() from '@kitop/shell/vite' to ${viteConfig} manually`);
@@ -61,8 +62,14 @@ async function init() {
   if (svelteConfig && /\badapter\b/.test(readFileSync(svelteConfig, "utf8"))) warn(`${svelteConfig} sets an adapter: remove it, desktop() sets its own`);
 
   pkg.scripts = { ...pkg.scripts, dev: "bunx --bun vite dev", build: "bunx --bun vite build", "test:desktop": "bun test --timeout 30000 tests/" };
-  writeFileSync(pkgPath, `${JSON.stringify(pkg, null, "\t")}\n`);
+  writeFileSync(pkgPath, stringifyLike(pkgText, pkg));
   ok("package.json scripts: dev, build, test:desktop");
+
+  if (!existsSync(join(root, "tests"))) {
+    mkdirSync(join(root, "tests"));
+    writeFileSync(join(root, "tests/app.test.ts"), STARTER_TEST);
+    ok("tests/app.test.ts");
+  }
 
   const gi = join(root, ".gitignore");
   const lines = existsSync(gi) ? readFileSync(gi, "utf8") : "";

@@ -26,6 +26,15 @@ The steps below make that change for you, then get the app running and built.
 - **[Bun](https://bun.sh) 1.4 or newer.** You don't need to move your project to it, but the app's server code will run on it.
 - **On macOS,** the Xcode command line tools (`xcode-select --install`). **On Linux or Windows,** see [Distribution](/shipping/distribution).
 - **Your project committed in git,** so you can read what changes.
+- **The package itself.** `@kitop/shell` isn't on npm yet. Until it is, build it from [the repository](https://github.com/beynar/svelte-desktop):
+
+  ```sh
+  git clone https://github.com/beynar/svelte-desktop
+  cd svelte-desktop/packages/shell
+  bun install && bun pm pack --destination /tmp
+  ```
+
+  Then, in the first step below, name the file it wrote (`/tmp/kitop-shell-<version>.tgz`) in place of `@kitop/shell`.
 
 ## Convert it
 
@@ -45,12 +54,13 @@ The steps below make that change for you, then get the app running and built.
     bunx kitop init
     ```
 
-    It does four things:
+    It does five things:
 
     - Writes `desktop.config.ts`, with your app's name.
     - Swaps `sveltekit()` for `desktop()` in `vite.config.ts`, and removes your `adapter` option and its import. Your other options stay.
     - Sets the `dev`, `build` and `test:desktop` scripts in `package.json`, replacing any with those names.
     - Adds `.desktop` to `.gitignore`.
+    - Writes a first test, `tests/app.test.ts`, if you have no `tests` folder. If you have one, `test:desktop` runs what's in it with `bun test`.
 
     **Check:** `git diff` shows that, and nothing else. If `init` warns that `svelte.config.js` sets an adapter, remove it there too.
   </Step>
@@ -120,7 +130,7 @@ The steps below make that change for you, then get the app running and built.
 
     `bun run check` still works if your project has it. The first run writes `src/host.d.ts`, the types of `host`: keep it in git.
 
-    **Check:** `.desktop/dist` has your app: a `.app`, a `.dmg` and a `.zip` on macOS; a folder, a `.tar.gz` and an AppImage on Linux. Open it. It runs without Vite, and what's stored in `localStorage` and your database stays between launches.
+    **Check:** `.desktop/dist` has your app: a `.app`, a `.dmg` and a `.zip` on macOS; a folder, a `.tar.gz` and an AppImage on Linux. Open it. It runs without Vite, and what's stored in `localStorage` and your database stays between launches. `bun run test:desktop` opens the built app and checks that it shows a page.
   </Step>
 </Steps>
 

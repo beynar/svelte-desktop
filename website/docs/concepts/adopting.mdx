@@ -17,7 +17,8 @@ The adapter's version is not a suggestion: see [what an app needs](/reference/ve
 
 - Writes `desktop.config.ts`, with the app name taken from `package.json` and the identifier `com.example.<name>`. **Change the identifier** before you ship. An existing config is left alone.
 - In `vite.config.ts` (or `.js`), replaces the `sveltekit` import and calls with `desktop`, and removes the `adapter: adapter(...)` option and the `import adapter` line. If it finds no `sveltekit(` call, it tells you to add `desktop()` yourself.
-- Sets the `dev`, `build` and `test:desktop` scripts, replacing existing ones of those names, and adds `.desktop` to `.gitignore`.
+- Sets the `dev`, `build` and `test:desktop` scripts, replacing existing ones of those names, and adds `.desktop` to `.gitignore`. `package.json` keeps its formatting.
+- Writes a first test, `tests/app.test.ts`, if there's no `tests` folder.
 
 It does not change `svelte.config.js`. If you configure the adapter there, it tells you, and you remove it by hand. The desktop plugin sets its own adapter, a wrapper around `adapter-bun`, so keep `@sveltejs/adapter-bun` installed, at that version. `kit.paths.origin` is ignored: the app runs on a loopback port of its own.
 
