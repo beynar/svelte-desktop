@@ -17,8 +17,10 @@ Your app is a local web server plus a window. Most of the protection is on by de
 In the built app the server listens on `127.0.0.1` behind a gate, on a port derived from the app's identifier, so the port isn't a secret:
 
 1. A request whose `Host` header isn't the server's own gets a 421 (DNS rebinding). Static assets and prerendered pages are served before this check and without the cookie, so don't put anything private in them.
-2. The first navigation trades a one-time secret for an `HttpOnly`, `SameSite=Strict` session cookie. Every other request needs that cookie or gets a 403. Other processes and browser tabs never see the cookie.
+2. The first navigation trades a one-time secret for an `HttpOnly`, `SameSite=Strict` session cookie. Every other request needs that cookie or gets a 403. Other processes and browser tabs never see the cookie. Each process has its own secret and cookie, so one [restarted after a crash](/concepts/architecture#when-something-crashes) doesn't accept the old ones.
 3. [WebSocket](/features/websockets#security) upgrades also need the cookie, and an `Origin` header, when present, must be the app's own.
+
+Behind the cookie like the app, and added by the shell: `/__desktop/page-crashed`, the static page shown when a page keeps crashing. Its only link stays on the app's own origin, whatever its URL says.
 
 Not behind the cookie: immutable build assets, including prerendered pages, and the single-use callback URL of a system-browser [OAuth](/host/web/oauth) sign-in. Don't put secrets in prerendered pages.
 

@@ -7,6 +7,12 @@ import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync 
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
 
+const MAX_ERROR = 16 * 1024;
+// A server that keeps dying stops being restarted: more than RESTART_LIMIT restarts in the window.
+export const RESTART_LIMIT = 3;
+const RESTART_WINDOW_MS = 5 * 60_000;
+const RESTART_DELAYS_MS = [0, 1000, 3000];
+
 export interface CrashReport {
   /** Absolute path of the OS report (.ips on macOS, .dmp on Windows). */
   path: string;
@@ -21,6 +27,8 @@ export interface CrashInfo {
   previousLaunch: number | null;
   /** OS crash reports for this app written since the previous launch. */
   reports: CrashReport[];
+  /** What ended the previous run's server, when it was a JavaScript error or an exit nobody asked for. */
+  lastError: { message: string; time: number } | null;
 }
 
 function reportDir(): { dir: string; match: (file: string, exe: string) => boolean } | null {
@@ -69,12 +77,50 @@ export function startCrashTracking(dataDir: string, exe = basename(process.execP
   }
   const previousLaunch = existsSync(launches) ? Number(readFileSync(launches, "utf8").trim()) || null : null;
   const reports = previousLaunch ? findCrashReports(exe, previousLaunch) : [];
+  const lastError = readLastError(dataDir);
+  // A server dying while it loads leaves no marker: it hadn't got as far as writing one.
+  if (lastError) uncleanExit = true;
   writeFileSync(marker, String(process.pid));
   writeFileSync(launches, String(Date.now()));
-  return { uncleanExit, previousLaunch, reports };
+  return { uncleanExit, previousLaunch, reports, lastError };
+}
+
+function readLastError(dataDir: string): CrashInfo["lastError"] {
+  const file = join(dataDir, ".last-error");
+  try {
+    const { message, time } = JSON.parse(readFileSync(file, "utf8"));
+    return typeof message === "string" && typeof time === "number" ? { message, time } : null;
+  } catch {
+    return null;
+  } finally {
+    rmSync(file, { force: true });
+  }
+}
+
+/** The server died: what the next start's `crashInfo()` reports. */
+export function recordCrash(dataDir: string, message: string, time = Date.now()) {
+  writeFileSync(join(dataDir, ".last-error"), JSON.stringify({ message: message.slice(0, MAX_ERROR), time }));
 }
 
 /** Graceful quit: the next start won't report an unclean exit. */
 export function endCrashTracking(dataDir: string) {
   rmSync(join(dataDir, ".running"), { force: true });
+}
+
+/**
+ * The server died: how long to wait before restarting the app, or null to stop trying. On disk,
+ * since each restart is a new process. Giving up starts over: the next launch is the user asking.
+ */
+export function nextRestart(dataDir: string, now = Date.now()): number | null {
+  const file = join(dataDir, ".crash-restarts");
+  let times: number[] = [];
+  try {
+    times = (JSON.parse(readFileSync(file, "utf8")) as number[]).filter((t) => now - t < RESTART_WINDOW_MS);
+  } catch {}
+  if (times.length >= RESTART_LIMIT) {
+    rmSync(file, { force: true });
+    return null;
+  }
+  writeFileSync(file, JSON.stringify([...times, now]));
+  return RESTART_DELAYS_MS[times.length]!;
 }

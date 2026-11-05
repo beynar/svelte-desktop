@@ -5,6 +5,7 @@ import { afterAll, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { launch } from '@kitop/shell/test';
+import { appDirs } from '../../src/os.ts';
 import { defaultDataDir } from '../../src/updater/platform.ts';
 
 const version = JSON.parse(readFileSync('package.json', 'utf8')).version as string;
@@ -80,6 +81,19 @@ test('dying before a page, twice: the previous version comes back and starts', a
 	const processes = await new Response(Bun.spawn(['ps', '-eo', 'args'], { stdout: 'pipe' }).stdout).text();
 	expect(processes.split('\n').some((l) => l.startsWith(executable()))).toBe(true);
 	await killApp();
+}, 60_000);
+
+test('a server that dies at startup, on its own: its restarts count, and the previous version comes back', async () => {
+	applied();
+	rmSync(join(appDirs('dev.kitop.notes').data, '.crash-restarts'), { force: true });
+	// crash-probe.ts: nobody starts it again but the app itself.
+	Bun.spawn([executable()], { env: { ...process.env, CRASH_HOW: 'import' }, stdout: 'ignore', stderr: 'ignore' });
+	for (let i = 0; i < 300 && state()?.phase !== 'rolled-back'; i++) await Bun.sleep(100);
+	expect(state()?.phase).toBe('rolled-back');
+	expect(readFileSync(`${root}/installed`, 'utf8')).toBe('old');
+	Bun.spawnSync(['pkill', '-9', '-f', executable()]);
+	rmSync(join(appDirs('dev.kitop.notes').data, '.crash-restarts'), { force: true });
+	rmSync(join(appDirs('dev.kitop.notes').data, '.last-error'), { force: true });
 }, 60_000);
 
 test('a packaged app ignores what points dev at other code', async () => {

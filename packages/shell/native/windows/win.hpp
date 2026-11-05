@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "../portable/core.hpp"
+#include "../portable/reload_budget.hpp"
 
 namespace sd::win {
 
@@ -124,6 +125,8 @@ struct View {
   std::string userAgent;               // custom UA ("" = default)
   std::vector<std::function<void()>> pending; // run once the controller exists
   std::string lastUrl;                 // for recovery after a browser crash
+  ReloadBudget reloads;                // after its render process dies
+  bool askingToReload = false;         // the "not responding" question is on screen
   bool failed = false;                 // controller creation failed for good
   bool ready = false;                  // controller set up and bridge script registered
   EventRegistrationToken tokens[8]{};  // [7]: DocumentTitleChanged (view.* only)

@@ -61,6 +61,8 @@ Re-reads the file, replaces `data` and updates `path`. Resolves `Record<string, 
 
 Cancels the pending debounce and writes the current record immediately. Resolves `void`; serialization and file I/O failures reject. Calling it before any successful load rejects with `Error('store.flush() before load()')`.
 
+You don't need it before quitting: what a page has pending is written as the page goes away, and what server code has pending is written after the `host.onBeforeQuit` hooks, for at most a second. A crash loses what's pending, so `flush()` what can't be lost.
+
 ### `init()`
 
 Loads the file, updates `data` and `path`, sets `ready` and resolves the store itself. The runtime calls it automatically when the native backend becomes available; normal app code does not need to call it.

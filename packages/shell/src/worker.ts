@@ -39,9 +39,22 @@ export interface WorkerOptions {
 const UPDATE_PATH = "/__desktop/update/";
 
 export function startWorker({ handler, routes = {}, websocket, mcp, testChannel = true }: WorkerOptions) {
+  // A failed background promise doesn't stop what the server is doing: it's logged, and the server
+  // keeps its state and the window its page. Without a handler Bun would end this Worker for it.
+  // A thrown error isn't handled here: it ends the Worker, and supervisor.ts restarts the app.
+  process.on("unhandledRejection", (err: any) => console.error("[shell] unhandled rejection:", err?.stack ?? err));
   self.addEventListener("message", async (e: MessageEvent) => {
     const msg = e.data;
-    if (msg?.type === "init") await init(msg as InitMessage, handler, routes, websocket, mcp, testChannel);
+    if (msg?.type === "init") {
+      try {
+        await init(msg as InitMessage, handler, routes, websocket, mcp, testChannel);
+      } catch (err) {
+        // No server, so this one is fatal: out of the promise, to end the Worker.
+        setTimeout(() => {
+          throw err;
+        });
+      }
+    }
     if (msg?.type === "shutdown") await shutdown();
   });
 }
@@ -100,6 +113,8 @@ async function init(msg: InitMessage, handler: KitHandler, routes: Record<string
     { args: [FFIType.ptr], returns: FFIType.void, threadsafe: true },
   );
   native.shell_set_event_sink(sink.ptr!);
+  // The callback dies with this thread, and native code would go on calling it.
+  process.on("exit", () => native.shell_set_event_sink(null));
   initPlatform({
     platformCall(request: string) {
       native.shell_platform_call(cstr(request));

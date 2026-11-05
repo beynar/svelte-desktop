@@ -3,6 +3,8 @@
 import { runShell } from "../main.ts";
 import type { ShellOptions } from "../types.ts";
 
+// The terminal `vite dev` runs in, through a pipe.
+process.env.KITOP_LOG ??= "stdout";
 const cfg = JSON.parse(process.env.KITOP_DEV ?? "{}") as Omit<ShellOptions, "createWorker"> & { url: string };
 await runShell({
   ...cfg,

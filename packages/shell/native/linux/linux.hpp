@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "../portable/core.hpp"
+#include "../portable/reload_budget.hpp"
 
 namespace sd {
 namespace lx {

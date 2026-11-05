@@ -11,6 +11,22 @@ type KitHandler = (req: Request, server: Server<any>) => Response | Promise<Resp
 
 export const SESSION_COOKIE = "__kitop";
 export const AUTH_PATH = "/__desktop/auth";
+/** Where native code sends a view whose web process died too often (native/portable/reload_budget.hpp). */
+export const PAGE_CRASHED_PATH = "/__desktop/page-crashed";
+
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+function pageCrashed(appName: string | undefined, to: string | null): Response {
+  const back = to?.startsWith("/") && !to.startsWith("//") && !to.startsWith("/\\") ? to : "/";
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>${escapeHtml(appName ?? "")}</title>
+<body style="font:15px system-ui,sans-serif;display:grid;place-content:center;height:100vh;margin:0;text-align:center">
+<h1 style="font-size:20px;font-weight:600;margin:0 0 8px">This page keeps crashing</h1>
+<p style="margin:0 0 16px">It stopped several times in a row, so it wasn't reloaded again. What wasn't saved in it is lost.</p>
+<p style="margin:0"><a href="${escapeHtml(back)}">Reload the page</a></p>`,
+    { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
+  );
+}
 
 export interface GateOptions {
   handler: KitHandler;
@@ -87,6 +103,8 @@ export function startGate(o: GateOptions): { server: Server<any>; origin: string
       const cookie = req.headers.get("cookie") ?? "";
       const got = /(?:^|;\s*)__kitop=([0-9a-f]+)/.exec(cookie)?.[1] ?? "";
       if (!timingSafeEqual(got, session)) return new Response("Forbidden", { status: 403 });
+
+      if (url.pathname === PAGE_CRASHED_PATH) return pageCrashed(o.appName, url.searchParams.get("to"));
 
       const oauth = await oauthRoutes(req, url);
       if (oauth) return oauth;

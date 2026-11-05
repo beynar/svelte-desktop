@@ -1,11 +1,11 @@
-// Production logging. An app started from Finder/Dock/`open` (parent = launchd),
-// a desktop launcher (Linux) or Explorer (Windows) has no terminal: console
-// output and uncaught errors from both threads go to <logs>/app.log (see
-// os.ts appDirs; rotated at 5 MB, one previous file kept).
-// KITOP_LOG=stdout keeps the terminal; =file forces the file.
+// Production logging. An app started from Finder/Dock/`open`, a desktop launcher
+// (Linux) or Explorer (Windows) has no terminal: console output goes to
+// <logs>/app.log (see os.ts appDirs; rotated at 5 MB, one previous file kept).
+// KITOP_LOG=stdout keeps the terminal; =file forces the file. A crash is written
+// to the file in every case: the terminal may be gone by the time anyone looks.
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { appDirs } from "./os.ts";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { format } from "node:util";
 
 export function logFilePath(identifier: string): string {
@@ -16,8 +16,15 @@ export function shouldLogToFile(): boolean {
   const mode = process.env.KITOP_LOG;
   if (mode === "stdout") return false;
   if (mode === "file") return true;
-  if (process.platform === "win32") return !process.stdout.isTTY && !process.env.KITOP_TEST;
-  return process.ppid === 1;
+  return !process.stdout.isTTY && !process.env.KITOP_TEST;
+}
+
+export function logCrash(file: string, thread: string, text: string) {
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${new Date().toISOString()} [${thread}] fatal ${text}\n`);
+  } catch {}
+  console.error(`[shell] ${text}`);
 }
 
 export function redirectConsole(file: string, thread: "main" | "worker") {
@@ -33,6 +40,4 @@ export function redirectConsole(file: string, thread: "main" | "worker") {
   for (const level of ["log", "info", "warn", "error", "debug"] as const) {
     (console as any)[level] = (...args: unknown[]) => write(level, args);
   }
-  process.on("uncaughtException", (err) => write("fatal", [err?.stack ?? err]));
-  process.on("unhandledRejection", (err: any) => write("unhandled", [err?.stack ?? err]));
 }

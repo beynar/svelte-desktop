@@ -9,6 +9,7 @@ import { bindJobs, jobs, stopAllJobs } from "./jobs/host.ts";
 import { stopAllServices } from "./services/host.ts";
 import type { DesktopApi } from "./api.ts";
 import { callPlatform, onPlatform } from "./platform/bus.ts";
+import { quitFlushes } from "./platform/store.ts";
 import type { MenuItemSpec, ShellEvent } from "./types.ts";
 
 export interface DesktopApiDeps {
@@ -21,6 +22,9 @@ export interface DesktopApiDeps {
 }
 
 type Listener = (e: any) => void;
+
+// A write that can't finish (a dead network drive) doesn't hold up the quit.
+const QUIT_FLUSH_MS = 1000;
 
 export interface DesktopRuntime {
   api: DesktopApi;
@@ -55,7 +59,7 @@ export function createDesktopRuntime(deps: DesktopApiDeps): DesktopRuntime {
   const paths = appDirs(deps.identifier);
   mkdirSync(paths.data, { recursive: true });
   mkdirSync(paths.cache, { recursive: true });
-  const crash: CrashInfo = deps.trackCrashes ? startCrashTracking(paths.data) : { uncleanExit: false, previousLaunch: null, reports: [] };
+  const crash: CrashInfo = deps.trackCrashes ? startCrashTracking(paths.data) : { uncleanExit: false, previousLaunch: null, reports: [], lastError: null };
 
   const fire = (type: string, event: unknown) => {
     for (const fn of listeners.get(type) ?? []) {
@@ -158,6 +162,9 @@ export function createDesktopRuntime(deps: DesktopApiDeps): DesktopRuntime {
           console.error("[shell] beforeQuit hook threw", err);
         }
       }
+      // After the hooks, which may still set something.
+      const flushes = [...quitFlushes()].map((flush) => flush().catch((err) => console.error("[shell] quit flush failed", err)));
+      await Promise.race([Promise.all(flushes), Bun.sleep(QUIT_FLUSH_MS)]);
       stopAllJobs();
       await stopAllServices();
       if (deps.trackCrashes) endCrashTracking(paths.data);

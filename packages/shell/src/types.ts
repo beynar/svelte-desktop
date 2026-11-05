@@ -60,7 +60,7 @@ export interface ShellOptions {
   url?: string;
   /** Dock icon PNG (dev mode: the app's icon instead of bun's; a bundle has its own). */
   appIcon?: string;
-  /** Must be created at the call site so `bun build --compile` sees the Worker entry. */
+  /** The thread this one talks to: supervisor.ts in a built app, the dev Worker in `vite dev`. */
   createWorker: () => Worker;
   version?: string;
   update?: UpdateConfig;
@@ -83,7 +83,11 @@ export type MenuItemSpec =
     };
 
 export type ShellEvent =
-  | { type: "ready" | "focus" | "blur" | "closed" | "webcontent-terminated"; window: number }
+  | { type: "ready" | "focus" | "blur" | "closed"; window: number }
+  /** The window's web process died. `gaveUp`: it died too often to reload it again. */
+  | { type: "webcontent-terminated"; window: number; gaveUp?: boolean }
+  /** Windows: the page has stopped responding (it may recover; the user chooses). */
+  | { type: "webcontent-unresponsive"; window: number }
   | { type: "external-navigation"; window: number; url: string }
   | { type: "signal"; signal: "SIGINT" | "SIGTERM" | "SIGHUP" }
   | { type: "menu"; id: string }

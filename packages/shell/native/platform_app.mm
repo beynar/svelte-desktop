@@ -358,6 +358,8 @@ void platform_register_app(void) {
     NSError *err = nil;
     if (![task launchAndReturnError:&err]) return [c fail:@"internal" message:err.localizedDescription];
     [c ok:nil];
+    // After a crash (src/supervisor.ts): nothing is left to quit gracefully, and a dead server can't answer the quit phases.
+    if ([c boolean:@"crashed" or:NO]) _exit(1);
     shell_quit();
   });
   platform_register(@"app", @"exit", ^(PlatformCall *c) { exit((int)[c number:@"code" or:0]); });

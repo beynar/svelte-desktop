@@ -131,7 +131,7 @@ Set behavior after the web content process terminates.
 
 `recovery` is `WebviewRecovery`, `'reload' | 'manual'`; new views default to `reload`. `target` is `WebviewTarget`. Resolves `null`. Invalid values reject with `invalid_args`. macOS only.
 
-`reload` starts a new document at the last URL and loses in-memory JavaScript state. `manual` leaves it stopped until an explicit `reload`. Handle termination from a surviving page or server: the terminated document cannot handle its own crash.
+`reload` starts a new document at the last URL and loses in-memory JavaScript state, up to three times in five minutes and later each time; then [it stops](/concepts/architecture#when-something-crashes). `manual` leaves it stopped until an explicit `reload`. Handle termination from a surviving page or server: the terminated document cannot handle its own crash.
 
 Read the current policy from `getInfo().recovery` (macOS).
 
@@ -364,7 +364,7 @@ Each helper takes a callback and returns `() => void` to unsubscribe. The same e
 | `navigationStarted` | None. |
 | `loaded` | None. |
 | `failed` | `domain: string`, `code: number`, `message: string`, `provisional: boolean`. |
-| `terminated` | `recovery: WebviewRecovery`, `reason: 'unknown'`. |
+| `terminated` | `recovery: WebviewRecovery`, `reason: 'unknown'`; `gaveUp: boolean` under `reload`, true when it died too often to be reloaded again. |
 
 These events cover full WebKit navigations, not SvelteKit client route transitions. HTTP error responses are loaded pages, not navigation errors. Public WebKit does not expose the termination reason.
 

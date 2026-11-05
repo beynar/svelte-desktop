@@ -572,10 +572,24 @@ static gboolean on_load_failed(WebKitWebView *, WebKitLoadEvent, gchar *uri, GEr
   return TRUE;
 }
 
+static gboolean reload_after_crash(gpointer data) {
+  WebKitWebView *wv = WEBKIT_WEB_VIEW(data);
+  if (!gtk_widget_in_destruction(GTK_WIDGET(wv))) webkit_web_view_reload(wv);
+  return G_SOURCE_REMOVE;
+}
+
 static gboolean on_web_process_terminated(WebKitWebView *wv, WebKitWebProcessTerminationReason, gpointer data) {
-  // Electrobun #550-style "web process died": reload instead of a dead view.
-  emit_raw(json{{"type", "webcontent-terminated"}, {"window", GPOINTER_TO_INT(data)}});
-  webkit_web_view_reload(wv);
+  static std::map<int, ReloadBudget> budgets;
+  int id = GPOINTER_TO_INT(data);
+  int delay = budgets[id].next(g_get_monotonic_time() / 1e6);
+  emit_raw(json{{"type", "webcontent-terminated"}, {"window", id}, {"gaveUp", delay < 0}});
+  if (delay >= 0) {
+    g_timeout_add_full(G_PRIORITY_DEFAULT, delay, reload_after_crash, g_object_ref(wv), g_object_unref);
+  } else {
+    const char *uri = webkit_web_view_get_uri(wv);
+    std::string page = crashed_page_url(app_origin(), uri ? uri : "");
+    if (!page.empty()) webkit_web_view_load_uri(wv, page.c_str());
+  }
   return FALSE;
 }
 

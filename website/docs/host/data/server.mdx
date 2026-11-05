@@ -51,8 +51,9 @@ Server only. Returns `CrashInfo` synchronously, describing the previous launch. 
 | `uncleanExit` | `boolean` | The previous run left its running marker and is no longer alive. |
 | `previousLaunch` | `number \| null` | Previous launch time in Unix milliseconds; `null` on the first launch. |
 | `reports` | `CrashReport[]` | Matching OS reports written since that launch. Each has `path: string` and `time: number` (Unix milliseconds). |
+| `lastError` | `{ message: string; time: number } \| null` | What ended the previous run's server: the error it threw, or the exit code it called `process.exit()` with. `null` if it didn't die that way, a native crash included. Also makes `uncleanExit` true. See [When something crashes](/concepts/architecture#when-something-crashes). |
 
-Packaged apps track launches. Dev returns `{ uncleanExit: false, previousLaunch: null, reports: [] }`. OS report discovery reads macOS `.ips`/`.crash` reports and Windows `.dmp` files. Linux has launch-marker detection but no automatic system crash-report discovery.
+Packaged apps track launches. Dev returns `{ uncleanExit: false, previousLaunch: null, reports: [], lastError: null }`. OS report discovery reads macOS `.ips`/`.crash` reports and Windows `.dmp` files. Linux has launch-marker detection but no automatic system crash-report discovery.
 
 ### `sidecar(name, args?, options?)`
 
@@ -178,7 +179,9 @@ Subscribes to a `ShellEvent` type and returns `() => void`. The callback receive
 
 | Type | Other event fields |
 | --- | --- |
-| `ready`, `focus`, `blur`, `closed`, `webcontent-terminated` | `window: number` (native shell window id). |
+| `ready`, `focus`, `blur`, `closed` | `window: number` (native shell window id). |
+| `webcontent-terminated` | `window: number`; `gaveUp: boolean`, true when it died too often to be reloaded again ([details](/concepts/architecture#when-something-crashes)). |
+| `webcontent-unresponsive` | `window: number`. Windows only: the page has stopped responding, and the user is asked whether to wait or reload. |
 | `external-navigation` | `window: number`, `url: string`. |
 | `signal` | `signal: 'SIGINT' \| 'SIGTERM' \| 'SIGHUP'`. |
 | `menu` | `id: string`; native `menuAction` is also adapted to this event. |

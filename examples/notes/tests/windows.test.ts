@@ -736,3 +736,51 @@ $item = $sh.Namespace((Split-Path $Lnk)).ParseName((Split-Path $Lnk -Leaf))
 			reg('query', `HKCU\\Software\\Classes\\AppUserModelId\\${ID}`).exitCode !== 0 && reg('query', `HKCU\\Software\\Classes\\CLSID\\${CLSID}`).exitCode !== 0, 30_000);
 	});
 });
+
+// In a launch of their own: what's tested here leaves a page crashed, or a question on screen.
+describe.skipIf(!process.env.WINDOWS_E2E)('windows: when the web process fails', () => {
+	const killRenderers = () =>
+		Bun.spawnSync(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -match '--type=renderer' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`]);
+
+	test('a page that keeps crashing: reloaded a few times, then a page that says so, with a way back', async () => {
+		const app = await launch({ app: APP, timeout: 90_000 });
+		// A call to a dead page may never come back.
+		const check = <T,>(code: string) => Promise.race([app.eval<T>(code).catch(() => null), Bun.sleep(1000).then(() => null)]);
+		const until = async (what: string, fn: () => Promise<boolean>) => {
+			const end = Date.now() + 30_000;
+			while (Date.now() < end) {
+				if (await fn()) return;
+				await Bun.sleep(200);
+			}
+			throw new Error(`timed out: ${what}`);
+		};
+		try {
+			await app.waitFor('#counter', { timeout: 30_000 });
+			for (let n = 1; n <= 3; n++) {
+				await app.eval('window.__before_crash = 1');
+				killRenderers();
+				await until(`reload ${n}`, async () => (await check<boolean>(`window.__before_crash === undefined && !!document.querySelector('#counter')`)) === true);
+			}
+			killRenderers();
+			await until('the page that says so', async () => (await check<string>('location.pathname')) === '/__desktop/page-crashed');
+			expect(await app.text()).toContain('keeps crashing');
+			await app.click('a');
+			await app.waitFor('#counter', { timeout: 20_000 });
+		} finally {
+			await app.close();
+		}
+	}, 180_000);
+
+	test('a page that is only slow is not reloaded: what is typed in it stays', async () => {
+		const app = await launch({ app: APP, timeout: 90_000 });
+		try {
+			await app.waitFor('#counter', { timeout: 30_000 });
+			await app.eval('window.__typed = 1');
+			// Long enough for WebView2 to call it unresponsive. It used to reload right then.
+			await app.eval('(() => { const end = Date.now() + 30000; while (Date.now() < end); })()');
+			expect(await app.eval('window.__typed')).toBe(1);
+		} finally {
+			await app.close();
+		}
+	}, 180_000);
+});

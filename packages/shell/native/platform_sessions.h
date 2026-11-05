@@ -15,6 +15,8 @@ BOOL platform_webview_options_valid(NSDictionary *options);
 void platform_lifecycle_configure(WKWebView *webview, NSDictionary *target, NSString *_Nullable recovery, int windowNative = 0);
 NSString *platform_lifecycle_recovery(WKWebView *webview);
 NSDictionary *platform_lifecycle_target(WKWebView *_Nullable webview);
+/// Its web process died too often to reload it again (set by platform_lifecycle_emit).
+BOOL platform_webview_gave_up(WKWebView *webview);
 void platform_lifecycle_emit(WKWebView *webview, NSString *type, NSError *_Nullable error, BOOL provisional, WKNavigation *_Nullable navigation = nil);
 NSURLRequest *platform_webview_request(WKWebView *webview, NSURL *url);
 void platform_webview_load(WKWebView *webview, NSURLRequest *request);

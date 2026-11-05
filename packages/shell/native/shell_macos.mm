@@ -198,8 +198,8 @@ static bool same_origin(NSURL *url) {
 
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
   platform_page_unloaded(self.windowId);
-  emit(@{@"type" : @"webcontent-terminated", @"window" : @(self.windowId)});
   platform_lifecycle_emit(webView, @"terminated", nil, NO);
+  emit(@{@"type" : @"webcontent-terminated", @"window" : @(self.windowId), @"gaveUp" : @(platform_webview_gave_up(webView))});
 }
 @end
 

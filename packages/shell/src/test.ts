@@ -179,7 +179,8 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
   }
   return makeHandle({
     origin: h.origin,
-    socket: socket!,
+    // The latest one: an app that restarts after a crash connects again (the same KITOP_TEST).
+    socket: { send: (data) => socket!.send(data) },
     pending,
     waiters,
     nextId: () => nextId++,

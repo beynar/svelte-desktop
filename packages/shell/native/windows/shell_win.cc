@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <deque>
 #include <mutex>
+#include <thread>
 
 #include "../shell.h"
 
@@ -502,6 +503,9 @@ View *find_view(int id) {
 
 static Window *find_window_unchecked(int id);
 static void recover_after_browser_exit();
+static void on_render_process_exit(int id);
+static void on_browser_process_exit(int id);
+static void ask_to_reload_unresponsive(int id);
 
 static bool is_internal_url(const std::string &url) {
   std::string scheme = url_scheme(url);
@@ -670,14 +674,16 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
         COREWEBVIEW2_PROCESS_FAILED_KIND kind = COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED;
         args->get_ProcessFailedKind(&kind);
         if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED) {
-          emit_raw(json{{"type", "webcontent-terminated"}, {"window", id}});
-          backend_run_on_main(recover_after_browser_exit);
-        } else if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED ||
-                   kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE) {
-          // Electrobun #550-style "frozen / web process died": reload instead of a dead view.
-          emit_raw(json{{"type", "webcontent-terminated"}, {"window", id}});
-          sender->Reload();
+          on_browser_process_exit(id);
+        } else if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED) {
+          on_render_process_exit(id);
+        } else if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE) {
+          // A slow page, more often than not: it isn't reloaded behind the user's back, which would
+          // lose what's typed in it. They choose, as in a browser.
+          emit_raw(json{{"type", "webcontent-unresponsive"}, {"window", id}});
+          ask_to_reload_unresponsive(id);
         }
+        (void)sender;
         return S_OK;
       });
   v->webview->add_ProcessFailed(onFail, &v->tokens[4]);
@@ -861,6 +867,63 @@ void view_execute(View *v, const std::string &code,
 
 // The browser process died: every controller is dead. Drop the environment and
 // recreate each web view at its last URL.
+static double now_seconds() { return GetTickCount64() / 1000.0; }
+
+/// Runs on the main thread after `ms`.
+static void after_delay(int ms, std::function<void()> fn) {
+  std::thread([ms, fn = std::move(fn)] {
+    Sleep((DWORD)ms);
+    backend_run_on_main(fn);
+  }).detach();
+}
+
+static void on_render_process_exit(int id) {
+  View *v = find_view(id);
+  if (!v) return;
+  int delay = v->reloads.next(now_seconds());
+  emit_raw(json{{"type", "webcontent-terminated"}, {"window", id}, {"gaveUp", delay < 0}});
+  if (delay >= 0) {
+    after_delay(delay, [id] {
+      View *v = find_view(id);
+      if (v && v->webview) v->webview->Reload();
+    });
+  } else {
+    std::string page = crashed_page_url(app_origin(), v->lastUrl);
+    if (!page.empty()) view_navigate(v, page);
+  }
+}
+
+// The browser process runs every view: when it keeps dying, no page can say so.
+static void on_browser_process_exit(int id) {
+  static ReloadBudget budget;
+  static double handled = -1;
+  // Each view gets this event for the same death.
+  double now = now_seconds();
+  bool same = handled >= 0 && now - handled < 1;
+  int delay = same ? 0 : budget.next(now);
+  if (!same) handled = now;
+  emit_raw(json{{"type", "webcontent-terminated"}, {"window", id}, {"gaveUp", delay < 0}});
+  if (same) return;
+  if (delay >= 0) return after_delay(delay, recover_after_browser_exit);
+  json o{{"message", "The web view keeps crashing"}, {"detail", "Its process stopped several times in a row, so the app will quit. Restarting the app, or reinstalling the WebView2 runtime, may help."}, {"buttons", json::array({"Quit"})}};
+  run_message_box(o, nullptr, [](int) { ExitProcess(1); });
+}
+
+static void ask_to_reload_unresponsive(int id) {
+  View *v = find_view(id);
+  if (!v || v->askingToReload) return;
+  v->askingToReload = true;
+  HWND parent = nullptr;
+  if (Window *w = find_window_unchecked(id)) parent = w->hwnd;
+  json o{{"message", "This page isn't responding"}, {"detail", "You can wait for it, or reload it and lose what isn't saved in it."}, {"buttons", json::array({"Wait", "Reload"})}, {"cancelId", 0}};
+  run_message_box(o, parent, [id](int button) {
+    View *v = find_view(id);
+    if (!v) return;
+    v->askingToReload = false;
+    if (button == 1 && v->webview) v->webview->Reload();
+  });
+}
+
 static void recover_after_browser_exit() {
   release(g_env);
   std::vector<std::pair<View *, std::string>> todo;

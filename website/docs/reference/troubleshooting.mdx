@@ -15,11 +15,31 @@ Built apps started from Finder, a launcher or Explorer have no terminal, so outp
 | Linux | `$XDG_STATE_HOME/<identifier>/logs` (default `~/.local/state`) |
 | Windows | `%LOCALAPPDATA%\<identifier>\Logs` |
 
-The file rotates at 5 MB and keeps one previous file, `app.log.1`. Uncaught errors from both threads are written there. `vite dev` and a build started from a terminal print to the terminal; set `KITOP_LOG=file` or `stdout` to force either. See [Architecture](/concepts/architecture#built-in).
+The file rotates at 5 MB and keeps one previous file, `app.log.1`. `vite dev` and a build started from a terminal print to the terminal; set `KITOP_LOG=file` or `stdout` to force either. Output piped elsewhere counts as no terminal: use `KITOP_LOG=stdout` to read it. A server crash is written to the file in every case, on a line with `fatal`. See [Architecture](/concepts/architecture#built-in).
 
 ## The app crashed
 
-In server code, `host.crashInfo()` reports whether the previous run exited uncleanly and lists OS crash reports written since (macOS `.ips`/`.crash`, Windows `.dmp`). Linux has no report discovery. Dev always returns an empty result. See [`crashInfo()`](/host/data/server#crashinfo).
+In server code, `host.crashInfo()` reports whether the previous run exited uncleanly, the error that ended its server (`lastError`), and OS crash reports written since (macOS `.ips`/`.crash`, Windows `.dmp`). Linux has no report discovery. Dev always returns an empty result. See [`crashInfo()`](/host/data/server#crashinfo).
+
+## The window closes and comes back on its own
+
+The server crashed and the app restarted. `app.log` has the reason, on a line with `fatal`, and so does `host.crashInfo().lastError`. An error thrown from a timer or an event callback is enough: catch it there. See [When something crashes](/concepts/architecture#when-something-crashes).
+
+## "App stopped working", then it quits
+
+The server crashed four times within five minutes, so the app stopped restarting it. It's often the same error each time, and often at startup: look in `app.log`. A version installed by an update rolls back on its own if it never stayed up long enough to be confirmed ([Self-update](/shipping/self-update)).
+
+## "This page keeps crashing"
+
+The page's web process died four times within five minutes. The server is fine, so this is about the page: usually memory, or a bug in the engine that something on the page triggers. "Reload the page" tries again. To react in the app, listen for `webcontent-terminated` and check `gaveUp` ([events](/host/data/server#desktopontype-fn)).
+
+## A rejected promise is in the log, and nothing happened
+
+That's intended: a rejection nothing handles is logged as `unhandled rejection`, and the server carries on. Handle it where it starts if it matters.
+
+## On Windows, "This page isn't responding"
+
+The page has been busy for a while. Waiting is safe, and reloading loses what's unsaved in it. If it comes up often, move the long work out of the page's main thread.
 
 ## I need to inspect a page or server code
 
@@ -29,7 +49,7 @@ Pages: the Web Inspector is on in `vite dev`. In a built app, set `debug: true` 
 
 - Open `app.log` first: a server that failed to start or a startup exception is written there.
 - On Windows, the WebView2 runtime must be installed; it is not bundled ([Limitations](/shipping/limitations#windows)).
-- If the web content process dies, the page reloads by default.
+- If the web content process dies, the page reloads, a limited number of times ([When something crashes](/concepts/architecture#when-something-crashes)).
 - Opening the app's loopback URL in a normal browser returns 403: requests need the window's session cookie ([Architecture](/concepts/architecture#the-localhost-session)).
 
 ## `vite dev` or `vite build` fails to start

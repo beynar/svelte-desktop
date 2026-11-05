@@ -396,6 +396,8 @@ void register_app() {
       return c->fail("internal", m);
     }
     c->ok();
+    // After a crash (src/supervisor.ts): nothing is left to quit gracefully.
+    if (c->flag("crashed")) _exit(1);
     request_quit();
   });
   reg("app", "exit", [](CallPtr c) { exit((int)c->num("code", 0)); });

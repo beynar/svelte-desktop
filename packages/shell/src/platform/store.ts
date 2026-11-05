@@ -15,10 +15,15 @@ const SAVE_DEBOUNCE_MS = 250;
 let data: Record<string, unknown> = {};
 let loaded = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
+let writing: Promise<unknown> = Promise.resolve();
 
-async function persist(): Promise<void> {
-	if (!loaded) return; // flush() guards; a stray timer before load() is a no-op
-	await writeAppFile('userData', FILE_NAME, JSON.stringify(data, null, 2));
+function persist(): Promise<void> {
+	if (!loaded) return Promise.resolve(); // flush() guards; a stray timer before load() is a no-op
+	const text = JSON.stringify(data, null, 2);
+	// One at a time, in order, so that quitting can wait for the last one.
+	const done = writing.catch(() => {}).then(() => writeAppFile('userData', FILE_NAME, text));
+	writing = done;
+	return done;
 }
 
 function scheduleSave(): void {
@@ -40,6 +45,21 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
 		timer = null;
 		void persist().catch(() => {});
 	});
+} else {
+	// Server code: the app quitting doesn't either (desktop-api.ts runs these). By way of globalThis:
+	// the app's server bundle has its own copy of this module.
+	quitFlushes().add(async () => {
+		if (timer) {
+			clearTimeout(timer);
+			timer = null;
+			void persist().catch(() => {});
+		}
+		await writing;
+	});
+}
+
+export function quitFlushes(): Set<() => Promise<void>> {
+	return ((globalThis as Record<symbol, Set<() => Promise<void>> | undefined>)[Symbol.for('kitop.quitFlushes')] ??= new Set());
 }
 
 export const store = {

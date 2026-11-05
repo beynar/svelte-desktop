@@ -39,7 +39,7 @@ export async function sizeFlags(c: ResolvedConfig, bun: string, opts: { aot: boo
 /** `bun build --compile` of the staged entries. A target runtime that can't be trimmed (a cross
  *  build: Bun downloads that target's runtime, without the trim table) is built again without. */
 export async function compileStaged(bun: string, stage: string, out: string, flags: string[], warn: (m: string) => void): Promise<void> {
-  const run = (f: string[]) => $`${bun} build --compile ${f} ${join(stage, "desktop-main.js")} ${join(stage, "desktop-worker.js")} --outfile ${out}`.cwd(stage).nothrow().quiet();
+  const run = (f: string[]) => $`${bun} build --compile ${f} ${join(stage, "desktop-main.js")} ${join(stage, "desktop-supervisor.js")} ${join(stage, "desktop-worker.js")} --outfile ${out}`.cwd(stage).nothrow().quiet();
   let r = await run(flags);
   if (r.exitCode !== 0 && flags.includes("--trim") && /doesn't support --trim/.test(r.stderr.toString())) {
     warn("--trim: this target's Bun runtime can't be trimmed (cross build) — built without");

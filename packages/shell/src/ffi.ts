@@ -2,10 +2,11 @@ import { dlopen, FFIType, CString, type Pointer } from "bun:ffi";
 
 // Mirror of native/shell.h. dlopen is refcounted: the UI thread and the Worker
 // each open the library and share one copy of its state.
-const { ptr, i32, cstring, function: fn, void: v } = FFIType;
+const { ptr, i32, cstring, void: v } = FFIType;
 export const symbols = {
   shell_abi_version: { args: [], returns: i32 },
-  shell_set_event_sink: { args: [fn], returns: v },
+  // A pointer, not `function`: bun:ffi refuses null for that, and null is how a dying thread lets go.
+  shell_set_event_sink: { args: [ptr], returns: v },
   shell_free: { args: [ptr], returns: v },
   shell_window_create: { args: [cstring], returns: i32 },
   shell_run: { args: [], returns: i32 },

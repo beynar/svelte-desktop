@@ -5,12 +5,14 @@
 #import <Network/Network.h>
 #import <objc/runtime.h>
 #include <cmath>
+#include <new>
+#include "portable/reload_budget.hpp"
 
 static NSString *const gateCookie = @"__kitop";
 static NSMutableDictionary *sessions;
 static NSMapTable<NSNumber *, WKWebView *> *views;
 static NSString *creatingSession;
-static char targetKey, recoveryKey, navigationKey, navigationsKey, windowKey, terminatedKey, recoveryURLKey, loadKey;
+static char targetKey, recoveryKey, navigationKey, navigationsKey, windowKey, terminatedKey, recoveryURLKey, loadKey, reloadsKey, gaveUpKey;
 
 static void provision_app_cookie(WKWebsiteDataStore *store, void (^done)(NSArray<NSHTTPCookie *> *, NSString *)) {
   // Vite serves dev pages directly, without the packaged app's loopback gate.
@@ -170,6 +172,27 @@ void platform_webview_reload(WKWebView *wv, BOOL ignoreCache) {
   } else if (ignoreCache) [wv reloadFromOrigin];
   else [wv reload];
 }
+BOOL platform_webview_gave_up(WKWebView *wv) { return [objc_getAssociatedObject(wv, &gaveUpKey) boolValue]; }
+// Reload, later each time, until the page has died too often (portable/reload_budget.hpp).
+static void recover_terminated(WKWebView *wv, NSURL *url) {
+  NSMutableData *budget = objc_getAssociatedObject(wv, &reloadsKey);
+  if (!budget) {
+    budget = [NSMutableData dataWithLength:sizeof(sd::ReloadBudget)];
+    new (budget.mutableBytes) sd::ReloadBudget();
+    objc_setAssociatedObject(wv, &reloadsKey, budget, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  int delay = ((sd::ReloadBudget *)budget.mutableBytes)->next(NSProcessInfo.processInfo.systemUptime);
+  objc_setAssociatedObject(wv, &gaveUpKey, @(delay < 0), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  if (delay < 0) {
+    std::string page = sd::crashed_page_url(platform_app_origin().UTF8String ?: "", url.absoluteString.UTF8String ?: "");
+    if (!page.empty()) platform_webview_load(wv, platform_webview_request(wv, [NSURL URLWithString:@(page.c_str())]));
+    return;
+  }
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, delay * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+    // Since then, the app may have sent it somewhere (navigating clears the mark).
+    if (platform_webview_terminated(wv)) platform_webview_reload(wv);
+  });
+}
 void platform_lifecycle_emit(WKWebView *wv, NSString *type, NSError *error, BOOL provisional, WKNavigation *navigation) {
   NSMapTable *navigations = objc_getAssociatedObject(wv, &navigationsKey);
   if (!navigations) { navigations = [NSMapTable weakToStrongObjectsMapTable]; objc_setAssociatedObject(wv, &navigationsKey, navigations, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
@@ -197,6 +220,10 @@ void platform_lifecycle_emit(WKWebView *wv, NSString *type, NSError *error, BOOL
     if (wv.URL) objc_setAssociatedObject(wv, &recoveryURLKey, wv.URL, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(wv, &terminatedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     d[@"recovery"] = recovery; d[@"reason"] = @"unknown";
+    if ([recovery isEqual:@"reload"]) {
+      recover_terminated(wv, objc_getAssociatedObject(wv, &recoveryURLKey));
+      d[@"gaveUp"] = @(platform_webview_gave_up(wv));
+    }
   }
   NSURLComponents *url = [NSURLComponents componentsWithString:d[@"url"]];
   if ([url.path isEqual:@"/__desktop/auth"]) {
@@ -204,7 +231,6 @@ void platform_lifecycle_emit(WKWebView *wv, NSString *type, NSError *error, BOOL
     if (error) d[@"message"] = @"Application authentication navigation failed";
   }
   platform_emit(@"webviewLifecycle", d);
-  if ([type isEqual:@"terminated"] && [recovery isEqual:@"reload"]) platform_webview_reload(wv);
 }
 
 static SDSession *resolve_session(PlatformCall *c) {

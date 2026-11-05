@@ -2,17 +2,28 @@
 // native UI thread: once shell_run() is entered, this thread's JS event loop is
 // frozen until the run loop stops. Everything the app does happens in the Worker.
 import { openNative, cstr } from "./ffi.ts";
-import { logFilePath, redirectConsole, shouldLogToFile } from "./logging.ts";
+import { logCrash, logFilePath, redirectConsole, shouldLogToFile } from "./logging.ts";
 import { isCompiledBinary } from "./updater/platform.ts";
 import { countUpdateLaunch, shellUpdater } from "./updater/startup.ts";
 import type { InitMessage, ShellOptions } from "./types.ts";
 
 export async function runShell(opts: ShellOptions): Promise<never> {
+  try {
+    return await run(opts);
+  } catch (error: any) {
+    logCrash(logFilePath(opts.identifier), "main", `the app could not start: ${error?.stack ?? error}`);
+    throw error;
+  }
+}
+
+async function run(opts: ShellOptions): Promise<never> {
   const logFile = shouldLogToFile() ? logFilePath(opts.identifier) : undefined;
   if (logFile) redirectConsole(logFile, "main");
   // Before anything that can crash: a version that dies in its native layer counts too.
   if (opts.update && isCompiledBinary() && (await countUpdateLaunch(shellUpdater(opts.update, opts.version ?? "0.0.0", opts.identifier)))) return new Promise<never>(() => {});
   // The server starts loading while the window is made (~200 ms); it waits for `init` to serve.
+  // This thread's events only arrive once the run loop has stopped: what watches the server while
+  // the app runs is on another thread (supervisor.ts, the Worker `createWorker` gives a built app).
   const worker = opts.createWorker();
   worker.addEventListener("error", (e) => console.error("[shell] worker error:", e.message));
   let ui: ReturnType<typeof openNative>;
@@ -46,6 +57,7 @@ export async function runShell(opts: ShellOptions): Promise<never> {
     worker.addEventListener("message", (e: MessageEvent) => {
       if (e.data?.type === "shutdown-complete") resolve();
     });
+    worker.addEventListener("close", () => resolve());
   });
   worker.postMessage({ type: "init", lib: opts.lib, windowId, secret, appName: opts.appName, identifier: opts.identifier, version: opts.version ?? "0.0.0", update: opts.update, url: opts.url, logFile } satisfies InitMessage);
 

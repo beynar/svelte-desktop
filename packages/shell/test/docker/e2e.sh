@@ -17,9 +17,13 @@ prepare() {
 }
 
 prepare notes
+# Server code that dies on demand, in this copy only (crash-recovery.test.ts).
+cp /work/packages/shell/test/docker/crash-probe.ts src/lib/server/crash-probe.ts
+echo "import '#lib/server/crash-probe.ts';" >> src/hooks.server.ts
 bunx --bun vite build 2>&1 | grep -E " error|✓ /" | tail -1
 bun test --timeout 60000 tests/mcp.test.ts tests/relaunch.test.ts
 bun test --timeout 60000 tests/app.test.ts -t 'host.store'
+bun test --timeout 60000 /work/packages/shell/test/docker/crash-recovery.test.ts
 
 # With an `update` config: rollback on a real app. Then a signed build, which has no test channel.
 sed -i "s|defineConfig({|defineConfig({ update: { manifestUrl: 'https://updates.invalid/update.json', publicKey: 'MCowBQYDK2VwAyEAGb9ECWmEzf6FQbrBZ9w7lshQhqowtrbLDFw4rXAxZuE=' },|" desktop.config.ts

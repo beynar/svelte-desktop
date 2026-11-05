@@ -14,9 +14,15 @@ type Reply = { nonce: string; ok: true; text: string | null } | { nonce: string;
 const isPage = typeof window !== 'undefined' && typeof document !== 'undefined';
 const validName = (name: string) => /^[A-Za-z0-9._-]+$/.test(name);
 
+// Remembered: on Linux and Windows the last write comes after the native run loop has stopped, when
+// nothing answers a platform call any more.
+const dirPaths = new Map<AppDir, string>();
+
 async function filePath(dir: AppDir, name: string): Promise<string> {
 	if (!validName(name)) throw new Error(`app file: invalid name ${name}`);
-	return `${await callPlatform<string>('app', 'getPath', { name: dir })}/${name}`;
+	let path = dirPaths.get(dir);
+	if (!path) dirPaths.set(dir, (path = await callPlatform<string>('app', 'getPath', { name: dir })));
+	return `${path}/${name}`;
 }
 
 async function local(op: 'read' | 'write', dir: AppDir, name: string, text?: string): Promise<string | null> {

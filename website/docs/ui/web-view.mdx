@@ -143,7 +143,7 @@ Views belong to their window and are destroyed when it closes. Reusing an `id` r
 
 ## Lifecycle and recovery (macOS)
 
-`onLifecycle` reports full WebKit navigations (`navigationStarted`, `loaded`, `failed`, `terminated`); SvelteKit client-side route changes don't count. By default a view whose web process dies reloads at its last URL, losing in-memory state. Create it with `recovery: 'manual'` to handle that yourself, from another page or the server, since the dead page can't:
+`onLifecycle` reports full WebKit navigations (`navigationStarted`, `loaded`, `failed`, `terminated`); SvelteKit client-side route changes don't count. By default a view whose web process dies reloads at its last URL, losing in-memory state, [a limited number of times](/concepts/architecture#when-something-crashes). Create it with `recovery: 'manual'` to handle that yourself, from another page or the server, since the dead page can't:
 
 ```ts
 const off = host.webview.onLifecycle(async (event) => {
