@@ -159,7 +159,7 @@ Subscribes to progress and state changes with `(download: DownloadRecord) => voi
 | `onRequested`, `get`, `list`, `pause`, `cancel`, `onChanged` | ✓ | — | ✓ |
 | `resume` | ✓ | — | same run¹ |
 
-1. WebView2 keeps the transfer: on Windows `pause` suspends it instead of canceling with a checkpoint, and `resume` continues it. `canResume` is what WebView2 reports, `resumeData` and `resumeBytes` are never set, and `finishing` isn't used. Transfers don't survive the app: after a relaunch a paused or active download is `interrupted` with `canResume: false`. History keeps the newest 200 records. This hasn't run on Windows yet.
+1. WebView2 keeps the transfer: on Windows `pause` suspends it instead of canceling with a checkpoint, and `resume` continues it. `canResume` is what WebView2 reports, `resumeData` and `resumeBytes` are never set, and `finishing` isn't used. Transfers don't survive the app: after a relaunch a paused or active download is `interrupted` with `canResume: false`. History keeps the newest 200 records.
 
 ## Example
 

@@ -166,7 +166,7 @@ To run code in a named world, pass `world` to [`executeJavaScript(code, target)`
 | `scripts.register`, `scripts.unregister`, `scripts.list` | ✓ | — | — |
 | `setNavigationPolicy` | ✓ | — | ✓¹ |
 
-1. On Windows only embedded views are asked, main frame and frames; `<a download>` links aren't. WebView2 can't defer a navigation, so the UI thread waits for the answer with a nested message loop, for ten seconds at most. Platform calls keep working meanwhile, but WebView2's own callbacks wait: a policy that needs one, such as `executeJavaScript`, runs into the deadline and the navigation is canceled. This hasn't run on Windows yet.
+1. On Windows only embedded views are asked, main frame and frames; `<a download>` links aren't. WebView2 can't defer a navigation, so the UI thread waits for the answer with a nested message loop, for ten seconds at most. Platform calls keep working meanwhile, but WebView2's own callbacks wait: a policy that needs one, such as `executeJavaScript`, runs into the deadline and the navigation is canceled. A refused request gets a local answer, so it doesn't reach the server.
 
 ## Example
 

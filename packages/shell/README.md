@@ -492,7 +492,7 @@ main thread: Cocoa run loop (WKWebView)   ←→   Worker: Bun.serve (SvelteKit)
 |---|---|---|---|
 | macOS 12+ | `native/*.mm` (Cocoa, WKWebView) | .app, zip, DMG, notarization, universal | full suites on this Mac |
 | Linux | `native/linux` (GTK3, WebKitGTK 4.1) on `native/portable` | app dir, tar.gz, AppImage | Docker under Xvfb (`test/docker/run.sh platform|notes`) |
-| Windows | `native/windows` (Win32, WebView2) on `native/portable` | folder, zip, NSIS installer, Authenticode | cross-compiled + Wine smoke of the native layer; **not yet run on real Windows** (AUDIT.md) |
+| Windows | `native/windows` (Win32, WebView2) on `native/portable` | folder, zip, NSIS installer, Authenticode | cross-compiled + Wine smoke of the native layer; end-to-end tests on a Windows runner in CI, x64 only |
 
 Platform-specific native code goes in `native/<platform>/` (`macos`, `linux`, `windows`); the rest of `native/` is built everywhere it can be.
 

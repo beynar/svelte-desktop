@@ -966,7 +966,6 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows: beyond notifications', () =>
 				if (pathname === '/file.txt') return new Response('downloaded body', { headers: attachment });
 				if (pathname === '/inline.txt') return new Response('not an attachment', { headers: { 'content-type': 'text/plain' } });
 				if (pathname === '/frame') return html('<iframe src="/framed"></iframe>');
-				if (pathname === '/blocked') log('a request for /blocked at', Date.now(), req.method);
 				return html(`<p>${pathname}</p>`);
 			},
 		});
@@ -1764,11 +1763,9 @@ Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64Strin
 			let request = asked('/blocked');
 			await op('view', 'navigate', { id: 'e2e-nav', url: `${ext}/blocked` });
 			const blocked = await request;
-			log('asked about /blocked at', Date.now());
 			await Bun.sleep(1000); // the request waits for the answer
 			expect(blocked).toMatchObject({ isMainFrame: true, viewId: 'e2e-nav' });
 			await op('webview', 'navigationDecision', { requestId: blocked.requestId, allow: false });
-			log('refused /blocked at', Date.now());
 			await Bun.sleep(800);
 			expect(await inView('e2e-nav', 'location.pathname')).toBe('/start');
 			expect(hits.get('/blocked') ?? 0).toBe(0);

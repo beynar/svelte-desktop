@@ -181,7 +181,7 @@ Subscribes to cookie changes across profiles and returns `() => void` to unsubsc
 | `cookies.get`, `cookies.set`, `cookies.remove`, `cookies.onChanged` | ✓ | — | ✓² |
 
 1. Private profiles work on any supported macOS; `persistent: true` and `setProxy` need macOS 14+.
-2. The default profile only: `list` gives that one, `getProxy` gives `null`, and another `session` rejects with `invalid_args`. WebView2 has no cookie event, so `cookies.onChanged` compares the whole profile once a second while someone listens. This hasn't run on Windows yet.
+2. The default profile only: `list` gives that one, `getProxy` gives `null`, and another `session` rejects with `invalid_args`. WebView2 has no cookie event, so `cookies.onChanged` compares the whole profile once a second while someone listens.
 
 ## Example
 

@@ -39,8 +39,7 @@ These are shell API limits. The page still has the web APIs its installed web en
 
 ## Windows
 
-- **Only partly tested on real Windows:** CI runs the app and its notifications on a Windows runner. Tests for windows, title-bar dragging, menus, tray, dialogs, clipboard, views, background jobs, MCP and relaunch are written for that runner and haven't run yet. High-DPI and multi-monitor setups aren't covered, since the runner has one display at 100%. Test your app on a real PC.
-- **Web content control is new and hasn't run on Windows yet:** permission handlers, download management, print options, navigation policy and cookies compile for x64 and arm64 and have their tests, but none of this WebView2 code has executed on a Windows machine. Expect corrections.
+- **Tested on a Windows runner, not on a PC:** CI runs end-to-end tests on a Windows runner for notifications, windows, title-bar dragging, menus, tray, dialogs, clipboard, views, background jobs, MCP, relaunch, permissions, downloads, printing, navigation policy and cookies. High-DPI and multi-monitor setups aren't covered, since the runner has one display at 100%, and only x64 runs: arm64 is compiled. Test your app on a real PC.
 - **Windows differs where WebView2 does:** a paused download resumes only in the run that started it, `host.webview.download` needs an attachment from another origin, and a navigation policy holds the navigation with a bounded wait. See [downloads](/host/web/downloads#platform-support) and [navigation policy](/host/web/web-content#platform-support).
 - The WebView2 runtime must be installed. The shell offers an Evergreen download link when it is missing; it does not bundle the runtime.
 - Rust and Go plugins need a Windows host. See [Distribution](/shipping/distribution#windows).

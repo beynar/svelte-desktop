@@ -580,5 +580,5 @@ Users on `beta` get beta builds. Users on `stable` never see them, because a man
 | The app never offers the update | `curl` the `manifestUrl` from `desktop.config.ts` with `{channel}` replaced: it must return the new version. The installed app's `version` must be lower, its `channel` the same, and its `publicKey` must match. Also call `host.update.check()` somewhere. |
 
 :::note
-Wine smoke tests cover the Windows native layer and installer, without loading a WebView2 page. Try the installer and app on a real PC before announcing the release. See [Limitations](/shipping/limitations).
+CI runs the installer and the app on a Windows runner. Try the installer and app on a real PC before announcing the release. See [Limitations](/shipping/limitations).
 :::

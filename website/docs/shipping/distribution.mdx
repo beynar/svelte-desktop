@@ -98,7 +98,7 @@ Rust and Go plugins are skipped when cross-building Windows from another OS; bui
 `timestampUrl` defaults to `http://timestamp.digicert.com`. Data lives in `%APPDATA%\<identifier>`, caches and logs in `%LOCALAPPDATA%`. `build.targetArch` is `x64` (default) or `arm64`.
 
 :::warning
-CI runs the app and its notifications on a real Windows runner, which doesn't cover everything: validate the installer and app on a real Windows desktop. Unsigned Windows builds also trigger SmartScreen warnings. See [Limitations](/shipping/limitations).
+CI runs the app on a real Windows runner, which doesn't cover everything: validate the installer and app on a real Windows desktop. Unsigned Windows builds also trigger SmartScreen warnings. See [Limitations](/shipping/limitations).
 :::
 
 ## Linux

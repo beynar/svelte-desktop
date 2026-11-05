@@ -6,9 +6,8 @@ Packaging is in `src/build/package-windows.ts` (`build: { target: 'windows' }`).
 
 ## Verified on Windows
 CI runs `examples/notes/tests/windows.test.ts` on a real Windows runner (`.github/workflows/windows.yml`):
-WebView2, WinRT toasts, the COM toast activator. What's listed below as not run yet still hasn't been.
-The same file now also tests windows, the title bar, menus, tray, dialogs, clipboard, views, screen and
-DPI, jobs, MCP, relaunch and web content control: those tests haven't run yet either.
+WebView2, WinRT toasts, the COM toast activator, windows, the title bar, menus, tray, dialogs, clipboard,
+views, screen and DPI, jobs, MCP, relaunch and web content control. x64 only, on one display at 100%.
 
 ## Verified without Windows
 - Clean build (`-Wall -Wextra`, llvm-mingw, WebView2 SDK headers); every `shell.h` export
@@ -45,29 +44,26 @@ the drag needs WebView2, so it is part of the first real Windows run.
 ## Embedded views and capture
 `view.*` (svc_embed.cc): a child HWND per view hosting its own WebView2 controller, browser-like
 navigation, same ops/events as macOS and Linux. `capture.*`: displays (EnumDisplayMonitors) and
-windows (EnumWindows), PNG through BitBlt / PrintWindow + WIC. Compiled (x64, arm64), not run:
-both need WebView2 / a real desktop session.
+windows (EnumWindows), PNG through BitBlt / PrintWindow + WIC.
 
-## Notifications (compiled, not run)
+## Notifications
 `svc_notifications.cc`: WinRT toasts through the ABI interfaces (combase resolved at run time),
 AUMID = identifier registered under `HKCU\Software\Classes\AppUserModelId` + set on the process and
 on the installer's Start Menu shortcut; ScheduledToastNotification for `at`/`repeat` (8 occurrences
 ahead, topped up); taskbar overlay badge; balloons as the fallback; `toastXml` used as is.
 Packaged apps also get a COM toast activator (CLSID derived from the identifier, `LocalServer32 =
 "<exe>" -ToastActivated`, `CustomActivator`, shortcut `ToastActivatorCLSID`) so clicks after the app
-quit launch it and land in the claim queue. To check on Windows: toasts show with the app name/icon,
-Activated/Dismissed reach the UI thread, reply input, scheduled toasts while closed, a click after
-quitting (cold start → claim), taskbar grouping with the pinned shortcut.
+quit launch it and land in the claim queue.
 
-## Web content control (compiled, not run)
-Same ops, result shapes and events as macOS, so `src/platform` doesn't know the difference. None of
-this COM code has executed on Windows: `windows.test.ts` has a test for each, and those are the first
-thing to read after a CI run.
+## Web content control
+Same ops, result shapes and events as macOS, so `src/platform` doesn't know the difference.
+`windows.test.ts` has a test for each.
 - `svc_web_policy.cc`, permissions: `PermissionRequested` (camera, microphone, geolocation) and
   `ScreenCaptureStarting` (`screenRecording`) held with a deferral; `SavesInProfile` off, or WebView2
   would stop asking. Saved decisions in `%LOCALAPPDATA%\<identifier>\web-permissions.json`.
   `_permissionPolicyForTesting` as on macOS, for the test channel.
-- `svc_web_policy.cc`, navigation policy: `NavigationStarting` and `FrameNavigationStarting` of views.
+- `svc_web_policy.cc`, navigation policy: `NavigationStarting` and `FrameNavigationStarting` of views,
+  and `WebResourceRequested` on documents, which keeps a refused request off the network.
   They have no deferral, so the handler pumps messages until the Worker answers (10 s at most). The
   answer comes through the run queue; WebView2 runs its callbacks serially and holds them meanwhile.
 - `svc_downloads.cc`: `DownloadStarting` + `ICoreWebView2DownloadOperation`, records in

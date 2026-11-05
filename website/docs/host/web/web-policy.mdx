@@ -196,7 +196,7 @@ await host.webview.revokeCertificate({
 
 What isn't available returns `unsupported`. These methods do not add WebUSB, HID or serial support. These are handler registrations and request/reply flows, not page-broadcast events. Use the callbacks above to receive requests.
 
-On Windows, `camera`, `microphone` and `location` come from WebView2's permission event and `screenRecording` from its screen capture event; `speech` never asks. The permission event names the requesting origin but not its frame, so `frame` is `null` and frame origins aren't compared; screen capture reports its frame. `prompt` leaves the request to WebView2's own dialog, except for screen capture, where it means the same as `allow`. WebView2 is told not to save answers in its profile, so a handler keeps being asked. Clipboard and notification requests have no `WebPermission` name: the app's own origin is allowed and others are denied, with no handler involved. This code hasn't run on Windows yet.
+On Windows, `camera`, `microphone` and `location` come from WebView2's permission event and `screenRecording` from its screen capture event; `speech` never asks. The permission event names the requesting origin but not its frame, so `frame` is `null` and frame origins aren't compared; screen capture reports its frame. `prompt` leaves the request to WebView2's own dialog, except for screen capture, where it means the same as `allow`. WebView2 is told not to save answers in its profile, so a handler keeps being asked. Clipboard and notification requests have no `WebPermission` name: the app's own origin is allowed and others are denied, with no handler involved.
 
 ## Example
 
