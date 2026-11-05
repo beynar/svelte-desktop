@@ -71,10 +71,11 @@ bun test --timeout 60000 tests/
 step "vite dev"
 DESKTOP_TEST_DEV=1 bun test --timeout 180000 tests/
 
-step "a website too: desktop({ adapter })"
+step "a website too: sveltekit({ adapter }), desktop()"
 rm -rf .desktop build site
-sed -i "s/desktop({/desktop({ adapter: { name: 'pack-test', adapt: (b) => { b.writeClient('site\/client'); b.writeServer('site\/server'); } },/" vite.config.ts
+sed -i -e "s/sveltekit({/sveltekit({ adapter: { name: 'pack-test', adapt: (b) => { b.writeClient('site\/client'); b.writeServer('site\/server'); } },/" -e "s/desktop({ website: false })/desktop()/" vite.config.ts
 grep -q pack-test vite.config.ts
+grep -q 'desktop()' vite.config.ts
 mkdir -p src/routes/where
 cat > src/routes/where/+page.svelte <<'PAGE'
 <p>host is {host.available ? 'the desktop' : 'a website'}</p>

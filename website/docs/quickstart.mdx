@@ -34,7 +34,7 @@ bunx kitop init
 bun run dev
 ```
 
-Step by step: [Convert a SvelteKit app](/convert-sveltekit-app). `init` writes `desktop.config.ts`, switches `vite.config.ts` to the `desktop()` plugin, and sets the `dev`, `build` and `test:desktop` scripts. If it prints a warning, see [Adopting an existing app](/concepts/adopting) for what it changes and what to check.
+Step by step: [Convert a SvelteKit app](/convert-sveltekit-app). `init` writes `desktop.config.ts`, adds the `desktop()` plugin to `vite.config.ts`, and sets the `dev`, `build` and `test:desktop` scripts. If it prints a warning, see [Adopting an existing app](/concepts/adopting) for what it changes and what to check.
 
   </Tab>
 </Tabs>
@@ -59,7 +59,7 @@ Step by step: [Convert a SvelteKit app](/convert-sveltekit-app). `init` writes `
 </Steps>
 
 :::tip
-`desktop({ ... }, { noWindow: true })` in `vite.config.ts`, or `KITOP_NO_WINDOW=1`, runs `vite dev` without the native window, for browser-only work. Server code still gets addons and sidecars.
+`desktop({ noWindow: true })` in `vite.config.ts`, or `KITOP_NO_WINDOW=1`, runs `vite dev` without the native window, for browser-only work. Server code still gets addons and sidecars.
 :::
 
 ## Project layout

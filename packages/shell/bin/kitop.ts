@@ -14,7 +14,7 @@ import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import shell from "../package.json";
-import { STARTER_TEST, stringifyLike } from "../src/build/init-edit.ts";
+import { addDesktopPlugin, STARTER_TEST, stringifyLike } from "../src/build/init-edit.ts";
 import { viteRuns } from "../src/build/targets.ts";
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -50,17 +50,14 @@ async function init() {
   if (viteConfig) {
     let src = readFileSync(viteConfig, "utf8");
     if (src.includes("@kitop/shell/vite")) warn(`${viteConfig} already uses the desktop plugin`);
-    else if (/sveltekit\(/.test(src)) {
-      src = src
-        .replace(/import\s*\{\s*sveltekit\s*\}\s*from\s*['"]@sveltejs\/kit\/vite['"];?/, "import { desktop } from '@kitop/shell/vite';")
-        .replace(/\bsveltekit\(/g, "desktop(");
-      if (!/\badapter\s*:/.test(src)) warn(`${viteConfig} has no adapter: this is a desktop app only. For a website too, pass yours: desktop({ adapter: adapter() })`);
-      writeFileSync(viteConfig, src);
-      ok(`${viteConfig}: sveltekit(…) → desktop(…)`);
+    else if (addDesktopPlugin(src)) {
+      if (!/\badapter\s*:/.test(src)) warn(`${viteConfig} has no adapter: with no flag, kitop build has no website to write. For a desktop app only, use desktop({ website: false })`);
+      writeFileSync(viteConfig, addDesktopPlugin(src)!);
+      ok(`${viteConfig}: desktop() next to sveltekit()`);
     } else warn(`add desktop() from '@kitop/shell/vite' to ${viteConfig} manually`);
   }
   const svelteConfig = ["svelte.config.js", "svelte.config.ts"].map((f) => join(root, f)).find(existsSync);
-  if (svelteConfig && /\badapter\b/.test(readFileSync(svelteConfig, "utf8"))) warn(`${svelteConfig} sets an adapter: move it to desktop({ adapter: … }) in the Vite config`);
+  if (svelteConfig && /\badapter\b/.test(readFileSync(svelteConfig, "utf8"))) warn(`${svelteConfig} sets an adapter: move it to sveltekit({ adapter: … }) in the Vite config`);
 
   pkg.scripts = { ...pkg.scripts, dev: "kitop dev", build: "kitop build", "test:desktop": "bun test --timeout 30000 tests/" };
   writeFileSync(pkgPath, stringifyLike(pkgText, pkg));
@@ -109,7 +106,7 @@ async function create(dir: string | undefined) {
       null,
       "\t",
     ),
-    "vite.config.ts": `import { desktop } from '@kitop/shell/vite';\nimport { defineConfig } from 'vite';\n\nexport default defineConfig({\n\tplugins: [desktop({ compilerOptions: { experimental: { async: true } }, experimental: { remoteFunctions: true } })]\n});\n`,
+    "vite.config.ts": `import { sveltekit } from '@sveltejs/kit/vite';\nimport { desktop } from '@kitop/shell/vite';\nimport { defineConfig } from 'vite';\n\nexport default defineConfig({\n\tplugins: [sveltekit({ compilerOptions: { experimental: { async: true } }, experimental: { remoteFunctions: true } }), desktop({ website: false })]\n});\n`,
     "desktop.config.ts": `import { defineConfig } from '@kitop/shell/config';\n\nexport default defineConfig({\n\tappName: ${JSON.stringify(title)},\n\tidentifier: 'com.example.${name.replace(/-/g, "")}',\n\twindow: { width: 900, height: 640, autosaveName: 'main' }\n});\n`,
     "tsconfig.json": JSON.stringify({ extends: "$app/tsconfig", compilerOptions: { strict: true, types: ["$app/types", "bun"] } }, null, "\t"),
     ".gitignore": "node_modules\n.svelte-kit\n.desktop\n",

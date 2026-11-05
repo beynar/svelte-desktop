@@ -8,20 +8,22 @@ Two files make a SvelteKit project a desktop app: the Vite plugin and `desktop.c
 ## The Vite plugin
 
 ```ts vite.config.ts
+import { sveltekit } from '@sveltejs/kit/vite';
 import { desktop } from '@kitop/shell/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  plugins: [desktop({ experimental: { remoteFunctions: true } })],
+  plugins: [sveltekit({ experimental: { remoteFunctions: true } }), desktop({ website: false })],
 });
 ```
 
-`desktop(kitOptions, options)` is SvelteKit's own plugin with the desktop adapter set (don't pass `adapter`). Svelte compiler options go in `kitOptions.compilerOptions`; for example, the `create` template turns on `experimental.async` to use `await` in markup. The first argument takes SvelteKit's plugin options; the second takes:
+`desktop(options)` goes next to SvelteKit's plugin, and SvelteKit's options and Svelte's compiler options stay in `sveltekit()`; for example, the `create` template turns on `experimental.async` to use `await` in markup. With an `adapter` in `sveltekit()` and no `website: false`, the project is [a website too](/convert-sveltekit-app): for a desktop target, `desktop()` puts the shell's adapter in place of yours. It takes:
 
 <TypeTable
   type={{
     config: { type: "Partial<DesktopConfig>", description: "Override desktop.config.ts inline. Top-level keys replace the file's values; nested objects are not deep-merged: `config: { window: { width: 800 } }` drops the file's other `window` keys, such as `autosaveName`." },
     exitOnClose: { type: "boolean", default: "true", description: "Stop vite dev when the app window is closed." },
+    website: { type: "boolean", default: "true", description: "`false` for a desktop app only: with no target, Vite builds and runs the app for the host, not a website." },
     noWindow: { type: "boolean", default: "false", description: "Don't open the native window in dev (browser-only dev). Any non-empty `KITOP_NO_WINDOW` also skips the shell, even if this option is `false`." },
   }}
 />

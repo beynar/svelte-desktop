@@ -1,20 +1,20 @@
 ---
 title: Convert a SvelteKit app
-description: Make an existing SvelteKit app a desktop app too, step by step. It stays a website, and the change is one word in its Vite config.
+description: Make an existing SvelteKit app a desktop app too, step by step. It stays a website, and the change is one plugin in its Vite config.
 sidebar:
   icon: arrow-right-left
 ---
 
-Your SvelteKit app stays a website and becomes a desktop app as well, from the same code, with one word changed. Routes, load functions, remote functions, form actions, endpoints and hooks stay as they are, and in the desktop app they run on Bun inside it.
+Your SvelteKit app stays a website and becomes a desktop app as well, from the same code, with one plugin added. Routes, load functions, remote functions, form actions, endpoints and hooks stay as they are, and in the desktop app they run on Bun inside it.
 
 ```diff vite.config.ts
--import { sveltekit } from '@sveltejs/kit/vite';
+ import { sveltekit } from '@sveltejs/kit/vite';
 +import { desktop } from '@kitop/shell/vite';
  import { defineConfig } from 'vite';
 
  export default defineConfig({
 -  plugins: [sveltekit({ adapter: adapter() })],
-+  plugins: [desktop({ adapter: adapter() })],
++  plugins: [sveltekit({ adapter: adapter() }), desktop()],
  });
 ```
 
@@ -66,12 +66,12 @@ The steps below make that change for you, then get the app running and built.
     It does five things:
 
     - Writes `desktop.config.ts`, with your app's name.
-    - Swaps `sveltekit()` for `desktop()` in `vite.config.ts`. Your options stay, your adapter among them.
+    - Adds `desktop()` next to `sveltekit()` in `vite.config.ts`. Your options and your adapter don't move.
     - Sets the `dev` and `build` scripts to `kitop dev` and `kitop build`, and adds `test:desktop`, replacing any with those names.
     - Adds `.desktop` to `.gitignore`.
     - Writes a first test, `tests/app.test.ts`, if you have no `tests` folder. If you have one, `test:desktop` runs what's in it with `bun test`.
 
-    **Check:** `git diff` shows that, and nothing else. If `init` warns that `svelte.config.js` sets an adapter, move it to `desktop({ adapter: … })`.
+    **Check:** `git diff` shows that, and nothing else. If `init` warns that `svelte.config.js` sets an adapter, move it to `sveltekit({ adapter: … })`.
   </Step>
 
   <Step title="Name your app">

@@ -28,7 +28,7 @@ bunx kitop init
 Adds desktop support to the SvelteKit project in the current directory:
 
 - writes `desktop.config.ts` (left alone if it exists), with `appName` and `identifier` derived from `package.json`;
-- rewrites `sveltekit(` to `desktop(` in `vite.config.ts`, keeping your options and your adapter;
+- adds `desktop()` next to `sveltekit()` in `vite.config.ts`, which keeps your options and your adapter;
 - sets the scripts `dev` (`kitop dev`), `build` (`kitop build`) and `test:desktop` (`bun test --timeout 30000 tests/`), replacing any existing values;
 - adds `.desktop` to `.gitignore`;
 - writes a first test, `tests/app.test.ts`, if there's no `tests` folder.
@@ -42,7 +42,7 @@ kitop dev [--mac | --windows | --linux] [vite options]
 kitop build [--mac] [--windows] [--linux] [vite options]
 ```
 
-With no flag, these are the website: `vite dev` and `vite build`, with the `adapter` given to `desktop()`. With a flag, they are the desktop app for that OS, and the project's adapter plays no part. A project whose `desktop()` has no `adapter` is a desktop app only, and with no flag builds for the host.
+With no flag, these are the website: `vite dev` and `vite build`, with the `adapter` given to `sveltekit()`. With a flag, they are the desktop app for that OS, and the project's adapter plays no part. With `desktop({ website: false })` the project is a desktop app only, and with no flag builds for the host.
 
 | | From macOS | From Linux | From Windows |
 | --- | --- | --- | --- |
@@ -124,7 +124,7 @@ Publishing updates, mostly from CI (see [Release with CI](/shipping/release)):
 
 ## Vite
 
-These are what `kitop dev` and `kitop build` run. In a project with an `adapter`, they're the website unless `KITOP_TARGET` is set.
+These are what `kitop dev` and `kitop build` run. With `desktop()`, they're the website unless `KITOP_TARGET` is set. With `desktop({ website: false })`, they're always the desktop app.
 
 | Command | |
 | --- | --- |

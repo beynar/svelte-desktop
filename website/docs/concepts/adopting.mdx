@@ -16,7 +16,7 @@ bun run dev --mac   # or --windows, --linux; with no flag, the website
 The adapter's version is not a suggestion: see [what an app needs](/reference/versioning#what-an-app-needs).
 
 - Writes `desktop.config.ts`, with the app name taken from `package.json` and the identifier `com.example.<name>`. **Change the identifier** before you ship. An existing config is left alone.
-- In `vite.config.ts` (or `.js`), replaces the `sveltekit` import and calls with `desktop`. Your options stay, and with an `adapter` among them the project stays a website: that adapter builds it unless a desktop target is asked for. If it finds no `sveltekit(` call, it tells you to add `desktop()` yourself.
+- In `vite.config.ts` (or `.js`), adds `desktop()` next to `sveltekit()`, and its import. Your options stay in `sveltekit()`, and with an `adapter` among them the project stays a website: that adapter builds it unless a desktop target is asked for. If it finds no `sveltekit(` call, it tells you to add `desktop()` yourself.
 - Sets `dev` and `build` to `kitop dev` and `kitop build`, and adds `test:desktop`, replacing existing ones of those names, and adds `.desktop` to `.gitignore`. `package.json` keeps its formatting.
 - Writes a first test, `tests/app.test.ts`, if there's no `tests` folder.
 

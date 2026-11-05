@@ -9,12 +9,13 @@ sidebar:
 `@kitop/shell` turns a SvelteKit app into a native app without changing the app. SSR, remote functions, form actions, endpoints and `bun:sqlite` run in-process on Bun. The UI is the system web view: WKWebView on macOS, WebKitGTK on Linux, WebView2 on Windows. The build output contains a compiled app executable and the native libraries. On macOS, it is a signed, notarizable `.app` bundle.
 
 ```ts vite.config.ts
+import { sveltekit } from '@sveltejs/kit/vite';
 import { desktop } from '@kitop/shell/vite';
 import { defineConfig } from 'vite';
 
-// SvelteKit's own plugin, wired with the desktop adapter and dev mode.
+// The shell, next to SvelteKit's own plugin.
 // `remoteFunctions` is SvelteKit's option for `.remote.ts` files.
-export default defineConfig({ plugins: [desktop({ experimental: { remoteFunctions: true } })] });
+export default defineConfig({ plugins: [sveltekit({ experimental: { remoteFunctions: true } }), desktop({ website: false })] });
 ```
 
 ```ts desktop.config.ts

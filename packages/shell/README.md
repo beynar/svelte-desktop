@@ -15,10 +15,11 @@ bun test                → drive the real window from tests
 ## Setup
 
 ```ts
-// vite.config.ts — the only plugin you need (it is SvelteKit's plugin, wired for desktop)
+// vite.config.ts — next to SvelteKit's plugin
+import { sveltekit } from '@sveltejs/kit/vite';
 import { desktop } from '@kitop/shell/vite';
 import { defineConfig } from 'vite';
-export default defineConfig({ plugins: [desktop({ experimental: { remoteFunctions: true } })] });
+export default defineConfig({ plugins: [sveltekit({ experimental: { remoteFunctions: true } }), desktop({ website: false })] });
 ```
 
 ```ts
@@ -34,7 +35,7 @@ export default defineConfig({
 New project: `bunx -p @kitop/shell kitop create my-app` (SvelteKit app, config, Swift plugin
 sample, tests), pinned to that version of the package.
 Existing project: `bun add -d @kitop/shell @sveltejs/adapter-bun@1.0.0-next.2`, then
-`bunx kitop init` writes both files, rewrites `sveltekit(` → `desktop(`, adds scripts and
+`bunx kitop init` writes both files, adds `desktop()` next to `sveltekit()`, adds scripts and
 `.gitignore`. `bunx kitop doctor` checks Bun, Xcode tools, the required versions, the config,
 signing identities and the notary profile, and exits non-zero when a check fails.
 Requirements: macOS 12+, Bun ≥ 1.4, Xcode command line tools, SvelteKit 3 (`^3.0.0-next.0`),

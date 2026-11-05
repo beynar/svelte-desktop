@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test";
-import { stringifyLike } from "./init-edit.ts";
+import { addDesktopPlugin, stringifyLike } from "./init-edit.ts";
+
+test("desktop() goes next to sveltekit(), which keeps its options", () => {
+  const head = "import { sveltekit } from '@sveltejs/kit/vite';\nimport { desktop } from '@kitop/shell/vite';\n";
+  expect(addDesktopPlugin("import { sveltekit } from '@sveltejs/kit/vite';\nplugins: [sveltekit({ adapter: adapter() })],")).toBe(`${head}plugins: [sveltekit({ adapter: adapter() }), desktop()],`);
+  // On lines of its own, with a parenthesis in a string and a plugin after it.
+  expect(addDesktopPlugin("import { sveltekit } from '@sveltejs/kit/vite';\n\tplugins: [\n\t\tsveltekit({\n\t\t\tout: join('a', 'b)'),\n\t\t}),\n\t\tother()\n\t]")).toBe(`${head}\tplugins: [\n\t\tsveltekit({\n\t\t\tout: join('a', 'b)'),\n\t\t}),\n\t\tdesktop(),\n\t\tother()\n\t]`);
+  expect(addDesktopPlugin("plugins: []")).toBeNull();
+  expect(addDesktopPlugin("sveltekit({ unfinished")).toBeNull();
+});
 
 test("a rewritten package.json keeps its indentation and final newline", () => {
   const value = { name: "a", scripts: { dev: "x" } };

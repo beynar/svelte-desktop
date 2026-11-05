@@ -1,12 +1,13 @@
 // The one line an app needs:
 //
 //   // vite.config.ts
+//   import { sveltekit } from '@sveltejs/kit/vite';
 //   import { desktop } from '@kitop/shell/vite';
-//   export default defineConfig({ plugins: [desktop({ experimental: { remoteFunctions: true } })] });
+//   export default defineConfig({ plugins: [sveltekit({ adapter: adapter() }), desktop()] });
 //
-// `desktop(kitOptions)` is SvelteKit's own plugin, wired with the desktop adapter,
-// plus dev mode. App settings live in desktop.config.ts (see config.ts).
-// With `desktop({ adapter: adapter() })` the project is a website as well: see plugin.js and `kitop dev`.
+// With a desktop target (`kitop dev --mac`), this is the shell: its adapter in place of the project's,
+// plus dev mode. Without one the project is a website, and none of this loads: see plugin.js.
+// App settings live in desktop.config.ts (see config.ts).
 //   vite dev    → the real native window on the Vite server: HMR, Web Inspector,
 //                 native API from pages and server code, native plugin rebuilt on change
 //   vite build  → signed .app + zip + DMG (+ release/ for the updater) in .desktop/dist
@@ -56,23 +57,45 @@ export interface DesktopPluginOptions {
   exitOnClose?: boolean;
   /** Don't open the native window in dev (browser-only dev). Default: $KITOP_NO_WINDOW. */
   noWindow?: boolean;
+  /** `false`: a desktop app only, so that no target means the host's. Default: with no target, the project is a website. */
+  website?: boolean;
 }
 
-/** What `sveltekit()` takes, so a config keeps its types when it moves to `desktop()`. With an `adapter`, the
- *  project is a website too: that adapter builds it unless a desktop target is asked for (see plugin.js). */
-type KitOptions = NonNullable<Parameters<typeof import("@sveltejs/kit/vite").sveltekit>[0]>;
 
-/** SvelteKit + kitop, for a desktop target. `kitOptions` are SvelteKit's plugin options; the adapter is the shell's. */
-export async function desktop(kitOptions: KitOptions = {}, options: DesktopPluginOptions = {}): Promise<Plugin[]> {
+async function flatPlugins(list: unknown): Promise<Plugin[]> {
+  const value = await list;
+  return Array.isArray(value) ? (await Promise.all(value.map(flatPlugins))).flat() : value ? [value as Plugin] : [];
+}
+
+// For a desktop target the shell's adapter takes the place of the project's. SvelteKit shows its
+// options to the plugins next to it (`api.options` on its setup plugin), and reads the adapter from
+// there. Ahead of its own config hook, which reads it too.
+function shellAdapter(config: ResolvedConfig): Plugin {
+  return {
+    name: "kitop:adapter",
+    enforce: "pre",
+    config: {
+      order: "pre",
+      async handler(user: { plugins?: unknown }, _env: unknown) {
+        const setup = (await flatPlugins(user.plugins)).find((p) => p.name === "vite-plugin-sveltekit-setup");
+        const kit = (setup?.api as { options?: { adapter?: { name: string; vite?: { plugins?: unknown } } } } | undefined)?.options;
+        if (!kit) throw new Error("kitop: desktop() goes next to SvelteKit's plugin: plugins: [sveltekit(), desktop()]. If sveltekit() is there, this version of SvelteKit doesn't show its options (api.options).");
+        // They came in with sveltekit(), before this: they stay, and may not suit a desktop build.
+        if (kit.adapter?.vite?.plugins) console.warn(`kitop: ${kit.adapter.name} adds Vite plugins of its own, and they stay active in the desktop build`);
+        kit.adapter = desktopAdapter(config) as never;
+      },
+    },
+  };
+}
+
+/** The shell, for a desktop target: next to SvelteKit's plugin, in the project's Vite config. */
+export async function desktop(options: DesktopPluginOptions = {}): Promise<Plugin[]> {
   if (typeof Bun === "undefined") throw new Error("kitop runs on Bun: use `bunx --bun vite …`");
   const config = await loadConfig(process.cwd(), options.config);
   // In dev, the app's server runs in this process: the system's certificates and proxy for it too.
   if (process.env.NODE_ENV !== "production") (await import("./system-network.ts")).applySystemNetwork(config.network);
   writeHostTypes(config.root);
-  const kitPath = Bun.resolveSync("@sveltejs/kit/vite", config.root);
-  const { sveltekit } = await import(kitPath);
-  const kit = (await sveltekit({ ...kitOptions, adapter: desktopAdapter(config) })) as Plugin[];
-  return [...kit, hydrationMarker(config.osPermissions, { foreground: config.notifications?.foreground ?? true }, { server: config.push?.server ?? null }), pushServiceWorker(), oauthDev(config.appName), websocketDev(config), serverEntry(config, "websocket"), serverEntry(config, "mcp"), mcpDev(config), devPlugin(config, options)];
+  return [shellAdapter(config), hydrationMarker(config.osPermissions, { foreground: config.notifications?.foreground ?? true }, { server: config.push?.server ?? null }), pushServiceWorker(), oauthDev(config.appName), websocketDev(config), serverEntry(config, "websocket"), serverEntry(config, "mcp"), mcpDev(config), devPlugin(config, options)];
 }
 
 // SvelteKit has no public "hydrated" signal; tests (and apps) need one. Wrap the

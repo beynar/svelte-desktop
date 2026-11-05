@@ -3,13 +3,13 @@
 A desktop app from your SvelteKit app, which stays a website: one Vite plugin, one config file, Bun, the system's web view, and a single binary.
 
 ```diff vite.config.ts
--import { sveltekit } from '@sveltejs/kit/vite';
+ import { sveltekit } from '@sveltejs/kit/vite';
 +import { desktop } from '@kitop/shell/vite';
  import { defineConfig } from 'vite';
 
  export default defineConfig({
 -  plugins: [sveltekit({ adapter: adapter() })],
-+  plugins: [desktop({ adapter: adapter() })],
++  plugins: [sveltekit({ adapter: adapter() }), desktop()],
  });
 ```
 
