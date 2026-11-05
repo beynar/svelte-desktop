@@ -844,7 +844,7 @@ function Front($h) { [SdWin]::Chord([byte[]]@(0x87)); [void][SdWin]::SetForegrou
 function Press($x, $y) { [void][SdWin]::SetCursorPos($x, $y); Start-Sleep -Milliseconds 120; [SdWin]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero) }
 function Release { [SdWin]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero) }
 function Descendant($h, [scriptblock]$pred) {
-  $root = if ($h -is [System.Windows.Automation.AutomationElement]) { $h } else { $A::FromHandle($h) }
+  $root = $A::FromHandle($h)
   $last = ''
   for ($i = 0; $i -lt 40; $i++) {
     foreach ($e in $root.FindAll($TS::Descendants, $True_)) { try { if (& $pred $e) { return $e } } catch { $last = $_.Exception.Message } }
@@ -874,10 +874,9 @@ switch ($Mode) {
   }
   'keys' { if ($s.title) { Front (Wait-Window $s.title) }; [SdWin]::Chord([byte[]]@($s.keys)); 'pressed' }
   'dialog-button' { $h = Wait-Window $s.title; $b = Descendant $h { param($e) $e.Current.AutomationId -like 'CommandButton_*' -and $e.Current.Name -eq $s.button }; Invoke-El $b; 'pressed' }
-  'file-dialog' { # The Edit in the file name box of the common dialog (WM_SETTEXT), then its default button.
+  'file-dialog' { # The file name box of the common dialog (1001 saving, 1148 opening; WM_SETTEXT), then its default button.
     $h = Wait-Window $s.title
-    $box = Descendant $h { param($e) $e.Current.AutomationId -eq 'FileNameControlHost' }
-    $edit = Descendant $box { param($e) $e.Current.ClassName -eq 'Edit' }
+    $edit = Descendant $h { param($e) $e.Current.ClassName -eq 'Edit' -and @('1001', '1148') -contains $e.Current.AutomationId }
     [void][SdWin]::SendMessage([IntPtr]$edit.Current.NativeWindowHandle, 0x000C, [IntPtr]::Zero, $s.path)
     Start-Sleep -Milliseconds 300
     $ok = Descendant $h { param($e) $e.Current.AutomationId -eq '1' }
@@ -1766,6 +1765,7 @@ Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64Strin
 			await op('view', 'navigate', { id: 'e2e-nav', url: `${ext}/blocked` });
 			const blocked = await request;
 			log('asked about /blocked at', Date.now());
+			await Bun.sleep(1000); // does the request wait for the answer?
 			expect(blocked).toMatchObject({ isMainFrame: true, viewId: 'e2e-nav' });
 			await op('webview', 'navigationDecision', { requestId: blocked.requestId, allow: false });
 			log('refused /blocked at', Date.now());
