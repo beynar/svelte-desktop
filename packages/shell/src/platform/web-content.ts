@@ -27,7 +27,7 @@ export type UserScript = {
 };
 export type NavigationRequest = { url: string; isMainFrame: boolean; viewId: string };
 export type NavigationPolicy = (request: NavigationRequest) => 'allow' | 'cancel' | Promise<'allow' | 'cancel'>;
-const navigationState = ((globalThis as Record<symbol, { off?: () => void } | undefined>)[Symbol.for('svelte-desktop.navigation-policy')] ??= {});
+const navigationState = ((globalThis as Record<symbol, { off?: () => void } | undefined>)[Symbol.for('kitop.navigation-policy')] ??= {});
 
 export const webContent = {
 	/** Global, including all sessions. The app origin and bridge are always exempt. */

@@ -1,4 +1,4 @@
-// The Windows build (SVELTE_DESKTOP_TARGET=windows bunx --bun vite build) on a Windows
+// The Windows build (KITOP_TARGET=windows bunx --bun vite build) on a Windows
 // machine: WebView2 window, host global, WinRT toasts, the COM toast activator.
 //   WINDOWS_E2E=1 [WINDOWS_APP=<app folder>] bun test --timeout 120000 tests/windows.test.ts
 // Skipped unless WINDOWS_E2E is set (CI: .github/workflows/windows.yml).
@@ -10,10 +10,10 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 import { toastActivatorClsid } from '../../../packages/shell/src/build/package-windows.ts';
 
-const ID = 'dev.svelte-desktop.notes';
+const ID = 'dev.kitop.notes';
 const CLSID = toastActivatorClsid(ID);
 const APP = resolve(process.env.WINDOWS_APP ?? '.desktop/dist/Svelte Notes-windows-x64');
 const tmp = process.platform === 'win32' ? mkdtempSync(join(tmpdir(), 'sd-win-')) : '';
@@ -160,7 +160,7 @@ function ProbeWindows {
       if ($w -and -not $seen.ContainsKey($w.Split('|')[0])) { $seen[$w.Split('|')[0]] = $w }
     }
   }
-  $seen.Values | Where-Object { $f = $_.Split('|'); $f[1] -notin @('SvelteDesktopWindow', 'Progman', 'WorkerW', 'Shell_TrayWnd', 'CASCADIA_HOSTING_WINDOW_CLASS', 'ConsoleWindowClass') }
+  $seen.Values | Where-Object { $f = $_.Split('|'); $f[1] -notin @('KitopWindow', 'Progman', 'WorkerW', 'Shell_TrayWnd', 'CASCADIA_HOSTING_WINDOW_CLASS', 'ConsoleWindowClass') }
 }
 function CenterOpen { @(ProbeWindows | Where-Object { $_.Split('|')[2] -eq 'Notification Center' }).Count -gt 0 }
 function CloseCenter { # toast popups don't show while the notification center is open: click outside it
@@ -594,10 +594,10 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 				connect: (url) => {
 					// A COM-launched server doesn't get our environment (nor, on the runner, registry
 					// changes made after logon): point the class's LocalServer32 at a wrapper that sets
-					// SVELTE_DESKTOP_TEST and runs the registered command ("<exe>" -ToastActivated
+					// KITOP_TEST and runs the registered command ("<exe>" -ToastActivated
 					// -Embedding). The app writes the real value back when it starts.
 					const cmd = join(tmp, 'toast-launch.cmd');
-					writeFileSync(cmd, `@echo off\r\nset SVELTE_DESKTOP_TEST=${url}\r\n"${exe}" -ToastActivated %*\r\n`);
+					writeFileSync(cmd, `@echo off\r\nset KITOP_TEST=${url}\r\n"${exe}" -ToastActivated %*\r\n`);
 					const wrapper = `"${process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe'}" /d /c "${cmd}"`;
 					for (const root of hklm ? ['HKCU', 'HKLM'] : ['HKCU']) reg('add', `${root}\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', wrapper, '/f');
 					activation = activate({ i: 'cold' }).then(() => Date.now() - t0);
@@ -627,7 +627,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 	});
 
 	/** Start the app the way Windows does for a toast (the activator's LocalServer32), with the
-	 *  test channel: `trigger` is the real click; a .cmd wrapper only adds SVELTE_DESKTOP_TEST. */
+	 *  test channel: `trigger` is the real click; a .cmd wrapper only adds KITOP_TEST. */
 	async function coldLaunch(trigger: () => Promise<unknown>) {
 		const exe = join(APP, readdirSync(APP).find((f) => /\.exe$/i.test(f))!);
 		try {
@@ -635,7 +635,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 				timeout: 60_000,
 				connect: (url) => {
 					const cmd = join(tmp, 'toast-launch.cmd');
-					writeFileSync(cmd, `@echo off\r\nset SVELTE_DESKTOP_TEST=${url}\r\n"${exe}" -ToastActivated %*\r\n`);
+					writeFileSync(cmd, `@echo off\r\nset KITOP_TEST=${url}\r\n"${exe}" -ToastActivated %*\r\n`);
 					reg('add', `HKCU\\Software\\Classes\\CLSID\\${CLSID}\\LocalServer32`, '/ve', '/d', `"${process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe'}" /d /c "${cmd}"`, '/f');
 					void trigger().then((r) => log('trigger', r), (e) => log('trigger failed', String(e)));
 				},
@@ -705,7 +705,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {
 		app = await launch({
 			timeout: 60_000,
 			connect: (url) => {
-				Bun.spawn(['powershell.exe', '-NoProfile', '-Command', `Start-Process -FilePath '${lnk}'`], { env: { ...process.env, SVELTE_DESKTOP_TEST: url }, stdout: 'ignore', stderr: 'ignore' });
+				Bun.spawn(['powershell.exe', '-NoProfile', '-Command', `Start-Process -FilePath '${lnk}'`], { env: { ...process.env, KITOP_TEST: url }, stdout: 'ignore', stderr: 'ignore' });
 			},
 		});
 		closed = false;

@@ -297,7 +297,7 @@ test("host.mcp, in an app of its own: every client found, one at a time, and rem
     stdout: "pipe",
     stderr: "inherit",
     // No login shell here, nor the clients of this machine.
-    env: { HOME: home, USERPROFILE: home, APPDATA: join(home, "roaming"), SHELL: "/nonexistent", PATH: "", SVELTE_DESKTOP_MCP: JSON.stringify(identity) },
+    env: { HOME: home, USERPROFILE: home, APPDATA: join(home, "roaming"), SHELL: "/nonexistent", PATH: "", KITOP_MCP: JSON.stringify(identity) },
   });
   const out = JSON.parse(await new Response(proc.stdout).text());
   expect(out.all.map((r: { client: string }) => r.client)).toEqual(["codex", "cursor"]);

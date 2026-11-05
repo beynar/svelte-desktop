@@ -1,5 +1,5 @@
 import tailwindcss from '@tailwindcss/vite';
-import { desktop } from '@svelte-desktop/shell/vite';
+import { desktop } from '@kitop/shell/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({

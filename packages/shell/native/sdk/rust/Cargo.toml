@@ -1,12 +1,12 @@
 [package]
-name = "svelte-desktop"
+name = "kitop"
 version = "0.1.0"
 edition = "2021"
-description = "Native plugins in Rust for svelte-desktop apps: commands callable from pages and server code, typed."
+description = "Native plugins in Rust for kitop apps: commands callable from pages and server code, typed."
 license = "MIT"
 
 [lib]
-name = "svelte_desktop"
+name = "kitop"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

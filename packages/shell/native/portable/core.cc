@@ -8,7 +8,7 @@
 #include <set>
 #include <thread>
 
-#include "../include/svelte_desktop.h"
+#include "../include/kitop.h"
 #include "../shell.h"
 
 #if defined(_WIN32)
@@ -256,7 +256,7 @@ void on_bridge_message(int native_id, const std::string &body, const std::string
 }
 
 // ---------------------------------------------------------------------------
-// Plugin host (include/svelte_desktop.h)
+// Plugin host (include/kitop.h)
 
 struct PluginCall {
   CallPtr call;

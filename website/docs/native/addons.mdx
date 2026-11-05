@@ -43,7 +43,7 @@ NAPI_MODULE(math, Init)
 The default native directory is `native/` when it exists. You can also set it explicitly:
 
 ```ts desktop.config.ts
-import { defineConfig } from '@svelte-desktop/shell/config';
+import { defineConfig } from '@kitop/shell/config';
 
 export default defineConfig({
   appName: 'Math',
@@ -89,7 +89,7 @@ There is no addon compiler-flags or extra-libraries config option. For builds ne
 ## Prebuilt addons
 
 ```ts desktop.config.ts
-import { defineConfig } from '@svelte-desktop/shell/config';
+import { defineConfig } from '@kitop/shell/config';
 
 export default defineConfig({
   appName: 'Math',
@@ -106,7 +106,7 @@ Paths resolve from the project root. A configured entry overrides a source addon
 
 In a packaged app, the SvelteKit server runs in a Bun Worker inside the app process. A synchronous addon function executes on that Worker's thread. A slow call blocks server requests and other Worker work. A native crash can terminate the whole app. In `vite dev`, the addon runs in the Vite server process instead. See [Threads and processes](/native/threads).
 
-For long work, implement an asynchronous Node-API function using `napi_create_async_work`, or move the call into a [job](/native/jobs) or [service](/native/services). Those children do not receive the server's `host` global. Import `loadAddon` from `@svelte-desktop/shell/server` there and return results through the job context or service port. Native background threads must use the appropriate Node-API completion or thread-safe function mechanism to call JavaScript.
+For long work, implement an asynchronous Node-API function using `napi_create_async_work`, or move the call into a [job](/native/jobs) or [service](/native/services). Those children do not receive the server's `host` global. Import `loadAddon` from `@kitop/shell/server` there and return results through the job context or service port. Native background threads must use the appropriate Node-API completion or thread-safe function mechanism to call JavaScript.
 
 Pages communicate through server endpoints or remote functions. The addon has no page bridge or UI-thread access of its own. Return values to the server and let server code send page events or invoke native APIs.
 

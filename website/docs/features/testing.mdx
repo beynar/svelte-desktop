@@ -3,11 +3,11 @@ title: Testing
 description: Drive the real app window from bun test, built or under vite dev.
 ---
 
-`@svelte-desktop/shell/test` launches the app in its real window and drives it from `bun test`: DOM interactions in the page, any native op, screenshots and native events.
+`@kitop/shell/test` launches the app in its real window and drives it from `bun test`: DOM interactions in the page, any native op, screenshots and native events.
 
 ```ts tests/app.test.ts
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 let app: AppHandle;
 beforeAll(async () => (app = await launch(process.env.DESKTOP_TEST_DEV ? { dev: true } : {})));
@@ -46,7 +46,7 @@ App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without o
     args: { type: "string[]", description: "Command-line arguments for a built app (URLs, documents)." },
     env: { type: "Record<string, string>" },
     timeout: { type: "number", default: "30000", description: "ms to wait for the app to connect and its page to load." },
-    connect: { type: "(testUrl: string) => void | Promise<void>", description: "Start the app yourself with testUrl as SVELTE_DESKTOP_TEST; launch waits for its connection. For example, to test a Windows toast activation." },
+    connect: { type: "(testUrl: string) => void | Promise<void>", description: "Start the app yourself with testUrl as KITOP_TEST; launch waits for its connection. For example, to test a Windows toast activation." },
   }}
 />
 
@@ -67,4 +67,4 @@ App startup exceeds Bun's 5 second default timeout, hence `--timeout`. Without o
 
 `click`, `fill` and `press` run JavaScript in the page. They do not send OS input: `press` dispatches keyboard events, and for `Enter` also submits the element's form. Use `platform()` for native operations. Page functions passed to `eval()` or `waitFor()` are serialized; pass values as `eval()` arguments rather than capturing local variables.
 
-The test channel is enabled by `SVELTE_DESKTOP_TEST`, which `launch()` sets. A built app can connect when that variable is supplied; a normal launch without it exposes no test channel. With `connect`, your callback must set the variable on the app it starts. `stdout` is empty in that mode.
+The test channel is enabled by `KITOP_TEST`, which `launch()` sets. A built app can connect when that variable is supplied; a normal launch without it exposes no test channel. With `connect`, your callback must set the variable on the app it starts. `stdout` is empty in that mode.

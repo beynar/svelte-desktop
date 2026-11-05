@@ -3,7 +3,7 @@
 // app's pages connect. Bun's ServerWebSocket: send, subscribe / publish to topics, close.
 //
 //   // src/websocket.ts
-//   import { defineWebSocket } from '@svelte-desktop/shell/websocket';
+//   import { defineWebSocket } from '@kitop/shell/websocket';
 //   export default defineWebSocket({
 //     path: '/ws',
 //     open(ws) { ws.subscribe('chat'); },
@@ -41,7 +41,7 @@ export function defineWebSocket<T = undefined>(handlers: WebSocketHandlers<T>): 
 
 type AnyHandlers = Callbacks<any> & { upgrade?: Upgrade<any> };
 
-const SERVER = Symbol.for("svelte-desktop.sockets.server");
+const SERVER = Symbol.for("kitop.sockets.server");
 const g = globalThis as { [SERVER]?: Server<any> };
 
 /** Server code anywhere (one server per app: shared through globalThis, whichever bundle calls it). */
@@ -75,7 +75,7 @@ export function socketPath(handlers: AnyHandlers, pathname: string): boolean {
 }
 
 // Each socket keeps the handlers that upgraded it (dev reloads apply to the next socket, not mid-way).
-const OWN = Symbol("svelte-desktop.socket.handlers");
+const OWN = Symbol("kitop.socket.handlers");
 type Carried = SocketData<unknown> & { [OWN]?: AnyHandlers };
 
 /** Upgrade `req` on `server` if it asks for it on one of the paths: undefined when upgraded, a

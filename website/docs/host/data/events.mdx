@@ -101,7 +101,7 @@ Calls local listeners synchronously. `name` is a `string`, `payload` is `unknown
 
 ### `emitTo(windowId, name, payload?)`
 
-Local only, despite its name: it does not reach another page or process, so use `host.broadcast` for that. Returns `Promise<void>`. `'main'` or `'0'` calls `host.events.emit` in this context; a string holding a positive integer does not reach `host.events.on` listeners. It dispatches on the platform event bus, so `host.on(name, fn)` and `onWindow(id, name, fn)` (from `@svelte-desktop/shell/platform`) receive it, with `windowId` added to the payload (object payloads gain `windowId`, other values become `{ windowId, data }`); anything else rejects with `invalid_args`.
+Local only, despite its name: it does not reach another page or process, so use `host.broadcast` for that. Returns `Promise<void>`. `'main'` or `'0'` calls `host.events.emit` in this context; a string holding a positive integer does not reach `host.events.on` listeners. It dispatches on the platform event bus, so `host.on(name, fn)` and `onWindow(id, name, fn)` (from `@kitop/shell/platform`) receive it, with `windowId` added to the payload (object payloads gain `windowId`, other values become `{ windowId, data }`); anything else rejects with `invalid_args`.
 
 ### `init()`
 

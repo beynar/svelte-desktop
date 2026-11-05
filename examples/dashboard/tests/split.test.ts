@@ -1,7 +1,7 @@
 // The example as it ships: its tabs in panes (`bun run build`). The other tests build with
 // `bun run build:test`, one page at a time; this one is for a build without it.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 let app: AppHandle;
 const until = async (check: () => Promise<boolean>, what: string, ms = 15_000) => {

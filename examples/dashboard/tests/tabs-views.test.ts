@@ -1,7 +1,7 @@
 // The views of kept-alive tabs (bun test tests/tabs-views.test.ts): one kept ready (`prewarm`), at
 // most one running (`maxViews={1}`: the others suspended), and a launch opening on the saved tab.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 let app: AppHandle;
 type View = { id: string; url: string | null };

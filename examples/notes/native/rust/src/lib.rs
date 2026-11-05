@@ -1,7 +1,7 @@
 // Native plugin in Rust: every command is callable from pages and server code,
 // typed — nativeModule('hello').rust({ name }) (types in src/native.d.ts, written by the build).
 use serde::{Deserialize, Serialize};
-use svelte_desktop::{plugin, Error, Plugin, TS};
+use kitop::{plugin, Error, Plugin, TS};
 
 #[derive(Deserialize, TS)]
 struct GreetArgs {

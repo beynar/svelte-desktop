@@ -27,6 +27,6 @@ An app that only wants its menus translated still lists the language, with nothi
 | Items macOS adds itself (Start Dictation, Emoji & Symbols, AutoFill) | macOS |
 | Menu items your app writes | You: they're your labels. Only the shell's exact English labels are translated. |
 
-The build writes `CFBundleLocalizations` and a `<language>.lproj/InfoPlist.strings` per language. In `vite dev`, the shell gets the list instead (there's no bundle), and `SVELTE_DESKTOP_LANGUAGE=fr` forces a language for a run.
+The build writes `CFBundleLocalizations` and a `<language>.lproj/InfoPlist.strings` per language. In `vite dev`, the shell gets the list instead (there's no bundle), and `KITOP_LANGUAGE=fr` forces a language for a run.
 
 Linux and Windows menus stay in the config's language for now.

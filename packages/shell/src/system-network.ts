@@ -97,8 +97,8 @@ const env = (k: string) => process.env[k] ?? process.env[k.toLowerCase()];
 /** Server code's network like the system's (see the top of this file). Synchronous: before the
  *  server starts, so before its first request. Child processes inherit it. */
 export function applySystemNetwork(config: NetworkConfig = {}) {
-  if (process.env.SVELTE_DESKTOP_NETWORK_APPLIED) return;
-  process.env.SVELTE_DESKTOP_NETWORK_APPLIED = "1";
+  if (process.env.KITOP_NETWORK_APPLIED) return;
+  process.env.KITOP_NETWORK_APPLIED = "1";
   if (config.systemCertificates !== false) process.env.NODE_USE_SYSTEM_CA ??= "1";
   if (config.systemProxy !== false && !env("HTTP_PROXY") && !env("HTTPS_PROXY") && !env("ALL_PROXY")) {
     const p = systemProxy();

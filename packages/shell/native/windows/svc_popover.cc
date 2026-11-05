@@ -32,7 +32,7 @@ static std::map<std::string, Popover *> g_popovers;
 static std::string g_tray_popover;
 static int g_next_native = 1000;
 static const UINT_PTR kPendingTimer = 7;
-static const wchar_t *kPopoverClass = L"SvelteDesktopPopover";
+static const wchar_t *kPopoverClass = L"KitopPopover";
 
 static Popover *find_native(int nativeId) {
   for (auto &[id, p] : g_popovers)

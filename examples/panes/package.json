@@ -8,7 +8,7 @@
 		"build": "bunx --bun vite build",
 		"test": "bun test --timeout 60000 tests/",
 		"prepare": "svelte-kit sync || echo ''",
-		"postinstall": "ln -sfn ../../../../packages/shell node_modules/@svelte-desktop/shell-link && rm -rf node_modules/@svelte-desktop/shell && mv node_modules/@svelte-desktop/shell-link node_modules/@svelte-desktop/shell"
+		"postinstall": "ln -sfn ../../../../packages/shell node_modules/@kitop/shell-link && rm -rf node_modules/@kitop/shell && mv node_modules/@kitop/shell-link node_modules/@kitop/shell"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-bun": "1.0.0-next.2",
@@ -20,7 +20,7 @@
 		"vite": "^8.1.5"
 	},
 	"dependencies": {
-		"@svelte-desktop/shell": "file:../../packages/shell"
+		"@kitop/shell": "file:../../packages/shell"
 	},
 	"imports": {
 		"#lib/*": "./src/lib/*"

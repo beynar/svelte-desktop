@@ -1,4 +1,4 @@
-#import "SvelteDesktop.h"
+#import "KitopObjC.h"
 
 static const sd_host *g_host;
 
@@ -32,7 +32,7 @@ void SDCommand(NSString *name, void (^handler)(NSDictionary *, SDReply)) {
 void SDEmit(NSString *event, id data) { g_host->emit(event.UTF8String, SDJSON(data).UTF8String); }
 NSWindow *SDWindow(int windowId) { return (__bridge NSWindow *)g_host->window(windowId); }
 NSError *SDError(NSString *code, NSString *message) {
-  return [NSError errorWithDomain:@"svelte-desktop" code:1 userInfo:@{@"code" : code, NSLocalizedDescriptionKey : message}];
+  return [NSError errorWithDomain:@"kitop" code:1 userInfo:@{@"code" : code, NSLocalizedDescriptionKey : message}];
 }
 
 int sd_plugin_init(const sd_host *host) {

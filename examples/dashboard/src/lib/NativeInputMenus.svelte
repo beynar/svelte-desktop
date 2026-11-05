@@ -32,9 +32,9 @@
 		note(`Exclusive selection: Write=${a?.checked}, Read=${b?.checked}`);
 	}
 	async function copy() {
-		const result = await host.clipboard.write({ text: 'Dashboard copy', html: '<b>Dashboard copy</b>', formats: { 'com.svelte-desktop.dashboard': btoa('native-copy') } });
-		const data = await host.clipboard.read({ formats: ['text/plain', 'text/html', 'com.svelte-desktop.dashboard'] });
-		note(`Copy #${result.changeCount}: ${result.changeCount - result.previousChangeCount} ownership change, ${Object.keys(data.formats).length} representations; ${atob(data.formats['com.svelte-desktop.dashboard'] ?? '')}`);
+		const result = await host.clipboard.write({ text: 'Dashboard copy', html: '<b>Dashboard copy</b>', formats: { 'com.kitop.dashboard': btoa('native-copy') } });
+		const data = await host.clipboard.read({ formats: ['text/plain', 'text/html', 'com.kitop.dashboard'] });
+		note(`Copy #${result.changeCount}: ${result.changeCount - result.previousChangeCount} ownership change, ${Object.keys(data.formats).length} representations; ${atob(data.formats['com.kitop.dashboard'] ?? '')}`);
 	}
 	const MENU_OWNER = 'dashboard:demo-menu-owner';
 	const menuOwner = crypto.randomUUID();

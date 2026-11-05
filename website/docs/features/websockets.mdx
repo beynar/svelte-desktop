@@ -6,7 +6,7 @@ description: WebSockets on the app's own server, from src/websocket.ts — only 
 `src/websocket.ts` declares the app server's sockets. The server upgrades the paths it names:
 
 ```ts src/websocket.ts
-import { defineWebSocket } from '@svelte-desktop/shell/websocket';
+import { defineWebSocket } from '@kitop/shell/websocket';
 
 export default defineWebSocket<{ user: string }>({
   path: '/ws',                                   // or ['/ws', '/rooms/*']
@@ -38,7 +38,7 @@ If `open` throws, the socket closes with code 1011: it isn't set up.
 A remote function, a server callback for a job or a server timer reaches the sockets subscribed to a topic:
 
 ```ts
-import { sockets } from '@svelte-desktop/shell/websocket';
+import { sockets } from '@kitop/shell/websocket';
 
 sockets.publish('chat', { type: 'new-message', id });  // objects are sent as JSON
 sockets.subscribers('chat');                            // how many are listening

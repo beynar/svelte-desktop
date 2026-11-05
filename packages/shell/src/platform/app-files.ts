@@ -51,7 +51,7 @@ function viaServer(op: 'read' | 'write', dir: AppDir, name: string, text?: strin
 async function run(op: 'read' | 'write', dir: AppDir, name: string, text?: string): Promise<string | null> {
 	if (!isPage) return local(op, dir, name, text);
 	if (!platformReady()) {
-		const key = `svelte-desktop:${dir}/${name}`;
+		const key = `kitop:${dir}/${name}`;
 		if (op === 'write') localStorage.setItem(key, text ?? '');
 		return op === 'write' ? null : localStorage.getItem(key);
 	}

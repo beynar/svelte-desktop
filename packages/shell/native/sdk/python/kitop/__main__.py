@@ -1,5 +1,5 @@
-"""python -m svelte_desktop run <dir>        serve the shell's calls (the app starts this)
-python -m svelte_desktop describe <dir>   print the commands and their TypeScript types (the build)"""
+"""python -m kitop run <dir>        serve the shell's calls (the app starts this)
+python -m kitop describe <dir>   print the commands and their TypeScript types (the build)"""
 
 import json
 import sys

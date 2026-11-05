@@ -3,7 +3,7 @@
 import { runShell } from "../main.ts";
 import type { ShellOptions } from "../types.ts";
 
-const cfg = JSON.parse(process.env.SVELTE_DESKTOP_DEV ?? "{}") as Omit<ShellOptions, "createWorker"> & { url: string };
+const cfg = JSON.parse(process.env.KITOP_DEV ?? "{}") as Omit<ShellOptions, "createWorker"> & { url: string };
 await runShell({
   ...cfg,
   window: cfg.window === false ? false : { debug: true, readyTimeoutMs: 8000, ...cfg.window },

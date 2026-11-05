@@ -8,12 +8,12 @@ import { dirname, join, resolve } from "node:path";
 import type { Arch } from "./package.ts";
 
 const NATIVE = resolve(import.meta.dir, "../../native");
-const SOURCES = [join(NATIVE, "sdk/ai/AppleIntelligence.swift"), join(NATIVE, "include/SvelteDesktop.swift"), join(NATIVE, "include/svelte_desktop.h")];
+const SOURCES = [join(NATIVE, "sdk/ai/AppleIntelligence.swift"), join(NATIVE, "include/Kitop.swift"), join(NATIVE, "include/kitop.h")];
 export const AI_LIB = "libshell-ai.dylib";
 
 /** The library for `arch`, or null when it can't be built here (no Swift toolchain). */
 export async function ensureAiPlugin(arch: Arch, warn?: (m: string) => void): Promise<string | null> {
-  const prebuilt = process.env[`SVELTE_DESKTOP_LIBSHELL_AI_${arch.toUpperCase()}`] ?? process.env.SVELTE_DESKTOP_LIBSHELL_AI;
+  const prebuilt = process.env[`KITOP_LIBSHELL_AI_${arch.toUpperCase()}`] ?? process.env.KITOP_LIBSHELL_AI;
   if (prebuilt) return prebuilt;
   if (process.platform !== "darwin") return null;
   const out = join(NATIVE, "build", `darwin-${arch === "arm64" ? "arm64" : "x86_64"}`, AI_LIB);

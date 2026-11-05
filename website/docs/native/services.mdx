@@ -57,7 +57,7 @@ export async function POST() {
 }
 ```
 
-`counter.send(data)` delivers a message to the child's `message` handler. The app stops running services when it quits; call `await counter.stop()` to stop one earlier. Every `start` creates a separate child; there is no automatic singleton per service name. `HostService` is a global type supplied by the app's generated host declarations. You can instead import `ServiceFunction` as a type from `@svelte-desktop/shell/server`.
+`counter.send(data)` delivers a message to the child's `message` handler. The app stops running services when it quits; call `await counter.stop()` to stop one earlier. Every `start` creates a separate child; there is no automatic singleton per service name. `HostService` is a global type supplied by the app's generated host declarations. You can instead import `ServiceFunction` as a type from `@kitop/shell/server`.
 
 ## Threads and processes
 
@@ -79,7 +79,7 @@ Restarts are off by default. With a restart policy, each unexpected exit, includ
 
 In `vite dev`, files in `src/services/` run directly with Bun through the service runner. Edits affect new children; they do not reload a running service. Stop and start it to use new code.
 
-In a packaged app, the adapter embeds each service and its IPC runner, then starts the app's own executable with `SVELTE_DESKTOP_SERVICE`. No external Bun installation or Bun CLI is needed, including with `build.trim`. Service files must be directly inside `src/services/`, have names containing letters, numbers, underscores or hyphens, and end in `.ts` or `.js`. They build as standalone Bun modules, outside the SvelteKit/Vite module pipeline; use ordinary module imports rather than assuming SvelteKit aliases are available.
+In a packaged app, the adapter embeds each service and its IPC runner, then starts the app's own executable with `KITOP_SERVICE`. No external Bun installation or Bun CLI is needed, including with `build.trim`. Service files must be directly inside `src/services/`, have names containing letters, numbers, underscores or hyphens, and end in `.ts` or `.js`. They build as standalone Bun modules, outside the SvelteKit/Vite module pipeline; use ordinary module imports rather than assuming SvelteKit aliases are available.
 
 Children inherit the parent's current environment and working directory. Service options configure messaging, startup timeout and restarts; they do not expose custom `env` or `cwd` options. Pass application-specific startup values as `args`.
 

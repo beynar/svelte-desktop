@@ -27,11 +27,11 @@ export async function sizeFlags(c: ResolvedConfig, bun: string, opts: { aot: boo
   const flags: string[] = [];
   if (c.build?.trim ?? has.trim) {
     if (has.trim) flags.push("--trim", "--trim-locales=en");
-    else opts.warn("build.trim: this Bun has no --trim (canary today: build.bun or $SVELTE_DESKTOP_BUN) — skipped");
+    else opts.warn("build.trim: this Bun has no --trim (canary today: build.bun or $KITOP_BUN) — skipped");
   }
   if (c.build?.aot && opts.aot) {
     if (has.aot) flags.push("--aot");
-    else opts.warn("build.aot: this Bun has no --aot (canary today: build.bun or $SVELTE_DESKTOP_BUN) — skipped");
+    else opts.warn("build.aot: this Bun has no --aot (canary today: build.bun or $KITOP_BUN) — skipped");
   }
   return flags;
 }

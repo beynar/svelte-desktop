@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import type { ServiceHandle } from '@svelte-desktop/shell/server';
+import type { ServiceHandle } from '@kitop/shell/server';
 
 let counter: Promise<ServiceHandle> | undefined;
 export async function POST({ request, url }) {

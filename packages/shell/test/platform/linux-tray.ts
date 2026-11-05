@@ -13,7 +13,7 @@ export default async (t: Harness) => {
   t.check("tray.isSet false initially", (await t.call("tray", "isSet")).value === false);
   const badFirst = await t.call("tray", "set", { title: "x", badgeColor: "nope" });
   t.check("invalid tray.set → invalid_args and creates nothing", badFirst.error?.code === "invalid_args" && (await t.call("tray", "isSet")).value === false, badFirst);
-  const set = await t.call("tray", "set", { title: "SD", tooltip: "svelte-desktop harness" });
+  const set = await t.call("tray", "set", { title: "SD", tooltip: "kitop harness" });
   t.check("tray.set {title,tooltip} → {set:true}", set.ok && set.value.set === true, set);
   t.check("tray.isSet / exists alias → true", (await t.call("tray", "isSet")).value === true && (await t.call("tray", "exists")).value === true);
   t.check("tray.getBounds → null (SNI doesn't expose the icon position)", (await t.call("tray", "getBounds")).value === null);

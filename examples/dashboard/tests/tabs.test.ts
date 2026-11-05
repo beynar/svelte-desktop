@@ -1,7 +1,7 @@
 // Tabs in the dashboard (bun test tests/tabs.test.ts): the window's tabs in the title bar and tabs
 // inside pages, driven in the real window — screenshots in /tmp/dashboard-tabs-*.png.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 let app: AppHandle;
 const titles = (bar: string) => app.eval<string[]>(`[...document.querySelectorAll('${bar} [role=tab]')].map((t) => t.textContent.replace('✕', '').trim())`);

@@ -170,7 +170,7 @@ int resolve_window(const Call &c) {
 
 std::string app_name() { return !g_name_override.empty() ? g_name_override : !g_app_name.empty() ? g_app_name : "App"; }
 std::string app_identifier() {
-  return !g_identifier_override.empty() ? g_identifier_override : !g_app_identifier.empty() ? g_app_identifier : "dev.svelte-desktop.app";
+  return !g_identifier_override.empty() ? g_identifier_override : !g_app_identifier.empty() ? g_app_identifier : "dev.kitop.app";
 }
 std::string app_version() { return g_app_version.empty() ? "0.0.0" : g_app_version; }
 void set_app_name_override(const std::string &n) { g_name_override = n; }
@@ -490,7 +490,7 @@ static void on_script_message(WebKitUserContentManager *, WebKitJavascriptResult
   if (!msg.is_object()) return;
   bool trusted = msg.contains("n") && msg["n"].is_string() && msg["n"].get<std::string>() == it->second.nonce;
   msg.erase("n");
-  static const bool trace = getenv("SVELTE_DESKTOP_BRIDGE_DEBUG") != nullptr;
+  static const bool trace = getenv("KITOP_BRIDGE_DEBUG") != nullptr;
   if (trace) fprintf(stderr, "[shell] bridge %d %s origin=%s trusted=%d %.200s\n", id, msg.value("t", "").c_str(), it->second.origin.c_str(), trusted, msg.dump().c_str());
   on_bridge_message(id, msg.dump(), it->second.origin, trusted);
 }
@@ -783,7 +783,7 @@ SHELL_API int shell_window_create(const char *opts_json) {
   take("identifier", lx::g_app_identifier);
   take("version", lx::g_app_version);
   if (lx::g_app_version.empty())
-    if (const char *v = getenv("SVELTE_DESKTOP_APP_VERSION")) lx::g_app_version = v;
+    if (const char *v = getenv("KITOP_APP_VERSION")) lx::g_app_version = v;
   return lx::create_window(o);
 }
 

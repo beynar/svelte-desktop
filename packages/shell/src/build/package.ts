@@ -46,7 +46,7 @@ export function libshellPath(arch: Arch, os: LibOS = hostLibOS): string {
 
 export async function ensureLibshell(arch: Arch, os: LibOS = hostLibOS): Promise<string> {
   // Prebuilt override (CI, published packages with prebuilt binaries).
-  const prebuilt = process.env[`SVELTE_DESKTOP_LIBSHELL_${arch.toUpperCase()}`] ?? (arch === hostArch && os === hostLibOS ? process.env.SVELTE_DESKTOP_LIBSHELL : undefined);
+  const prebuilt = process.env[`KITOP_LIBSHELL_${arch.toUpperCase()}`] ?? (arch === hostArch && os === hostLibOS ? process.env.KITOP_LIBSHELL : undefined);
   if (prebuilt) return prebuilt;
   const lib = libshellPath(arch, os);
   if (os === "linux") {
@@ -265,7 +265,7 @@ export function localizedStrings(c: ResolvedConfig): Record<string, string> {
 // Compile
 
 async function compile(c: ResolvedConfig, stage: string, out: string, arch: Arch): Promise<void> {
-  const bun = c.build?.bun ?? process.env.SVELTE_DESKTOP_BUN ?? process.execPath;
+  const bun = c.build?.bun ?? process.env.KITOP_BUN ?? process.execPath;
   // A desktop app must not pick up bunfig.toml / .env from whatever directory it
   // is launched in (behavior changes, environment injection).
   const flags = ["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv", ...(await sizeFlags(c, bun, { aot: arch === hostArch, warn: (m) => console.log(`  \x1b[33m!\x1b[0m ${m}`) }))]; // --aot can't cross-compile
@@ -461,7 +461,7 @@ export async function writeRelease(c: ResolvedConfig, app: string, arches: Arch[
     artifacts: Object.fromEntries(keys.map((k) => [k, artifact])),
     ...(patches.length ? { patches: Object.fromEntries(keys.map((k) => [k, patches])) } : {}),
   };
-  const keyPath = c.update!.privateKey ?? process.env.SVELTE_DESKTOP_UPDATE_KEY;
+  const keyPath = c.update!.privateKey ?? process.env.KITOP_UPDATE_KEY;
   const manifestPath = join(dist, "release", "update.json");
   if (keyPath && existsSync(resolve(c.root, keyPath))) {
     const signedManifest = await signManifest(manifest as any, privateKeyFromText(await Bun.file(resolve(c.root, keyPath)).text()));
@@ -470,6 +470,6 @@ export async function writeRelease(c: ResolvedConfig, app: string, arches: Arch[
     return { dir, manifest: manifestPath, artifact: artifactPath, signed: true };
   }
   await Bun.write(manifestPath.replace(/\.json$/, ".unsigned.json"), JSON.stringify(manifest, null, 2));
-  log(`release  ${dir}/${file} (update.unsigned.json — set update.privateKey or $SVELTE_DESKTOP_UPDATE_KEY to sign)`);
+  log(`release  ${dir}/${file} (update.unsigned.json — set update.privateKey or $KITOP_UPDATE_KEY to sign)`);
   return { dir, manifest: manifestPath.replace(/\.json$/, ".unsigned.json"), artifact: artifactPath, signed: false };
 }

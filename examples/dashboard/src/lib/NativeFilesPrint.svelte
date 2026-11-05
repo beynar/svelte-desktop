@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Button } from 'entasis/button';
-	import type { DownloadRecord } from '@svelte-desktop/shell/platform';
+	import type { DownloadRecord } from '@kitop/shell/platform';
 	let items = $state<DownloadRecord[]>([]);
 	let message = $state({ downloads: '', print: '', bookmarks: '' });
 	let url = $state('');

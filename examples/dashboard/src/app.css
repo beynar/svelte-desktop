@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 /* material-sidebar, material-glass…: the shell's native materials as utilities. */
-@plugin '@svelte-desktop/shell/tailwind';
+@plugin '@kitop/shell/tailwind';
 
 @plugin 'entasis/tailwind-plugin/theme' {
 	name: light;

@@ -9,7 +9,7 @@ import { socketCallbacks, socketServer, upgradeSocket, type WebSocketHandlers } 
 
 type KitHandler = (req: Request, server: Server<any>) => Response | Promise<Response>;
 
-export const SESSION_COOKIE = "__svelte_desktop";
+export const SESSION_COOKIE = "__kitop";
 export const AUTH_PATH = "/__desktop/auth";
 
 export interface GateOptions {
@@ -85,7 +85,7 @@ export function startGate(o: GateOptions): { server: Server<any>; origin: string
       if (callback) return callback;
 
       const cookie = req.headers.get("cookie") ?? "";
-      const got = /(?:^|;\s*)__svelte_desktop=([0-9a-f]+)/.exec(cookie)?.[1] ?? "";
+      const got = /(?:^|;\s*)__kitop=([0-9a-f]+)/.exec(cookie)?.[1] ?? "";
       if (!timingSafeEqual(got, session)) return new Response("Forbidden", { status: 403 });
 
       const oauth = await oauthRoutes(req, url);

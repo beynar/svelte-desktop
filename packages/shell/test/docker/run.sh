@@ -9,7 +9,7 @@ set -e
 here=$(cd "$(dirname "$0")" && pwd)
 shell=$(cd "$here/../.." && pwd)      # packages/shell
 repo=$(cd "$shell/../.." && pwd)      # repository root
-IMAGE=${IMAGE:-svelte-desktop-linux}
+IMAGE=${IMAGE:-kitop-linux}
 cmd=${1:-platform}; [ $# -gt 0 ] && shift
 [ "$cmd" = image ] || docker image inspect "$IMAGE" >/dev/null 2>&1 || docker build -t "$IMAGE" "$shell/native/docker"
 case "$cmd" in

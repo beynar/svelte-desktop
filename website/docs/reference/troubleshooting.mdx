@@ -15,7 +15,7 @@ Built apps started from Finder, a launcher or Explorer have no terminal, so outp
 | Linux | `$XDG_STATE_HOME/<identifier>/logs` (default `~/.local/state`) |
 | Windows | `%LOCALAPPDATA%\<identifier>\Logs` |
 
-The file rotates at 5 MB and keeps one previous file, `app.log.1`. Uncaught errors from both threads are written there. `vite dev` and a build started from a terminal print to the terminal; set `SVELTE_DESKTOP_LOG=file` or `stdout` to force either. See [Architecture](/concepts/architecture#built-in).
+The file rotates at 5 MB and keeps one previous file, `app.log.1`. Uncaught errors from both threads are written there. `vite dev` and a build started from a terminal print to the terminal; set `KITOP_LOG=file` or `stdout` to force either. See [Architecture](/concepts/architecture#built-in).
 
 ## The app crashed
 
@@ -38,7 +38,7 @@ The desktop plugin runs on Bun. Start Vite through Bun: `bunx --bun vite dev` (o
 
 ## `doctor` reports a failure
 
-[`bunx svelte-desktop doctor`](/reference/cli#doctor) checks Bun, the host toolchain, the config and, on macOS, the signing identities and notary profile. Fix the item it names. A failed check does not change the exit status, and warnings are fine for a first build.
+[`bunx kitop doctor`](/reference/cli#doctor) checks Bun, the host toolchain, the config and, on macOS, the signing identities and notary profile. Fix the item it names. A failed check does not change the exit status, and warnings are fine for a first build.
 
 ## A native plugin doesn't build
 

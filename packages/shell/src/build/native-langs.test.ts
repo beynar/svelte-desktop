@@ -46,7 +46,7 @@ test("NativeModules: one entry per service, commands from every language, untype
   ]);
   const text = readFileSync(file, "utf8");
   expect(file).toBe(join(tmp, "src", "native.d.ts"));
-  expect(text).toContain("declare module '@svelte-desktop/shell/native'");
+  expect(text).toContain("declare module '@kitop/shell/native'");
   expect(text).toContain('"hello": {\n\t\t\trust(args: { name: string }): Promise<{ message: string }>;\n\t\t\tgo(args: { name: string }): Promise<{ message: string }>;\n\t\t};');
   expect(text).toContain("now(): Promise<number>;"); // no arguments
   expect(text).toContain("ping(args?: Record<string, unknown>): Promise<unknown>;"); // untyped (C, ObjC)

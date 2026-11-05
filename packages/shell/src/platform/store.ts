@@ -1,6 +1,6 @@
 /**
  * Persisted JSON key-value store. Pure JS: a flat record flushed to
- * `${app.getPath('userData')}/svelte-desktop-store.json`, this app's own —
+ * `${app.getPath('userData')}/kitop-store.json`, this app's own —
  * writes are debounced 250ms so bursts of set() calls coalesce into one write.
  * From a page, the app's server process does the file I/O (app-files.ts).
  * Call load() once at init (the stores-module `store` namespace does it);
@@ -8,7 +8,7 @@
  */
 import { readAppFile, writeAppFile } from './app-files';
 
-const FILE_NAME = 'svelte-desktop-store.json';
+const FILE_NAME = 'kitop-store.json';
 const SAVE_DEBOUNCE_MS = 250;
 
 let data: Record<string, unknown> = {};

@@ -10,7 +10,7 @@ A sidecar is an executable shipped beside your app and started by server code. P
 Supply an `ffmpeg` executable for each target you ship. The framework copies these files; it does not download or compile them.
 
 ```ts desktop.config.ts
-import { defineConfig } from '@svelte-desktop/shell/config';
+import { defineConfig } from '@kitop/shell/config';
 
 export default defineConfig({
   appName: 'Media Tools',
@@ -83,7 +83,7 @@ Names used by `host.sidecar` may contain letters, numbers, dots, underscores and
 | Bundle | `Contents/MacOS/<name>` | Beside the app executable as `<name>` | Beside the app executable as `<name>.exe` |
 | Executable mode | Bundle copy gets `chmod +x` | Bundle copy gets mode `0755` | Copied as an executable; warns if it lacks a PE header |
 
-The Vite plugin resolves dev paths from the project root and exposes them through `SVELTE_DESKTOP_SIDECAR_<NAME>` environment variables, with punctuation in the uppercase name replaced by underscores. In dev, source files on macOS and Linux must already be executable (`chmod +x`); otherwise `host.sidecar` rejects with a spawn error. A bundle build fails if a selected source file is missing. Dependent libraries or companion resource files are not collected automatically.
+The Vite plugin resolves dev paths from the project root and exposes them through `KITOP_SIDECAR_<NAME>` environment variables, with punctuation in the uppercase name replaced by underscores. In dev, source files on macOS and Linux must already be executable (`chmod +x`); otherwise `host.sidecar` rejects with a spawn error. A bundle build fails if a selected source file is missing. Dependent libraries or companion resource files are not collected automatically.
 
 Restart Vite after changing the mapping. The framework does not build or hot-reload the sidecar. Replacing an executable does not replace an already running process; stop it and spawn a new one.
 

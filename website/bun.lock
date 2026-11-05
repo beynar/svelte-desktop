@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "svelte-desktop-docs",
+      "name": "kitop-docs",
       "dependencies": {
         "blume": "^2.2.6",
       },

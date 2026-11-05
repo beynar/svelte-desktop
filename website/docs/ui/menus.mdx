@@ -106,7 +106,7 @@ lifecycle subscriptions receive no events and `closePopup` rejects with `unsuppo
 
 ```svelte
 <script>
-  import MenuBar from '@svelte-desktop/shell/platform/MenuBar.svelte';
+  import MenuBar from '@kitop/shell/platform/MenuBar.svelte';
 </script>
 
 <MenuBar label="Tools" items={[
@@ -152,7 +152,7 @@ await host.menu.addRecentDocument('/Users/me/notes.md'); // the system's recent 
 The older server API takes the whole menu bar as `label`/`submenu` items. Prefer `host.menu.setAppMenu` for new code. Clicks on items with an `id` arrive as `menu` events in the server.
 
 ```ts src/hooks.server.ts
-import { onDesktopReady } from '@svelte-desktop/shell/server';
+import { onDesktopReady } from '@kitop/shell/server';
 
 onDesktopReady((desktop) => {
   desktop.menu.set([

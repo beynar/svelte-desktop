@@ -48,7 +48,7 @@ export interface DesktopApi {
   readonly menu: { set(spec: MenuItemSpec[]): void };
   /** Native events: focus/blur, menu clicks, external navigations, wake... */
   on<T extends ShellEvent["type"]>(type: T, fn: (e: Extract<ShellEvent, { type: T }>) => void): () => void;
-  /** Push a JSON message to every open page (see `@svelte-desktop/shell/client`). */
+  /** Push a JSON message to every open page (see `@kitop/shell/client`). */
   publish(type: string, data?: unknown): void;
   openExternal(url: string): Promise<void>;
   onBeforeQuit(fn: () => void | Promise<void>): void;

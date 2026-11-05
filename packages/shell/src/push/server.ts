@@ -3,7 +3,7 @@
  * APNs (macOS) and Web Push (browsers, and your own push server for macOS / Windows / Linux).
  * No dependencies: WebCrypto for the JWTs and the Web Push encryption, node:http2 for APNs.
  *
- *   import { createPush } from '@svelte-desktop/shell/push';
+ *   import { createPush } from '@kitop/shell/push';
  *   const push = createPush({
  *     apns: { teamId, keyId, key: await Bun.file('AuthKey.p8').text() },
  *     webpush: { publicKey, privateKey, subject: 'mailto:ops@example.com' },

@@ -8,7 +8,7 @@ description: The user's shell in the app with xterm.js and Bun's pseudo-terminal
 Bun runs a program in a pseudo-terminal (`Bun.spawn` with `terminal`), so it behaves as in a real terminal: colors, prompts, full-screen programs like `vim` or `htop`. Run the user's shell on the app's server, and draw it in the page with [xterm.js](https://xtermjs.org). A [WebSocket](/features/websockets) carries the bytes both ways. Install the page's dependencies first: `bun add @xterm/xterm @xterm/addon-fit`.
 
 ```ts src/websocket.ts
-import { defineWebSocket } from '@svelte-desktop/shell/websocket';
+import { defineWebSocket } from '@kitop/shell/websocket';
 
 const shells = new Map<number, ReturnType<typeof Bun.spawn>>();
 let next = 1;

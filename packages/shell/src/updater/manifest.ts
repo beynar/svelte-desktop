@@ -27,7 +27,7 @@ export const PLATFORM_KEYS: readonly PlatformKey[] = [
 export const ARCHIVE_FORMATS: readonly ArchiveFormat[] = ["tar.zst", "tar.gz"];
 
 /** Domain separation: a signature over a manifest can't be replayed as anything else. */
-export const SIGNATURE_CONTEXT = "svelte-desktop/update-manifest/v1\n";
+export const SIGNATURE_CONTEXT = "kitop/update-manifest/v1\n";
 
 export interface Artifact {
 	/** Absolute, or relative to the manifest URL. */

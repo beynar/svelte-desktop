@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 
-from svelte_desktop import InvalidArgs, command, emit
+from kitop import InvalidArgs, command, emit
 
 
 @dataclass

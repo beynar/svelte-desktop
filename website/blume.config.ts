@@ -1,7 +1,7 @@
 import { defineConfig } from "blume";
 
 export default defineConfig({
-  title: "svelte-desktop",
+  title: "kitop",
   description:
     "Desktop apps from an unmodified SvelteKit app: one Vite plugin, one config file, Bun, the system web view, one signed binary.",
   logo: "/icon.svg",

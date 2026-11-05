@@ -1,5 +1,5 @@
 // Compiles an app's native plugin folder (Swift / Objective-C / C / C++) into
-// libapp-native.dylib against native/include/svelte_desktop.h. Frameworks are
+// libapp-native.dylib against native/include/kitop.h. Frameworks are
 // autolinked from `import X` (Swift) and `@import X;` (Objective-C modules).
 import { $ } from "bun";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
@@ -58,7 +58,7 @@ export async function buildNativePlugin(
     mkdirSync(objDir, { recursive: true });
     const objs: string[] = [];
     // The ObjC layer provides sd_plugin_init only for Swift-less plugins.
-    const helpers = swift.length ? [] : [join(include, "SvelteDesktop.m")];
+    const helpers = swift.length ? [] : [join(include, "KitopObjC.m")];
     for (const src of [...clangSrc, ...helpers]) {
       const obj = join(objDir, `${relative(c.native, src).replace(/[\/.]/g, "_")}.o`);
       const lang = /\.(m|mm)$/.test(src) ? ["-fobjc-arc", "-fmodules"] : [];
@@ -69,7 +69,7 @@ export async function buildNativePlugin(
     }
     const slice = join(objDir, "libapp-native.dylib");
     const r = swift.length
-      ? await $`swiftc -emit-library -module-name AppNative -swift-version 5 -O -target ${clangArch}-apple-macos${min} -import-objc-header ${join(include, "svelte_desktop.h")} ${swift} ${join(include, "SvelteDesktop.swift")} ${objs} -framework Cocoa -Xlinker -install_name -Xlinker @rpath/libapp-native.dylib -o ${slice}`.nothrow().quiet()
+      ? await $`swiftc -emit-library -module-name AppNative -swift-version 5 -O -target ${clangArch}-apple-macos${min} -import-objc-header ${join(include, "kitop.h")} ${swift} ${join(include, "Kitop.swift")} ${objs} -framework Cocoa -Xlinker -install_name -Xlinker @rpath/libapp-native.dylib -o ${slice}`.nothrow().quiet()
       : await $`clang -dynamiclib -arch ${clangArch} -mmacosx-version-min=${min} ${objs} -framework Cocoa -install_name @rpath/libapp-native.dylib -o ${slice}`.nothrow().quiet();
     if (r.exitCode !== 0) throw new Error(`native plugin link failed (${arch}):\n${r.stderr.toString()}${r.stdout.toString()}`);
     slices.push(slice);

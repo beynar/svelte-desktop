@@ -257,7 +257,7 @@ std::string app_name() {
   auto dot = name.rfind(L'.');
   return utf8(dot == std::wstring::npos ? name : name.substr(0, dot));
 }
-std::string app_identifier() { return g_app_identifier.empty() ? "dev.svelte-desktop.app" : g_app_identifier; }
+std::string app_identifier() { return g_app_identifier.empty() ? "dev.kitop.app" : g_app_identifier; }
 std::string app_version() {
   if (g_app_version.empty()) {
     g_app_version = packaged() ? exe_version() : "";
@@ -429,7 +429,7 @@ static void env_failed(HRESULT hr) {
   g_env_failed_shown = true;
   // Unattended runs (launch() tests, CI): no modal dialog, just quit.
   wchar_t flag[8];
-  bool unattended = GetEnvironmentVariableW(L"SVELTE_DESKTOP_TEST", flag, 8) || GetEnvironmentVariableW(L"SVELTE_DESKTOP_NO_DIALOGS", flag, 8);
+  bool unattended = GetEnvironmentVariableW(L"KITOP_TEST", flag, 8) || GetEnvironmentVariableW(L"KITOP_NO_DIALOGS", flag, 8);
   if (unattended) {
     emit_raw(json{{"type", "signal"}, {"signal", "SIGTERM"}});
     request_quit();
@@ -1101,8 +1101,8 @@ static LRESULT CALLBACK hidden_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-static const wchar_t *kWindowClass = L"SvelteDesktopWindow";
-const wchar_t *const kHiddenClass = L"SvelteDesktopHidden";
+static const wchar_t *kWindowClass = L"KitopWindow";
+const wchar_t *const kHiddenClass = L"KitopHidden";
 
 static void register_classes() {
   HINSTANCE inst = GetModuleHandleW(nullptr);
@@ -1119,7 +1119,7 @@ static void register_classes() {
   WNDCLASSEXW mc{sizeof mc};
   mc.lpfnWndProc = msg_proc;
   mc.hInstance = inst;
-  mc.lpszClassName = L"SvelteDesktopMessage";
+  mc.lpszClassName = L"KitopMessage";
   RegisterClassExW(&mc);
 
   WNDCLASSEXW hc{sizeof hc};
@@ -1139,7 +1139,7 @@ static void init_main_thread(const json &o) {
   enable_dpi_awareness();
   register_classes();
   HINSTANCE inst = GetModuleHandleW(nullptr);
-  HWND msgWnd = CreateWindowExW(0, L"SvelteDesktopMessage", nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, inst, nullptr);
+  HWND msgWnd = CreateWindowExW(0, L"KitopMessage", nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, inst, nullptr);
   g_msg.store(msgWnd);
   // Title = identifier: second instances find the holder with FindWindow (svc_app.cc).
   g_hidden = CreateWindowExW(WS_EX_TOOLWINDOW, kHiddenClass, wide(app_identifier()).c_str(), WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, inst, nullptr);

@@ -1,6 +1,6 @@
 // Tailwind CSS plugin (v4): the shell's native materials as utilities.
 //
-//   @plugin '@svelte-desktop/shell/tailwind';
+//   @plugin '@kitop/shell/tailwind';
 //
 //   <aside class="material-sidebar bg-surface">           the material in the app, bg-surface in a browser
 //   <div class="material-glass material-tint-primary/20 rounded-xl">

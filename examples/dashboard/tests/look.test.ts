@@ -1,6 +1,6 @@
 // Screenshots of the three pages (bun test tests/look.test.ts) — a visual check, not assertions.
 import { test } from 'bun:test';
-import { launch } from '@svelte-desktop/shell/test';
+import { launch } from '@kitop/shell/test';
 
 test('dashboard pages', async () => {
 	const app = await launch({ dev: true, env: { VITE_TABS_SPLIT: '0' } });

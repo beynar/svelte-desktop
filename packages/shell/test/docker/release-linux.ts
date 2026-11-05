@@ -36,7 +36,7 @@ for (const version of ["0.1.0", "0.2.0"]) {
 }
 const manifestText = readFileSync(join(out, "release/update.json"), "utf8");
 const m = await parseSignedManifest(manifestText, [publicKey]);
-check("update.json verifies with the public key (ed25519)", m.version === "0.2.0" && m.name === "dev.svelte-desktop.notes");
+check("update.json verifies with the public key (ed25519)", m.version === "0.2.0" && m.name === "dev.kitop.notes");
 const art = (m.artifacts as any)[key];
 check(`artifact under ${key} (tar.zst)`, art?.format === "tar.zst" && art.url === `0.2.0/svelte-notes-0.2.0-linux-${arch}.tar.zst`.replace("svelte-notes", "SvelteNotes"), art);
 const file = join(out, "release", art.url);

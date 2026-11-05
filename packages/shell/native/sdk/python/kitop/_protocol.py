@@ -105,7 +105,7 @@ def _default(value: Any) -> Any:
 def emit(event: str, data: Any = None) -> None:
     """Broadcasts an event to every page and to server code (`host.on(event, fn)`). Any thread."""
     if not _EVENT.match(event):
-        raise ValueError(f"svelte-desktop: event name {event!r} may only hold letters, digits and _ . : / -")
+        raise ValueError(f"kitop: event name {event!r} may only hold letters, digits and _ . : / -")
     send(f"V {event} {encode(data)}")
 
 

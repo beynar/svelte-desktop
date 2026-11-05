@@ -45,7 +45,7 @@ static std::map<int, int> g_owners; // the window of every view there was, this 
 static std::string g_focus_when_ready; // the view asked for the keyboard before it was ready
 static std::map<int, std::string> g_with_focus; // by native window: the view that last had the keyboard, until its page does
 static int g_next_embed = 2000;
-static const wchar_t *kEmbedClass = L"SvelteDesktopEmbeddedView";
+static const wchar_t *kEmbedClass = L"KitopEmbeddedView";
 
 static double scale_of(HWND hwnd) { return monitor_scale(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)); }
 

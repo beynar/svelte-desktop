@@ -28,7 +28,7 @@ import type { Arch, PackageResult } from "./package.ts";
 
 const shellRoot = resolve(import.meta.dir, "../..");
 const nativeRoot = join(shellRoot, "native");
-const IMAGE = process.env.SVELTE_DESKTOP_WINDOWS_IMAGE ?? "svelte-desktop-windows";
+const IMAGE = process.env.KITOP_WINDOWS_IMAGE ?? "kitop-windows";
 const log = (s: string) => console.log(`  \x1b[36m▸\x1b[0m ${s}`);
 const warn = (s: string) => console.log(`  \x1b[33m!\x1b[0m ${s}`);
 const mb = (p: string) => `${(statSync(p).size / 1048576).toFixed(1)} MB`;
@@ -90,17 +90,17 @@ export function shellDllPath(arch: Arch): string {
 
 /** shell.dll for `arch`: prebuilt override, else native/build/windows-<arch>/shell.dll (rebuilt in Docker when stale). */
 export async function ensureShellDll(arch: Arch): Promise<string> {
-  const prebuilt = process.env[`SVELTE_DESKTOP_SHELL_DLL_${arch.toUpperCase()}`] ?? (arch === "x64" ? process.env.SVELTE_DESKTOP_SHELL_DLL : undefined);
+  const prebuilt = process.env[`KITOP_SHELL_DLL_${arch.toUpperCase()}`] ?? (arch === "x64" ? process.env.KITOP_SHELL_DLL : undefined);
   if (prebuilt) return prebuilt;
   const dll = shellDllPath(arch);
-  const sources = ["windows", "portable", "shell.h", "include/svelte_desktop.h", "docker/windows/Dockerfile", "docker/windows/build.sh"].map((p) => join(nativeRoot, p));
+  const sources = ["windows", "portable", "shell.h", "include/kitop.h", "docker/windows/Dockerfile", "docker/windows/build.sh"].map((p) => join(nativeRoot, p));
   if (existsSync(dll) && statSync(dll).mtimeMs >= newestMtime(sources)) return dll;
   if (!(await hasDocker())) {
     if (existsSync(dll)) {
       warn(`shell.dll (${arch}) is older than native/windows sources and Docker is unavailable: using the stale build`);
       return dll;
     }
-    throw new Error(`shell.dll (${arch}) is not built and Docker is unavailable: run native/build-windows.sh ${arch} where Docker runs, or set SVELTE_DESKTOP_SHELL_DLL_${arch.toUpperCase()}`);
+    throw new Error(`shell.dll (${arch}) is not built and Docker is unavailable: run native/build-windows.sh ${arch} where Docker runs, or set KITOP_SHELL_DLL_${arch.toUpperCase()}`);
   }
   log(`native: building shell.dll (${arch}, llvm-mingw in Docker)`);
   const r = await $`${join(nativeRoot, "build-windows.sh")} ${arch}`.nothrow().quiet();
@@ -127,7 +127,7 @@ export async function buildWindowsPlugin(c: ResolvedConfig, arch: Arch, outDir: 
   if (!files.length) return null;
   const apple = files.filter((f) => /\.(swift|m|mm)$/.test(f));
   if (apple.length) {
-    log(`native plugin: skipped on Windows (${apple.map((f) => relative(c.root, f)).join(", ")}: Swift/Objective-C can't be cross-compiled; a C/C++ plugin against native/include/svelte_desktop.h ships on every OS)`);
+    log(`native plugin: skipped on Windows (${apple.map((f) => relative(c.root, f)).join(", ")}: Swift/Objective-C can't be cross-compiled; a C/C++ plugin against native/include/kitop.h ships on every OS)`);
     return null;
   }
   if (!(await hasDocker())) {
@@ -455,7 +455,7 @@ export function patchExeResources(exe: string, opts: { ico?: Buffer; version?: B
 // Compile
 
 async function compileExe(c: ResolvedConfig, stage: string, out: string, arch: Arch, ico: string | null): Promise<void> {
-  const bun = c.build?.bun ?? process.env.SVELTE_DESKTOP_BUN ?? process.execPath;
+  const bun = c.build?.bun ?? process.env.KITOP_BUN ?? process.execPath;
   // A desktop app must not pick up bunfig.toml / .env from its working directory.
   const flags = ["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv", `--target=bun-windows-${arch}`, "--windows-hide-console"];
   flags.push(...(await sizeFlags(c, bun, { aot: false, warn })));
@@ -524,7 +524,7 @@ const nsisStr = (s: string) => s.replace(/\$/g, "$$$$").replace(/"/g, '$\\"');
 /**
  * CLSID of the app's toast activator (COM server that receives toast clicks after the
  * app quit). Same derivation as notif::activator_clsid in native/portable/notifications.hpp:
- * FNV-1a 64 of "svelte-desktop:toast-activator:<id>" and of that + "#", laid out as a GUID
+ * FNV-1a 64 of "kitop:toast-activator:<id>" and of that + "#", laid out as a GUID
  * with version 5 / RFC 4122 variant bits. shell.dll registers it (HKCU CLSID LocalServer32,
  * AppUserModelId CustomActivator) and stamps it on the Start Menu shortcut
  * (System.AppUserModel.ToastActivatorCLSID) at startup: NSIS can't set shortcut properties.
@@ -535,7 +535,7 @@ export function toastActivatorClsid(identifier: string): string {
     for (const b of new TextEncoder().encode(s)) h = ((h ^ BigInt(b)) * 0x100000001b3n) & 0xffffffffffffffffn;
     return h;
   };
-  const base = `svelte-desktop:toast-activator:${identifier}`;
+  const base = `kitop:toast-activator:${identifier}`;
   const a = fnv(base), b = fnv(`${base}#`);
   const hex = (v: bigint, n: number) => v.toString(16).toUpperCase().padStart(n, "0");
   const d4 = Array.from({ length: 8 }, (_, i) => (b >> BigInt(56 - 8 * i)) & 0xffn);
@@ -550,7 +550,7 @@ export function nsisScript(c: ResolvedConfig, o: { exe: string; srcDir: string; 
   const uninst = `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${id}`;
   const open = `"$INSTDIR\\${exe}" "%1"`;
   const lines: string[] = [
-    "; Generated by @svelte-desktop/shell (package-windows.ts)",
+    "; Generated by @kitop/shell (package-windows.ts)",
     "Unicode true",
     "ManifestDPIAware true",
     "SetCompressor /SOLID lzma",
@@ -706,7 +706,7 @@ async function writeWindowsRelease(c: ResolvedConfig, appDir: string, exe: strin
     ...(previous?.patches ? { patches: Object.fromEntries(Object.entries(previous.patches).filter(([k]) => k !== key)) } : {}),
   };
   if (manifest.patches && !Object.keys(manifest.patches).length) delete manifest.patches;
-  const keyPath = c.update!.privateKey ?? process.env.SVELTE_DESKTOP_UPDATE_KEY;
+  const keyPath = c.update!.privateKey ?? process.env.KITOP_UPDATE_KEY;
   if (keyPath && existsSync(resolve(c.root, keyPath))) {
     const signed = await signManifest(manifest, privateKeyFromText(await Bun.file(resolve(c.root, keyPath)).text()));
     await Bun.write(manifestPath, JSON.stringify(signed, null, 2));
@@ -714,7 +714,7 @@ async function writeWindowsRelease(c: ResolvedConfig, appDir: string, exe: strin
     return { dir, manifest: manifestPath, artifact: artifactPath, signed: true };
   }
   await Bun.write(unsignedPath, JSON.stringify(manifest, null, 2));
-  log(`release  ${relative(dist, artifactPath)} (${mb(artifactPath)}) + update.unsigned.json [${Object.keys(manifest.artifacts).join(", ")}] (set update.privateKey or $SVELTE_DESKTOP_UPDATE_KEY to sign)`);
+  log(`release  ${relative(dist, artifactPath)} (${mb(artifactPath)}) + update.unsigned.json [${Object.keys(manifest.artifacts).join(", ")}] (set update.privateKey or $KITOP_UPDATE_KEY to sign)`);
   return { dir, manifest: unsignedPath, artifact: artifactPath, signed: false };
 }
 

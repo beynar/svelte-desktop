@@ -170,7 +170,7 @@ Asks for the notification permission first when needed.
 Taps on push notifications are ordinary `notificationResponse`s, with `payload`
 taken from the push.
 
-## Push wire format (what `@svelte-desktop/shell/push` sends)
+## Push wire format (what `@kitop/shell/push` sends)
 
 - APNs: `{"aps": {"alert": {"title","subtitle","body"}, "sound", "badge", "thread-id",
   "mutable-content"}, "sd": "<payload JSON string>"}`, header
@@ -182,7 +182,7 @@ taken from the push.
 
 What each one offers, and where it lives here.
 
-| | Electron (`Notification`, `pushNotifications`) | Tauri (`notification` plugin) | svelte-desktop |
+| | Electron (`Notification`, `pushNotifications`) | Tauri (`notification` plugin) | kitop |
 |---|---|---|---|
 | title / body / subtitle | ✓ | ✓ | ✓ |
 | icon / image / attachment | icon | icon, largeIcon, attachments | `icon`, `image` (path, file:, data:, http(s), app URL) |
@@ -208,7 +208,7 @@ What each one offers, and where it lives here.
 | permission | `isSupported()` | `isPermissionGranted`, `requestPermission` | `isSupported()`, `permission` (reactive), `requestPermission()` |
 | remote push: register | APNs (macOS) | — (community plugins) | `host.push.register()`: APNs (macOS), your own push server (macOS, Windows, Linux), Web Push (browsers) |
 | remote push: receive | `received-apns-notification` | — | `push.on('message')`, taps = notification clicks, `push.on('token')` |
-| remote push: send | — | — | `@svelte-desktop/shell/push`: APNs (HTTP/2, JWT), Web Push (VAPID, aes128gcm), expired targets reported |
+| remote push: send | — | — | `@kitop/shell/push`: APNs (HTTP/2, JWT), Web Push (VAPID, aes128gcm), expired targets reported |
 | browser fallback | — | — | Notification API + service worker (`/__desktop/push-sw.js`) |
 
 Verified end to end: macOS (packaged app), Linux (Xvfb), Chrome (a real Web Push
@@ -222,9 +222,9 @@ Web Push (RFC 8030 delivery, RFC 8291 encryption, RFC 8292 VAPID) is an open
 protocol, so the same target and the same sender work against your own server.
 
 - **Server** — the wire rules (request validation, VAPID, limits, frames) live in one
-  runtime-free module, `@svelte-desktop/shell/push-protocol` (src/push/protocol.ts), and one
+  runtime-free module, `@kitop/shell/push-protocol` (src/push/protocol.ts), and one
   contract test suite (src/push/contract.testkit.ts) runs against both implementations:
-  `@svelte-desktop/shell/push-server`
+  `@kitop/shell/push-server`
   (Bun, bun:sqlite, anywhere) and `packages/push-worker` (Cloudflare Workers: one Durable
   Object per device with SQLite storage, hibernatable WebSocket, TTL alarm — `wrangler deploy`).
   - `POST /v1/subscribe` (`Authorization: Bearer <device secret>`, body

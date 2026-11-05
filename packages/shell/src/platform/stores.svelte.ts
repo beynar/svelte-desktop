@@ -1,9 +1,9 @@
 /**
- * svelte-desktop/stores — the public, reactive platform API.
+ * kitop/stores — the public, reactive platform API.
  *
  * One import gives app code every namespace:
  *
- *   import { app, theme, window, secureStorage } from 'svelte-desktop/stores';
+ *   import { app, theme, window, secureStorage } from 'kitop/stores';
  *   await initStores();
  *   {theme.dark ? 'dark' : 'light'}    // reactive — OS flips update live
  *   {app.info?.version}
@@ -1074,7 +1074,7 @@ export const menu = new MenuNamespace();
 
 // ── notifications ───────────────────────────────────────────────────
 
-declare const __SVELTE_DESKTOP_NOTIFICATIONS__: { foreground?: boolean } | undefined;
+declare const __KITOP_NOTIFICATIONS__: { foreground?: boolean } | undefined;
 
 class NotificationsNamespace extends PlatformNamespace {
 	/** 'unknown' until read; refreshed when the app comes back to front. */
@@ -1089,7 +1089,7 @@ class NotificationsNamespace extends PlatformNamespace {
 		if (!this.#bound) {
 			this.#bound = true;
 			onPlatform('appActivated', () => void this.refresh());
-			const config = typeof __SVELTE_DESKTOP_NOTIFICATIONS__ !== 'undefined' ? __SVELTE_DESKTOP_NOTIFICATIONS__ : undefined;
+			const config = typeof __KITOP_NOTIFICATIONS__ !== 'undefined' ? __KITOP_NOTIFICATIONS__ : undefined;
 			if (config?.foreground === false) void notificationsSvc.setForeground(false).catch(() => {});
 		}
 		await this.refresh();
@@ -1475,7 +1475,7 @@ class EventsNamespace extends PlatformNamespace {
 export const events = new EventsNamespace();
 
 // ── background jobs ─────────────────────────────────────────────────
-// Mirrors `jobs` from '@svelte-desktop/shell/server' (src/jobs/*.ts run in their own
+// Mirrors `jobs` from '@kitop/shell/server' (src/jobs/*.ts run in their own
 // processes): the server broadcasts snapshots on the `jobs` channel.
 
 export interface JobView {

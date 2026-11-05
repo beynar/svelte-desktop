@@ -3,7 +3,7 @@
 # aarch64 targets), the WebView2 SDK headers from NuGet, NSIS and osslsigncode.
 # Runs on linux/arm64 and linux/amd64 hosts (llvm-mingw ships both host builds).
 #
-#   docker build -t svelte-desktop-windows native/docker/windows
+#   docker build -t kitop-windows native/docker/windows
 FROM debian:bookworm-slim
 
 ARG LLVM_MINGW=20261020

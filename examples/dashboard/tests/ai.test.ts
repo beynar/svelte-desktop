@@ -1,7 +1,7 @@
 // host.ai and host.which in the built app (`bun run build` first). The model itself answers only on
 // macOS 26 with Apple Intelligence on: elsewhere the calls must say why, with the right codes.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 let app: AppHandle;
 beforeAll(async () => {

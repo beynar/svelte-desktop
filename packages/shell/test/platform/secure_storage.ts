@@ -2,7 +2,7 @@
 import type { Harness } from "../harness-worker.ts";
 
 export default async (t: Harness) => {
-  const service = `dev.svelte-desktop.harness-test.${process.pid}.${Date.now()}`;
+  const service = `dev.kitop.harness-test.${process.pid}.${Date.now()}`;
   const account = "alice";
   const secret = `s3cr3t-${crypto.randomUUID()}`;
   const secret2 = `rotated-${crypto.randomUUID()} é ✓`;

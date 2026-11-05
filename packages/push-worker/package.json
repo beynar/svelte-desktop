@@ -1,5 +1,5 @@
 {
-	"name": "@svelte-desktop/push-worker",
+	"name": "@kitop/push-worker",
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
@@ -14,6 +14,6 @@
 		"wrangler": "^4.156.0"
 	},
 	"dependencies": {
-		"@svelte-desktop/shell": "workspace:*"
+		"@kitop/shell": "workspace:*"
 	}
 }

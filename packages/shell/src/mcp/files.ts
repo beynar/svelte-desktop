@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { appDirs } from "../os.ts";
 
 /** Which app, for host.mcp and for the bridge in dev. */
-export const IDENTITY_ENV = "SVELTE_DESKTOP_MCP";
+export const IDENTITY_ENV = "KITOP_MCP";
 export interface McpIdentity {
   identifier: string;
   appName: string;

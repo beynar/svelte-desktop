@@ -11,7 +11,7 @@ sidebar:
   <Tab title="New project">
 
 ```sh
-bunx svelte-desktop create my-app
+bunx kitop create my-app
 cd my-app && bun install && bun run dev
 ```
 
@@ -21,8 +21,8 @@ cd my-app && bun install && bun run dev
   <Tab title="Existing SvelteKit app">
 
 ```sh
-bunx svelte-desktop init
-bun add -d @sveltejs/adapter-bun @svelte-desktop/shell
+bunx kitop init
+bun add -d @sveltejs/adapter-bun @kitop/shell
 bun run dev
 ```
 
@@ -31,7 +31,7 @@ bun run dev
   </Tab>
 </Tabs>
 
-`bunx svelte-desktop doctor` checks Bun, the Xcode tools and the config, and on macOS the signing identity and notary profile.
+`bunx kitop doctor` checks Bun, the Xcode tools and the config, and on macOS the signing identity and notary profile.
 
 ## Develop
 
@@ -51,7 +51,7 @@ bun run dev
 </Steps>
 
 :::tip
-`desktop({ ... }, { noWindow: true })` in `vite.config.ts`, or `SVELTE_DESKTOP_NO_WINDOW=1`, runs `vite dev` without the native window, for browser-only work. Server code still gets addons and sidecars.
+`desktop({ ... }, { noWindow: true })` in `vite.config.ts`, or `KITOP_NO_WINDOW=1`, runs `vite dev` without the native window, for browser-only work. Server code still gets addons and sidecars.
 :::
 
 ## Project layout

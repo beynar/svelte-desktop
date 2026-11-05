@@ -15,7 +15,7 @@
 	import { bellRingingIcon } from 'entasis/icons/bellRinging';
 	import { fingerprintIcon } from 'entasis/icons/fingerprint';
 	import { cpuIcon } from 'entasis/icons/cpu';
-	import { WindowTabs, type TabGroup, type TabLike } from '@svelte-desktop/shell/tabs';
+	import { WindowTabs, type TabGroup, type TabLike } from '@kitop/shell/tabs';
 	import { board, upcoming } from '#lib/data.svelte';
 	import ThemeToggle from '#lib/ThemeToggle.svelte';
 	import { backdropTabs, followBackdrop } from '#lib/backdrop';

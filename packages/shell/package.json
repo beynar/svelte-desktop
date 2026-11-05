@@ -1,5 +1,5 @@
 {
-	"name": "@svelte-desktop/shell",
+	"name": "@kitop/shell",
 	"version": "0.0.1",
 	"private": true,
 	"type": "module",
@@ -42,7 +42,7 @@
 		"svelte": "^5.56.0"
 	},
 	"bin": {
-		"svelte-desktop": "./bin/svelte-desktop.ts"
+		"kitop": "./bin/kitop.ts"
 	},
 	"dependencies": {
 		"@atlaskit/pragmatic-drag-and-drop": "^4.0.0",

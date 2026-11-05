@@ -6,7 +6,7 @@
 //              page's xterm.js: input and size as JSON, output as raw bytes. Only the app's pages
 //              reach the app's sockets (its session cookie), so only they get a shell.
 import { dev } from '$app/env';
-import { defineWebSocket } from '@svelte-desktop/shell/websocket';
+import { defineWebSocket } from '@kitop/shell/websocket';
 import { presence } from './lib/server/presence';
 
 let next = 1;

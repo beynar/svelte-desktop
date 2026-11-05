@@ -2,7 +2,7 @@
 // code calls it or a cloud model.
 //
 //   import { generateText, streamText, generateObject } from 'ai';
-//   import { appleIntelligence } from '@svelte-desktop/shell/ai-sdk';
+//   import { appleIntelligence } from '@kitop/shell/ai-sdk';
 //
 //   const local = (await host.ai.availability()).available;
 //   const model = local ? appleIntelligence() : openai('gpt-5-mini');

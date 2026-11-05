@@ -49,7 +49,7 @@ interface BusState {
 	nextChannelId: number;
 	watched: Set<string>;
 }
-const S: BusState = ((globalThis as Record<symbol, BusState | undefined>)[Symbol.for('svelte-desktop.bus')] ??= {
+const S: BusState = ((globalThis as Record<symbol, BusState | undefined>)[Symbol.for('kitop.bus')] ??= {
 	backend: null,
 	nextCallId: 1,
 	allowlist: null,

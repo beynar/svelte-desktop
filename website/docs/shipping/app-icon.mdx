@@ -37,9 +37,9 @@ Ship a full-bleed square artwork without rounded corners or margins and let macO
 ## Preview and export
 
 ```sh
-bunx svelte-desktop icon                          # from desktop.config.ts or icon.png
-bunx svelte-desktop icon art/logo.png --background '#0b1020'
-bunx svelte-desktop icon art/logo.png --out icons/
+bunx kitop icon                          # from desktop.config.ts or icon.png
+bunx kitop icon art/logo.png --background '#0b1020'
+bunx kitop icon art/logo.png --out icons/
 ```
 
 The command generates the icons now, into `.desktop/icons` (what the build uses) or `--out`, and prints each target's files. Passing an image that isn't the configured one only previews it: set `icon` in the config to ship it. Generated icons are cached in `.desktop/icons` until the image or the options change.

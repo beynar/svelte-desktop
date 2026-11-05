@@ -39,7 +39,7 @@ export interface WindowOptions {
 export interface ShellOptions {
   appName: string;
   /** false: no visible main window at start (menu-bar apps). */
-  /** Reverse-DNS id, e.g. dev.svelte-desktop.notes — names the data directories. */
+  /** Reverse-DNS id, e.g. dev.kitop.notes — names the data directories. */
   identifier: string;
   window?: WindowOptions | false;
   /** Absolute path of libshell for this platform. */

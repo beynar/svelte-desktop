@@ -1,12 +1,12 @@
 /**
- * A self-hosted Web Push service (RFC 8030 delivery, RFC 8292 VAPID) for svelte-desktop apps
+ * A self-hosted Web Push service (RFC 8030 delivery, RFC 8292 VAPID) for kitop apps
  * on macOS, Windows and Linux: no Apple or Google account. Each device holds one WebSocket
  * to it; your app server sends with `createPush({ webpush })` to the endpoints it hands out,
  * exactly as to a browser's push service. Messages stay end-to-end encrypted (aes128gcm):
  * this server never sees their content. The wire rules live in protocol.ts, shared with the
  * Cloudflare implementation (packages/push-worker); this file is storage + sockets.
  *
- *   import { servePush } from '@svelte-desktop/shell/push-server';
+ *   import { servePush } from '@kitop/shell/push-server';
  *   servePush({ port: 8080, publicUrl: 'https://push.example.com', db: 'push.sqlite' });
  *
  * Or mount it in your own Bun.serve: `const push = createPushServer(opts)` then

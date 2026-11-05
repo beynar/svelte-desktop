@@ -4,7 +4,7 @@
 import type { TabGroup, TabLike } from './tabs.svelte.ts';
 
 /** A tab's data on a drag (the bar of another window reads it on the drop). */
-const TAB_TYPE = 'application/x-svelte-desktop-tab';
+const TAB_TYPE = 'application/x-kitop-tab';
 
 type Dnd = {
 	element: typeof import('@atlaskit/pragmatic-drag-and-drop/element/adapter');

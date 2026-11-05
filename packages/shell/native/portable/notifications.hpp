@@ -334,7 +334,7 @@ inline json pending_json(const json &e) {
 // ---- Windows toast activator ------------------------------------------------------
 /// Per-app COM class id of the toast activator, derived from the identifier (same
 /// derivation as toastActivatorClsid in src/build/package-windows.ts):
-/// FNV-1a 64 of "svelte-desktop:toast-activator:" + id, then of the same bytes + "#",
+/// FNV-1a 64 of "kitop:toast-activator:" + id, then of the same bytes + "#",
 /// laid out as a GUID with version 5 / RFC 4122 variant bits. "{XXXXXXXX-XXXX-…}".
 inline std::string activator_clsid(const std::string &identifier) {
   auto fnv = [](const std::string &s) {
@@ -342,7 +342,7 @@ inline std::string activator_clsid(const std::string &identifier) {
     for (unsigned char ch : s) h = (h ^ ch) * 1099511628211ULL;
     return h;
   };
-  std::string base = "svelte-desktop:toast-activator:" + identifier;
+  std::string base = "kitop:toast-activator:" + identifier;
   unsigned long long a = fnv(base), b = fnv(base + "#");
   unsigned d1 = (unsigned)(a >> 32), d2 = (unsigned)((a >> 16) & 0xffff), d3 = (unsigned)((a & 0x0fff) | 0x5000);
   unsigned char d4[8];

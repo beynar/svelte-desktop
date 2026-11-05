@@ -6,7 +6,7 @@
 #import <objc/runtime.h>
 #include <cmath>
 
-static NSString *const gateCookie = @"__svelte_desktop";
+static NSString *const gateCookie = @"__kitop";
 static NSMutableDictionary *sessions;
 static NSMapTable<NSNumber *, WKWebView *> *views;
 static NSString *creatingSession;
@@ -14,7 +14,7 @@ static char targetKey, recoveryKey, navigationKey, navigationsKey, windowKey, te
 
 static void provision_app_cookie(WKWebsiteDataStore *store, void (^done)(NSArray<NSHTTPCookie *> *, NSString *)) {
   // Vite serves dev pages directly, without the packaged app's loopback gate.
-  if (getenv("SVELTE_DESKTOP_DEV")) {
+  if (getenv("KITOP_DEV")) {
     [store.httpCookieStore getAllCookies:^(NSArray<NSHTTPCookie *> *cookies) { done(cookies, nil); }];
     return;
   }
@@ -141,7 +141,7 @@ void platform_webview_load(WKWebView *wv, NSURLRequest *input) {
     WKWebView *current = weak;
     if (!current || objc_getAssociatedObject(current, &loadKey) != token || ![views.objectEnumerator.allObjects containsObject:current]) return;
     if (error) {
-      NSError *failure = [NSError errorWithDomain:@"SvelteDesktopSessionErrorDomain" code:1 userInfo:@{NSLocalizedDescriptionKey:error, NSURLErrorFailingURLErrorKey:request.URL}];
+      NSError *failure = [NSError errorWithDomain:@"KitopSessionErrorDomain" code:1 userInfo:@{NSLocalizedDescriptionKey:error, NSURLErrorFailingURLErrorKey:request.URL}];
       platform_lifecycle_emit(current, @"failed", failure, YES);
     } else [current loadRequest:request];
   };

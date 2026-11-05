@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import type { Harness } from "../harness-worker.ts";
 
 const displayed = async () => Number((await $`dunstctl count displayed`.quiet().nothrow()).stdout.toString().trim() || "0");
-const ID = "dev.svelte-desktop.harness";
+const ID = "dev.kitop.harness";
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 export default async (t: Harness) => {

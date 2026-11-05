@@ -1,7 +1,7 @@
 /**
- * Self-hosted push for svelte-desktop apps on Cloudflare: a Web Push service (RFC 8030 delivery,
+ * Self-hosted push for kitop apps on Cloudflare: a Web Push service (RFC 8030 delivery,
  * RFC 8292 VAPID) on Workers + Durable Objects — the FCM/APNs role for macOS, Windows and Linux,
- * with no Apple or Google account. The wire rules come from @svelte-desktop/shell/push-protocol,
+ * with no Apple or Google account. The wire rules come from @kitop/shell/push-protocol,
  * shared with the Bun implementation (push-server.ts); this file is routing, storage and sockets.
  *
  * - The Worker is stateless: it authenticates, validates and routes.
@@ -14,7 +14,7 @@ import { DurableObject } from 'cloudflare:workers';
 import {
 	checkVapid, deviceName, deviceSecret, expiresAt, isRefusal, MAX_QUEUE, messageFrame, now, parseDeviceFrame, parsePush,
 	parseSubscribe, PING, PONG, randomId, refuse, respond, type PushRequest, type Refusal,
-} from '@svelte-desktop/shell/push-protocol';
+} from '@kitop/shell/push-protocol';
 
 export interface Env {
 	DEVICE: DurableObjectNamespace<Device>;

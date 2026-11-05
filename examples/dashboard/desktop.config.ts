@@ -1,8 +1,8 @@
-import { defineConfig } from '@svelte-desktop/shell/config';
+import { defineConfig } from '@kitop/shell/config';
 
 export default defineConfig({
 	appName: 'Dashboard',
-	identifier: 'dev.svelte-desktop.dashboard',
+	identifier: 'dev.kitop.dashboard',
 	// `dashboard file.md` in a terminal opens it here (the Modules page installs the command).
 	command: 'dashboard',
 	protocols: ['asset'],

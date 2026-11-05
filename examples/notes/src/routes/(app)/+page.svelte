@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { onDesktopEvent } from '@svelte-desktop/shell/client';
-	import Popover from '@svelte-desktop/shell/platform/Popover.svelte';
+	import { onDesktopEvent } from '@kitop/shell/client';
+	import Popover from '@kitop/shell/platform/Popover.svelte';
 	import { addNote, getState, increment } from '#lib/data.remote';
 	import {
 		clearNotes,

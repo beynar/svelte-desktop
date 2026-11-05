@@ -8,7 +8,7 @@ Python commands run in one Python process that the app starts and owns. Pick Pyt
 ## Quick start
 
 ```sh
-bunx svelte-desktop add python
+bunx kitop add python
 ```
 
 This creates `native/python/` with a `pyproject.toml` and `hello.py`, which defines `hello.python`. Put your modules in that folder. Replace the generated `dependencies = []` in `pyproject.toml` with your own (for the example below, `["numpy>=2"]`), or run `uv add <package>` from the folder.
@@ -19,7 +19,7 @@ Install [uv](https://docs.astral.sh/uv/) on the build machine; it creates the en
 from dataclasses import dataclass
 
 import numpy as np
-from svelte_desktop import InvalidArgs, command, emit
+from kitop import InvalidArgs, command, emit
 
 
 @dataclass
@@ -56,7 +56,7 @@ await host.native.stats.progress({ steps: 3 });
 off();
 ```
 
-`native` from `@svelte-desktop/shell/native` is the same object. Command names are shared with the other plugins: two languages can't register the same `service.op`.
+`native` from `@kitop/shell/native` is the same object. Command names are shared with the other plugins: two languages can't register the same `service.op`.
 
 ## Type mapping
 
@@ -94,7 +94,7 @@ Results are encoded to JSON:
 
 ## SDK API
 
-Import `svelte_desktop`. Point your editor at `.desktop/python/venv` to resolve the import.
+Import `kitop`. Point your editor at `.desktop/python/venv` to resolve the import.
 
 | Public item | Contract |
 | --- | --- |
@@ -112,7 +112,7 @@ An `Error` rejects with its code and message. Any other exception rejects with `
 
 The Python process runs apart from the shell: a crash in Python or an extension module doesn't take the app down, and the GIL never blocks the window. It starts with the app, so it boots while the page loads. It has no access to windows or `host`: emit an event or return a result, and let the page or server act. See [Threads and processes](/native/threads).
 
-**Concurrency.** `def` handlers run on a pool of 8 threads (`SVELTE_DESKTOP_PYTHON_WORKERS` in the app's environment changes it). `async def` handlers run on one asyncio loop in its own thread. Calls overlap, so protect shared state. Pure-Python CPU work holds the GIL; numpy, torch and most native libraries release it.
+**Concurrency.** `def` handlers run on a pool of 8 threads (`KITOP_PYTHON_WORKERS` in the app's environment changes it). `async def` handlers run on one asyncio loop in its own thread. Calls overlap, so protect shared state. Pure-Python CPU work holds the GIL; numpy, torch and most native libraries release it.
 
 **Output.** `print()` and other stdout or stderr output goes to the app's stderr: the `vite dev` terminal, or a packaged app's log file.
 

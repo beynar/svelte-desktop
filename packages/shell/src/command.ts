@@ -26,7 +26,7 @@ export interface CommandStatus {
 }
 
 /** desktop.config `command`, set for the app's processes by its entry (src/adapter.js). */
-const commandName = (): string | null => process.env.SVELTE_DESKTOP_COMMAND || null;
+const commandName = (): string | null => process.env.KITOP_COMMAND || null;
 
 /** What the link points to: the launcher script in the bundle (macOS), the app's executable (Linux). */
 function target(name: string): string | null {

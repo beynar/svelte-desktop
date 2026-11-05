@@ -7,10 +7,10 @@ Use Objective-C plugins for AppKit and other macOS frameworks. Use the C ABI for
 
 ## Quick start: Objective-C
 
-The shell supplies `native/include/SvelteDesktop.h` and `SvelteDesktop.m`, and the build adds the include directory. In a macOS source set with no Swift files, define one `SDSetup` function and register commands in it:
+The shell supplies `native/include/KitopObjC.h` and `KitopObjC.m`, and the build adds the include directory. In a macOS source set with no Swift files, define one `SDSetup` function and register commands in it:
 
 ```objc native/macos/Files.m
-#import "SvelteDesktop.h"
+#import "KitopObjC.h"
 @import Foundation;
 
 void SDSetup(void) {
@@ -72,11 +72,11 @@ Objective-C results are `unknown` in generated TypeScript; narrow them in JavaSc
 
 ### Mixing sources on macOS
 
-The build links `SvelteDesktop.m` only when there are no Swift sources. With Swift sources, `SvelteDesktop.swift` supplies the entry point and calls `desktopSetup` instead, so don't mix `SDCommand` and Swift setup. A loose C/C++ file defining its own `sd_plugin_init` collides with the supplied one: on macOS, register through Objective-C or Swift and call your C/C++ routines from the handlers. Swift `import` and Objective-C `@import` autolink frameworks; there is no linker-flags option.
+The build links `KitopObjC.m` only when there are no Swift sources. With Swift sources, `Kitop.swift` supplies the entry point and calls `desktopSetup` instead, so don't mix `SDCommand` and Swift setup. A loose C/C++ file defining its own `sd_plugin_init` collides with the supplied one: on macOS, register through Objective-C or Swift and call your C/C++ routines from the handlers. Swift `import` and Objective-C `@import` autolink frameworks; there is no linker-flags option.
 
 ## The C ABI
 
-The header is `native/include/svelte_desktop.h` in `@svelte-desktop/shell`, with C++ linkage guards and no Cocoa dependency. A standalone plugin (Linux and Windows) exports:
+The header is `native/include/kitop.h` in `@kitop/shell`, with C++ linkage guards and no Cocoa dependency. A standalone plugin (Linux and Windows) exports:
 
 ```c
 int sd_plugin_init(const sd_host *host);
@@ -117,7 +117,7 @@ The shell owns the handles: don't destroy them or use them after their window cl
 C compiles as C17 and C++ as C++17. Export `sd_plugin_init` with `extern "C"`. This Linux plugin starts a native thread per call; the same file works under `native/windows/` for production. Don't put two standalone entry points in one platform's source set.
 
 ```cpp native/linux/Work.cpp
-#include "svelte_desktop.h"
+#include "kitop.h"
 #include <exception>
 #include <string>
 #include <thread>

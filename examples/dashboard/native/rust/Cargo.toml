@@ -7,7 +7,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-svelte-desktop = { path = "../../node_modules/@svelte-desktop/shell/native/sdk/rust" }
+kitop = { path = "../../node_modules/@kitop/shell/native/sdk/rust" }
 serde = { version = "1", features = ["derive"] }
 ts-rs = "12"
 sha2 = "0.10"

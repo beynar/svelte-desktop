@@ -10,8 +10,8 @@
 //    `JSCallback` created with `threadsafe: true` in the Worker) that receives a
 //    malloc'd UTF-8 JSON string. The receiver owns it and must call shell_free.
 //  - JS never holds native pointers: windows are small integer ids.
-#ifndef SVELTE_DESKTOP_SHELL_H
-#define SVELTE_DESKTOP_SHELL_H
+#ifndef KITOP_SHELL_H
+#define KITOP_SHELL_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,7 +62,7 @@ SHELL_API int shell_menu_set(const char *spec_json);
 SHELL_API int shell_platform_call(const char *request_json);
 
 // UI thread, after the first window: dlopen an app native plugin (see
-// include/svelte_desktop.h) and run its sd_plugin_init. 0 on success.
+// include/kitop.h) and run its sd_plugin_init. 0 on success.
 SHELL_API int shell_load_plugin(const char *path);
 
 // Any thread. JSON array of "service.op" / "service.*" rules pages may call

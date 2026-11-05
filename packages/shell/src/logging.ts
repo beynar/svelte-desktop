@@ -2,7 +2,7 @@
 // a desktop launcher (Linux) or Explorer (Windows) has no terminal: console
 // output and uncaught errors from both threads go to <logs>/app.log (see
 // os.ts appDirs; rotated at 5 MB, one previous file kept).
-// SVELTE_DESKTOP_LOG=stdout keeps the terminal; =file forces the file.
+// KITOP_LOG=stdout keeps the terminal; =file forces the file.
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { appDirs } from "./os.ts";
 import { join } from "node:path";
@@ -13,10 +13,10 @@ export function logFilePath(identifier: string): string {
 }
 
 export function shouldLogToFile(): boolean {
-  const mode = process.env.SVELTE_DESKTOP_LOG;
+  const mode = process.env.KITOP_LOG;
   if (mode === "stdout") return false;
   if (mode === "file") return true;
-  if (process.platform === "win32") return !process.stdout.isTTY && !process.env.SVELTE_DESKTOP_TEST;
+  if (process.platform === "win32") return !process.stdout.isTTY && !process.env.KITOP_TEST;
   return process.ppid === 1;
 }
 

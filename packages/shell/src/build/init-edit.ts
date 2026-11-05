@@ -1,4 +1,4 @@
-// `svelte-desktop init`'s edit of a Vite config.
+// `kitop init`'s edit of a Vite config.
 
 /** The config without its `adapter: adapter(…)` option, whatever the call spans: the desktop plugin
  *  sets the adapter itself. A call whose end can't be found stays, rather than cutting the file. */

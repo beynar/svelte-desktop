@@ -1,5 +1,5 @@
 // App icons: one source image → every target's icon files, generated at build (cached in
-// .desktop/icons) or with `svelte-desktop icon`. Bun.Image decodes and resamples; the
+// .desktop/icons) or with `kitop icon`. Bun.Image decodes and resamples; the
 // shaping (macOS squircle) and the containers
 // (.icns, .ico) are written here — no sips/iconutil, so any OS builds any target's icons.
 //

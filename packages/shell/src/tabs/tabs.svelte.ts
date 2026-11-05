@@ -1518,7 +1518,7 @@ export class TabGroup<T extends TabLike = TabLike> {
 	}
 }
 
-const KEY = Symbol('svelte-desktop tabs');
+const KEY = Symbol('kitop tabs');
 
 /** <WindowTabs> hands its group to everything inside it. */
 export function setTabs<T extends TabLike>(group: TabGroup<T>): TabGroup<T> {

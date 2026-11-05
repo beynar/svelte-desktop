@@ -1,4 +1,4 @@
-// Swift layer over svelte_desktop.h — compiled together with an app's native/*.swift.
+// Swift layer over kitop.h — compiled together with an app's native/*.swift.
 // The app defines one function:
 //
 //   struct HelloArgs: Codable { let name: String }

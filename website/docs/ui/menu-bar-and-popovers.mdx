@@ -34,7 +34,7 @@ Put the popover routes in their own group, apart from the window's layout:
 
 ```svelte src/routes/(popover)/quick/+page.svelte
 <script lang="ts">
-  import PopoverContent from '@svelte-desktop/shell/platform/PopoverContent.svelte';
+  import PopoverContent from '@kitop/shell/platform/PopoverContent.svelte';
   import { addNote } from '$lib/data.remote';
 </script>
 
@@ -56,7 +56,7 @@ Put the popover routes in their own group, apart from the window's layout:
 
 ```svelte src/routes/(app)/+layout.svelte
 <script>
-  import StatusItem from '@svelte-desktop/shell/platform/StatusItem.svelte';
+  import StatusItem from '@kitop/shell/platform/StatusItem.svelte';
 </script>
 
 <StatusItem icon="note.text" tooltip="Quick note" popover={{ route: '/quick', width: 320 }} />
@@ -93,7 +93,7 @@ A menu-bar-only app sets `trayOnly: true` (macOS only: no Dock icon, no app menu
 
 ```svelte
 <script>
-  import Popover from '@svelte-desktop/shell/platform/Popover.svelte';
+  import Popover from '@kitop/shell/platform/Popover.svelte';
   let button = $state(), open = $state(false);
 </script>
 

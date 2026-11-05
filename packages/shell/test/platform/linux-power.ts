@@ -9,7 +9,7 @@ const inhibitors = async () =>
 export default async (t: Harness) => {
   const bat = await t.call("power", "getBattery");
   t.check("power.getBattery shape (no battery in a container → percent null, external)", bat.ok && (bat.value.percent === null || typeof bat.value.percent === "number") && typeof bat.value.charging === "boolean" && typeof bat.value.external === "boolean", bat);
-  const reason = `svelte-desktop harness ${process.pid}-${Date.now()}`;
+  const reason = `kitop harness ${process.pid}-${Date.now()}`;
   const ids: number[] = [];
   for (const type of ["display", "idle", "system"]) {
     const r = await t.call("power", "blockSleep", { type, reason: `${reason} ${type}` });

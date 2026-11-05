@@ -1,7 +1,7 @@
 // desktop.crashInfo() across launches of the built app: graceful quit → clean start;
 // a killed process → the next start reports an unclean exit. (Built app only.)
 import { expect, test } from 'bun:test';
-import { launch } from '@svelte-desktop/shell/test';
+import { launch } from '@kitop/shell/test';
 
 const info = (app: Awaited<ReturnType<typeof launch>>) => app.eval<{ uncleanExit: boolean; previousLaunch: number | null; reports: unknown[] }>(`fetch('/api/crash').then((r) => r.json())`);
 

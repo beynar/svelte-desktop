@@ -1,8 +1,8 @@
-// Package desktop: native plugins in Go for svelte-desktop apps.
+// Package desktop: native plugins in Go for kitop apps.
 //
 //	package main
 //
-//	import "svelte-desktop.dev/go/desktop"
+//	import "kitop.dev/go/desktop"
 //
 //	type HashArgs struct{ Text string `json:"text"` }
 //	type Digest struct{ Hex string `json:"hex"` }
@@ -13,7 +13,7 @@
 //
 //	func main() {}
 //
-// The app's `native/go/` module is built by svelte-desktop (`go build -buildmode=c-shared`) and loaded
+// The app's `native/go/` module is built by kitop (`go build -buildmode=c-shared`) and loaded
 // by the shell. Each command is a platform op: `nativeModule('hasher').sha256({ text })` from pages and
 // server code, typed from the Go types (the build reads them with `sd_plugin_describe`). Handlers run on
 // their own goroutine, never the UI thread; a panic rejects the call.
@@ -62,7 +62,7 @@ var commands []*command
 func Command[A any, R any](name string, f func(A) (R, error)) {
 	service, op, ok := strings.Cut(name, ".")
 	if !ok {
-		panic("svelte-desktop: command " + name + " must be named service.op")
+		panic("kitop: command " + name + " must be named service.op")
 	}
 	commands = append(commands, &command{
 		service: service, op: op,

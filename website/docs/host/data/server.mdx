@@ -145,7 +145,7 @@ Server-owned operations on otherwise shared services have their own references: 
 
 ## The explicit desktop object
 
-`@svelte-desktop/shell/server` exports `desktop`, `isDesktop`, `onDesktopReady`, `sidecar`, `loadAddon`, `jobs`, `services` and `diagnostics`. The last six are the explicit counterparts of the host APIs above (`onDesktopReady` is `host.ready`).
+`@kitop/shell/server` exports `desktop`, `isDesktop`, `onDesktopReady`, `sidecar`, `loadAddon`, `jobs`, `services` and `diagnostics`. The last six are the explicit counterparts of the host APIs above (`onDesktopReady` is `host.ready`).
 
 `desktop.window`, `desktop.dialog` and `desktop.menu` are older, shorter wrappers. Prefer the `host.*` members: they return results and errors, which these wrappers swallow.
 
@@ -165,7 +165,7 @@ What only the `desktop` object offers is below.
 `isDesktop()` returns a synchronous `boolean` indicating whether the desktop API is installed. Accessing `desktop` members outside the shell throws. `onDesktopReady(fn)` has the same callback and behavior as `host.ready`.
 
 ```ts src/hooks.server.ts
-import { onDesktopReady } from '@svelte-desktop/shell/server';
+import { onDesktopReady } from '@kitop/shell/server';
 
 onDesktopReady((desktop) => {
   desktop.on('menu', (e) => desktop.publish('menu', e.id));
@@ -188,10 +188,10 @@ Subscribes to a `ShellEvent` type and returns `() => void`. The callback receive
 
 `desktop.publish(type, data?)` sends a JSON message to every app page and returns `void`. `type` is a `string`; `data` is optional `unknown`. It uses the `desktop` broadcast channel; delivery failures are swallowed by this wrapper.
 
-Pages receive those messages through `onDesktopEvent(type, fn)` from `@svelte-desktop/shell/client`. This page helper returns `() => void`; `fn(data, type)` receives the payload and actual message type. Pass `'*'` to receive every desktop message. Forwarded shell events use `native:<type>` and carry the full `ShellEvent` as data.
+Pages receive those messages through `onDesktopEvent(type, fn)` from `@kitop/shell/client`. This page helper returns `() => void`; `fn(data, type)` receives the payload and actual message type. Pass `'*'` to receive every desktop message. Forwarded shell events use `native:<type>` and carry the full `ShellEvent` as data.
 
 ```ts
-import { onDesktopEvent } from '@svelte-desktop/shell/client';
+import { onDesktopEvent } from '@kitop/shell/client';
 
 const off = onDesktopEvent('menu', (id) => {
   if (id === 'new-note') console.log('Create a note');

@@ -1,8 +1,8 @@
-//! Native plugins in Rust for svelte-desktop apps.
+//! Native plugins in Rust for kitop apps.
 //!
 //! ```ignore
 //! use serde::{Deserialize, Serialize};
-//! use svelte_desktop::{plugin, Error, Plugin, TS};
+//! use kitop::{plugin, Error, Plugin, TS};
 //!
 //! #[derive(Deserialize, TS)]
 //! struct HashArgs { text: String }
@@ -17,7 +17,7 @@
 //! plugin!(setup);
 //! ```
 //!
-//! The app's `native/rust/` crate (`crate-type = ["cdylib"]`) is built by svelte-desktop and loaded
+//! The app's `native/rust/` crate (`crate-type = ["cdylib"]`) is built by kitop and loaded
 //! by the shell. Each command is a platform op: `nativeModule('hasher').sha256({ text })` from pages
 //! and server code, typed from the Rust types (the build reads them with `sd_plugin_describe`).
 //! Handlers run on a worker thread, never the UI thread; a panic rejects the call.
@@ -33,7 +33,7 @@ pub use serde_json::Value;
 pub use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
-// The C ABI (native/include/svelte_desktop.h)
+// The C ABI (native/include/kitop.h)
 
 const ABI_VERSION: c_int = 1;
 
@@ -137,7 +137,7 @@ impl Plugin {
         R: Serialize + TS + 'static,
         F: Fn(A) -> Result<R, Error> + Send + Sync + 'static,
     {
-        let (service, op) = name.split_once('.').unwrap_or_else(|| panic!("svelte-desktop: command `{name}` must be named service.op"));
+        let (service, op) = name.split_once('.').unwrap_or_else(|| panic!("kitop: command `{name}` must be named service.op"));
         let cfg = ts_rs::Config::new().with_large_int("number");
         let args = A::inline(&cfg);
         self.commands.push(Command {

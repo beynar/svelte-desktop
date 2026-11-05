@@ -8,7 +8,7 @@ A Rust plugin runs inside the shell process, with a new native thread for each c
 ## Quick start
 
 ```sh
-bunx svelte-desktop add rust
+bunx kitop add rust
 ```
 
 This creates `native/rust/Cargo.toml`, `native/rust/src/lib.rs` and a `.gitignore` for `target/`, with a starter command `hello.rust`. It refuses to overwrite an existing `native/rust`. Install Cargo and a Rust that supports edition `2024`.
@@ -25,7 +25,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-svelte-desktop = { path = "../../node_modules/@svelte-desktop/shell/native/sdk/rust" }
+kitop = { path = "../../node_modules/@kitop/shell/native/sdk/rust" }
 serde = { version = "1", features = ["derive"] }
 ts-rs = "12"
 sha2 = "0.10"
@@ -36,7 +36,7 @@ Keep the SDK path the CLI wrote if your installation differs.
 ```rust native/rust/src/lib.rs
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use svelte_desktop::{emit, log, plugin, Error, Plugin, TS};
+use kitop::{emit, log, plugin, Error, Plugin, TS};
 
 #[derive(Deserialize, TS)]
 struct HashArgs {
@@ -85,8 +85,8 @@ plugin!(setup);
 After `vite dev` writes `native.checksum.rust` to `src/native.d.ts`, call it from a page or server code. A call with bad arguments rejects with `invalid_args`.
 
 ```ts
-import { native } from '@svelte-desktop/shell/native';
-import { onPlatform } from '@svelte-desktop/shell/platform';
+import { native } from '@kitop/shell/native';
+import { onPlatform } from '@kitop/shell/platform';
 
 const requestId = crypto.randomUUID();
 const off = onPlatform<{ requestId: string; bytes: number }>(
@@ -112,7 +112,7 @@ Rust uses Serde: derive `Deserialize` for arguments, `Serialize` for results, an
 
 ## SDK API
 
-The crate is `svelte-desktop`, imported as `svelte_desktop`.
+The crate is `kitop`, imported as `kitop`.
 
 | Public item | Contract |
 | --- | --- |

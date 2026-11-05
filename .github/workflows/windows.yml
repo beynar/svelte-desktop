@@ -26,7 +26,7 @@ jobs:
         run: bun install
       - name: Build the Windows app (shell.dll, addon and installer through the Docker toolchain)
         working-directory: examples/notes
-        run: SVELTE_DESKTOP_TARGET=windows bunx --bun vite build
+        run: KITOP_TARGET=windows bunx --bun vite build
       - name: Unit tests (packagers)
         working-directory: packages/shell
         run: bun test src/build/package-windows.test.ts src/build/package-linux.test.ts
@@ -89,5 +89,5 @@ jobs:
         if: failure()
         shell: powershell
         run: |
-          Get-ChildItem -Recurse "$env:LOCALAPPDATA\dev.svelte-desktop.notes" -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize
-          Get-ChildItem -Recurse "$env:LOCALAPPDATA\dev.svelte-desktop.notes" -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Tail 80 }
+          Get-ChildItem -Recurse "$env:LOCALAPPDATA\dev.kitop.notes" -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize
+          Get-ChildItem -Recurse "$env:LOCALAPPDATA\dev.kitop.notes" -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Tail 80 }

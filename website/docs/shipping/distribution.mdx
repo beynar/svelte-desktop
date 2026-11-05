@@ -3,12 +3,12 @@ title: Distribution
 description: Build, sign and package for macOS, Windows and Linux.
 ---
 
-`bunx --bun vite build` compiles the server into one executable and packages it for the target. Output goes to `.desktop/dist` (`build.outDir`). The target is the host OS unless `build.target` (`macos`, `linux` or `windows`) or `SVELTE_DESKTOP_TARGET` says otherwise; Linux and Windows can be built from macOS. The environment variables override the config. Building macOS requires macOS and its Apple toolchain.
+`bunx --bun vite build` compiles the server into one executable and packages it for the target. Output goes to `.desktop/dist` (`build.outDir`). The target is the host OS unless `build.target` (`macos`, `linux` or `windows`) or `KITOP_TARGET` says otherwise; Linux and Windows can be built from macOS. The environment variables override the config. Building macOS requires macOS and its Apple toolchain.
 
 ```sh
 bunx --bun vite build                               # macOS, the host
-SVELTE_DESKTOP_TARGET=linux bunx --bun vite build   # cross-build
-SVELTE_DESKTOP_TARGET=windows SVELTE_DESKTOP_TARGET_ARCH=arm64 bunx --bun vite build
+KITOP_TARGET=linux bunx --bun vite build   # cross-build
+KITOP_TARGET=windows KITOP_TARGET_ARCH=arm64 bunx --bun vite build
 ```
 
 ## Pick your path
@@ -54,24 +54,24 @@ sign: { identity: 'Developer ID Application: You (TEAMID)', notaryProfile: 'nota
 
 <Steps>
   <Step title="Get a Developer ID certificate">
-    A **Developer ID Application** certificate in your keychain. `bunx svelte-desktop doctor` lists the identities it finds.
+    A **Developer ID Application** certificate in your keychain. `bunx kitop doctor` lists the identities it finds.
   </Step>
   <Step title="Store notary credentials">
     Create a keychain profile with Apple's `xcrun notarytool store-credentials notary`, then pass its name as `NOTARY_PROFILE` (or `sign.notaryProfile`).
   </Step>
   <Step title="Build">
-    Set `CODESIGN_IDENTITY` (or `sign.identity`) and build. `bunx svelte-desktop preflight .desktop/dist/<App>.app` runs the same pre-flight on any bundle.
+    Set `CODESIGN_IDENTITY` (or `sign.identity`) and build. `bunx kitop preflight .desktop/dist/<App>.app` runs the same pre-flight on any bundle.
   </Step>
 </Steps>
 
 **Universal builds.** `build: { universal: true }` builds both arm64 and x64 slices (Bun cross-compiles the other executable slice) and lipos the executable, `libshell`, the plugins and compiled addons into one app. Prebuilt addons must already contain the slices you need; sidecars are copied without merging architectures.
 
-**Smaller builds.** `build.trim` drops the Bun APIs your app never calls (about 45 MB), and `build.aot` compiles to machine code at build time, which uses less memory. Both need a Bun that supports `--trim` and `--aot`: today that is canary, not stable, so default builds are larger. Point `build.bun` or `SVELTE_DESKTOP_BUN` at a canary binary; `bunx svelte-desktop doctor` reports whether yours qualifies. When available, `trim` is on by default (`trim: false` opts out, and the packager retries without it if the target runtime rejects it); `aot` is opt-in with `build: { aot: true }`, and is skipped for the other slice of a universal build and for Windows builds.
+**Smaller builds.** `build.trim` drops the Bun APIs your app never calls (about 45 MB), and `build.aot` compiles to machine code at build time, which uses less memory. Both need a Bun that supports `--trim` and `--aot`: today that is canary, not stable, so default builds are larger. Point `build.bun` or `KITOP_BUN` at a canary binary; `bunx kitop doctor` reports whether yours qualifies. When available, `trim` is on by default (`trim: false` opts out, and the packager retries without it if the target runtime rejects it); `aot` is opt-in with `build: { aot: true }`, and is skipped for the other slice of a universal build and for Windows builds.
 
 ## Windows
 
 ```sh
-SVELTE_DESKTOP_TARGET=windows bunx --bun vite build
+KITOP_TARGET=windows bunx --bun vite build
 ```
 
 | Output | |
@@ -98,7 +98,7 @@ The Windows native layer and installer have Wine smoke tests, but those do not v
 ## Linux
 
 ```sh
-SVELTE_DESKTOP_TARGET=linux bunx --bun vite build
+KITOP_TARGET=linux bunx --bun vite build
 ```
 
 | Output | |

@@ -535,7 +535,7 @@ NSString *platform_app_name(void) {
   return NSBundle.mainBundle.infoDictionary[@"CFBundleName"] ?: g_app_name ?: NSProcessInfo.processInfo.processName;
 }
 NSString *platform_app_identifier(void) {
-  return NSBundle.mainBundle.bundleIdentifier ?: g_app_identifier ?: @"dev.svelte-desktop.app";
+  return NSBundle.mainBundle.bundleIdentifier ?: g_app_identifier ?: @"dev.kitop.app";
 }
 NSString *platform_app_version(void) {
   return NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"0.0.0";

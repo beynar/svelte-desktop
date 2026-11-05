@@ -11,7 +11,7 @@
 static dispatch_queue_t keychain_queue(void) {
   static dispatch_queue_t q;
   static dispatch_once_t once;
-  dispatch_once(&once, ^{ q = dispatch_queue_create("dev.svelte-desktop.keychain", DISPATCH_QUEUE_SERIAL); });
+  dispatch_once(&once, ^{ q = dispatch_queue_create("dev.kitop.keychain", DISPATCH_QUEUE_SERIAL); });
   return q;
 }
 

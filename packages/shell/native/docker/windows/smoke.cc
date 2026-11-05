@@ -60,7 +60,7 @@ template <class T> static T sym(HMODULE m, const char *name) {
 }
 
 int main() {
-  SetEnvironmentVariableW(L"SVELTE_DESKTOP_NO_DIALOGS", L"1");
+  SetEnvironmentVariableW(L"KITOP_NO_DIALOGS", L"1");
   HMODULE m = LoadLibraryW(L"shell.dll");
   if (!m) {
     printf("FAIL LoadLibrary(shell.dll): %lu\n", GetLastError());
@@ -86,7 +86,7 @@ int main() {
   set_sink(sink);
   origin("http://127.0.0.1:4321");
   perms("[\"app.*\",\"window.getTitle\"]");
-  int id = create("{\"appName\":\"Smoke\",\"identifier\":\"dev.svelte-desktop.smoke\",\"visible\":false,\"title\":\"Smoke\"}");
+  int id = create("{\"appName\":\"Smoke\",\"identifier\":\"dev.kitop.smoke\",\"visible\":false,\"title\":\"Smoke\"}");
   printf("%s shell_window_create() = %d (WebView2 is absent under Wine: the controller never starts)\n", id > 0 ? "ok  " : "FAIL", id);
   if (id <= 0) g_failures++;
   const char *requests[] = {

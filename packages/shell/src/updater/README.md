@@ -1,6 +1,6 @@
 # Auto-updater
 
-`@svelte-desktop/shell/updater` works with static hosting (S3, R2, GitHub Releases, any CDN). The release manifest is signed, and every archive is pinned by its hash. Files are swapped by a helper that runs after the app exits, and an update that never confirms a healthy start is rolled back automatically.
+`@kitop/shell/updater` works with static hosting (S3, R2, GitHub Releases, any CDN). The release manifest is signed, and every archive is pinned by its hash. Files are swapped by a helper that runs after the app exits, and an update that never confirms a healthy start is rolled back automatically.
 
 The design follows Electrobun's updater (a static `update.json`, full archives, and a swap helper that runs after exit, with rollback), with one gap closed: **Electrobun signs neither the manifest nor the archives; this updater does.**
 
@@ -22,7 +22,7 @@ scripts/updater-cli.ts   keygen / sign / verify / pack / make-manifest
 1. **Signed manifest.** `update.json` carries an Ed25519 `signature`. The signed bytes are:
 
    ```
-   UTF-8( "svelte-desktop/update-manifest/v1\n" + canonicalize(manifest minus "signature") )
+   UTF-8( "kitop/update-manifest/v1\n" + canonicalize(manifest minus "signature") )
    ```
 
    `canonicalize` produces JSON with object keys sorted recursively (JS default string order), no whitespace, and `undefined` members dropped. Non-finite numbers are rejected. The signature covers every field, including unknown and future ones (`patches`). Because verification re-serializes the parsed object, pretty-printing or reordering the file does not break it, while changing any value does. The context prefix provides domain separation, so the key's signatures cannot be replayed in another protocol.
@@ -93,7 +93,7 @@ Clients that predate delta updates ignore the field.
 ## Client flow
 
 ```ts
-import { createUpdater } from "@svelte-desktop/shell/updater";
+import { createUpdater } from "@kitop/shell/updater";
 
 const updater = createUpdater({
   manifestUrl: "https://updates.example.com/myapp/{channel}/update.json",

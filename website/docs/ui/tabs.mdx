@@ -17,7 +17,7 @@ One declaration, in the root layout (`Sidebar`, `AppShell` and `RouteIcon` in th
 
 ```svelte src/routes/+layout.svelte
 <script lang="ts">
-	import { WindowTabs } from '@svelte-desktop/shell/tabs';
+	import { WindowTabs } from '@kitop/shell/tabs';
 
 	let { children } = $props();
 </script>
@@ -107,7 +107,7 @@ The main window's tabs are restored at the next launch:
 
 - `tab` draws each tab (default: its title and a close button).
 - `layout` gets `bar` (the tab bar: `class`, `label`, `start`, `end`), `content` (the page, and each kept-alive tab's view in the same place) and `api`; without it, the bar goes above the content.
-- `embedded`: a kept-alive tab's view runs your app again, layout included — there, and in a popover, `<WindowTabs>` renders the page alone (or this snippet), on the server too (the view's request says so), so the view shows at its first paint. Your own code can test `embedded` from `@svelte-desktop/shell/tabs` (in the page).
+- `embedded`: a kept-alive tab's view runs your app again, layout included — there, and in a popover, `<WindowTabs>` renders the page alone (or this snippet), on the server too (the view's request says so), so the view shows at its first paint. Your own code can test `embedded` from `@kitop/shell/tabs` (in the page).
 
 `api` is available as `bind:api` in the browser, and as the `api` argument of the `layout` snippet on the server. It has: `items`, `active`, `open(path | url, { background, reuse })` (`reuse: false`: another tab on a kept-alive route already open), `close(id?)`, `activate(id)`, `reopen()`, `cycle(1 | -1)`, `move(id, index)`. `api.open('https://…')` shows another site in a tab of its own (external links keep opening the browser); it can't call native APIs and receives none of the app's events. A tab is `{ id, path?, url?, title? }`. Reuse of a kept-alive tab matches the pathname, ignoring query and hash; it activates the existing tab without changing its URL. Use `reuse: false` to open a separate tab with different parameters.
 
@@ -142,7 +142,7 @@ A view is drawn over the page: your page's popovers and dialogs can't cover a ke
 
 ```svelte src/routes/+layout.svelte
 <script lang="ts">
-	import { WindowTabs } from '@svelte-desktop/shell/tabs';
+	import { WindowTabs } from '@kitop/shell/tabs';
 	import Sidebar from '#lib/Sidebar.svelte';
 
 	let { children } = $props();

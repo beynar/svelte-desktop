@@ -396,7 +396,7 @@ static gboolean (*clearv)(const SecretSchema *, GHashTable *, GCancellable *, GE
 static void (*pw_free)(gchar *);
 
 static const SecretSchema schema = {
-    "dev.svelte-desktop.Password", SECRET_SCHEMA_NONE, {{"service", SECRET_SCHEMA_ATTRIBUTE_STRING}, {"account", SECRET_SCHEMA_ATTRIBUTE_STRING}, {nullptr, (SecretSchemaAttributeType)0}}};
+    "dev.kitop.Password", SECRET_SCHEMA_NONE, {{"service", SECRET_SCHEMA_ATTRIBUTE_STRING}, {"account", SECRET_SCHEMA_ATTRIBUTE_STRING}, {nullptr, (SecretSchemaAttributeType)0}}};
 
 static bool load() {
   if (tried) return loaded;

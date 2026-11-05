@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { Button } from 'entasis/button';
-	import type { AIAvailability } from '@svelte-desktop/shell/ai';
+	import type { AIAvailability } from '@kitop/shell/ai';
 	import Terminal from '#lib/Terminal.svelte';
 
 	let { data } = $props();
@@ -264,7 +264,7 @@
 				<p class="text-neutral-readable text-sm">Checking…</p>
 			{:else if !aiState.available}
 				<p class="text-neutral text-sm" data-ai-unavailable={aiState.reason}>Unavailable — {reasons[aiState.reason ?? ''] ?? aiState.reason}</p>
-				<p class="text-neutral-readable text-xs">The same code runs a cloud model instead: <code>appleIntelligence()</code> from <code>@svelte-desktop/shell/ai-sdk</code> is a Vercel AI SDK model.</p>
+				<p class="text-neutral-readable text-xs">The same code runs a cloud model instead: <code>appleIntelligence()</code> from <code>@kitop/shell/ai-sdk</code> is a Vercel AI SDK model.</p>
 			{:else}
 				<textarea
 					bind:value={aiPrompt}

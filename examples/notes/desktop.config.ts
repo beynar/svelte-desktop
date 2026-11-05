@@ -1,8 +1,8 @@
-import { defineConfig } from '@svelte-desktop/shell/config';
+import { defineConfig } from '@kitop/shell/config';
 
 export default defineConfig({
 	appName: 'Svelte Notes',
-	identifier: 'dev.svelte-desktop.notes',
+	identifier: 'dev.kitop.notes',
 	window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 'main', titleBarStyle: 'hiddenInset' },
 	schemes: ['svelte-notes'],
 	// Keeps running with no window (menu-bar icon, Dock click reopens): pushes keep arriving.

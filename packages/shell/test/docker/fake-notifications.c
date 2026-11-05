@@ -2,8 +2,8 @@
 // records every Notify / CloseNotification as a JSON line in $FAKE_NOTIFY_LOG
 // (default /tmp/fake-notify.log) and plays the user on demand through a second
 // interface on the same object:
-//   dev.svelte_desktop.FakeNotifications.Invoke(u id, s action) → ActionInvoked
-//   dev.svelte_desktop.FakeNotifications.Close(u id, u reason)  → NotificationClosed
+//   dev.kitop.FakeNotifications.Invoke(u id, s action) → ActionInvoked
+//   dev.kitop.FakeNotifications.Close(u id, u reason)  → NotificationClosed
 //   gcc fake-notifications.c $(pkg-config --cflags --libs gio-2.0) -o fake-notifications
 #include <gio/gio.h>
 #include <stdio.h>
@@ -20,7 +20,7 @@ static const char *xml =
     "<arg type='s' direction='out'/><arg type='s' direction='out'/></method>"
     "<signal name='NotificationClosed'><arg type='u'/><arg type='u'/></signal>"
     "<signal name='ActionInvoked'><arg type='u'/><arg type='s'/></signal>"
-    "</interface><interface name='dev.svelte_desktop.FakeNotifications'>"
+    "</interface><interface name='dev.kitop.FakeNotifications'>"
     "<method name='Invoke'><arg type='u' direction='in'/><arg type='s' direction='in'/></method>"
     "<method name='Close'><arg type='u' direction='in'/><arg type='u' direction='in'/></method>"
     "</interface></node>";
@@ -64,7 +64,7 @@ static void call(GDBusConnection *c, const gchar *sender, const gchar *path, con
     const char *caps[] = {"actions", "body", "body-markup", "persistence", "sound", NULL};
     g_dbus_method_invocation_return_value(inv, g_variant_new("(^as)", caps));
   } else if (g_str_equal(method, "GetServerInformation")) {
-    g_dbus_method_invocation_return_value(inv, g_variant_new("(ssss)", "fake-notifications", "svelte-desktop", "1.0", "1.2"));
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(ssss)", "fake-notifications", "kitop", "1.0", "1.2"));
   } else if (g_str_equal(method, "Notify")) {
     const char *app, *icon, *summary, *body;
     guint32 replaces;

@@ -74,7 +74,7 @@ const APPS: App[] = [
     toolZip: join(BENCH, "ours-builds/minimal-stable/HelloOurs-1.0.0-darwin-arm64.zip"),
     ready: "beacon",
     alsoStdout: true,
-    env: { SVELTE_DESKTOP_DEBUG: "1" },
+    env: { KITOP_DEBUG: "1" },
   },
   {
     key: "ours-minimal-aot",
@@ -84,7 +84,7 @@ const APPS: App[] = [
     toolZip: join(BENCH, "ours-builds/minimal-aot/HelloOurs-1.0.0-darwin-arm64.zip"),
     ready: "beacon",
     alsoStdout: true,
-    env: { SVELTE_DESKTOP_DEBUG: "1" },
+    env: { KITOP_DEBUG: "1" },
   },
   {
     key: "ours-notes",
@@ -93,7 +93,7 @@ const APPS: App[] = [
     dmg: join(BENCH, "ours-notes-snapshot/Notes-0.1.0-darwin-arm64.dmg"),
     toolZip: join(BENCH, "ours-notes-snapshot/Notes-0.1.0-darwin-arm64.zip"),
     ready: "stdout",
-    env: { SVELTE_DESKTOP_DEBUG: "1" },
+    env: { KITOP_DEBUG: "1" },
   },
 ];
 

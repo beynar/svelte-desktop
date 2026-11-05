@@ -44,7 +44,7 @@ func desktopSetup() {
 Call these from a page or SvelteKit server code:
 
 ```ts
-import { native } from '@svelte-desktop/shell/native';
+import { native } from '@kitop/shell/native';
 
 const app = await native.os.findApp({ bundleId: 'com.apple.TextEdit' });
 // { name: string; path: string } | null
@@ -147,7 +147,7 @@ func registerHashCommands() {
 Subscribe before starting the command, and remove the listener even if it fails:
 
 ```ts
-import { native } from '@svelte-desktop/shell/native';
+import { native } from '@kitop/shell/native';
 
 async function hashFile(path: string) {
   const jobId = crypto.randomUUID();
@@ -204,4 +204,4 @@ A plugin is privileged native code: validate paths and sizes inside it. OS conse
 
 ## Build
 
-All Swift files plus the shipped `SvelteDesktop.swift` compile together as one `AppNative` module (Swift 5 language mode), linked with any C-family objects into `libapp-native`. You need a Swift toolchain and the Apple SDK. Imported framework modules autolink. `desktopSetup()` runs on the UI thread before the run loop starts and also when the build reads the commands, with no window or app: keep it to registration. A command not registered on the current platform rejects with `unknown`.
+All Swift files plus the shipped `Kitop.swift` compile together as one `AppNative` module (Swift 5 language mode), linked with any C-family objects into `libapp-native`. You need a Swift toolchain and the Apple SDK. Imported framework modules autolink. `desktopSetup()` runs on the UI thread before the run loop starts and also when the build reads the commands, with no window or app: keep it to registration. A command not registered on the current platform rejects with `unknown`.

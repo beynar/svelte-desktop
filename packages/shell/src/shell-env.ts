@@ -11,7 +11,7 @@
 //
 // Windows: GUI apps get the user's environment from the registry, so it's process.env as is.
 
-const MARK = "__SVELTE_DESKTOP_ENV__";
+const MARK = "__KITOP_ENV__";
 
 export interface ShellEnvOptions {
   /** Ask the shell again (the result is kept after the first call). */

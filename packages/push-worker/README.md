@@ -1,22 +1,22 @@
-# @svelte-desktop/push-worker
+# @kitop/push-worker
 
-Your own push service on Cloudflare — the FCM/APNs role for svelte-desktop apps on macOS,
+Your own push service on Cloudflare — the FCM/APNs role for kitop apps on macOS,
 Windows and Linux, with no Apple or Google account. Web Push compatible (RFC 8030 delivery,
 RFC 8291 encryption, RFC 8292 VAPID): messages stay end-to-end encrypted for each device.
 
 ```sh
-bunx wrangler deploy        # → https://svelte-desktop-push.<you>.workers.dev
+bunx wrangler deploy        # → https://kitop-push.<you>.workers.dev
 ```
 
 ```ts
 // desktop.config.ts
-push: { server: 'https://svelte-desktop-push.<you>.workers.dev' }
+push: { server: 'https://kitop-push.<you>.workers.dev' }
 
 // in the app (page or server code)
 const target = await host.push.register()   // { provider: 'webpush', endpoint, keys } → your backend
 
 // your backend
-import { createPush } from '@svelte-desktop/shell/push';
+import { createPush } from '@kitop/shell/push';
 const push = createPush({ webpush: { publicKey, privateKey, subject: 'mailto:ops@example.com' } });
 await push.send(target, { id: 'msg-42', title: 'Alice', body: 'Lunch?', url: '/chat/42' });
 ```
@@ -33,6 +33,6 @@ How it maps to Cloudflare:
   delivered only if the device is connected; VAPID-locked subscriptions reject other senders;
   unsubscribed endpoints answer 410 (`expired` for `createPush`).
 
-The same contract is implemented by `@svelte-desktop/shell/push-server` (Bun + SQLite) for
+The same contract is implemented by `@kitop/shell/push-server` (Bun + SQLite) for
 self-hosting anywhere else; `test/worker.test.ts` runs the shell's client and sender against
 this Worker in workerd (`bun run test`). Contract: `packages/shell/native/NOTIFICATIONS.md`.

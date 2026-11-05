@@ -1,8 +1,8 @@
 // Launch at login: reads without side effects in the built app, and neither reads nor writes reject in
 // `vite dev`, where it isn't available. Turning it on for real (a system notification, an entry in the
-// user's Login Items) isn't part of the suite: SVELTE_DESKTOP_TEST_LOGIN_ITEM=1 runs it.
+// user's Login Items) isn't part of the suite: KITOP_TEST_LOGIN_ITEM=1 runs it.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 const off = { available: false, enabled: false, requiresApproval: false, launchedAtLogin: false };
 
@@ -18,7 +18,7 @@ describe('built app', () => {
 		expect(await app.eval(`host.app.getLoginItem()`)).toMatchObject({ available: true, launchedAtLogin: false });
 	});
 
-	test.if(!!process.env.SVELTE_DESKTOP_TEST_LOGIN_ITEM)('on, then off', async () => {
+	test.if(!!process.env.KITOP_TEST_LOGIN_ITEM)('on, then off', async () => {
 		try {
 			expect(await app.eval(`host.app.setLoginItem(true)`)).toMatchObject({ available: true, enabled: true });
 			expect(await app.eval(`host.app.getLoginItem()`)).toMatchObject({ enabled: true });

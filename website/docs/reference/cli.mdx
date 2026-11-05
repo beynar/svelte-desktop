@@ -1,16 +1,16 @@
 ---
 title: CLI
-description: The svelte-desktop command and the Vite commands that drive development and builds.
+description: The kitop command and the Vite commands that drive development and builds.
 ---
 
 ```sh
-bunx svelte-desktop <create|init|doctor|icon|add|preflight|keygen|release>
+bunx kitop <create|init|doctor|icon|add|preflight|keygen|release>
 ```
 
 ## create
 
 ```sh
-bunx svelte-desktop create <directory>
+bunx kitop create <directory>
 ```
 
 Scaffolds a new desktop app in an empty directory: `package.json` (with `dev`, `build` and `test` scripts), `vite.config.ts`, `desktop.config.ts`, `tsconfig.json`, a SvelteKit page using a remote function, a Swift plugin sample (`native/Hello.swift`) and a test (`tests/app.test.ts`). Then `cd <directory> && bun install && bun run dev`.
@@ -18,7 +18,7 @@ Scaffolds a new desktop app in an empty directory: `package.json` (with `dev`, `
 ## init
 
 ```sh
-bunx svelte-desktop init
+bunx kitop init
 ```
 
 Adds desktop support to the SvelteKit project in the current directory:
@@ -28,12 +28,12 @@ Adds desktop support to the SvelteKit project in the current directory:
 - sets the scripts `dev` (`bunx --bun vite dev`), `build` (`bunx --bun vite build`) and `test:desktop` (`bun test --timeout 30000 tests/`), replacing any existing values;
 - adds `.desktop` to `.gitignore`.
 
-Then `bun add -d @sveltejs/adapter-bun @svelte-desktop/shell && bun run dev`.
+Then `bun add -d @sveltejs/adapter-bun @kitop/shell && bun run dev`.
 
 ## doctor
 
 ```sh
-bunx svelte-desktop doctor
+bunx kitop doctor
 ```
 
 Checks Bun (1.4 or newer, and whether its revision says canary), the host toolchain, `@sveltejs/adapter-bun`, the config and icon setting. It reports installed `cargo`, `go` and `uv` tools when found.
@@ -49,7 +49,7 @@ On macOS, `doctor` also checks the signing identity (`security find-identity`) a
 ## icon
 
 ```sh
-bunx svelte-desktop icon [image] [--background '#hex'] [--out dir]
+bunx kitop icon [image] [--background '#hex'] [--out dir]
 ```
 
 Generates every target's icons now, from `image` or from the configured icon, into `.desktop/icons` (what the build uses) or `--out`. `--background` overrides the macOS icon background. Without `image`, this command loads the config and its icon fallback only when `desktop.config.ts` exists; a project using only `.js` or `.mjs` must pass the image explicitly. Passing an image generates a preview; it does not change the config. See [App icon](/shipping/app-icon).
@@ -57,7 +57,7 @@ Generates every target's icons now, from `image` or from the configured icon, in
 ## add
 
 ```sh
-bunx svelte-desktop add rust|go|python
+bunx kitop add rust|go|python
 ```
 
 Creates a working native plugin in `native/rust` (a Cargo crate) or `native/go` (a Go module), wired to the SDK in the package, with the example command `hello.rust` or `hello.go`. `add python` creates `native/python` with a `pyproject.toml` and a `hello.python` command; Python commands need `uv`. Requires `cargo` or `go` to build. An existing destination is left untouched and returns an error. With the default `native` directory, `vite dev` builds it and writes its types to `src/native.d.ts`; this command always scaffolds under `native/`, even if your config uses another directory. See [Native code](/native/plugins).
@@ -65,7 +65,7 @@ Creates a working native plugin in `native/rust` (a Cargo crate) or `native/go` 
 ## preflight
 
 ```sh
-bunx svelte-desktop preflight <App.app>
+bunx kitop preflight <App.app>
 ```
 
 Checks a bundle against Apple's notarization requirements (hardened runtime, timestamps, entitlements, nested signing, SDK). Exits non-zero on errors. The build runs it before submitting.
@@ -73,7 +73,7 @@ Checks a bundle against Apple's notarization requirements (hardened runtime, tim
 ## keygen
 
 ```sh
-bunx svelte-desktop keygen [--out updater.key] [--force]
+bunx kitop keygen [--out updater.key] [--force]
 ```
 
 Creates the ed25519 key pair for [signed updates](/shipping/self-update): the private key (mode 0600) and `<out>.pub` with the base64 public key for `update.publicKey`.
@@ -81,7 +81,7 @@ Creates the ed25519 key pair for [signed updates](/shipping/self-update): the pr
 ## release
 
 ```sh
-bunx svelte-desktop release <merge|fetch-previous|sign|verify|make-manifest|pack|keygen> …
+bunx kitop release <merge|fetch-previous|sign|verify|make-manifest|pack|keygen> …
 ```
 
 Publishing updates, mostly from CI (see [Release with CI](/shipping/release)):
@@ -96,14 +96,14 @@ Publishing updates, mostly from CI (see [Release with CI](/shipping/release)):
 | `release pack <path>… --out <archive.tar.zst\|archive.tar.gz>` | Packs one or more paths into an archive; it does not sign a manifest. |
 | `release keygen [--out updater.key] [--force]` | The same key generation command as top-level `keygen`. |
 
-`--key-env VAR` reads the private key text from `VAR`; `--key` reads a file. When both are supplied, the file wins. `--notes-file` takes precedence over `--notes`. Run `bunx svelte-desktop release --help` for the updater command usage.
+`--key-env VAR` reads the private key text from `VAR`; `--key` reads a file. When both are supplied, the file wins. `--notes-file` takes precedence over `--notes`. Run `bunx kitop release --help` for the updater command usage.
 
 ## Vite
 
 | Command | |
 | --- | --- |
-| `bunx --bun vite dev` | The native window on the Vite server. Closing it stops Vite unless `exitOnClose` is `false`. `noWindow` or `SVELTE_DESKTOP_NO_WINDOW` skips the shell. |
+| `bunx --bun vite dev` | The native window on the Vite server. Closing it stops Vite unless `exitOnClose` is `false`. `noWindow` or `KITOP_NO_WINDOW` skips the shell. |
 | `bunx --bun vite build` | Build and package for `build.target` (default: the host) into `build.outDir` (default `.desktop/dist`). |
-| `SVELTE_DESKTOP_TARGET=<target> bunx --bun vite build` | Another target without editing the config |
+| `KITOP_TARGET=<target> bunx --bun vite build` | Another target without editing the config |
 
 Run [end-to-end tests](/features/testing) with `bun test --timeout 30000 tests/`. They drive the built app, so build first.

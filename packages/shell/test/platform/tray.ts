@@ -18,7 +18,7 @@ export default async (t: Harness) => {
   const stillUnset = await t.call("tray", "isSet");
   t.check("invalid tray.set → invalid_args and creates nothing", badFirst.error?.code === "invalid_args" && stillUnset.value === false, { badFirst, stillUnset });
 
-  const set = await t.call("tray", "set", { title: "SD", tooltip: "svelte-desktop harness" });
+  const set = await t.call("tray", "set", { title: "SD", tooltip: "kitop harness" });
   t.check("tray.set {title,tooltip} → {set:true}", set.ok && set.value.set === true, set);
   const isSet = await t.call("tray", "isSet");
   const exists = await t.call("tray", "exists");

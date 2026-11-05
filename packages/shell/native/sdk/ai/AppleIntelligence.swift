@@ -1,5 +1,5 @@
 // host.ai on macOS: Apple's on-device language model (Foundation Models, macOS 26 with Apple
-// Intelligence on). A plugin of the shell's own, built with the Swift SDK (include/SvelteDesktop.swift)
+// Intelligence on). A plugin of the shell's own, built with the Swift SDK (include/Kitop.swift)
 // by src/build/ai.ts and loaded with the app's plugins; src/ai.ts is its JavaScript side.
 //
 //   ai.availability()                         { available, reason? }

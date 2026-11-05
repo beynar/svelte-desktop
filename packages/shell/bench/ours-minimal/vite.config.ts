@@ -1,5 +1,5 @@
 import { sveltekit } from '@sveltejs/kit/vite';
-import desktop from '@svelte-desktop/shell/adapter';
+import desktop from '@kitop/shell/adapter';
 import { defineConfig } from 'vite';
 
 export default defineConfig({

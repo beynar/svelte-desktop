@@ -33,7 +33,7 @@ export type PermissionHandler = (request: WebPermissionRequest) => WebPermission
 export type AuthChallengeHandler = (request: AuthChallenge) => AuthChallengeAnswer | Promise<AuthChallengeAnswer>;
 type Request<T> = T & { requestId: string };
 type PolicyState = { permission: PermissionHandler | null; auth: AuthChallengeHandler | null; listening: boolean };
-const state = ((globalThis as Record<symbol, PolicyState | undefined>)[Symbol.for('svelte-desktop.web-policy')] ??= {
+const state = ((globalThis as Record<symbol, PolicyState | undefined>)[Symbol.for('kitop.web-policy')] ??= {
 	permission: null, auth: null, listening: false,
 });
 function assertServer() {

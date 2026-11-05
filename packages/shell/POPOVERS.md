@@ -21,8 +21,8 @@ src/routes/
 ```svelte
 <!-- (popover)/quick/+page.svelte -->
 <script lang="ts">
-  import PopoverContent from '@svelte-desktop/shell/platform/PopoverContent.svelte';
-  import { broadcast, closePopover } from '@svelte-desktop/shell/platform';
+  import PopoverContent from '@kitop/shell/platform/PopoverContent.svelte';
+  import { broadcast, closePopover } from '@kitop/shell/platform';
   import { addNote, getState } from '$lib/data.remote';
 </script>
 
@@ -72,7 +72,7 @@ click that dismissed a transient popover never reopens it.
 **From code** (page or server):
 
 ```ts
-import { popover } from '@svelte-desktop/shell/platform';
+import { popover } from '@kitop/shell/platform';
 await popover.create({ id: 'quick', route: '/quick', width: 320, tray: true });
 await popover.show('quick', { anchor: 'tray' | 'cursor' | { x, y, width, height } | { screen: {…} } });
 await popover.toggle('quick'); await popover.hide('quick');

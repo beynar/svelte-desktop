@@ -4,7 +4,7 @@ description: Every option of desktop.config.ts.
 ---
 
 ```ts desktop.config.ts
-import { defineConfig } from '@svelte-desktop/shell/config';
+import { defineConfig } from '@kitop/shell/config';
 
 export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' });
 ```
@@ -16,7 +16,7 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
 <TypeTable
   type={{
     appName: { type: "string", required: true, default: "package.json productName, else name", description: "Display name. The loader errors if no name is available." },
-    identifier: { type: "string", required: true, default: "dev.svelte-desktop.<normalized appName>", description: "Reverse-DNS bundle id (`com.example.app`). The loader lowercases appName and removes non-alphanumeric characters for the fallback. Names the bundle and the data directories." },
+    identifier: { type: "string", required: true, default: "dev.kitop.<normalized appName>", description: "Reverse-DNS bundle id (`com.example.app`). The loader lowercases appName and removes non-alphanumeric characters for the fallback. Names the bundle and the data directories." },
     version: { type: "string", default: "package.json version, else 0.0.0" },
     icon: { type: "string | { source: string; background?: string }", default: "icon.png, icon.svg, then static/icon.png", description: "One square image for every target. See [App icon](/shipping/app-icon)." },
     copyright: { type: "string" },
@@ -37,7 +37,7 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
     push: { type: "PushConfig", description: "APNs or your own push server." },
     native: { type: "string | false", default: '"native" if the folder exists', description: "Native sources directory, relative to the project. Swift, Objective-C, C, C++, Rust crates and Go modules; see Native code. `false` disables discovery." },
     addons: { type: "Record<string, string>", description: "Prebuilt Node-API addons (`.node`) to ship; sources in `native/addons/` compile automatically. See [Native code](/native) for platform support." },
-    sidecars: { type: "Record<string, string | Partial<Record<'macos' | 'linux' | 'windows', string>>>", description: "Executables shipped with the app, started from server code with `host.sidecar(name)` (or `sidecar(name)` imported from `@svelte-desktop/shell/server`). Paths are relative to the project; an omitted platform ships no executable for that entry." },
+    sidecars: { type: "Record<string, string | Partial<Record<'macos' | 'linux' | 'windows', string>>>", description: "Executables shipped with the app, started from server code with `host.sidecar(name)` (or `sidecar(name)` imported from `@kitop/shell/server`). Paths are relative to the project; an omitted platform ships no executable for that entry." },
     bridge: { type: "{ allow?: string[] }", description: "Page-to-native bridge policy; see below." },
     plist: { type: "Record<string, unknown>", description: "Extra Info.plist keys." },
     update: { type: "UpdateConfig & { privateKey?: string; baseUrl?: string }", description: "Signed self-update feed. See [Self-update](/shipping/self-update)." },
@@ -153,7 +153,7 @@ Every field of `WindowAnimation` is optional. These defaults apply when animatio
     manifestUrl: { type: "string", required: true, description: "update.json URL; may contain {channel}." },
     publicKey: { type: "string | string[]", required: true, description: "ed25519 public key(s), base64." },
     channel: { type: "string", default: '"stable"' },
-    privateKey: { type: "string", default: "$SVELTE_DESKTOP_UPDATE_KEY", description: "Key file `vite build` signs `release/update.json` with. Without a key, the build writes `release/update.unsigned.json`." },
+    privateKey: { type: "string", default: "$KITOP_UPDATE_KEY", description: "Key file `vite build` signs `release/update.json` with. Without a key, the build writes `release/update.unsigned.json`." },
     baseUrl: { type: "string", description: "Public base URL where release/ is uploaded." },
   }}
 />
@@ -162,12 +162,12 @@ Every field of `WindowAnimation` is optional. These defaults apply when animatio
 
 <TypeTable
   type={{
-    target: { type: '"macos" | "linux" | "windows"', default: "the host, or $SVELTE_DESKTOP_TARGET" },
-    targetArch: { type: '"x64" | "arm64"', default: "host architecture on Linux; x64 otherwise; $SVELTE_DESKTOP_TARGET_ARCH overrides", description: "Linux and Windows targets. Windows defaults to `x64`." },
+    target: { type: '"macos" | "linux" | "windows"', default: "the host, or $KITOP_TARGET" },
+    targetArch: { type: '"x64" | "arm64"', default: "host architecture on Linux; x64 otherwise; $KITOP_TARGET_ARCH overrides", description: "Linux and Windows targets. Windows defaults to `x64`." },
     universal: { type: "boolean", default: "false", description: "macOS: build both arm64 and x64 slices and lipo a universal app." },
     aot: { type: "boolean", default: "false", description: "Bun `--aot`: machine code at build time. Enabled only when the compiler supports it and the build can use host AOT; ignored for Windows and cross-architecture builds." },
     trim: { type: "boolean", default: "on when the compiling Bun supports --trim", description: "Drop unused Bun APIs, with `--trim-locales=en`. Falls back to an untrimmed build if the target runtime cannot be trimmed." },
-    bun: { type: "string", default: "$SVELTE_DESKTOP_BUN or the running Bun", description: "Bun binary used to compile." },
+    bun: { type: "string", default: "$KITOP_BUN or the running Bun", description: "Bun binary used to compile." },
     dmg: { type: "boolean", default: "true", description: "macOS DMG." },
     zip: { type: "boolean", default: "true", description: "macOS and Windows zip." },
     outDir: { type: "string", default: '".desktop/dist"' },

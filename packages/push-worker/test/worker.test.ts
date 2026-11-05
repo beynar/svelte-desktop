@@ -9,7 +9,7 @@ import { deliveryContract, refusalContract } from "../../shell/src/push/contract
 
 const dir = mkdtempSync(join(tmpdir(), "sd-push-worker-"));
 const port = 18000 + Math.floor(Math.random() * 2000);
-// PUSH_WORKER_URL=https://svelte-desktop-push.<you>.workers.dev: the same tests against a deployed Worker.
+// PUSH_WORKER_URL=https://kitop-push.<you>.workers.dev: the same tests against a deployed Worker.
 const deployed = process.env.PUSH_WORKER_URL?.replace(/\/+$/, "");
 const base = deployed ?? `http://127.0.0.1:${port}`;
 let dev: ReturnType<typeof Bun.spawn> | undefined;

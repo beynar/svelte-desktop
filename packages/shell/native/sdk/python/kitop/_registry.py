@@ -32,12 +32,12 @@ commands: dict[str, Command] = {}
 def command(name: str) -> Callable[[F], F]:
     """Registers the function as the command `service.op`."""
     if not _NAME.match(name):
-        raise ValueError(f"svelte-desktop: command {name!r} must be named service.op (letters, digits, _ and -)")
+        raise ValueError(f"kitop: command {name!r} must be named service.op (letters, digits, _ and -)")
 
     def register(fn: F) -> F:
         if name in commands and commands[name].fn is not fn:
             other = commands[name]
-            raise ValueError(f"svelte-desktop: command {name!r} is defined twice ({other.module} and {fn.__module__})")
+            raise ValueError(f"kitop: command {name!r} is defined twice ({other.module} and {fn.__module__})")
         service, op = name.split(".", 1)
         commands[name] = Command(service, op, fn, fn.__module__)
         return fn

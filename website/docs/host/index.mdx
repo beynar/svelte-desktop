@@ -90,12 +90,12 @@ Add the operations for each member the page uses, or test the page with the list
 
 The same API is available as modules, for those who prefer imports:
 
-- `@svelte-desktop/shell/stores`: the reactive stores.
-- `@svelte-desktop/shell/platform`: the services and `broadcast`. `NativeApiError` is exported from here too.
-- `@svelte-desktop/shell/native`: `native`.
-- `@svelte-desktop/shell/server` and `@svelte-desktop/shell/client`: server-only and page-only helpers.
+- `@kitop/shell/stores`: the reactive stores.
+- `@kitop/shell/platform`: the services and `broadcast`. `NativeApiError` is exported from here too.
+- `@kitop/shell/native`: `native`.
+- `@kitop/shell/server` and `@kitop/shell/client`: server-only and page-only helpers.
 
 ```ts
-import { theme, window } from '@svelte-desktop/shell/stores';
-import { popover, broadcast } from '@svelte-desktop/shell/platform';
+import { theme, window } from '@kitop/shell/stores';
+import { popover, broadcast } from '@kitop/shell/platform';
 ```

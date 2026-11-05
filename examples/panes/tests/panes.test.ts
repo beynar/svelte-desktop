@@ -1,7 +1,7 @@
 // <WindowTabs split> in the built app: each tab in its own process, panes made and resized, tabs
 // moved between them without their page reloading, the layout back at the next launch.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 type Box = { x: number; y: number; width: number; height: number };
 let app: AppHandle;

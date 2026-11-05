@@ -5,7 +5,7 @@
 //     together: the build writes its go.mod) — one Go plugin per app, as a process holds one Go
 //     runtime.
 // Each is built into a shared library the shell loads next to libapp-native, with the SDKs in
-// native/sdk/{rust,go} (the plugin ABI of native/include/svelte_desktop.h). Their commands are
+// native/sdk/{rust,go} (the plugin ABI of native/include/kitop.h). Their commands are
 // reached with `native` (src/native.ts), typed by native-types.ts.
 import { $ } from "bun";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -122,7 +122,7 @@ function rustProject(c: ResolvedConfig, plugin: LanguagePlugin): string {
   const dir = generated(c, plugin);
   mkdirSync(dir, { recursive: true });
   const manifest = join(dir, "Cargo.toml");
-  const text = `# Written by svelte-desktop for ${relative(c.root, plugin.files![0]!)} — a crate of its own: put a Cargo.toml next to it for more dependencies.
+  const text = `# Written by kitop for ${relative(c.root, plugin.files![0]!)} — a crate of its own: put a Cargo.toml next to it for more dependencies.
 [package]
 name = "app-${plugin.name}"
 version = "0.0.0"
@@ -133,7 +133,7 @@ crate-type = ["cdylib"]
 path = ${JSON.stringify(plugin.files![0]!)}
 
 [dependencies]
-svelte-desktop = { path = ${JSON.stringify(join(SDK, "rust"))} }
+kitop = { path = ${JSON.stringify(join(SDK, "rust"))} }
 serde = { version = "1", features = ["derive"] }
 ts-rs = "12"
 
@@ -176,14 +176,14 @@ function goProject(c: ResolvedConfig, plugin: LanguagePlugin): string {
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, "go.mod"),
-    `// Written by svelte-desktop for the loose .go files of native/ — a module of their own: put a go.mod next to them for more dependencies.
+    `// Written by kitop for the loose .go files of native/ — a module of their own: put a go.mod next to them for more dependencies.
 module app-go
 
 go 1.22
 
-require svelte-desktop.dev/go/desktop v0.0.0
+require kitop.dev/go/desktop v0.0.0
 
-replace svelte-desktop.dev/go/desktop => ${join(SDK, "go")}
+replace kitop.dev/go/desktop => ${join(SDK, "go")}
 `,
   );
   let hasMain = false;

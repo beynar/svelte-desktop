@@ -96,7 +96,7 @@ A server job record contains `id`, `name`, `state`, `progress` (0 to 1), `messag
 | `ctx.signal` | Aborted when the child receives a cancellation message. App quit kills running jobs without first sending that message. |
 | `ctx.id` | The job id |
 
-The default export can be synchronous or asynchronous. `HostJob` is supplied by the app's host declarations; `JobFunction` and `JobContext` are also available as type imports from `@svelte-desktop/shell/server`. An undefined result is sent as `null`. Stdout and stderr are captured alongside `ctx.log` output. The server retains up to 200 log entries per job; list/page snapshots include the last 20, and persisted history includes the last 50.
+The default export can be synchronous or asynchronous. `HostJob` is supplied by the app's host declarations; `JobFunction` and `JobContext` are also available as type imports from `@kitop/shell/server`. An undefined result is sent as `null`. Stdout and stderr are captured alongside `ctx.log` output. The server retains up to 200 log entries per job; list/page snapshots include the last 20, and persisted history includes the last 50.
 
 ## Threads and processes
 
@@ -108,7 +108,7 @@ On normal app quit, server cleanup kills tracked running jobs and records them a
 
 ## Development, packaging and history
 
-In `vite dev`, Bun imports the source file through the job runner. Each new job sees the current source; an edit does not reload a running child. In a built app, the adapter embeds each job and its IPC runner. Starting a job launches the app's own executable with `SVELTE_DESKTOP_JOB`, without needing an external Bun installation or the Bun CLI, including with `build.trim`.
+In `vite dev`, Bun imports the source file through the job runner. Each new job sees the current source; an edit does not reload a running child. In a built app, the adapter embeds each job and its IPC runner. Starting a job launches the app's own executable with `KITOP_JOB`, without needing an external Bun installation or the Bun CLI, including with `build.trim`.
 
 Entry names may contain letters, numbers, underscores and hyphens, and end in `.ts` or `.js`. Subdirectories are not discovered. Jobs build as standalone Bun modules outside the SvelteKit/Vite pipeline; use ordinary imports rather than assuming SvelteKit aliases are available.
 

@@ -1,7 +1,7 @@
 // `prewarm` with panes (vite dev: the env reaches the page): a spare view taken to a keepAlive route
 // goes there, its own navigation isn't mistaken for leaving for that route's tab.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 let app: AppHandle;
 beforeAll(async () => {

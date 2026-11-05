@@ -5,7 +5,7 @@ import platform
 from dataclasses import dataclass
 
 import numpy as np
-from svelte_desktop import InvalidArgs, command
+from kitop import InvalidArgs, command
 
 
 @dataclass

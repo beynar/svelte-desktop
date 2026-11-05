@@ -7,7 +7,7 @@
 #   native/build-windows.sh x64 arm64  # both
 set -eu
 cd "$(dirname "$0")"
-IMAGE=${SVELTE_DESKTOP_WINDOWS_IMAGE:-svelte-desktop-windows}
+IMAGE=${KITOP_WINDOWS_IMAGE:-kitop-windows}
 command -v docker >/dev/null 2>&1 || { echo "build-windows.sh: docker is required" >&2; exit 1; }
 docker build -q -t "$IMAGE" docker/windows >/dev/null
 [ $# -eq 0 ] && set -- x64

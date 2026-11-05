@@ -1,7 +1,7 @@
-// End-to-end testing of a real svelte-desktop app (built .app or `vite dev`),
+// End-to-end testing of a real kitop app (built .app or `vite dev`),
 // in the real WKWebView window, from `bun test`:
 //
-//   import { launch } from '@svelte-desktop/shell/test';
+//   import { launch } from '@kitop/shell/test';
 //   import { test, expect, afterAll } from 'bun:test';
 //   const app = await launch({ app: '.desktop/dist/Notes.app' });     // or launch({ dev: true })
 //   afterAll(() => app.close());
@@ -12,7 +12,7 @@
 //     expect(await app.text('ul')).toContain('hello');
 //   });
 //
-// The app connects back to a WebSocket opened here (SVELTE_DESKTOP_TEST); the
+// The app connects back to a WebSocket opened here (KITOP_TEST); the
 // channel exists only when that variable is set. Selectors run in the page.
 //
 // Assert failures with `expect(await app.platform(…).catch((e) => e)).toMatchObject({ code })`,
@@ -31,7 +31,7 @@ export interface LaunchOptions {
   /** Command-line arguments for a built app (URLs, documents to open). */
   args?: string[];
   /** Start the app yourself (e.g. Windows' toast activator launching it): called with the
-   *  test channel URL to put in the app's SVELTE_DESKTOP_TEST; launch() then waits for it to connect. */
+   *  test channel URL to put in the app's KITOP_TEST; launch() then waits for it to connect. */
   connect?: (testUrl: string) => void | Promise<void>;
   /** ms to wait for the app to connect and its page to load. Default 30000. */
   timeout?: number;
@@ -75,7 +75,7 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
     hostname: "127.0.0.1",
     port: 0,
     fetch(req, srv) {
-      return srv.upgrade(req) ? undefined : new Response("svelte-desktop test runner", { status: 426 });
+      return srv.upgrade(req) ? undefined : new Response("kitop test runner", { status: 426 });
     },
     websocket: {
       message(ws, raw) {
@@ -83,7 +83,7 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
       },
       perMessageDeflate: false,
       close(_ws, code, reason) {
-        if (process.env.SVELTE_DESKTOP_TEST_DEBUG) console.log(`[test-channel] closed ${code} ${reason}`);
+        if (process.env.KITOP_TEST_DEBUG) console.log(`[test-channel] closed ${code} ${reason}`);
       },
     },
   });
@@ -97,7 +97,7 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
     }
   }
   function routeFrame(ws: { send(data: string): unknown }, raw: string) {
-    if (process.env.SVELTE_DESKTOP_TEST_DEBUG) console.log("[test-channel]", raw.slice(0, 200));
+    if (process.env.KITOP_TEST_DEBUG) console.log("[test-channel]", raw.slice(0, 200));
     const m = JSON.parse(raw);
     if (m.t === "hello") {
       socket = ws;
@@ -118,10 +118,10 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
   }
 
   // MIMALLOC_PURGE_DELAY: what LaunchServices gives the built app (its Info.plist), launched here directly.
-  const env = { MIMALLOC_PURGE_DELAY: "0", ...process.env, ...options.env, SVELTE_DESKTOP_TEST: `ws://127.0.0.1:${server.port}` };
+  const env = { MIMALLOC_PURGE_DELAY: "0", ...process.env, ...options.env, KITOP_TEST: `ws://127.0.0.1:${server.port}` };
   if (options.connect) {
     const timer = setTimeout(() => resolveHello({ origin: "" }), timeout);
-    await options.connect(env.SVELTE_DESKTOP_TEST);
+    await options.connect(env.KITOP_TEST);
     const h = await hello;
     clearTimeout(timer);
     if (!socket) {

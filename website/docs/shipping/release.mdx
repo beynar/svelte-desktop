@@ -52,7 +52,7 @@ This part is shared by both ways of releasing.
     On your machine, in the project:
 
     ```sh
-    bunx svelte-desktop keygen --out updater.key
+    bunx kitop keygen --out updater.key
     ```
 
     It writes `updater.key` (the private key) and `updater.key.pub` (the public key, one line of base64).
@@ -67,7 +67,7 @@ This part is shared by both ways of releasing.
     Add an `update` block. Replace the placeholders, and paste the line from `updater.key.pub` as `publicKey`:
 
     ```ts desktop.config.ts
-    import { defineConfig } from '@svelte-desktop/shell/config';
+    import { defineConfig } from '@kitop/shell/config';
 
     export default defineConfig({
       appName: 'MyApp',
@@ -161,9 +161,9 @@ export CODESIGN_IDENTITY="Developer ID Application: Acme Inc (AB12CD34EF)"
 export NOTARY_PROFILE=notary
 VERSION=$(jq -r .version package.json)
 
-bunx svelte-desktop release fetch-previous https://updates.example.com/$APP_SLUG/$CHANNEL/update.json --platform darwin-arm64 --platform darwin-x64 --public-key "$(cat updater.key.pub)"
+bunx kitop release fetch-previous https://updates.example.com/$APP_SLUG/$CHANNEL/update.json --platform darwin-arm64 --platform darwin-x64 --public-key "$(cat updater.key.pub)"
 bunx --bun vite build
-bunx svelte-desktop release merge .desktop/dist/release/update.unsigned.json --key updater.key --out update.json
+bunx kitop release merge .desktop/dist/release/update.unsigned.json --key updater.key --out update.json
 
 # R2 credentials for the aws CLI (the R2 API token from the setup)
 export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… AWS_DEFAULT_REGION=auto
@@ -333,7 +333,7 @@ jobs:
           xcrun notarytool store-credentials notary --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --keychain "$KEYCHAIN"
 
       - name: Previous release (for delta patches)
-        run: bunx svelte-desktop release fetch-previous "$UPDATES_URL/$APP_SLUG/$CHANNEL/update.json" --platform darwin-arm64 --platform darwin-x64 --public-key "${{ vars.UPDATE_PUBLIC_KEY }}"
+        run: bunx kitop release fetch-previous "$UPDATES_URL/$APP_SLUG/$CHANNEL/update.json" --platform darwin-arm64 --platform darwin-x64 --public-key "${{ vars.UPDATE_PUBLIC_KEY }}"
 
       - name: Build, sign and notarize
         env:
@@ -412,7 +412,7 @@ jobs:
 
       - name: Build
         env:
-          SVELTE_DESKTOP_TARGET: windows
+          KITOP_TARGET: windows
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
           RELEASE_CHANNEL: ${{ env.CHANNEL }}
         run: bunx --bun vite build
@@ -454,8 +454,8 @@ jobs:
         env:
           UPDATE_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
         run: |
-          bunx svelte-desktop release merge dists/dist-macos/release/update.unsigned.json dists/dist-windows/release/update.unsigned.json --key-env UPDATE_PRIVATE_KEY --out update.json
-          bunx svelte-desktop release verify update.json --public-key "${{ vars.UPDATE_PUBLIC_KEY }}"
+          bunx kitop release merge dists/dist-macos/release/update.unsigned.json dists/dist-windows/release/update.unsigned.json --key-env UPDATE_PRIVATE_KEY --out update.json
+          bunx kitop release verify update.json --public-key "${{ vars.UPDATE_PUBLIC_KEY }}"
 
       - name: Upload the update archives
         run: |
@@ -559,7 +559,7 @@ Users on `beta` get beta builds. Users on `stable` never see them, because a man
 | --- | --- |
 | `check` fails: tag doesn't match | The tag must be `v` + the `package.json` version. Delete the tag (`git push origin :v1.4.0`), fix, and tag again. |
 | macOS: `no identity found` / `errSecInternalComponent` | `MACOS_SIGNING_IDENTITY` doesn't exactly match the certificate, or the `.p12` password is wrong. Compare with `security find-identity -v -p codesigning` on your Mac. |
-| macOS: notarization `Invalid` | The build prints the `xcrun notarytool log <id> --keychain-profile notary` command. Run it on your Mac with the same API key to see Apple's reasons. Run `bunx svelte-desktop preflight .desktop/dist/MyApp.app` locally first. |
+| macOS: notarization `Invalid` | The build prints the `xcrun notarytool log <id> --keychain-profile notary` command. Run it on your Mac with the same API key to see Apple's reasons. Run `bunx kitop preflight .desktop/dist/MyApp.app` locally first. |
 | macOS: `notarytool` can't find the profile `notary` | Check the credential-import step, the selected keychain and `APPLE_API_KEY_P8_BASE64`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID`. |
 | linux: `Package gtk+-3.0 was not found` | The apt step didn't run or failed: it must come before the build. |
 | linux: no `.AppImage` | The build prints `AppImage: appimagetool failed …`. The `.tar.gz` still ships; check that the appimagetool download step succeeded. |

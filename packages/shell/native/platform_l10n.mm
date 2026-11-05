@@ -116,12 +116,12 @@ static NSDictionary<NSString *, NSString *> *current(void) {
   static dispatch_once_t once;
   dispatch_once(&once, ^{
     // The app's language for this user (CFBundleLocalizations ∩ their preferred languages). vite dev
-    // has no bundle to declare them: SVELTE_DESKTOP_LOCALIZATIONS lists them instead, and
-    // SVELTE_DESKTOP_LANGUAGE forces one.
+    // has no bundle to declare them: KITOP_LOCALIZATIONS lists them instead, and
+    // KITOP_LANGUAGE forces one.
     NSDictionary *env = NSProcessInfo.processInfo.environment;
-    NSString *lang = env[@"SVELTE_DESKTOP_LANGUAGE"];
-    if (!lang && [env[@"SVELTE_DESKTOP_LOCALIZATIONS"] length])
-      lang = [NSBundle preferredLocalizationsFromArray:[env[@"SVELTE_DESKTOP_LOCALIZATIONS"] componentsSeparatedByString:@","] forPreferences:nil].firstObject;
+    NSString *lang = env[@"KITOP_LANGUAGE"];
+    if (!lang && [env[@"KITOP_LOCALIZATIONS"] length])
+      lang = [NSBundle preferredLocalizationsFromArray:[env[@"KITOP_LOCALIZATIONS"] componentsSeparatedByString:@","] forPreferences:nil].firstObject;
     if (!lang) lang = NSBundle.mainBundle.preferredLocalizations.firstObject ?: @"en";
     NSDictionary *all = tables();
     table = all[lang];

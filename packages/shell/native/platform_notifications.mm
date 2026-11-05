@@ -187,7 +187,7 @@ static void install_categories(void) {
 
 // Action sets of notifications that may outlive this process (scheduled ones): persisted, so
 // their buttons exist again after a relaunch. Bounded; the oldest go first.
-static NSString *const kCategoriesKey = @"svelte-desktop.notificationCategories";
+static NSString *const kCategoriesKey = @"kitop.notificationCategories";
 static const NSUInteger kMaxStoredCategories = 64;
 
 // One category per distinct action set; we own every category of the app.
@@ -568,10 +568,10 @@ void platform_register_notifications(void) {
   platform_register(@"notifications", @"requestPermission",
                     ^(PlatformCall *call) { platform_notifications_permission(call, YES); });
 
-  // e2e tests (launch() sets SVELTE_DESKTOP_TEST): a user response to a delivered
+  // e2e tests (launch() sets KITOP_TEST): a user response to a delivered
   // notification, through the same path as a real one. `cold`: as if no page was loaded.
   // Same condition as the test channel (which already drives the app): ws://127.0.0.1:<port>.
-  const char *test = getenv("SVELTE_DESKTOP_TEST");
+  const char *test = getenv("KITOP_TEST");
   if (test && !strncmp(test, "ws://127.0.0.1:", 15))
     platform_register(@"notifications", @"simulateResponse", ^(PlatformCall *call) {
       if (!has_bundle()) return [call fail:@"unavailable" message:@"notifications.simulateResponse: needs a bundled app"];

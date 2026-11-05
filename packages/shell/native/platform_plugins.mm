@@ -1,8 +1,8 @@
 // Loads the app's native plugin (libapp-native.dylib) and bridges its ops into
-// the platform registry. See include/svelte_desktop.h.
+// the platform registry. See include/kitop.h.
 #include <dlfcn.h>
 
-#include "include/svelte_desktop.h"
+#include "include/kitop.h"
 #include "platform_internal.h"
 #include "shell.h"
 

@@ -1,6 +1,6 @@
 // What a setter sets reads back: state a settings page shows without keeping its own copy.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 let app: AppHandle;
 beforeAll(async () => {

@@ -1,5 +1,5 @@
 // Server code pushing to the open sockets (a remote function or a job's callback would do the same).
-import { sockets } from '@svelte-desktop/shell/websocket';
+import { sockets } from '@kitop/shell/websocket';
 import { presence } from '../../../lib/server/presence';
 
 export function POST() {

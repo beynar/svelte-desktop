@@ -1,6 +1,6 @@
 <script lang="ts">
-	import PopoverContent from '@svelte-desktop/shell/platform/PopoverContent.svelte';
-	import { broadcast, closePopover } from '@svelte-desktop/shell/platform';
+	import PopoverContent from '@kitop/shell/platform/PopoverContent.svelte';
+	import { broadcast, closePopover } from '@kitop/shell/platform';
 	const emojis = ['😀', '🎉', '✅', '🔥', '💡', '📌', '🚀', '❤️', '👀', '🙏', '☕️', '🌈'];
 	async function pick(e: string) {
 		await broadcast('emoji', e);

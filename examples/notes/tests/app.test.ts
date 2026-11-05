@@ -2,7 +2,7 @@
 // `bun run test` / `bun run test:dev` (same tests against `vite dev`). App startup needs
 // more than bun's default 5 s per hook, hence `--timeout` in the scripts.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 let app: AppHandle;
 beforeAll(async () => {
@@ -72,7 +72,7 @@ test('native Rust and Go plugins: typed commands, errors, events, a panic-free r
 	expect(await app.platform('hello', 'rust', { name: 'Ada' })).toEqual({ message: 'Hello Ada from Rust' });
 	expect(await app.platform('hello', 'go', { name: 'Ada' })).toEqual({ message: 'Hello Ada from Go' });
 	expect(await app.platform('text', 'stats', { text: 'one two\nthree' })).toEqual({ words: 3, lines: 2, longest: 'three' });
-	// The page's own way in: host.native (also `native` from '@svelte-desktop/shell/native').
+	// The page's own way in: host.native (also `native` from '@kitop/shell/native').
 	expect(await app.eval(`host.native.hello.go({ name: 'page' })`)).toEqual({ message: 'Hello page from Go' });
 	expect(await app.eval(`host.native.greeter.add({ a: 20, b: 22 })`)).toBe(42);
 	for (const op of ['rust', 'go'])
@@ -104,8 +104,8 @@ test('host.store and host.windowState from the page: the app server owns the fil
 	await app.eval(`(async () => { await host.store.load(); host.store.set('e2e', { n: 7 }); await host.store.flush(); })()`);
 	// In this app's own folder: the OS's app-data root is shared with every other app.
 	const own = await app.platform<string>('app', 'getPath', { name: 'userData' });
-	expect(own).toContain('dev.svelte-desktop.notes');
-	expect(JSON.parse(await Bun.file(`${own}/svelte-desktop-store.json`).text()).e2e).toEqual({ n: 7 });
+	expect(own).toContain('dev.kitop.notes');
+	expect(JSON.parse(await Bun.file(`${own}/kitop-store.json`).text()).e2e).toEqual({ n: 7 });
 	await app.eval('(window.__beforeReload = true, setTimeout(() => location.reload(), 10), true)');
 	await app.waitFor(() => !(window as any).__beforeReload && document.documentElement.hasAttribute('data-desktop-hydrated'), { timeout: 15_000 });
 	expect(await app.eval(`host.store.load().then((d) => d.e2e)`)).toEqual({ n: 7 });
@@ -242,7 +242,7 @@ test('the `host` global, without imports, in the page and in server code', async
 	expect(page).toEqual({ available: true, name: 'Svelte Notes', dark: 'boolean', clipboard: 'via host', jobs: true, start: 'undefined', info: 'Svelte Notes' });
 	const server = await app.eval<Record<string, unknown>>(`fetch('/api/host').then((r) => r.json())`);
 	expect(server).toMatchObject({ available: true, name: 'Svelte Notes', jobs: true, start: 'function' });
-	expect(String(server.data)).toContain('dev.svelte-desktop.notes');
+	expect(String(server.data)).toContain('dev.kitop.notes');
 });
 
 test('permissions: declared in desktop.config, reactive statuses, undeclared error, the guided panel', async () => {
@@ -336,8 +336,8 @@ test('notifications: dedupe by id, schedule, lists, deep link on click, actions/
 });
 
 test('self-hosted push (push.server): register, end-to-end encrypted delivery, dedupe by id, tap deep-links', async () => {
-	const { servePush } = await import('@svelte-desktop/shell/push-server');
-	const { createPush, generateVapidKeys } = await import('@svelte-desktop/shell/push');
+	const { servePush } = await import('@kitop/shell/push-server');
+	const { createPush, generateVapidKeys } = await import('@kitop/shell/push');
 	const server = servePush({ port: 47123, hostname: '127.0.0.1' });
 	try {
 		await app.eval(`(window.__pm = [], host.push.on('message', (m) => window.__pm.push(m)), true)`);
@@ -368,8 +368,8 @@ test('self-hosted push (push.server): register, end-to-end encrypted delivery, d
 
 test('quitOnLastWindowClosed: false — closing the last window hides it; the app and its push connection live on; a click shows it and deep-links', async () => {
 	if (process.env.DESKTOP_TEST_DEV) return; // vite dev owns the window lifecycle
-	const { servePush } = await import('@svelte-desktop/shell/push-server');
-	const { createPush, generateVapidKeys } = await import('@svelte-desktop/shell/push');
+	const { servePush } = await import('@kitop/shell/push-server');
+	const { createPush, generateVapidKeys } = await import('@kitop/shell/push');
 	const server = servePush({ port: 47123, hostname: '127.0.0.1' });
 	try {
 		const target = await app.eval<never>('host.push.register()');

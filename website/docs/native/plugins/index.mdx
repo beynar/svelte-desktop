@@ -10,7 +10,7 @@ A plugin adds native commands that pages and SvelteKit server code call the same
 Add one with the CLI, then edit the generated source:
 
 ```sh
-bunx svelte-desktop add rust    # or go, python
+bunx kitop add rust    # or go, python
 ```
 
 Swift, Objective-C and C/C++ plugins are plain files under `native/`. Each language page has a complete example: [Rust](/native/plugins/rust), [Go](/native/plugins/go), [Python](/native/plugins/python), [Swift](/native/plugins/swift), [Objective-C, C and C++](/native/plugins/objective-c-and-c).
@@ -18,7 +18,7 @@ Swift, Objective-C and C/C++ plugins are plain files under `native/`. Each langu
 Every command is named `service.op`. Call it from a page or server code:
 
 ```ts
-import { native } from '@svelte-desktop/shell/native';
+import { native } from '@kitop/shell/native';
 
 const stats = await native.text.stats({ text: 'Hello from the app' });
 const again = await host.native.text.stats({ text: 'Another call' }); // same object
@@ -59,7 +59,7 @@ Rust, Go and Python turn handler panics and exceptions into `internal`; Swift tu
 
 ## Events
 
-Plugins emit events with `svelte_desktop::emit` (Rust), `desktop.Emit` (Go), `emit` (Python), `Desktop.emit` (Swift), `SDEmit` (Objective-C) or the C host's `emit`, from any thread. Every app-origin page and the server receive them; replies go only to the caller.
+Plugins emit events with `kitop::emit` (Rust), `desktop.Emit` (Go), `emit` (Python), `Desktop.emit` (Swift), `SDEmit` (Objective-C) or the C host's `emit`, from any thread. Every app-origin page and the server receive them; replies go only to the caller.
 
 Use an object payload. Other JSON values arrive as `{ value: ... }`. Event payloads aren't in `src/native.d.ts`: the listener supplies the type. Include a request ID when calls run concurrently.
 
@@ -77,7 +77,7 @@ Events emitted during plugin setup fire before pages load and the server is list
 Page calls go through the same bridge policy as built-in operations:
 
 ```ts desktop.config.ts
-import { defineConfig } from '@svelte-desktop/shell/config';
+import { defineConfig } from '@kitop/shell/config';
 
 export default defineConfig({
   appName: 'Example',

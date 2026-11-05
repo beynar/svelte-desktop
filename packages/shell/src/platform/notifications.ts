@@ -184,9 +184,9 @@ const native = () => platformReady();
 
 // Self-hosted push (desktop.config `push.server`) on desktop: the client runs in the app's
 // server process (push/desktop.ts); pages ask it over the `push:*` broadcast channel.
-declare const __SVELTE_DESKTOP_PUSH__: { server?: string | null } | undefined;
+declare const __KITOP_PUSH__: { server?: string | null } | undefined;
 function selfHostedPush(): boolean {
-	const c = typeof __SVELTE_DESKTOP_PUSH__ !== 'undefined' ? __SVELTE_DESKTOP_PUSH__ : undefined;
+	const c = typeof __KITOP_PUSH__ !== 'undefined' ? __KITOP_PUSH__ : undefined;
 	if (!c?.server || !native()) return false;
 	return true;
 }
@@ -261,7 +261,7 @@ interface State {
 	bound: boolean;
 	observers: Map<string, Set<Listener>>;
 }
-const S: State = ((globalThis as Record<symbol, State | undefined>)[Symbol.for('svelte-desktop.notifications')] ??= {
+const S: State = ((globalThis as Record<symbol, State | undefined>)[Symbol.for('kitop.notifications')] ??= {
 	listeners: new Map(),
 	retained: [],
 	seen: new Set(),
@@ -547,7 +547,7 @@ const web = {
 		if ((await web.request()) !== 'granted') throw new NativeApiError('denied', 'push.register: notifications are not allowed');
 		let sub = await reg.pushManager.getSubscription();
 		if (!sub) {
-			if (!opts.vapidPublicKey) throw new NativeApiError('invalid_args', 'push.register: browsers need `vapidPublicKey` (generateVapidKeys() from @svelte-desktop/shell/push)');
+			if (!opts.vapidPublicKey) throw new NativeApiError('invalid_args', 'push.register: browsers need `vapidPublicKey` (generateVapidKeys() from @kitop/shell/push)');
 			const key = Uint8Array.from(atob(opts.vapidPublicKey.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
 			sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
 		}

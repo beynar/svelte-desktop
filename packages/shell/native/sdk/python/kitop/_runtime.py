@@ -1,4 +1,4 @@
-"""`python -m svelte_desktop run <dir>`: imports the app's modules, then serves the shell's calls."""
+"""`python -m kitop run <dir>`: imports the app's modules, then serves the shell's calls."""
 
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ class Server:
 def run(root: str) -> None:
     open_channel()
     load_modules(root)
-    server = Server(int(os.environ.get("SVELTE_DESKTOP_PYTHON_WORKERS") or 8))
+    server = Server(int(os.environ.get("KITOP_PYTHON_WORKERS") or 8))
     send("READY")
     for raw in sys.stdin.buffer:  # EOF: the app is gone (or quitting)
         line = raw.decode("utf-8").strip()

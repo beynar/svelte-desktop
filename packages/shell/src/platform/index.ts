@@ -1352,7 +1352,7 @@ export interface AvailableUpdate {
 type UpdateInfoWire = Omit<AvailableUpdate, 'downloadAndInstall'>;
 
 /** In the Worker the shell installs an in-process implementation here. */
-const UPDATER_KEY = Symbol.for('svelte-desktop.updater');
+const UPDATER_KEY = Symbol.for('kitop.updater');
 interface InProcessUpdater {
 	check(): Promise<UpdateInfoWire | null>;
 	install(): Promise<void>;
@@ -1363,7 +1363,7 @@ async function updaterCall<T>(op: 'check' | 'install'): Promise<T> {
 	if (local) return (await local[op]()) as T;
 	if (typeof location === 'undefined') {
 		const { NativeApiError } = await import('./bus');
-		throw new NativeApiError('unavailable', 'the updater runs inside the svelte-desktop shell');
+		throw new NativeApiError('unavailable', 'the updater runs inside the kitop shell');
 	}
 	const res = await fetch(`/__desktop/update/${op}`, { method: 'POST' });
 	const body = await res.json();
@@ -1493,7 +1493,7 @@ export function onBroadcast<T = unknown>(
 }
 
 // ── native modules ──────────────────────────────────────────────────
-// The app's own native commands: `native` from '@svelte-desktop/shell/native' (also host.native).
+// The app's own native commands: `native` from '@kitop/shell/native' (also host.native).
 
 // ── webview ─────────────────────────────────────────────────────────
 // Features of windows, popovers and embedded views. Every op targets, in order:
@@ -1613,8 +1613,8 @@ export type DownloadFailedEvent = DownloadBase & { error: string; canceled: bool
 // get a guided flow: the right System Settings pane plus a floating panel with
 // the app's icon to drag into the list.
 
-declare const __SVELTE_DESKTOP_PERMISSIONS__: Record<string, string> | undefined;
-const DECLARED: Record<string, string> = typeof __SVELTE_DESKTOP_PERMISSIONS__ === 'object' && __SVELTE_DESKTOP_PERMISSIONS__ ? __SVELTE_DESKTOP_PERMISSIONS__ : {};
+declare const __KITOP_PERMISSIONS__: Record<string, string> | undefined;
+const DECLARED: Record<string, string> = typeof __KITOP_PERMISSIONS__ === 'object' && __KITOP_PERMISSIONS__ ? __KITOP_PERMISSIONS__ : {};
 
 /** Must be in desktop.config `permissions` before asking (usage strings / manifest entries). */
 const MUST_DECLARE = new Set<string>(['camera', 'microphone', 'location', 'contacts', 'calendars', 'reminders', 'photos', 'bluetooth', 'speech', 'appleEvents', 'desktopFolder', 'documentsFolder', 'downloadsFolder']);

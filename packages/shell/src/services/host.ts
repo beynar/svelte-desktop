@@ -4,21 +4,21 @@ import { channel, jsonValue, limits, type Packet } from './channel.ts';
 import type { ServiceExit, ServiceHandle, ServiceOptions } from './types.ts';
 export type * from './types.ts';
 
-const KEY = Symbol.for('svelte-desktop.services');
+const KEY = Symbol.for('kitop.services');
 const globalState = globalThis as typeof globalThis & { [KEY]?: Set<ServiceHandle> };
 const running = globalState[KEY] ??= new Set<ServiceHandle>();
 
 function command(name: string) {
   if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error(`invalid service name "${name}"`);
-  const dir = process.env.SVELTE_DESKTOP_SERVICES_DIR;
+  const dir = process.env.KITOP_SERVICES_DIR;
   if (dir) {
     const file = ['ts', 'js'].map((ext) => join(dir, `${name}.${ext}`)).find(existsSync);
     if (!file) throw new Error(`no service "${name}" (expected src/services/${name}.ts)`);
-    return { argv: [process.execPath, process.env.SVELTE_DESKTOP_SERVICES_RUNNER ?? join(import.meta.dir, 'dev-runner.ts'), file], env: {} };
+    return { argv: [process.execPath, process.env.KITOP_SERVICES_RUNNER ?? join(import.meta.dir, 'dev-runner.ts'), file], env: {} };
   }
-  const names = (globalThis as typeof globalThis & { [key: symbol]: string[] })[Symbol.for('svelte-desktop.services.names')] ?? [];
+  const names = (globalThis as typeof globalThis & { [key: symbol]: string[] })[Symbol.for('kitop.services.names')] ?? [];
   if (!names.includes(name)) throw new Error(`no bundled service "${name}"`);
-  return { argv: [process.execPath], env: { SVELTE_DESKTOP_SERVICE: name } };
+  return { argv: [process.execPath], env: { KITOP_SERVICE: name } };
 }
 function positive(n: number) { if (!Number.isFinite(n) || n <= 0) throw new Error('service timeout must be positive'); return n; }
 

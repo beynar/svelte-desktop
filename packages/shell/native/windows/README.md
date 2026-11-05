@@ -28,7 +28,7 @@ Packaging is in `src/build/package-windows.ts` (`build: { target: 'windows' }`).
    (Bun is assumed to locate its payload by section name; the example used the in-place path).
 6. Mixed-DPI multi-monitor coordinates; best-effort graceful quit at logoff.
 7. Missing WebView2 runtime → a dialog links to the Evergreen download
-   (suppressed with `SVELTE_DESKTOP_TEST` / `SVELTE_DESKTOP_NO_DIALOGS`).
+   (suppressed with `KITOP_TEST` / `KITOP_NO_DIALOGS`).
 
 ## Title bar
 `titleBarStyle` other than `default` → a frameless window (WS_POPUP + resizable frame); drag regions

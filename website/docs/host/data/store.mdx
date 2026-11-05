@@ -12,7 +12,7 @@ How-to: [Dialogs, clipboard and services](/ui/platform-services#key-value-store)
 | Property | Type | Description |
 | --- | --- | --- |
 | `data` | `Record<string, unknown>` | This context's in-memory record. Updated by `set`, `delete`, `clear` and `load`. |
-| `path` | `string \| null` | `null` until loaded, then the filename `svelte-desktop-store.json`. Only a "loaded" marker: it is not a usable path. |
+| `path` | `string \| null` | `null` until loaded, then the filename `kitop-store.json`. Only a "loaded" marker: it is not a usable path. |
 | `ready` | `boolean` | `true` after successful initialization. |
 | `error` | `Error \| null` | Initialization failure, or `null`. Later `load` and `flush` failures reject their promises. |
 

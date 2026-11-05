@@ -113,7 +113,7 @@ Taps on pushes are ordinary notification clicks, with the same `url` and `data`.
 No dependencies; one sender for APNs and Web Push (your own push server included):
 
 ```ts server.ts
-import { createPush } from '@svelte-desktop/shell/push';
+import { createPush } from '@kitop/shell/push';
 
 const push = createPush({
   apns: { teamId, keyId, key: await Bun.file('AuthKey.p8').text() },
@@ -134,7 +134,7 @@ No Apple account needed: set `push.server` to a Web Push compatible service you 
 Run the server anywhere with Bun:
 
 ```ts push-server.ts
-import { servePush } from '@svelte-desktop/shell/push-server';
+import { servePush } from '@kitop/shell/push-server';
 
 servePush({ port: 47123, publicUrl: 'https://push.example.com', db: 'push.sqlite' }); // db defaults to ':memory:'
 ```

@@ -20,7 +20,7 @@ writeFileSync(
 import asyncio, enum
 from dataclasses import dataclass, field
 from typing import Literal, NotRequired, Optional, TypedDict
-from svelte_desktop import command, emit, InvalidArgs
+from kitop import command, emit, InvalidArgs
 
 class Mode(enum.Enum):
     FAST = "fast"
@@ -96,7 +96,7 @@ test.skipIf(!hasUv)("run: replies, errors, events on the protocol; print() never
     { id: 8, service: "geo", op: "norm", args: { p: { x: 3, y: 4 }, extra: [] } },
     { id: 9, service: "geo", op: "norm", args: { p: { z: 1 }, extra: [] } },
   ];
-  const proc = Bun.spawn([python, "-B", "-m", "svelte_desktop", "run", app], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...process.env, PYTHONPATH: SDK } });
+  const proc = Bun.spawn([python, "-B", "-m", "kitop", "run", app], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...process.env, PYTHONPATH: SDK } });
   proc.stdin.write(calls.map((c) => JSON.stringify(c)).join("\n") + "\n");
   await proc.stdin.flush();
   await Bun.sleep(400);

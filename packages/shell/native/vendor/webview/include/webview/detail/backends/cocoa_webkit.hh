@@ -57,7 +57,7 @@
 
 #include <objc/objc-runtime.h>
 
-// svelte-desktop's optional policy hook runs before WKWebView copies its configuration.
+// kitop's optional policy hook runs before WKWebView copies its configuration.
 extern "C" void webview_sd_configure_webkit(void *) __attribute__((weak_import));
 // Optional +1 window factory; the engine retains its normal owning lifecycle.
 extern "C" void *webview_sd_create_window(void) __attribute__((weak_import));

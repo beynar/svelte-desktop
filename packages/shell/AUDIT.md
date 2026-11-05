@@ -1,4 +1,4 @@
-# Gap audit: svelte-desktop shell vs Electron, Tauri, Electrobun and gpuix-svelte
+# Gap audit: kitop shell vs Electron, Tauri, Electrobun and gpuix-svelte
 
 Measured on macOS 26.5, arm64 (M4 Pro), 2026-10-31. "Before" is the state when
 this audit started; **now** is the current state. Each ✅ in the "now" column is
@@ -10,12 +10,12 @@ Legend: ✅ have · 🟡 partial · ❌ missing · — not applicable
 
 | Capability | Electron | Tauri 2 | Electrobun | gpuix-svelte | before | **now** | Evidence |
 |---|---|---|---|---|---|---|---|
-| One-step setup | ✅ | ✅ | ✅ | ✅ | 🟡 adapter + build script | ✅ one Vite plugin + `desktop.config.ts`; `svelte-desktop init` / `doctor` | `init` on a fresh SvelteKit project: built and smoke-tested |
+| One-step setup | ✅ | ✅ | ✅ | ✅ | 🟡 adapter + build script | ✅ one Vite plugin + `desktop.config.ts`; `kitop init` / `doctor` | `init` on a fresh SvelteKit project: built and smoke-tested |
 | Dev mode, HMR in the real window | ✅ | ✅ | 🟡 rebuild | ✅ | ❌ | ✅ `vite dev` opens the native window on Vite | HMR probe: hot update, same JS context |
 | Native/server API in dev | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ RPC bridge Vite ↔ dev shell; addons and sidecars in dev with or without a window | `bun run test:dev` 10/10 |
 | Unmodified SSR framework | 🟡 | ❌ SPA | 🟡 SPA | ❌ | ✅ | ✅ full SvelteKit 3: SSR, streaming, form actions, cookies, remote functions, prerendering, params, hooks, `$app/env` | `examples/kit-conformance` 18/18, built and `vite dev` |
 | Typed native API | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 245 ops, 22 services, stores | `test/run-platform.sh` |
-| E2E testing of the real app | 🟡 Playwright | 🟡 WebDriver | ❌ | ✅ | 🟡 bespoke script | ✅ `@svelte-desktop/shell/test` (macOS, Linux, Windows layout, Android over adb, iOS simulator) (built or dev) | `bun run test`, 8/8 |
+| E2E testing of the real app | 🟡 Playwright | 🟡 WebDriver | ❌ | ✅ | 🟡 bespoke script | ✅ `@kitop/shell/test` (macOS, Linux, Windows layout, Android over adb, iOS simulator) (built or dev) | `bun run test`, 8/8 |
 | DevTools | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ on in dev; `debug` / `setInspectable` in prod | — |
 
 ## 2. Native extensibility
@@ -55,7 +55,7 @@ Evidence: `test/platform/webview.ts`, 102 checks.
 | .app, Info.plist and icon from config | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ schemes, document types, usage strings, LSUIElement, extra keys | plist inspected |
 | Hardened runtime and entitlements | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ Bun JIT set, plus device entitlements derived from usage strings | signed build (Apple Development identity), 19/19 e2e |
 | Developer ID signing, timestamped | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ nested code first, then the bundle, then the DMG | `codesign -dvv` |
-| Notarization and stapling | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 `notarytool` + staple (app and DMG), gated by a local pre-flight (`svelte-desktop preflight`) | a build signed with an Apple Development identity passes every pre-flight check except the certificate type; a real submission needs a Developer ID |
+| Notarization and stapling | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 `notarytool` + staple (app and DMG), gated by a local pre-flight (`kitop preflight`) | a build signed with an Apple Development identity passes every pre-flight check except the certificate type; a real submission needs a Developer ID |
 | Universal arm64 + x64 | ✅ | ✅ | 🟡 | ❌ | ❌ | ✅ lipo of executable, libshell, plugin and addons | e2e 19/19 on both slices (x64 under Rosetta) |
 | DMG with Applications link, zip | ✅ | ✅ | ✅ | ❌ | 🟡 | ✅ | — |
 | No `.env` / `bunfig.toml` picked up at runtime | — | — | — | ✅ | ❌ (found in this audit) | ✅ | regression test via `bunfig.toml` in cwd |

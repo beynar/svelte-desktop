@@ -1,4 +1,4 @@
-# @svelte-desktop/shell
+# @kitop/shell
 
 Turn an **unmodified SvelteKit app** into a native desktop app (macOS; Linux via
 GTK/WebKitGTK; Windows via WebView2 — see Platforms): one Vite plugin,
@@ -16,14 +16,14 @@ bun test                → drive the real window from tests
 
 ```ts
 // vite.config.ts — the only plugin you need (it is SvelteKit's plugin, wired for desktop)
-import { desktop } from '@svelte-desktop/shell/vite';
+import { desktop } from '@kitop/shell/vite';
 import { defineConfig } from 'vite';
 export default defineConfig({ plugins: [desktop({ experimental: { remoteFunctions: true } })] });
 ```
 
 ```ts
 // desktop.config.ts
-import { defineConfig } from '@svelte-desktop/shell/config';
+import { defineConfig } from '@kitop/shell/config';
 export default defineConfig({
   appName: 'Notes',
   identifier: 'com.example.notes',
@@ -31,9 +31,9 @@ export default defineConfig({
 });
 ```
 
-New project: `bunx svelte-desktop create my-app` (SvelteKit app, config, Swift plugin sample, tests).
-Existing project: `bunx svelte-desktop init` writes both files, rewrites
-`sveltekit(` → `desktop(`, adds scripts and `.gitignore`. `bunx svelte-desktop doctor`
+New project: `bunx kitop create my-app` (SvelteKit app, config, Swift plugin sample, tests).
+Existing project: `bunx kitop init` writes both files, rewrites
+`sveltekit(` → `desktop(`, adds scripts and `.gitignore`. `bunx kitop doctor`
 checks Bun, Xcode tools, the config, signing identities and the notary profile.
 Requirements: macOS 12+, Bun ≥ 1.4, Xcode command line tools, `@sveltejs/adapter-bun`.
 
@@ -43,7 +43,7 @@ Requirements: macOS 12+, Bun ≥ 1.4, Xcode command line tools, `@sveltejs/adapt
 |---|---|
 | **Your app, unchanged** | SvelteKit SSR + remote functions + `bun:sqlite`, served on a random loopback port behind a session-cookie gate (Host check, one-time secret, HttpOnly cookie) |
 | **Dev mode** | `vite dev` opens the native window on the Vite server: HMR in the window, Web Inspector, server code reaches native APIs through an RPC bridge, native plugin rebuilt and window restarted on change, `desktop.config.ts` edits restart. Closing the window ends `vite dev`. |
-| **Native API** | 245 ops in 22 services (incl. aliases), typed, from pages **and** server code, plus reactive stores (`import { theme, window, tray } from '@svelte-desktop/shell/stores'`). [Platform API](#platform-api) |
+| **Native API** | 245 ops in 22 services (incl. aliases), typed, from pages **and** server code, plus reactive stores (`import { theme, window, tray } from '@kitop/shell/stores'`). [Platform API](#platform-api) |
 | **Your own native code** | `native/*.swift` / `*.m` / `*.c` → a plugin dylib, commands in Rust, Go, Swift, Objective-C or C, one typed API from pages and server (`native.svc.op()`); `native/addons/*.c` → Node-API addons (`loadAddon`); `sidecars` for executables. [Native code](#native-code) |
 | **Web view features** | alert/confirm/prompt, file drop with real paths, downloads, print/PDF, find, zoom, context menu control, camera/mic permissions, open-file/file associations, capturePage, executeJavaScript. [WEBVIEW.md](WEBVIEW.md) |
 | **Menu-bar apps & popovers** | `<StatusItem popover="/route">`, `<Popover anchor={el}>`, Spotlight-style panels on a global hotkey, content sized to fit. [POPOVERS.md](POPOVERS.md) |
@@ -138,7 +138,7 @@ const math = host.loadAddon<{ fib(n: number): number }>('fastmath');
 | server code only | `paths` · `crashInfo()` · `sidecar()` · `loadAddon()` · `onBeforeQuit()` · `ready()` · `jobs.start()` / `jobs.wait()` |
 
 `host.available` is false in a plain browser tab or outside the app. The modules
-(`@svelte-desktop/shell/platform`, `/stores`, `/server`, `/client`) still exist for
+(`@kitop/shell/platform`, `/stores`, `/server`, `/client`) still exist for
 those who prefer imports.
 
 Services: app · window (81 ops, multi-window, close veto, titlebar styles) · screen ·
@@ -225,7 +225,7 @@ received while the app runs, `on('token')` rotations; taps on pushes are ordinar
 notification clicks (same `url`/`data`). Send from Bun, no dependencies:
 
 ```ts
-import { createPush, generateVapidKeys } from '@svelte-desktop/shell/push';
+import { createPush, generateVapidKeys } from '@kitop/shell/push';
 const push = createPush({
   apns: { teamId, keyId, key: await Bun.file('AuthKey.p8').text() },
   webpush: { publicKey, privateKey, subject: 'mailto:ops@example.com' },
@@ -236,7 +236,7 @@ const results = await push.sendMany(targets, { id: 'msg-42', title: 'Alice', bod
 
 No Apple account needed: set `push.server` to your own push service — deploy
 `packages/push-worker` on Cloudflare (`bunx wrangler deploy`: Workers + one Durable Object per
-device, hibernatable WebSockets) or run `servePush()` from `@svelte-desktop/shell/push-server`
+device, hibernatable WebSockets) or run `servePush()` from `@kitop/shell/push-server`
 anywhere. The app holds one connection while it runs; `register()` then returns a Web Push
 target and the same `push.send()` delivers to it, end-to-end encrypted.
 
@@ -289,7 +289,7 @@ macOS (built and `vite dev`) and Linux (Docker).
 
 ## Tabs
 
-`@svelte-desktop/shell/tabs`: `<WindowTabs>`, configured by its props and drawn with snippets. It
+`@kitop/shell/tabs`: `<WindowTabs>`, configured by its props and drawn with snippets. It
 is the window's tabs — your SvelteKit routes in the title bar: links and `goto()` move the active
 tab, `target="_blank"` / ⌘-click open one, a `keepAlive` route keeps running in its own web view,
 titles are the pages' `<title>`, a native Tab menu, ⌘1–9, restored at launch, dragged out into its
@@ -298,7 +298,7 @@ own window or onto another window's bar. Tabs inside a page are plain Svelte: no
 ```svelte
 <!-- src/routes/+layout.svelte -->
 <script lang="ts">
-  import { WindowTabs } from '@svelte-desktop/shell/tabs';
+  import { WindowTabs } from '@kitop/shell/tabs';
   let { children } = $props();
 </script>
 
@@ -340,7 +340,7 @@ export default () => {
 Commands in **Rust**, **Go**, **Swift**, Objective-C or C, all reached the same way, typed:
 
 ```ts
-import { native } from '@svelte-desktop/shell/native';     // or host.native, no import
+import { native } from '@kitop/shell/native';     // or host.native, no import
 
 const stats = await native.text.stats({ text });           // Rust → { words: number; longest: string | null }
 const hello = await native.greeter.hello({ name: 'Ada' });  // Swift → string
@@ -351,8 +351,8 @@ arguments and results are typed from the Rust (`TS`), Go and Swift (`Codable`) t
 Objective-C and C commands are listed, typed `unknown`.
 
 ```sh
-bunx svelte-desktop add rust    # native/rust: a cargo crate on the Rust SDK (native/sdk/rust)
-bunx svelte-desktop add go      # native/go: a Go module on the Go SDK (native/sdk/go)
+bunx kitop add rust    # native/rust: a cargo crate on the Rust SDK (native/sdk/rust)
+bunx kitop add go      # native/go: a Go module on the Go SDK (native/sdk/go)
 ```
 
 ```rust
@@ -394,14 +394,14 @@ the `.exe`). Rust and Go handlers run off the UI thread; Swift ones on the main 
 Rust and Go plugins build on the target's own OS (no cross-compilation yet).
 
 Objective-C/C: `SDCommand(@"svc.op", ^(NSDictionary *args, SDReply reply) { … })` in
-`void SDSetup(void)`; raw C ABI in [`native/include/svelte_desktop.h`](native/include/svelte_desktop.h).
+`void SDSetup(void)`; raw C ABI in [`native/include/kitop.h`](native/include/kitop.h).
 Frameworks autolink from `import`/`@import`. Node-API addons: `native/addons/fastmath.c` →
 `loadAddon<{ fib(n: number): number }>('fastmath')` in server code (dev and build).
 
 ## Testing
 
 ```ts
-import { launch } from '@svelte-desktop/shell/test';
+import { launch } from '@kitop/shell/test';
 const app = await launch();                       // built app; launch({ dev: true }) for vite dev
 await app.fill('input[name=q]', 'hello'); await app.press('input[name=q]', 'Enter');
 await app.waitFor(() => document.body.innerText.includes('hello'));
@@ -410,14 +410,14 @@ await app.close();
 ```
 
 Run with `bun test --timeout 30000` (app startup exceeds bun's 5 s default). The test
-channel exists only when `launch()` sets `SVELTE_DESKTOP_TEST`.
+channel exists only when `launch()` sets `KITOP_TEST`.
 
 ## App icon
 
 One square image — PNG, JPEG or WebP, 1024 px or more (SVG when building on macOS) — at
 `icon.png` / `icon.svg`, or named by `icon` in `desktop.config.ts`. The build generates every
 target's icons from it (cached in `.desktop/icons`, redone when the image or the options
-change); `bunx svelte-desktop icon [image] [--background '#hex'] [--out dir]` generates them
+change); `bunx kitop icon [image] [--background '#hex'] [--out dir]` generates them
 now, to look at them or ship them elsewhere. No Xcode or ImageMagick needed: any OS builds
 any target's icons.
 
@@ -448,7 +448,7 @@ CODESIGN_IDENTITY="Developer ID Application: You (TEAMID)" NOTARY_PROFILE=notary
 Signs nested code then the bundle with the hardened runtime and the entitlements Bun's
 JIT needs (plus device entitlements derived from `usageDescriptions`), notarizes and
 staples the app and the DMG, after a local pre-flight of Apple's requirements
-(`bunx svelte-desktop preflight App.app` runs it on any bundle). Without an identity builds are ad-hoc signed (runs
+(`bunx kitop preflight App.app` runs it on any bundle). Without an identity builds are ad-hoc signed (runs
 locally, Gatekeeper blocks downloads). `build.universal` lipos arm64 + x64 (Bun cross-
 compiles the x64 slice; `aot` stays on the host slice).
 
@@ -492,7 +492,7 @@ main thread: Cocoa run loop (WKWebView)   ←→   Worker: Bun.serve (SvelteKit)
 Platform-specific native code goes in `native/<platform>/` (`macos`, `linux`, `windows`); the rest of `native/` is built everywhere it can be.
 
 `build: { target: 'macos' | 'linux' | 'windows' }` selects the target, or
-`SVELTE_DESKTOP_TARGET=linux vite build` without editing the config. The portable core
+`KITOP_TARGET=linux vite build` without editing the config. The portable core
 (`native/portable`) carries the dispatcher, bridge, permissions and plugin host
 shared by Linux and Windows.
 

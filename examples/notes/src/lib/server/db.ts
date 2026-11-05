@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
-import { desktop, isDesktop } from '@svelte-desktop/shell/server';
+import { desktop, isDesktop } from '@kitop/shell/server';
 
 let db: Database | undefined;
 

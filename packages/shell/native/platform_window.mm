@@ -720,7 +720,7 @@ static NSRect controls_rect(NSWindow *w, NSWindowButton b) {
   return NSMakeRect(inWindow.origin.x, h - NSMaxY(inWindow), inWindow.size.width, inWindow.size.height);
 }
 
-// e2e tests (launch() sets SVELTE_DESKTOP_TEST): a trackpad gesture (began / changed… / ended) through
+// e2e tests (launch() sets KITOP_TEST): a trackpad gesture (began / changed… / ended) through
 // the title-bar routing decision the scroll monitor uses, then to the window like a real one — WebKit
 // scrolls (or rubber-bands) for real. {x, y}: point in the window (top-left, points); dx/dy per step
 // (positive dy = scrolling up); steps. Answers mid-gesture; the gesture ends ~200 ms later.
@@ -739,7 +739,7 @@ static void send_scroll_step(NSWindow *w, NSPoint local, double dx, double dy, C
 }
 
 static void register_test_scroll(void) {
-  const char *test = getenv("SVELTE_DESKTOP_TEST");
+  const char *test = getenv("KITOP_TEST");
   if (!test || strncmp(test, "ws://127.0.0.1:", 15)) return;
   platform_register(@"window", @"testScroll", ^(PlatformCall *c) {
     NSWindow *w = platform_window(platform_resolve_window(c));

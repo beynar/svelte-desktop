@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '../../app.css';
 	import { resolve } from '$app/paths';
-	import StatusItem from '@svelte-desktop/shell/platform/StatusItem.svelte';
+	import StatusItem from '@kitop/shell/platform/StatusItem.svelte';
 	import { onMount } from 'svelte';
 	let { children } = $props();
 	let responses = $state<string[]>([]);

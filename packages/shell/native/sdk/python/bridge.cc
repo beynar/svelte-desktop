@@ -1,4 +1,4 @@
-// The Python bridge: a native plugin (native/include/svelte_desktop.h) that registers the app's
+// The Python bridge: a native plugin (native/include/kitop.h) that registers the app's
 // Python commands as platform ops and runs them in one Python process of the app's own.
 //
 // It reads its manifest — written by the build — next to the library (libapp-python.manifest), or
@@ -13,11 +13,11 @@
 //
 // `${here}` in a value is the manifest's folder. The process starts with the plugin (Python boots
 // while the page loads); calls are written on its stdin as JSON lines, and it answers on stdout
-// (see native/sdk/python/svelte_desktop/_protocol.py). When it exits, its pending calls reject and
+// (see native/sdk/python/kitop/_protocol.py). When it exits, its pending calls reject and
 // the next call starts a new one. It ends with the app: its stdin closes and it exits.
 //
 // `__python.restart` replaces the process (the dev server calls it when a .py file changes).
-#include "svelte_desktop.h"
+#include "kitop.h"
 
 #include <atomic>
 #include <cerrno>

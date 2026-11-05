@@ -46,7 +46,7 @@ let server: Server<any>;
 let sink: JSCallback;
 let runtime: DesktopRuntime;
 
-const debug = !!Bun.env.SVELTE_DESKTOP_DEBUG;
+const debug = !!Bun.env.KITOP_DEBUG;
 
 // Debug logs (possibly app.log) never carry a sign-in: OAuth parameters in URLs are masked.
 const SECRET_PARAMS = /([?&#](?:code|state|access_token|id_token|refresh_token|code_verifier|token)=)[^&#"\s]*/gi;
@@ -55,7 +55,7 @@ const redact = (s: string) => s.replace(SECRET_PARAMS, "$1…");
 function dispatch(event: ShellEvent) {
   if (debug) console.log(`[shell] event ${event.type === "platform" && event.name === "protocolRequest" ? "protocolRequest" : redact(JSON.stringify(event))}`);
   // Platform API traffic: pages get platform events straight from native;
-  // here they feed the Worker's bus (server code's `@svelte-desktop/shell/platform`).
+  // here they feed the Worker's bus (server code's `@kitop/shell/platform`).
   if (event.type === "platformResult") return deliverPlatformEvent("platformResult", event);
   if (event.type === "platform") return deliverPlatformEvent(event.name, event.data);
   runtime?.feed(event);
@@ -141,7 +141,7 @@ async function init(msg: InitMessage, handler: KitHandler, routes: Record<string
 // a freshly applied update; an unconfirmed one rolls back on the next start.
 
 type Updates = ReturnType<typeof setupUpdater>;
-const UPDATER_KEY = Symbol.for("svelte-desktop.updater");
+const UPDATER_KEY = Symbol.for("kitop.updater");
 
 function setupUpdater(msg: InitMessage) {
   const cfg = msg.update!;

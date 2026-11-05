@@ -45,9 +45,9 @@ test("remote form() adds a note", async () => {
 
 test("platform API from the packaged app: identity, window, diagnostics, theme, clipboard", async () => {
   const info = await app.platform<any>("app", "getInfo");
-  expect(info).toMatchObject({ name: "Svelte Notes", identifier: "dev.svelte-desktop.notes", version: "0.1.0", platform: "linux", packaged: true });
+  expect(info).toMatchObject({ name: "Svelte Notes", identifier: "dev.kitop.notes", version: "0.1.0", platform: "linux", packaged: true });
   expect((await app.platform<any>("app", "getBundleType")).type).toBe("app");
-  expect(await app.platform<string>("app", "getPath", { name: "userData" })).toMatch(/\/dev\.svelte-desktop\.notes$/);
+  expect(await app.platform<string>("app", "getPath", { name: "userData" })).toMatch(/\/dev\.kitop\.notes$/);
   const diag = await app.platform<any>("diagnostics", "info");
   expect(diag).toMatchObject({ os: "linux", renderer: "webkitgtk" });
   await app.platform("window", "setTitle", { title: "Under test" });

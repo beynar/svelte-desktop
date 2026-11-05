@@ -1,7 +1,7 @@
 #!/bin/sh
 # Compiles native/windows + native/portable into shell.dll inside the
-# svelte-desktop-windows image. Usage (from build-windows.sh):
-#   docker run --rm -v <packages/shell/native>:/src svelte-desktop-windows sh /src/docker/windows/build.sh x64|arm64
+# kitop-windows image. Usage (from build-windows.sh):
+#   docker run --rm -v <packages/shell/native>:/src kitop-windows sh /src/docker/windows/build.sh x64|arm64
 set -eu
 ARCH=${1:-x64}
 case "$ARCH" in

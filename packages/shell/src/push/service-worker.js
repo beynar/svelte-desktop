@@ -1,4 +1,4 @@
-// Web Push + notification clicks for svelte-desktop apps opened in a browser.
+// Web Push + notification clicks for kitop apps opened in a browser.
 // Served at /__desktop/push-sw.js, registered with scope /__desktop/push/ so it never
 // competes with the app's own service worker (it controls no page; it only receives
 // pushes and notification events). Talks to pages with postMessage (`__sd` messages).

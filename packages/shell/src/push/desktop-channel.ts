@@ -3,7 +3,7 @@
 import type { WebPushTarget, WirePushMessage } from './protocol.ts';
 
 /** The client registered on globalThis by desktop.ts, used directly by server code. */
-export const PUSH_CLIENT = Symbol.for('svelte-desktop.push.client');
+export const PUSH_CLIENT = Symbol.for('kitop.push.client');
 
 export const CHANNEL = {
 	request: 'push:request',

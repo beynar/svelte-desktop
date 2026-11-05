@@ -6,8 +6,8 @@ version = 4
 name = "app-native"
 version = "0.1.0"
 dependencies = [
+ "kitop",
  "serde",
- "svelte-desktop",
  "ts-rs",
 ]
 
@@ -16,6 +16,15 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "kitop"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
 
 [[package]]
 name = "memchr"
@@ -82,15 +91,6 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
-]
-
-[[package]]
-name = "svelte-desktop"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "ts-rs",
 ]
 
 [[package]]

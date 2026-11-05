@@ -76,5 +76,5 @@ self.onmessage = (e: MessageEvent) => {
   native.shell_set_app_origin(cstr(new URL(url).origin));
   void startPath(init.identifier).then((path) => native.shell_window_navigate(init.windowId, cstr(new URL(path, url).href)));
   // The Vite plugin reads this line to connect.
-  console.log(`SVELTE_DESKTOP_DEV_READY ${JSON.stringify({ rpc: `ws://127.0.0.1:${server.port}/?t=${token}` })}`);
+  console.log(`KITOP_DEV_READY ${JSON.stringify({ rpc: `ws://127.0.0.1:${server.port}/?t=${token}` })}`);
 };

@@ -1,7 +1,7 @@
 // The Modules page's terminal (built app): the user's shell in a pseudo-terminal on the app's server
 // (src/websocket.ts, /terminal), drawn by xterm.js.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 let app: AppHandle;
 beforeAll(async () => {

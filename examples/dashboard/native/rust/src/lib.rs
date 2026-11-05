@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use svelte_desktop::{emit, plugin, Error, Plugin, TS};
+use kitop::{emit, plugin, Error, Plugin, TS};
 
 #[derive(Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

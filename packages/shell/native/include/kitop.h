@@ -1,4 +1,4 @@
-// svelte-desktop native plugin ABI.
+// kitop native plugin ABI.
 //
 // An app's `native/` folder (Swift, Objective-C, C) is compiled into
 // libapp-native.dylib and loaded by the shell on the UI thread before the run
@@ -10,8 +10,8 @@
 // regular platform ops: callable from pages (`native.service.op(args)`)
 // and from server code, with the same permission checks. Handlers run on the
 // main thread; resolve/reject may be called later, from any thread.
-#ifndef SVELTE_DESKTOP_H
-#define SVELTE_DESKTOP_H
+#ifndef KITOP_H
+#define KITOP_H
 
 #ifdef __cplusplus
 extern "C" {

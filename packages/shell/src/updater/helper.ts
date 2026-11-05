@@ -54,7 +54,7 @@ export function renderShHelper(p: HelperPlan): string {
 		)
 		.join("\n");
 	return `#!/bin/sh
-# svelte-desktop updater helper (generated; safe to delete).
+# kitop updater helper (generated; safe to delete).
 STATE=${q(p.statePath)}
 exec >>${q(p.logPath)} 2>&1
 log() { echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $*"; }
@@ -113,7 +113,7 @@ export function renderPs1Helper(p: HelperPlan): string {
 				`  if (Test-Path -LiteralPath ${q(m.dest)}) { Move-Retry ${q(m.dest)} ${q(m.backup)} }\n  Move-Retry ${q(m.src)} ${q(m.dest)}\n  $script:done[${i}] = $true`,
 		)
 		.join("\n");
-	return `# svelte-desktop updater helper (generated; safe to delete).
+	return `# kitop updater helper (generated; safe to delete).
 $ErrorActionPreference = 'Stop'
 $StatePath = ${q(p.statePath)}
 $LogPath = ${q(p.logPath)}

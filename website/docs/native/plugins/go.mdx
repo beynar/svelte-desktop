@@ -8,7 +8,7 @@ A Go plugin runs inside the shell process, with a goroutine for each command cal
 ## Quick start
 
 ```sh
-bunx svelte-desktop add go
+bunx kitop add go
 ```
 
 This creates `native/go/go.mod` and `native/go/main.go`, with a `hello.go` command registered in `init()` and an empty `func main() {}`. It refuses to overwrite an existing `native/go`. Install Go 1.22 or later and a C compiler for cgo.
@@ -24,7 +24,7 @@ import (
     "crypto/sha256"
     "fmt"
 
-    "svelte-desktop.dev/go/desktop"
+    "kitop.dev/go/desktop"
 )
 
 type HashArgs struct {
@@ -74,8 +74,8 @@ func main() {}
 After `vite dev` writes `native.checksum.go` to `src/native.d.ts`, call it from a page or server code:
 
 ```ts
-import { native } from '@svelte-desktop/shell/native';
-import { onPlatform } from '@svelte-desktop/shell/platform';
+import { native } from '@kitop/shell/native';
+import { onPlatform } from '@kitop/shell/platform';
 
 const requestId = crypto.randomUUID();
 const off = onPlatform<{ requestId: string; bytes: number }>(
@@ -116,7 +116,7 @@ Custom `MarshalJSON`, `json:",string"`, fixed byte arrays, nil slices and maps, 
 
 ## SDK API
 
-Import `svelte-desktop.dev/go/desktop`.
+Import `kitop.dev/go/desktop`.
 
 | Public item | Contract |
 | --- | --- |

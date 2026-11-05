@@ -5,7 +5,7 @@ package main
 import (
 	"time"
 
-	"svelte-desktop.dev/go/desktop"
+	"kitop.dev/go/desktop"
 )
 
 type GreetArgs struct {

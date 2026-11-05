@@ -1,7 +1,7 @@
 // The one line an app needs:
 //
 //   // vite.config.ts
-//   import { desktop } from '@svelte-desktop/shell/vite';
+//   import { desktop } from '@kitop/shell/vite';
 //   export default defineConfig({ plugins: [desktop({ experimental: { remoteFunctions: true } })] });
 //
 // `desktop(kitOptions)` is SvelteKit's own plugin, wired with the desktop adapter,
@@ -44,7 +44,7 @@ interface DevState {
   restarting: boolean;
 }
 // Survives Vite's in-process restarts (config edits re-instantiate plugins).
-const STATE_KEY = Symbol.for("svelte-desktop.dev");
+const STATE_KEY = Symbol.for("kitop.dev");
 const devState = ((globalThis as any)[STATE_KEY] ??= { child: null, bridge: null, restarting: false }) as DevState;
 
 export interface DesktopPluginOptions {
@@ -52,20 +52,20 @@ export interface DesktopPluginOptions {
   config?: Partial<DesktopConfig>;
   /** Stop `vite dev` when the app window is closed (like `tauri dev`). Default true. */
   exitOnClose?: boolean;
-  /** Don't open the native window in dev (browser-only dev). Default: $SVELTE_DESKTOP_NO_WINDOW. */
+  /** Don't open the native window in dev (browser-only dev). Default: $KITOP_NO_WINDOW. */
   noWindow?: boolean;
 }
 
-/** SvelteKit + svelte-desktop. `kitOptions` are SvelteKit's plugin options (adapter excluded). */
+/** SvelteKit + kitop. `kitOptions` are SvelteKit's plugin options (adapter excluded). */
 /** Types for the `host` global: a one-line src/host.d.ts, written once (keep it in git). */
 function writeHostTypes(root: string) {
   const file = join(root, "src", "host.d.ts");
   if (existsSync(file) || !existsSync(join(root, "src"))) return;
-  writeFileSync(file, "// The `host` global (svelte-desktop): typed for page and server code.\nimport '@svelte-desktop/shell/globals';\n");
+  writeFileSync(file, "// The `host` global (kitop): typed for page and server code.\nimport '@kitop/shell/globals';\n");
 }
 
 export async function desktop(kitOptions: Record<string, unknown> = {}, options: DesktopPluginOptions = {}): Promise<Plugin[]> {
-  if (typeof Bun === "undefined") throw new Error("svelte-desktop runs on Bun: use `bunx --bun vite …`");
+  if (typeof Bun === "undefined") throw new Error("kitop runs on Bun: use `bunx --bun vite …`");
   const config = await loadConfig(process.cwd(), options.config);
   // In dev, the app's server runs in this process: the system's certificates and proxy for it too.
   if (process.env.NODE_ENV !== "production") (await import("./system-network.ts")).applySystemNetwork(config.network);
@@ -83,16 +83,16 @@ function hydrationMarker(permissionsConfig: Record<string, string>, notification
   const hostClient = JSON.stringify(join(shellRoot, "src", "host", "client.ts"));
   const hostServer = JSON.stringify(join(shellRoot, "src", "host", "server.ts"));
   return {
-    name: "svelte-desktop:hydration-marker",
+    name: "kitop:hydration-marker",
     // desktop.config `permissions` (name → reason) for host.permissions, in page and server code.
     config: () => ({
       // The client below is imported by absolute path: serve it even when the shell sits
       // outside the app's allow list (a linked checkout, a monorepo sibling).
       server: { fs: { allow: [shellRoot] } },
       define: {
-        __SVELTE_DESKTOP_PERMISSIONS__: JSON.stringify(permissionsConfig),
-        __SVELTE_DESKTOP_NOTIFICATIONS__: JSON.stringify(notificationsConfig),
-        __SVELTE_DESKTOP_PUSH__: JSON.stringify(pushConfig),
+        __KITOP_PERMISSIONS__: JSON.stringify(permissionsConfig),
+        __KITOP_NOTIFICATIONS__: JSON.stringify(notificationsConfig),
+        __KITOP_PUSH__: JSON.stringify(pushConfig),
       },
     }),
     transform(code, id) {
@@ -171,7 +171,7 @@ function oauthDev(appName: string): Plugin {
   type Next = (err?: unknown) => void;
   type NodeRes = { statusCode: number; writableEnded: boolean; setHeader(k: string, v: string): void; end(b?: string | Uint8Array): void; on(e: "close", f: () => void): void };
   return {
-    name: "svelte-desktop:oauth",
+    name: "kitop:oauth",
     configureServer(server) {
       server.middlewares.use((rq, rs, next) => {
         const req = rq as unknown as NodeReq, res = rs as unknown as NodeRes;
@@ -222,7 +222,7 @@ function websocketDev(config: ResolvedConfig): Plugin {
   type UpgradeReq = { url?: string; method?: string; rawHeaders: string[]; headers: Record<string, string | string[] | undefined> };
   type Duplex = { write(b: string | Uint8Array): void; pipe<T>(d: T): T; destroy(): void; on(e: string, f: (...a: any[]) => void): void };
   return {
-    name: "svelte-desktop:websocket",
+    name: "kitop:websocket",
     apply: "serve",
     async configureServer(vite) {
       const file = ["ts", "js"].map((ext) => join(config.root, "src", `websocket.${ext}`)).find((f) => existsSync(f));
@@ -293,11 +293,14 @@ function websocketDev(config: ResolvedConfig): Plugin {
   };
 }
 
+/** What the dev shell prints once it's up (dev/main.ts), then its JSON. */
+const DEV_READY = "KITOP_DEV_READY ";
+
 // The app's MCP server in dev (src/mcp.ts): through Vite's ssr runner too, the file as it is now on
 // each request, its list published again when it's edited.
 function mcpDev(config: ResolvedConfig): Plugin {
   return {
-    name: "svelte-desktop:mcp",
+    name: "kitop:mcp",
     apply: "serve",
     async configureServer(vite) {
       const file = ["ts", "js"].map((ext) => join(config.root, "src", `mcp.${ext}`)).find((f) => existsSync(f));
@@ -328,7 +331,7 @@ function mcpDev(config: ResolvedConfig): Plugin {
 function serverEntry(config: ResolvedConfig, name: "websocket" | "mcp"): Plugin {
   const file = ["ts", "js"].map((ext) => join(config.root, "src", `${name}.${ext}`)).find((f) => existsSync(f));
   return {
-    name: `svelte-desktop:${name}-entry`,
+    name: `kitop:${name}-entry`,
     apply: "build",
     configEnvironment(environment: string, env: { build?: { rollupOptions?: { input?: unknown } } }) {
       if (!file || environment !== "ssr") return;
@@ -348,7 +351,7 @@ function serverEntry(config: ResolvedConfig, name: "websocket" | "mcp"): Plugin 
 function pushServiceWorker(): Plugin {
   const file = join(shellRoot, "src", "push", "service-worker.js");
   return {
-    name: "svelte-desktop:push-sw",
+    name: "kitop:push-sw",
     configureServer(server) {
       server.middlewares.use((rq, rs, next) => {
         const req = rq as { url?: string }, res = rs as { setHeader(k: string, v: string): void; end(b: Buffer): void };
@@ -374,21 +377,21 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
   // addons and sidecars with or without the native window (browser / mobile dev).
   async function prepareServerNatives() {
     // Background jobs run from their sources in dev.
-    process.env.SVELTE_DESKTOP_JOBS_DIR = join(config.root, "src", "jobs");
-    process.env.SVELTE_DESKTOP_JOBS_RUNNER = join(shellRoot, "src", "jobs", "dev-runner.ts");
-    process.env.SVELTE_DESKTOP_SERVICES_DIR = join(config.root, "src", "services");
-    process.env.SVELTE_DESKTOP_SERVICES_RUNNER = join(shellRoot, "src", "services", "dev-runner.ts");
+    process.env.KITOP_JOBS_DIR = join(config.root, "src", "jobs");
+    process.env.KITOP_JOBS_RUNNER = join(shellRoot, "src", "jobs", "dev-runner.ts");
+    process.env.KITOP_SERVICES_DIR = join(config.root, "src", "services");
+    process.env.KITOP_SERVICES_RUNNER = join(shellRoot, "src", "services", "dev-runner.ts");
     const arch = process.arch === "arm64" ? "arm64" : "x64";
     try {
       const { buildAddons } = await import("./build/native.ts");
       const addons = await buildAddons(config, { arches: [arch], outDir: join(config.root, ".desktop/dev/addons"), quiet: true });
-      process.env.SVELTE_DESKTOP_ADDONS = JSON.stringify(addons);
+      process.env.KITOP_ADDONS = JSON.stringify(addons);
     } catch (err) {
       server.config.logger.error(`\x1b[35m[desktop]\x1b[0m ${(err as Error).message}`);
     }
     const os = process.platform === "win32" ? "windows" : process.platform === "linux" ? "linux" : "macos";
     for (const [name, path] of sidecarEntries(config, os))
-      process.env[`SVELTE_DESKTOP_SIDECAR_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`] = path;
+      process.env[`KITOP_SIDECAR_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`] = path;
   }
 
   // The app icon, in the Dock the built app will have (dev runs as `bun`): generated like the
@@ -480,9 +483,9 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
       env: {
         MIMALLOC_PURGE_DELAY: "0", // as in the built app's Info.plist
         ...process.env,
-        SVELTE_DESKTOP_DEV: JSON.stringify(dev),
+        KITOP_DEV: JSON.stringify(dev),
         // The app's languages (no bundle to declare them in dev): the shell's menus follow.
-        ...(config.locales && Object.keys(config.locales).length ? { SVELTE_DESKTOP_LOCALIZATIONS: [config.language ?? "en", ...Object.keys(config.locales)].join(",") } : {}),
+        ...(config.locales && Object.keys(config.locales).length ? { KITOP_LOCALIZATIONS: [config.language ?? "en", ...Object.keys(config.locales)].join(",") } : {}),
       },
       stdout: "pipe",
       stderr: "inherit",
@@ -501,8 +504,8 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
         while ((nl = buf.indexOf("\n")) >= 0) {
           const line = buf.slice(0, nl);
           buf = buf.slice(nl + 1);
-          if (line.startsWith("SVELTE_DESKTOP_DEV_READY ")) {
-            const { rpc } = JSON.parse(line.slice(25));
+          if (line.startsWith(DEV_READY)) {
+            const { rpc } = JSON.parse(line.slice(DEV_READY.length));
             const { connectDevShell } = await import("./dev/bridge.ts");
             devState.bridge?.close();
             devState.bridge = await connectDevShell(rpc, { appName: config.appName, identifier: config.identifier, origin: new URL(url).origin });
@@ -569,13 +572,13 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
   }
 
   return {
-    name: "svelte-desktop:dev",
+    name: "kitop:dev",
     apply: "serve",
     configureServer(s) {
       server = s;
       const natives = prepareServerNatives();
       s.middlewares.use((_req: unknown, _res: unknown, next: () => void) => void natives.then(() => next()));
-      if (options.noWindow || process.env.SVELTE_DESKTOP_NO_WINDOW) return;
+      if (options.noWindow || process.env.KITOP_NO_WINDOW) return;
       const watched = [config.configFile, config.native, ...iconFiles].filter(Boolean) as string[];
       for (const w of watched) s.watcher.add(w);
       s.watcher.on("add", (file) => (isPythonSource(file) ? pythonChanged() : void iconChanged(file)));

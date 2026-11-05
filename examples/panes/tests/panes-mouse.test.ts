@@ -3,7 +3,7 @@
 // What synthetic events can't tell: the pointer stays with the page it was pressed in while it
 // crosses another pane's web view, a press in a view gives its pane the focus.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 const enabled = process.env.DESKTOP_TEST_MOUSE === '1';
 const run = enabled ? test : test.skip;

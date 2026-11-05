@@ -1,7 +1,7 @@
 import { command, query } from '$app/server';
-import { desktop, isDesktop, loadAddon } from '@svelte-desktop/shell/server';
+import { desktop, isDesktop, loadAddon } from '@kitop/shell/server';
 import { getDb } from '#lib/server/db.ts';
-import { native } from '@svelte-desktop/shell/native';
+import { native } from '@kitop/shell/native';
 
 export const shellInfo = query(async () =>
 	isDesktop()

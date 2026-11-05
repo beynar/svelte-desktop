@@ -1,4 +1,4 @@
-import { onDesktopReady } from '@svelte-desktop/shell/server';
+import { onDesktopReady } from '@kitop/shell/server';
 import '#lib/server/update-probe.ts';
 
 onDesktopReady((desktop) => {

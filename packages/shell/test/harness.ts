@@ -10,11 +10,11 @@ if (!suite) throw new Error("usage: bun test/harness.ts <suite.ts> [--keep-open]
 const arch = process.arch === "arm64" ? "arm64" : "x86_64";
 const os = process.platform === "linux" ? "linux" : process.platform === "win32" ? "windows" : "darwin";
 const libFile = os === "linux" ? "libshell.so" : os === "windows" ? "shell.dll" : "libshell.dylib";
-const lib = process.env.SVELTE_DESKTOP_LIB ?? resolve(import.meta.dir, `../native/build/${os}-${arch}/${libFile}`);
+const lib = process.env.KITOP_LIB ?? resolve(import.meta.dir, `../native/build/${os}-${arch}/${libFile}`);
 const ui = openNative(lib);
 const windowId = ui.shell_window_create(
   // HARNESS_WINDOW: extra window options for one suite (e.g. {"quitOnLastWindowClosed":false}).
-  cstr(JSON.stringify({ title: "platform harness", width: 720, height: 480, appName: "Harness", identifier: "dev.svelte-desktop.harness", ...JSON.parse(process.env.HARNESS_WINDOW ?? "{}") })),
+  cstr(JSON.stringify({ title: "platform harness", width: 720, height: 480, appName: "Harness", identifier: "dev.kitop.harness", ...JSON.parse(process.env.HARNESS_WINDOW ?? "{}") })),
 );
 const worker = new Worker(new URL("./harness-worker.ts", import.meta.url).href);
 let failed = 0;

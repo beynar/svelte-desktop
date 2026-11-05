@@ -2,7 +2,7 @@
 	import '../app.css';
 	import { invalidateAll } from '$app/navigation';
 	import { page as current } from '$app/state';
-	import { WindowTabs, type TabGroup, type TabLike } from '@svelte-desktop/shell/tabs';
+	import { WindowTabs, type TabGroup, type TabLike } from '@kitop/shell/tabs';
 
 	let { children } = $props();
 	let tabs = $state<TabGroup<TabLike>>();

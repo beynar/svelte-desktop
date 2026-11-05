@@ -6,8 +6,8 @@ import { services, stopAllServices } from './host.ts';
 import { createDesktopRuntime } from '../desktop-api.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'sd-services-'));
-const before = process.env.SVELTE_DESKTOP_SERVICES_DIR;
-process.env.SVELTE_DESKTOP_SERVICES_DIR = dir;
+const before = process.env.KITOP_SERVICES_DIR;
+process.env.KITOP_SERVICES_DIR = dir;
 writeFileSync(join(dir, 'counter.ts'), `
 export default (args, port) => {
   let count = args.initial ?? 0;
@@ -23,7 +23,7 @@ export default (args, port) => {
 `);
 writeFileSync(join(dir, 'bad.ts'), `export default () => { throw new Error('initialization failed'); };`);
 writeFileSync(join(dir, 'stuck.ts'), `export default async () => { await new Promise(() => {}); };`);
-afterAll(async () => { await stopAllServices(); if (before === undefined) delete process.env.SVELTE_DESKTOP_SERVICES_DIR; else process.env.SVELTE_DESKTOP_SERVICES_DIR = before; rmSync(dir, { recursive: true, force: true }); });
+afterAll(async () => { await stopAllServices(); if (before === undefined) delete process.env.KITOP_SERVICES_DIR; else process.env.KITOP_SERVICES_DIR = before; rmSync(dir, { recursive: true, force: true }); });
 const until = async (fn: () => boolean) => { for (let i = 0; i < 100; i++) { if (fn()) return; await Bun.sleep(10); } throw new Error('condition timed out'); };
 
 test('duplex events, persistent request/reply, failure and timeout', async () => {

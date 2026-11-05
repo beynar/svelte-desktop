@@ -1,4 +1,4 @@
-"""`python -m svelte_desktop describe <dir>`: the commands and their TypeScript types, in the shape
+"""`python -m kitop describe <dir>`: the commands and their TypeScript types, in the shape
 the other SDKs' `sd_plugin_describe` returns ({language, commands: [{service, op, args, result}]})."""
 
 from __future__ import annotations

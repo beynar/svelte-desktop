@@ -7,7 +7,7 @@
 //     native/python/pyproject.toml), the sources read in place;
 //   - a build: a standalone CPython (the uv-managed one the environment was made from), the
 //     dependencies and the sources, in Contents/Resources/python, signed with the app.
-// The types come from the functions' annotations (`python -m svelte_desktop describe`), through
+// The types come from the functions' annotations (`python -m kitop describe`), through
 // the bridge's `sd_plugin_describe`, like every other plugin's.
 import { $ } from "bun";
 import { closeSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -25,7 +25,7 @@ export const PYTHON_LIB = (os: PluginOS) => `${os === "windows" ? "" : "lib"}app
 /** `python -I` ignores the user's PYTHON* variables and site: the paths come as arguments
  *  (mode, SDK, site-packages or "", sources). `site.addsitedir` runs the packages' .pth files. */
 const BOOT =
-  "import sys,site,runpy;m,s=sys.argv[1],sys.argv[2:5];sys.path.insert(0,s[0]);s[1] and site.addsitedir(s[1]);sys.argv=['svelte_desktop',m,s[2]];runpy.run_module('svelte_desktop',run_name='__main__',alter_sys=True)";
+  "import sys,site,runpy;m,s=sys.argv[1],sys.argv[2:5];sys.path.insert(0,s[0]);s[1] and site.addsitedir(s[1]);sys.argv=['kitop',m,s[2]];runpy.run_module('kitop',run_name='__main__',alter_sys=True)";
 /** -B: no .pyc written next to the sources (or into a signed bundle); -X utf8: UTF-8 everywhere. */
 const FLAGS = ["-I", "-B", "-X", "utf8"];
 
@@ -79,7 +79,7 @@ interface Manifest {
 
 function writeManifest(file: string, m: Manifest) {
   const lines = [
-    `# Written by svelte-desktop: the Python process of the app (native/sdk/python/bridge.cc reads it).`,
+    `# Written by kitop: the Python process of the app (native/sdk/python/bridge.cc reads it).`,
     `python ${m.python}`,
     ...m.args.map((a) => `arg ${a}`),
     `cwd ${m.cwd}`,
@@ -93,7 +93,7 @@ function writeManifest(file: string, m: Manifest) {
 /** libapp-python for `os`/`arch` (rebuilt when the bridge's sources change). */
 export async function buildBridge(os: PluginOS, arch: Arch, out: string, minimumSystemVersion = "12.0"): Promise<string> {
   const src = join(SDK, "bridge.cc");
-  const newest = Math.max(statSync(src).mtimeMs, statSync(join(INCLUDE, "svelte_desktop.h")).mtimeMs);
+  const newest = Math.max(statSync(src).mtimeMs, statSync(join(INCLUDE, "kitop.h")).mtimeMs);
   if (existsSync(out) && statSync(out).mtimeMs >= newest) return out;
   mkdirSync(dirname(out), { recursive: true });
   const common = ["-std=c++17", "-O2", "-fvisibility=hidden", `-I${INCLUDE}`, src, "-o", out];
@@ -116,9 +116,9 @@ export async function preparePythonDev(c: ResolvedConfig, opts: { arch: Arch; ou
   if (!src) return null;
   const venv = join(c.root, ".desktop", "python", "venv");
   const python = await syncEnvironment(c, src, venv, { dev: true });
-  // The SDK on the environment's path: editors resolve `svelte_desktop`, and tests run with it.
+  // The SDK on the environment's path: editors resolve `kitop`, and tests run with it.
   const site = existsSync(join(venv, "lib")) ? readdirSync(join(venv, "lib")).map((d) => join(venv, "lib", d, "site-packages")).find(existsSync) : join(venv, "Lib", "site-packages");
-  if (site && existsSync(site)) writeFileSync(join(site, "svelte_desktop_sdk.pth"), SDK + "\n");
+  if (site && existsSync(site)) writeFileSync(join(site, "kitop_sdk.pth"), SDK + "\n");
   const description = await describePython(python, src);
   const os = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
   const lib = await buildBridge(os, opts.arch, join(opts.outDir, PYTHON_LIB(os)), c.build?.minimumSystemVersion);
@@ -183,7 +183,7 @@ export async function bundlePython(
   copyTree(runtime, join(out, "runtime"), (rel) => RUNTIME_SKIP.some((re) => re.test(rel)) || (rel.startsWith("bin/") && rel !== `bin/python${version}`));
   const site = readdirSync(join(venv, "lib")).map((d) => join(venv, "lib", d, "site-packages")).find(existsSync);
   if (site) copyTree(site, join(out, "site-packages"), (rel) => /^(_virtualenv\.(pth|py)|__editable__.*)$/.test(rel) || /(^|\/)__pycache__$/.test(rel));
-  copyTree(SDK, join(out, "sdk"), (rel) => !rel.startsWith("svelte_desktop") || /(^|\/)__pycache__$/.test(rel));
+  copyTree(SDK, join(out, "sdk"), (rel) => !rel.startsWith("kitop") || /(^|\/)__pycache__$/.test(rel));
   copyTree(src, join(out, "app"), (rel) => /^(\.|__pycache__$|pyproject\.toml$|uv\.lock$|tests?$)/.test(rel) || /(^|\/)__pycache__$/.test(rel));
   // Bytecode now — the bundle is signed, the app can't write it later (-B) — checked against
   // nothing: copies, archives and installs change the sources' times.

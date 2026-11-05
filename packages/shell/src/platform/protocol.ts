@@ -9,7 +9,7 @@ interface ProtocolState {
 	active: Map<string, Active>;
 	listening: boolean;
 }
-const key = Symbol.for('svelte-desktop.protocol');
+const key = Symbol.for('kitop.protocol');
 const state = ((globalThis as Record<symbol, ProtocolState | undefined>)[key] ??= {
 	handlers: new Map(), active: new Map(), listening: false,
 });

@@ -1,5 +1,5 @@
 // C side of the Go SDK: cgo can't call the host's function pointers itself.
-#include "svelte_desktop.h"
+#include "kitop.h"
 
 int sd_go_set_host(const sd_host *host);
 int sd_go_register(const char *service, const char *op, unsigned long user);

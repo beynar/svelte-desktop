@@ -1,5 +1,5 @@
 // Background jobs for server code: each job is a child process (the app's own
-// executable with SVELTE_DESKTOP_JOB=<name>, which runs the job compiled into it;
+// executable with KITOP_JOB=<name>, which runs the job compiled into it;
 // `bun src/jobs/x.ts` in dev), tracked here, mirrored to pages through the `jobs`
 // broadcast channel.
 // State lives on globalThis so the SvelteKit server bundle and the shell share it.
@@ -9,8 +9,8 @@ import type { JobInfo, JobState } from "./types.ts";
 
 export type { JobContext, JobFunction, JobInfo, JobState } from "./types.ts";
 
-const NAMES = Symbol.for("svelte-desktop.jobs.names");
-const STATE = Symbol.for("svelte-desktop.jobs");
+const NAMES = Symbol.for("kitop.jobs.names");
+const STATE = Symbol.for("kitop.jobs");
 
 interface Running {
   proc: ReturnType<typeof Bun.spawn>;
@@ -52,7 +52,7 @@ const HISTORY = 200;
 const LOG_LINES = 200;
 
 function sourcesDir(): string | null {
-  return process.env.SVELTE_DESKTOP_JOBS_DIR ?? null;
+  return process.env.KITOP_JOBS_DIR ?? null;
 }
 
 /** The command for a job (argv + extra environment), or an error message. */
@@ -63,12 +63,12 @@ function command(name: string): { argv: string[]; env: Record<string, string> } 
   if (dir) {
     const file = ["ts", "js"].map((e) => join(dir, `${name}.${e}`)).find((f) => existsSync(f));
     if (!file) return `no job "${name}" (expected src/jobs/${name}.ts)`;
-    return { argv: [process.execPath, process.env.SVELTE_DESKTOP_JOBS_RUNNER ?? join(import.meta.dir, "dev-runner.ts"), file], env: {} };
+    return { argv: [process.execPath, process.env.KITOP_JOBS_RUNNER ?? join(import.meta.dir, "dev-runner.ts"), file], env: {} };
   }
-  // Packaged app: the job is compiled into the executable; it runs it when started with SVELTE_DESKTOP_JOB.
+  // Packaged app: the job is compiled into the executable; it runs it when started with KITOP_JOB.
   const names = ((globalThis as any)[NAMES] as string[] | undefined) ?? [];
   if (!names.includes(name)) return `no job "${name}" (src/jobs/${name}.ts is bundled at build time)`;
-  return { argv: [process.execPath], env: { SVELTE_DESKTOP_JOB: name } };
+  return { argv: [process.execPath], env: { KITOP_JOB: name } };
 }
 
 function snapshot(): JobInfo[] {

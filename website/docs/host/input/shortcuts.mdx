@@ -143,7 +143,7 @@ Linux global registration and its events require X11. Listener helpers are local
 Register once in server startup so a page reload does not attempt a duplicate registration. The callback filters its id before showing the main window.
 
 ```ts src/hooks.server.ts
-import { onDesktopReady } from '@svelte-desktop/shell/server';
+import { onDesktopReady } from '@kitop/shell/server';
 
 onDesktopReady(async () => {
   host.shortcuts.onPressed(async ({ id }) => {

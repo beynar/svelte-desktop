@@ -7,10 +7,10 @@
 		"dev": "bunx --bun vite dev",
 		"build": "bunx --bun vite build",
 		"prepare": "svelte-kit sync || echo ''",
-		"postinstall": "ln -sfn ../../../../packages/shell node_modules/@svelte-desktop/shell-link && rm -rf node_modules/@svelte-desktop/shell && mv node_modules/@svelte-desktop/shell-link node_modules/@svelte-desktop/shell",
+		"postinstall": "ln -sfn ../../../../packages/shell node_modules/@kitop/shell-link && rm -rf node_modules/@kitop/shell && mv node_modules/@kitop/shell-link node_modules/@kitop/shell",
 		"test": "bun test --timeout 30000 tests/",
 		"test:dev": "DESKTOP_TEST_DEV=1 bun test --timeout 90000 tests/",
-		"push-server": "bun -e \"(await import('@svelte-desktop/shell/push-server')).servePush({ port: 47123, db: '.desktop/push.sqlite' }); console.log('push server on :47123')\""
+		"push-server": "bun -e \"(await import('@kitop/shell/push-server')).servePush({ port: 47123, db: '.desktop/push.sqlite' }); console.log('push server on :47123')\""
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-bun": "1.0.0-next.2",
@@ -23,7 +23,7 @@
 	},
 	"dependencies": {
 		"@modelcontextprotocol/server": "^2.4.0",
-		"@svelte-desktop/shell": "file:../../packages/shell",
+		"@kitop/shell": "file:../../packages/shell",
 		"zod": "^4.2.0"
 	},
 	"imports": {

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { X509Certificate } from 'node:crypto';
-import { webview } from '@svelte-desktop/shell/platform';
+import { webview } from '@kitop/shell/platform';
 
 type Servers = { http: ReturnType<typeof Bun.serve>; https?: ReturnType<typeof Bun.serve>; fingerprint: string; tlsError: string };
 let starting: Promise<Servers> | undefined;

@@ -7,7 +7,7 @@ import { $ } from "bun";
 import { existsSync, readFileSync } from "node:fs";
 import type { Harness } from "../harness-worker.ts";
 
-const ID = "dev.svelte-desktop.harness";
+const ID = "dev.kitop.harness";
 const LOG = `/tmp/fake-notify-${process.pid}.log`;
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const DEST = ["--session", "--dest", "org.freedesktop.Notifications", "--object-path", "/org/freedesktop/Notifications"];
@@ -15,8 +15,8 @@ const DEST = ["--session", "--dest", "org.freedesktop.Notifications", "--object-
 type Sent = { op: string; id: number; replaces?: number; timeout?: number; summary?: string; body?: string; actions?: string[]; hints?: Record<string, any> };
 const sent = (): Sent[] => (existsSync(LOG) ? readFileSync(LOG, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
 const last = (summary: string) => sent().filter((n) => n.op === "notify" && n.summary === summary).at(-1);
-const invoke = (id: number, action: string) => $`gdbus call ${DEST} --method dev.svelte_desktop.FakeNotifications.Invoke ${id} ${action}`.quiet().nothrow();
-const close = (id: number, reason: number) => $`gdbus call ${DEST} --method dev.svelte_desktop.FakeNotifications.Close ${id} ${reason}`.quiet().nothrow();
+const invoke = (id: number, action: string) => $`gdbus call ${DEST} --method dev.kitop.FakeNotifications.Invoke ${id} ${action}`.quiet().nothrow();
+const close = (id: number, reason: number) => $`gdbus call ${DEST} --method dev.kitop.FakeNotifications.Close ${id} ${reason}`.quiet().nothrow();
 
 export default async (t: Harness) => {
   await $`pkill -x dunst`.quiet().nothrow();

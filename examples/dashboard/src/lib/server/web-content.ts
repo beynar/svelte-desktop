@@ -1,5 +1,5 @@
 // Worker-side custom resources. The page only gets URLs and probe statistics.
-import { protocol } from '@svelte-desktop/shell/platform';
+import { protocol } from '@kitop/shell/platform';
 export const assetStats = { bytes: 0, completed: 0, cancelled: 0, requests: 0 };
 if (protocol.isProtocolHandled('asset')) protocol.unhandle('asset');
 protocol.handle('asset', (request) => {

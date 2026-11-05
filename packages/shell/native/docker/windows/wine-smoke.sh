@@ -7,19 +7,19 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 native=$(cd "$here/../.." && pwd)
-docker build -q -t svelte-desktop-windows "$here" >/dev/null
-docker build -q --platform linux/amd64 -f "$here/Dockerfile.wine" -t svelte-desktop-wine "$here" >/dev/null
+docker build -q -t kitop-windows "$here" >/dev/null
+docker build -q --platform linux/amd64 -f "$here/Dockerfile.wine" -t kitop-wine "$here" >/dev/null
 echo "== exports of build/windows-x64/shell.dll"
-docker run --rm -v "$native":/src svelte-desktop-windows sh -c \
+docker run --rm -v "$native":/src kitop-windows sh -c \
   'llvm-objdump -p /src/build/windows-x64/shell.dll | sed -n "/Export Table/,\$p" | grep -o "shell_[a-z_]*" | sort | tr "\n" " "; echo;
    cd /src/build/windows-x64 && x86_64-w64-mingw32-clang++ -std=c++17 -O1 -Wall -static /src/docker/windows/smoke.cc -o smoke.exe'
 echo "== smoke.exe under Wine"
-docker run --rm --platform linux/amd64 -v "$native/build/windows-x64":/w -w /w svelte-desktop-wine \
+docker run --rm --platform linux/amd64 -v "$native/build/windows-x64":/w -w /w kitop-wine \
   sh -c 'xvfb-run -a sh -c "wineboot -i >/dev/null 2>&1; wine smoke.exe" 2>&1' | grep -E '^(ok|FAIL)|SMOKE'
 if [ $# -ge 1 ]; then
   setup=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
   echo "== NSIS installer under Wine: $(basename "$setup")"
-  docker run --rm --platform linux/amd64 -v "$(dirname "$setup")":/d svelte-desktop-wine sh -c "
+  docker run --rm --platform linux/amd64 -v "$(dirname "$setup")":/d kitop-wine sh -c "
     wineboot -i >/dev/null 2>&1
     wine '/d/$(basename "$setup")' /S; wineserver -w
     dir=\$(ls -d \"\$WINEPREFIX/drive_c/users/\$(whoami)/AppData/Local/Programs/\"*/ 2>/dev/null | head -1)

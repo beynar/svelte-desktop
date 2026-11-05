@@ -1,3 +1,3 @@
-module svelte-desktop.dev/go/desktop
+module kitop.dev/go/desktop
 
 go 1.22

@@ -1,8 +1,8 @@
 <script lang="ts">
 	// Spotlight-style command palette in a borderless panel (global hotkey).
-	import PopoverContent from '@svelte-desktop/shell/platform/PopoverContent.svelte';
-	import { broadcast, closePopover, windows } from '@svelte-desktop/shell/platform';
-	import { app, theme } from '@svelte-desktop/shell/stores';
+	import PopoverContent from '@kitop/shell/platform/PopoverContent.svelte';
+	import { broadcast, closePopover, windows } from '@kitop/shell/platform';
+	import { app, theme } from '@kitop/shell/stores';
 
 	const commands = [
 		{ label: 'New note', run: async () => { await app.show(); await windows.focus(); await broadcast('focus-input'); } },

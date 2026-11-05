@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Opened from the menu-bar icon. Same server, same remote functions and
 	// session as the main window; `host.broadcast` tells the window to refresh.
-	import PopoverContent from '@svelte-desktop/shell/platform/PopoverContent.svelte';
+	import PopoverContent from '@kitop/shell/platform/PopoverContent.svelte';
 	import { addNote, getState } from '#lib/data.remote';
 
 	let input: HTMLInputElement | undefined = $state();

@@ -1,8 +1,8 @@
-"""Python commands for svelte-desktop apps.
+"""Python commands for kitop apps.
 
     # native/python/text.py
     from dataclasses import dataclass
-    from svelte_desktop import command, emit
+    from kitop import command, emit
 
     @dataclass
     class Stats:

@@ -23,7 +23,7 @@ export default async (t: Harness) => {
   );
 
   // Sleep blocks: create, verify with pmset, release, verify gone.
-  const reason = `svelte-desktop harness ${process.pid}-${Date.now()}`;
+  const reason = `kitop harness ${process.pid}-${Date.now()}`;
   const ids: number[] = [];
   for (const type of ["display", "idle", "system"]) {
     const r = await t.call("power", "blockSleep", { type, reason: `${reason} ${type}` });

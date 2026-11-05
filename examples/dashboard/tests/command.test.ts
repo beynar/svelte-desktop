@@ -1,7 +1,7 @@
 // desktop.config `command` (built app): host.command installs `dashboard` on the user's PATH, and
 // `dashboard <file>` from a terminal opens the file in the running app. Uninstalled afterwards.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 import { realpathSync } from 'node:fs';
 
 let app: AppHandle;

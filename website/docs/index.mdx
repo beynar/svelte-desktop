@@ -1,15 +1,15 @@
 ---
-title: svelte-desktop
+title: kitop
 description: "Desktop apps from an unmodified SvelteKit app: one Vite plugin, one config file, Bun, the system web view, a packaged executable."
 sidebar:
   label: Introduction
   icon: house
 ---
 
-`@svelte-desktop/shell` turns a SvelteKit app into a native app without changing the app. SSR, remote functions, form actions, endpoints and `bun:sqlite` run in-process on Bun. The UI is the system web view: WKWebView on macOS, WebKitGTK on Linux, WebView2 on Windows. The build output contains a compiled app executable and the native libraries. On macOS, it is a signed, notarizable `.app` bundle.
+`@kitop/shell` turns a SvelteKit app into a native app without changing the app. SSR, remote functions, form actions, endpoints and `bun:sqlite` run in-process on Bun. The UI is the system web view: WKWebView on macOS, WebKitGTK on Linux, WebView2 on Windows. The build output contains a compiled app executable and the native libraries. On macOS, it is a signed, notarizable `.app` bundle.
 
 ```ts vite.config.ts
-import { desktop } from '@svelte-desktop/shell/vite';
+import { desktop } from '@kitop/shell/vite';
 import { defineConfig } from 'vite';
 
 // SvelteKit's own plugin, wired with the desktop adapter and dev mode.
@@ -18,7 +18,7 @@ export default defineConfig({ plugins: [desktop({ experimental: { remoteFunction
 ```
 
 ```ts desktop.config.ts
-import { defineConfig } from '@svelte-desktop/shell/config';
+import { defineConfig } from '@kitop/shell/config';
 
 export default defineConfig({
   appName: 'Notes',
@@ -52,12 +52,12 @@ Hello-world app on macOS 26.5 (M4 Pro), all processes counted. Numbers from the 
 | Electron 45 | 258 MB | 115 MB | 303 ms | 88–149 MB |
 | Tauri 2.12 | 4 MB | 1.8 MB | 313 ms | 75–170 MB |
 | Electrobun 2.0 | 31 MB (187 MB installed) | 31 MB | 396 ms | 86 MB |
-| svelte-desktop, Bun stable | 86 MB | 39 MB | 378 ms | 87 MB |
-| svelte-desktop, `--aot --trim` (Bun canary) | 45 MB | 19 MB | 334 ms | 85 MB |
+| kitop, Bun stable | 86 MB | 39 MB | 378 ms | 87 MB |
+| kitop, `--aot --trim` (Bun canary) | 45 MB | 19 MB | 334 ms | 85 MB |
 
-- **Electron** ships Chromium and Node; you write the main process and IPC yourself. svelte-desktop is 3 to 6 times smaller and runs your SvelteKit server unchanged.
-- **Tauri** is about 10 times smaller (no bundled server JavaScript runtime). svelte-desktop keeps SSR and server code in TypeScript on Bun, with Rust, Go, Swift, Objective-C, C, C++ or Node-API for native code.
-- **Electrobun** also uses Bun and the system web view. svelte-desktop provides SvelteKit SSR end to end and signed update manifests with archive integrity checks.
+- **Electron** ships Chromium and Node; you write the main process and IPC yourself. kitop is 3 to 6 times smaller and runs your SvelteKit server unchanged.
+- **Tauri** is about 10 times smaller (no bundled server JavaScript runtime). kitop keeps SSR and server code in TypeScript on Bun, with Rust, Go, Swift, Objective-C, C, C++ or Node-API for native code.
+- **Electrobun** also uses Bun and the system web view. kitop provides SvelteKit SSR end to end and signed update manifests with archive integrity checks.
 
 ## What you get
 

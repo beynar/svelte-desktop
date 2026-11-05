@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"build": "bun ../../scripts/build.ts",
-		"postinstall": "mkdir -p node_modules/@svelte-desktop && ln -sfn ../../../.. node_modules/@svelte-desktop/shell"
+		"postinstall": "mkdir -p node_modules/@kitop && ln -sfn ../../../.. node_modules/@kitop/shell"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-bun": "1.0.0-next.2",

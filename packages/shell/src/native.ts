@@ -3,7 +3,7 @@
 // (Rust, Go, Swift, Objective-C, C); the build reads them back from the libraries and writes
 // their types into `NativeModules` (src/native.d.ts):
 //
-//   import { native } from '@svelte-desktop/shell/native';
+//   import { native } from '@kitop/shell/native';
 //   const { words } = await native.text.stats({ text });   // Rust: p.command("text.stats", …)
 //   const message = await native.greeter.hello({ name });  // Swift: Desktop.command("greeter.hello") { (a: HelloArgs) in … }
 import { callPlatform } from "./platform/bus.ts";

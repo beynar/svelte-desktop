@@ -12,7 +12,7 @@ const dist = join(process.cwd(), ".desktop/dist/Svelte Notes");
 const exe = join(dist, readdirSync(dist).find((f) => f === "svelte-notes")!);
 
 test(".desktop entry declares the scheme and the document type", () => {
-  const entry = readFileSync(join(dist, "share/applications/dev.svelte-desktop.notes.desktop"), "utf8");
+  const entry = readFileSync(join(dist, "share/applications/dev.kitop.notes.desktop"), "utf8");
   expect(entry).toContain("Exec=svelte-notes %U");
   expect(entry).toMatch(/MimeType=.*x-scheme-handler\/svelte-notes;/);
   expect(entry).toMatch(/MimeType=.*text\/markdown;/);
@@ -31,7 +31,7 @@ test("opened with a URL and a document: initial URLs, opened files, openUrls/ope
     expect(await app.platform<{ acquired: boolean }>("app", "requestSingleInstanceLock")).toEqual({ acquired: true });
     const urls = app.nextEvent<{ urls: string[] }>("openUrls");
     const files = app.nextEvent<{ paths: string[] }>("openFiles");
-    const second = Bun.spawn([exe, "svelte-notes://open/second", "opened-note.md"], { cwd: "/tmp", env: { ...process.env, SVELTE_DESKTOP_TEST: "" }, stdout: "ignore", stderr: "ignore" });
+    const second = Bun.spawn([exe, "svelte-notes://open/second", "opened-note.md"], { cwd: "/tmp", env: { ...process.env, KITOP_TEST: "" }, stdout: "ignore", stderr: "ignore" });
     expect((await urls).urls).toEqual(["svelte-notes://open/second"]);
     expect((await files).paths).toEqual([doc]);
     second.kill();
@@ -41,7 +41,7 @@ test("opened with a URL and a document: initial URLs, opened files, openUrls/ope
 }, 120_000);
 
 test("launch at login: the autostart entry, the user turning it off, and a launch from it", async () => {
-  const entry = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "autostart/dev.svelte-desktop.notes.desktop");
+  const entry = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "autostart/dev.kitop.notes.desktop");
   let app = await launch({ timeout: 60_000 });
   try {
     await app.waitFor("#counter", { timeout: 20_000 });
@@ -106,7 +106,7 @@ test("what the setters set reads back", async () => {
 }, 120_000);
 
 test("deepLink.register: installs the entry and sets the default, keeping what's there", async () => {
-  const id = "dev.svelte-desktop.notes.desktop";
+  const id = "dev.kitop.notes.desktop";
   const entry = join(homedir(), ".local/share/applications", id), list = join(homedir(), ".config/mimeapps.list");
   rmSync(entry, { force: true });
   mkdirSync(join(homedir(), ".config"), { recursive: true });
@@ -139,7 +139,7 @@ test("deepLink.register: installs the entry and sets the default, keeping what's
 }, 120_000);
 
 test("default URL handler: not until the system says so", async () => {
-  const id = "dev.svelte-desktop.notes.desktop";
+  const id = "dev.kitop.notes.desktop";
   const isDefault = async () => {
     const app = await launch({ timeout: 60_000 });
     try {

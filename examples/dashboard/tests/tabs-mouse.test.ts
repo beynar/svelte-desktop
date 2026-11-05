@@ -3,7 +3,7 @@
 // Reorder, drag out into a new window, drop onto that window's bar, and a page's own drag and
 // drop (the calendar) with an isolated tab's hidden view in the window.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 const run = process.env.DESKTOP_TEST_MOUSE ? test : test.skip;
 type Win = { windowId: number; label: string; bounds: { x: number; y: number; width: number; height: number } };

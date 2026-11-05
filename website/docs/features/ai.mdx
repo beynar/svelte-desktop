@@ -46,7 +46,7 @@ On macOS 26 with Apple Intelligence on, `host.ai` runs Apple's on-device model. 
 
 ```ts src/lib/model.ts
 import { openai } from '@ai-sdk/openai';
-import { appleIntelligence } from '@svelte-desktop/shell/ai-sdk';
+import { appleIntelligence } from '@kitop/shell/ai-sdk';
 
 export async function model() {
   return (await host.ai.availability()).available ? appleIntelligence() : openai('gpt-5-mini');
@@ -100,7 +100,7 @@ The framework's part is to find them. An app opened from the Finder doesn't get 
 import { spawn } from 'node:child_process';
 // A service runs in a process of its own, without the `host` global: the same helpers, imported.
 import { createInterface } from 'node:readline';
-import { shellEnv, which } from '@svelte-desktop/shell/server';
+import { shellEnv, which } from '@kitop/shell/server';
 
 const agent: HostService<{ cwd: string }> = async ({ cwd }, port) => {
   const env = await shellEnv();

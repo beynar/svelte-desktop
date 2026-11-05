@@ -1,4 +1,4 @@
-// Import this from SvelteKit server code: `import { desktop } from '@svelte-desktop/shell/server'`.
+// Import this from SvelteKit server code: `import { desktop } from '@kitop/shell/server'`.
 // It holds no FFI itself — the Worker runtime installs the implementation on
 // globalThis before the app's server code runs — so it bundles into the server
 // build like any small module and simply throws when not running in the shell.
@@ -15,7 +15,7 @@ export { jobs } from "./jobs/host.ts";
 export type { JobContext, JobFunction, JobInfo, JobState, StartOptions } from "./jobs/host.ts";
 export type { MenuItemSpec, ShellEvent } from "./types.ts";
 
-const KEY = Symbol.for("svelte-desktop.api");
+const KEY = Symbol.for("kitop.api");
 
 export function isDesktop(): boolean {
   return KEY in globalThis;
@@ -24,12 +24,12 @@ export function isDesktop(): boolean {
 export const desktop: DesktopApi = new Proxy({} as DesktopApi, {
   get(_, prop) {
     const api = (globalThis as any)[KEY] as DesktopApi | undefined;
-    if (!api) throw new Error(`desktop.${String(prop)}: not running inside the svelte-desktop shell`);
+    if (!api) throw new Error(`desktop.${String(prop)}: not running inside the kitop shell`);
     return (api as any)[prop];
   },
 });
 
-const READY = Symbol.for("svelte-desktop.ready");
+const READY = Symbol.for("kitop.ready");
 const queue = ((globalThis as any)[READY] ??= []) as Array<(api: DesktopApi) => void>;
 
 /**

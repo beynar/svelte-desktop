@@ -1,6 +1,6 @@
 // desktop.config.ts — the one place an app describes itself as a desktop app.
 //
-//   import { defineConfig } from '@svelte-desktop/shell/config';
+//   import { defineConfig } from '@kitop/shell/config';
 //   export default defineConfig({ appName: 'Notes', identifier: 'dev.example.notes' });
 //
 // Everything but appName/identifier is optional. The Vite plugin loads it for
@@ -62,7 +62,7 @@ export interface BuildConfig {
   /** Bun `--trim`: drop the Bun APIs the app never calls, the Bun command line first (~45 MB).
    *  Default: on when the Bun compiling has it (canary today); `false` turns it off. */
   trim?: boolean;
-  /** Bun binary used to compile. Default: $SVELTE_DESKTOP_BUN or the running Bun. */
+  /** Bun binary used to compile. Default: $KITOP_BUN or the running Bun. */
   bun?: string;
   /** Also build the x64 slice and lipo a universal app. */
   universal?: boolean;
@@ -89,7 +89,7 @@ export interface DesktopConfig {
   /** Default: package.json version. */
   version?: string;
   /** App icon: one square image (PNG, JPEG or WebP, 1024 px or more; SVG when building on macOS), relative to the project;
-   *  every target's icons are generated from it at build (`svelte-desktop icon` previews them).
+   *  every target's icons are generated from it at build (`kitop icon` previews them).
    *  A square artwork is put on macOS's squircle grid; one with transparent corners is taken as
    *  already shaped. `background` (hex): behind such an artwork in macOS 26's icon, which is
    *  opaque — default the artwork's corner color, else white.
@@ -100,7 +100,7 @@ export interface DesktopConfig {
   window?: WindowOptions | false;
   /** Signed self-update feed. */
   update?: UpdateConfig & {
-    /** ed25519 private key file used by `vite build` to sign release/update.json. Default $SVELTE_DESKTOP_UPDATE_KEY. */
+    /** ed25519 private key file used by `vite build` to sign release/update.json. Default $KITOP_UPDATE_KEY. */
     privateKey?: string;
     /** Public base URL where release/ is uploaded (artifact URLs in update.json). */
     baseUrl?: string;
@@ -179,7 +179,7 @@ export interface PushConfig {
    *  enables Push Notifications (`sign.provisioningProfile`).
    *  The entitlement's environment is `environment` when set, else the one the provisioning profile grants. */
   apns?: boolean | { environment?: "development" | "production" };
-  /** Your own push server (`@svelte-desktop/shell/push-server`, Web Push compatible) for macOS, Windows
+  /** Your own push server (`@kitop/shell/push-server`, Web Push compatible) for macOS, Windows
    *  and Linux: the app holds one connection to it while it runs (window closed included) — no Apple or
    *  Google account. `host.push.register()` returns a Web Push target your server sends to with
    *  `createPush({ webpush })`. Takes precedence over APNs on macOS. */
@@ -294,18 +294,18 @@ export function resolveConfig(root: string, config: Partial<DesktopConfig>, conf
   const pkgPath = join(root, "package.json");
   const pkg = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, "utf8")) : {};
   const appName = config.appName ?? pkg.productName ?? pkg.name;
-  if (!appName) throw new Error("svelte-desktop: `appName` is required (desktop.config.ts)");
-  const identifier = config.identifier ?? `dev.svelte-desktop.${String(appName).toLowerCase().replace(/[^a-z0-9]+/g, "")}`;
+  if (!appName) throw new Error("kitop: `appName` is required (desktop.config.ts)");
+  const identifier = config.identifier ?? `dev.kitop.${String(appName).toLowerCase().replace(/[^a-z0-9]+/g, "")}`;
   if (!/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(identifier))
-    throw new Error(`svelte-desktop: identifier "${identifier}" must be reverse-DNS (e.g. com.example.app)`);
+    throw new Error(`kitop: identifier "${identifier}" must be reverse-DNS (e.g. com.example.app)`);
   for (const scheme of config.protocols ?? []) {
     if (!isCustomProtocolScheme(scheme))
-      throw new Error(`svelte-desktop: invalid or WebKit-reserved protocol "${scheme}"`);
+      throw new Error(`kitop: invalid or WebKit-reserved protocol "${scheme}"`);
   }
   const nativeDir = config.native === false ? null : resolve(root, config.native ?? "native");
-  // `SVELTE_DESKTOP_TARGET=windows vite build` builds another target without editing the config.
-  const envTarget = process.env.SVELTE_DESKTOP_TARGET as BuildConfig["target"] | undefined;
-  const envArch = process.env.SVELTE_DESKTOP_TARGET_ARCH as BuildConfig["targetArch"] | undefined;
+  // `KITOP_TARGET=windows vite build` builds another target without editing the config.
+  const envTarget = process.env.KITOP_TARGET as BuildConfig["target"] | undefined;
+  const envArch = process.env.KITOP_TARGET_ARCH as BuildConfig["targetArch"] | undefined;
   const build = envTarget || envArch ? { ...config.build, ...(envTarget && { target: envTarget }), ...(envArch && { targetArch: envArch }) } : config.build;
   const osPermissions: Record<string, string> = {};
   for (const [k, reason] of Object.entries(PAGE_PERMISSIONS)) if (config.permissions?.[k] !== false) osPermissions[k] = reason(appName);

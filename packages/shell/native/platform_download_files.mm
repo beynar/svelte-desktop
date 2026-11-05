@@ -12,7 +12,7 @@ NSString *platform_download_prefix(NSString *path, NSString *ident) {
 static NSNumber *file_size(NSString *path, NSError **error) {
   NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:error];
   if (attributes && ![attributes[NSFileType] isEqual:NSFileTypeRegular]) {
-    if (error) *error = [NSError errorWithDomain:@"svelte-desktop.download" code:1 userInfo:@{NSLocalizedDescriptionKey:@"download checkpoint must be a regular file"}];
+    if (error) *error = [NSError errorWithDomain:@"kitop.download" code:1 userInfo:@{NSLocalizedDescriptionKey:@"download checkpoint must be a regular file"}];
     return nil;
   }
   return attributes[NSFileSize];
@@ -38,7 +38,7 @@ BOOL platform_download_rewind(NSString *path, NSString *prefix, int64_t bytes, N
   NSNumber *size = file_size(prefix, error);
   if (!size) return NO;
   if (size.longLongValue != bytes) {
-    if (error) *error = [NSError errorWithDomain:@"svelte-desktop.download" code:2 userInfo:@{NSLocalizedDescriptionKey:@"download checkpoint size changed"}];
+    if (error) *error = [NSError errorWithDomain:@"kitop.download" code:2 userInfo:@{NSLocalizedDescriptionKey:@"download checkpoint size changed"}];
     return NO;
   }
   return copy_atomic(prefix, path, error);

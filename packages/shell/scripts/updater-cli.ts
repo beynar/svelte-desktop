@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Publishing CLI for the svelte-desktop updater.
+ * Publishing CLI for the kitop updater.
  *
  *   bun scripts/updater-cli.ts keygen [--out updater.key] [--force]
  *   bun scripts/updater-cli.ts sign <manifest.json> (--key <file> | --key-env VAR) [--out <file>]

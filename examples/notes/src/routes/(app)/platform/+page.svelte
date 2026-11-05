@@ -4,11 +4,11 @@
 	import {
 		app, window as win, screen, clipboard, theme, system, power, tray, shortcuts,
 		notifications, secureStorage, capabilities, diagnostics, menu, onPlatform, isNative
-	} from '@svelte-desktop/shell/stores';
-	import MenuBar from '@svelte-desktop/shell/platform/MenuBar.svelte';
-	import Popover from '@svelte-desktop/shell/platform/Popover.svelte';
+	} from '@kitop/shell/stores';
+	import MenuBar from '@kitop/shell/platform/MenuBar.svelte';
+	import Popover from '@kitop/shell/platform/Popover.svelte';
 	let paletteOpen = $state(false);
-	import { native } from '@svelte-desktop/shell/native';
+	import { native } from '@kitop/shell/native';
 	import { nativeGreeting, fib } from '#lib/desktop.remote';
 	const fromPage = native.greeter.hello({ name: 'page' }).catch((e) => `error: ${e.message}`);
 
@@ -50,7 +50,7 @@
 			<button onclick={run('dock badge', () => app.setDockBadge(String(Math.floor(Math.random() * 9) + 1)))}>Dock badge</button>
 			<button onclick={run('dock progress', () => app.setDockProgress({ status: 'normal', completed: 6, total: 10 }))}>Dock progress</button>
 			<button onclick={run('clear dock', async () => { await app.setDockBadge(null); await app.setDockProgress({ status: 'none' }); })}>Clear</button>
-			<button onclick={run('about', () => app.aboutPanel({ credits: 'Built with svelte-desktop' }))}>About…</button>
+			<button onclick={run('about', () => app.aboutPanel({ credits: 'Built with kitop' }))}>About…</button>
 		</section>
 
 		<section class="card" data-testid="window">
@@ -65,7 +65,7 @@
 			<button onclick={run('normal level', () => win.setAlwaysOnTop(false))}>Normal</button>
 			<button onclick={run('titlebar', () => win.setTitleBarStyle('hiddenInset'))}>Inset titlebar</button>
 			<button onclick={run('titlebar', () => win.setTitleBarStyle('default'))}>Default titlebar</button>
-			<button onclick={run('new window', () => import('@svelte-desktop/shell/platform').then((p) => p.windows.create({ title: 'Second', width: 520, height: 420 })))}>New window</button>
+			<button onclick={run('new window', () => import('@kitop/shell/platform').then((p) => p.windows.create({ title: 'Second', width: 520, height: 420 })))}>New window</button>
 		</section>
 
 		<section class="card" data-testid="theme">

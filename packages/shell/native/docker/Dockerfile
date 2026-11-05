@@ -1,5 +1,5 @@
 # Linux build + test image for the GTK3 / WebKitGTK 4.1 backend of libshell.
-#   docker build -t svelte-desktop-linux packages/shell/native/docker
+#   docker build -t kitop-linux packages/shell/native/docker
 # Provides: compilers + GTK/WebKitGTK/appindicator/libnotify/libsecret headers,
 # Xvfb + openbox (EWMH window manager) + dunst (notification daemon) + D-Bus +
 # gnome-keyring (headless tests), Bun, appimagetool.

@@ -13,7 +13,7 @@
 //
 // Native code on Linux: the plugin folder's C/C++ sources are built with the
 // host compiler into libapp-native.so (they implement sd_plugin_init from
-// native/include/svelte_desktop.h). Swift / Objective-C sources are macOS-only
+// native/include/kitop.h). Swift / Objective-C sources are macOS-only
 // and skipped with a notice. native/addons/*.c|cc|cpp → <name>.node with cc/c++.
 // Compiling native code needs a Linux host (or the Docker image); when cross-
 // building from macOS those steps are skipped with a warning unless prebuilt.
@@ -58,7 +58,7 @@ export async function buildLinuxPlugin(c: ResolvedConfig, arch: Arch, outDir: st
   const all = pluginSources(c.native);
   const apple = all.filter((f) => /\.(swift|m|mm)$/.test(f));
   const files = all.filter((f) => /\.(c|cc|cpp)$/.test(f));
-  if (apple.length) warn(`native plugin: ${apple.map((f) => relative(c.root, f)).join(", ")} skipped (Swift/Objective-C are macOS-only; write C/C++ against native/include/svelte_desktop.h for Linux)`);
+  if (apple.length) warn(`native plugin: ${apple.map((f) => relative(c.root, f)).join(", ")} skipped (Swift/Objective-C are macOS-only; write C/C++ against native/include/kitop.h for Linux)`);
   if (!files.length) return null;
   if (!canCompileNative(arch)) {
     warn(`native plugin: C/C++ sources need a Linux ${arch} host to compile (skipped)`);
@@ -112,7 +112,7 @@ export async function buildLinuxAddons(c: ResolvedConfig, arch: Arch, outDir: st
 }
 
 async function compile(c: ResolvedConfig, stage: string, out: string, arch: Arch): Promise<void> {
-  const bun = c.build?.bun ?? process.env.SVELTE_DESKTOP_BUN ?? process.execPath;
+  const bun = c.build?.bun ?? process.env.KITOP_BUN ?? process.execPath;
   const native = process.platform === "linux" && arch === hostArch;
   // A desktop app must not pick up bunfig.toml / .env from its launch directory.
   const flags = ["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv", `--target=bun-linux-${arch}`];

@@ -7,7 +7,7 @@ const exe = `${app}/Contents/MacOS/${(await Bun.file(`${app}/Contents/Info.plist
 const times: number[] = [];
 for (let i = 0; i < runs + 1; i++) {
   const t0 = performance.now();
-  const p = Bun.spawn([exe], { env: { ...process.env, SVELTE_DESKTOP_DEBUG: "1" }, stdout: "pipe", stderr: "ignore" });
+  const p = Bun.spawn([exe], { env: { ...process.env, KITOP_DEBUG: "1" }, stdout: "pipe", stderr: "ignore" });
   const reader = p.stdout.getReader();
   let buf = "";
   while (!buf.includes('"type":"ready"')) {

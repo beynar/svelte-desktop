@@ -36,7 +36,7 @@ launches were Electron 324, Tauri 294, ours-stable 1166 and ours-aot 349 ms. Not
 ³ Electrobun's "main" adds up the 1.1 MB native `launcher` and the 38.9 MB `bun` process that
 runs the app code.
 ⁴ Notes can't fetch an arbitrary URL, so its number is the time to the `"type":"ready"` line on
-stdout (`SVELTE_DESKTOP_DEBUG=1`), which fires on `DOMContentLoaded`. The minimal app records both
+stdout (`KITOP_DEBUG=1`), which fires on `DOMContentLoaded`. The minimal app records both
 signals, which calibrates the gap: the stdout line comes **47–48 ms earlier** than the `load`
 beacon (stable: 330 vs 378 ms; aot: 287 vs 334 ms). On the beacon scale, Notes is about
 **415 ms**.
@@ -97,7 +97,7 @@ bun install                                   # electrobun@2.0.5 (npm bootstrap 
 ./node_modules/.bin/electrobun build --env=stable
 
 # Ours, minimal (bench/ours-minimal → copied to bench/ours-builds/minimal-{stable,aot})
-bun install                                   # postinstall symlinks node_modules/@svelte-desktop/shell → packages/shell
+bun install                                   # postinstall symlinks node_modules/@kitop/shell → packages/shell
 bun ../../scripts/build.ts                    # Bun 1.4.4 stable
 bun ../../scripts/build.ts --aot --trim --bun /tmp/bun-canary/bun-darwin-aarch64/bun   # 1.4.4-canary.1+da867c60b
 
@@ -112,7 +112,7 @@ bun bench.ts
 | Electron | 45.2.0, electron-builder 26.18.0 |
 | Tauri | crate `tauri` 2.12.5, wry 0.57.1, `@tauri-apps/cli` 2.12.4, create-tauri-app 4.7.5, rustc/cargo 1.94.0 |
 | Electrobun | npm `electrobun` 2.0.5 → Hutch 0.28.2, Electrobun core 2.0.5, bundled bun 1.4.4 (system WebKit, `bundleCEF: false`) |
-| Ours | `@svelte-desktop/shell` (working tree, 2026-10-31), @sveltejs/kit 3.1.1, adapter-bun 1.0.0-next.2, svelte 5.57.3, vite 8.3.5; Bun 1.4.4+38afee6c8 (stable) and 1.4.4-canary.1+da867c60b (aot) |
+| Ours | `@kitop/shell` (working tree, 2026-10-31), @sveltejs/kit 3.1.1, adapter-bun 1.0.0-next.2, svelte 5.57.3, vite 8.3.5; Bun 1.4.4+38afee6c8 (stable) and 1.4.4-canary.1+da867c60b (aot) |
 | Harness | bun 1.4.4, node 26.13.0 / npm 11.20.0, Xcode 26.5 |
 
 ## Caveats
@@ -134,7 +134,7 @@ bun bench.ts
    `--aot --trim` build (47.5 MB executable). By measurement time it had been replaced with a
    stable Bun 1.4.4 build (85.6 MB). I snapshotted that stable build with `ditto` into
    `bench/ours-notes-snapshot/` and measured the copy. It shares its data directory
-   (`dev.svelte-desktop.notes`) with the real Notes, so the benchmark launches opened that
+   (`dev.kitop.notes`) with the real Notes, so the benchmark launches opened that
    sqlite database.
 4. **The cold-start signal differs for Notes only** (see ⁴). Ours shows the window only at
    `DOMContentLoaded`. The other three show their window earlier, often still blank, so

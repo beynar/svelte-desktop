@@ -3,7 +3,7 @@
 // gets one too. The shell draws them behind the web view — what a test can see is the page side:
 // html[data-desktop-materials], and [data-desktop-material-on] on what's drawn right now.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { launch, type AppHandle } from '@svelte-desktop/shell/test';
+import { launch, type AppHandle } from '@kitop/shell/test';
 
 let app: AppHandle;
 beforeAll(async () => {

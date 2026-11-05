@@ -1,5 +1,5 @@
-// Test channel: when SVELTE_DESKTOP_TEST is set (by `launch()` from
-// '@svelte-desktop/shell/test'), the shell connects to the test runner's
+// Test channel: when KITOP_TEST is set (by `launch()` from
+// '@kitop/shell/test'), the shell connects to the test runner's
 // WebSocket and executes platform calls for it. Never active otherwise.
 //   runner → app  {id, service, op, args}
 //   app → runner  {t:'result', id, ok, value|error} | {t:'event', name, data} | {t:'hello', origin}
@@ -24,7 +24,7 @@ export function attachTestChannel(socket: { send(data: string): unknown }, info:
 }
 
 export function connectTestChannel(info: { origin: string; appName: string }) {
-  const url = process.env.SVELTE_DESKTOP_TEST;
+  const url = process.env.KITOP_TEST;
   if (!url) return;
   const ws = new WebSocket(url);
   let onFrame: ((raw: string) => void) | null = null;
