@@ -1765,7 +1765,7 @@ Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64Strin
 			await op('view', 'navigate', { id: 'e2e-nav', url: `${ext}/blocked` });
 			const blocked = await request;
 			log('asked about /blocked at', Date.now());
-			await Bun.sleep(1000); // does the request wait for the answer?
+			await Bun.sleep(1000); // the request waits for the answer
 			expect(blocked).toMatchObject({ isMainFrame: true, viewId: 'e2e-nav' });
 			await op('webview', 'navigationDecision', { requestId: blocked.requestId, allow: false });
 			log('refused /blocked at', Date.now());

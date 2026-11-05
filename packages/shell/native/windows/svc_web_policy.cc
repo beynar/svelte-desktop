@@ -173,6 +173,19 @@ void web_screen_capture_starting(View *v, ICoreWebView2ScreenCaptureStartingEven
 static bool g_navigation_policy = false;
 static std::map<std::string, std::function<void(bool)>> g_navigations;
 
+// NavigationStarting doesn't hold the request: it reaches the server while the answer is awaited. A
+// handler on document requests does, because WebView2 waits for it and keeps it until the
+// navigation's handler has returned, by which time a refusal has cancelled the request.
+void web_policy_attach(View *v) {
+  if (!g_navigation_policy || v->browserView.empty() || !v->webview || v->holdsRequests) return;
+  auto *onRequest = new Cb<ICoreWebView2WebResourceRequestedEventHandler, ICoreWebView2 *, ICoreWebView2WebResourceRequestedEventArgs *>(
+      IID_ICoreWebView2WebResourceRequestedEventHandler, [](ICoreWebView2 *, ICoreWebView2WebResourceRequestedEventArgs *) -> HRESULT { return S_OK; });
+  v->webview->add_WebResourceRequested(onRequest, &v->tokens[11]);
+  onRequest->Release();
+  v->webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT);
+  v->holdsRequests = true;
+}
+
 void web_navigation_policy(View *v, const std::string &url, bool main_frame, ICoreWebView2NavigationStartingEventArgs *args) {
   // An app policy cannot sever its own origin or its bridge.
   if (!g_navigation_policy || (!app_origin().empty() && url_origin(url) == app_origin())) return;
@@ -265,6 +278,7 @@ void register_web_policy() {
   reg("webview", "setNavigationPolicy", [](CallPtr c) {
     if (c->caller) return c->fail("denied", "this operation belongs to server code");
     g_navigation_policy = c->flag("enabled", false);
+    for (auto &[id, v] : views()) web_policy_attach(v);
     auto pending = std::move(g_navigations);
     g_navigations.clear();
     for (auto &[ident, done] : pending) done(false);

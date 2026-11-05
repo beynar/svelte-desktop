@@ -779,6 +779,7 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
   }
 
   downloads_attach(v);
+  web_policy_attach(v);
 
   // Menu accelerators while the page has keyboard focus (keys go to the browser process).
   auto *onKey = new Cb<ICoreWebView2AcceleratorKeyPressedEventHandler, ICoreWebView2Controller *, ICoreWebView2AcceleratorKeyPressedEventArgs *>(
@@ -884,6 +885,7 @@ void view_destroy(View *v) {
     v->webview->remove_ProcessFailed(v->tokens[4]);
     v->webview->remove_PermissionRequested(v->tokens[5]);
     v->webview->remove_FrameNavigationStarting(v->tokens[8]);
+    if (v->holdsRequests) v->webview->remove_WebResourceRequested(v->tokens[11]);
     if (auto *wv27 = query<ICoreWebView2_27>(v->webview, IID_ICoreWebView2_27)) {
       wv27->remove_ScreenCaptureStarting(v->tokens[10]);
       wv27->Release();

@@ -138,7 +138,8 @@ struct View {
   bool askingToReload = false;         // the "not responding" question is on screen
   bool failed = false;                 // controller creation failed for good
   bool ready = false;                  // controller set up and bridge script registered
-  EventRegistrationToken tokens[11]{}; // [7]: DocumentTitleChanged (view.* only), [8]: FrameNavigationStarting, [9]: DownloadStarting, [10]: ScreenCaptureStarting
+  EventRegistrationToken tokens[12]{}; // [7]: DocumentTitleChanged (view.* only), [8]: FrameNavigationStarting, [9]: DownloadStarting, [10]: ScreenCaptureStarting, [11]: WebResourceRequested
+  bool holdsRequests = false;          // navigation policy: see web_policy_attach
   std::string browserView;             // view.* id: any origin may load ("" = app page)
 };
 
@@ -339,6 +340,7 @@ void register_deep_link();
 void web_permission_requested(View *v, ICoreWebView2PermissionRequestedEventArgs *args);
 void web_screen_capture_starting(View *v, ICoreWebView2ScreenCaptureStartingEventArgs *args);
 void web_navigation_policy(View *v, const std::string &url, bool main_frame, ICoreWebView2NavigationStartingEventArgs *args);
+void web_policy_attach(View *v);
 /// Downloads (svc_downloads.cc).
 void downloads_attach(View *v);
 void downloads_detach(View *v);
