@@ -1,0 +1,149 @@
+---
+title: Convert a SvelteKit app
+description: Turn an existing SvelteKit app into a desktop app, step by step. The change is one Vite plugin.
+sidebar:
+  icon: arrow-right-left
+---
+
+A desktop app is your SvelteKit app with one plugin swapped. Routes, load functions, remote functions, form actions, endpoints and hooks stay as they are, and run on Bun inside the app.
+
+```diff vite.config.ts
+-import { sveltekit } from '@sveltejs/kit/vite';
++import { desktop } from '@kitop/shell/vite';
+ import { defineConfig } from 'vite';
+
+ export default defineConfig({
+-  plugins: [sveltekit({ adapter: adapter() })],
++  plugins: [desktop()],
+ });
+```
+
+The steps below make that change for you, then get the app running and built.
+
+## Before you start
+
+- **SvelteKit 3 and Svelte 5.** On SvelteKit 2, upgrade first: kitop doesn't run on it.
+- **[Bun](https://bun.sh) 1.4 or newer.** You don't need to move your project to it, but the app's server code will run on it.
+- **On macOS,** the Xcode command line tools (`xcode-select --install`). **On Linux or Windows,** see [Distribution](/shipping/distribution).
+- **Your project committed in git,** so you can read what changes.
+
+## Convert it
+
+<Steps>
+  <Step title="Install the packages">
+    From your project's folder:
+
+    ```sh
+    bun add -d @kitop/shell @sveltejs/adapter-bun@1.0.0-next.2 @types/bun
+    ```
+
+    Name the adapter's version: the framework needs exactly this one. `@types/bun` keeps `svelte-check` and `tsc` working, since your config now loads code that runs on Bun.
+  </Step>
+
+  <Step title="Run init">
+    ```sh
+    bunx kitop init
+    ```
+
+    It does four things:
+
+    - Writes `desktop.config.ts`, with your app's name.
+    - Swaps `sveltekit()` for `desktop()` in `vite.config.ts`, and removes your `adapter` option and its import. Your other options stay.
+    - Sets the `dev`, `build` and `test:desktop` scripts in `package.json`, replacing any with those names.
+    - Adds `.desktop` to `.gitignore`.
+
+    **Check:** `git diff` shows that, and nothing else. If `init` warns that `svelte.config.js` sets an adapter, remove it there too.
+  </Step>
+
+  <Step title="Remove your old adapter">
+    `desktop()` brings its own, so the old one no longer does anything:
+
+    ```sh
+    bun remove @sveltejs/adapter-auto
+    ```
+
+    Name yours if it's another one, such as `@sveltejs/adapter-node`.
+  </Step>
+
+  <Step title="Name your app">
+    Edit `desktop.config.ts`:
+
+    ```ts desktop.config.ts
+    import { defineConfig } from '@kitop/shell/config';
+
+    export default defineConfig({
+      appName: 'My Site',
+      identifier: 'com.acme.mysite', // not com.example: change it now
+      window: { width: 1024, height: 720, autosaveName: 'main' },
+    });
+    ```
+
+    The identifier names your app to the OS and locates its data, so changing it later strands what users have saved. Use a domain you own. The [configuration page](/concepts/configuration) has the other options.
+  </Step>
+
+  <Step title="Check your setup">
+    ```sh
+    bunx kitop doctor
+    ```
+
+    Fix what's marked `✗`. Warnings are fine for now, such as a missing icon or `bridge.allow`: they matter when you ship.
+  </Step>
+
+  <Step title="Run it">
+    ```sh
+    bun run dev
+    ```
+
+    A native window opens on your app, with hot reload. The first run compiles the native shell, which takes a minute.
+
+    **Check:** your home page shows, and you can navigate, sign in and submit forms as you do in a browser. On a blank window, see [Troubleshooting](/reference/troubleshooting).
+  </Step>
+
+  <Step title="Fix what behaves differently">
+    Most apps need little or nothing here. The usual ones:
+
+    | If your app | Then |
+    | --- | --- |
+    | Reads `.env` at runtime through `$env/dynamic` | There's no `.env` on your users' machines. Use `$env/static` for what's public, and keep secrets on your own backend |
+    | Calls an API from the page | It sees your app's `http://127.0.0.1` origin. Allow it in that API's CORS rules, or make the call from server code |
+    | Uses a Node-only module | Server code runs on Bun, which supports most of them. Replace one that fails |
+    | Signs in through OAuth | Use the [loopback or scheme flow](/features/oauth) |
+    | Opens windows with `window.open` | They open in the default browser. Use [`host.windows`](/host/windows/windows) for windows of your app |
+
+    [Adopting an existing app](/concepts/adopting) has the full list.
+  </Step>
+
+  <Step title="Build it">
+    ```sh
+    bun run build
+    ```
+
+    `bun run check` still works if your project has it. The first run writes `src/host.d.ts`, the types of `host`: keep it in git.
+
+    **Check:** `.desktop/dist` has your app: a `.app`, a `.dmg` and a `.zip` on macOS; a folder, a `.tar.gz` and an AppImage on Linux. Open it. It runs without Vite, and what's stored in `localStorage` and your database stays between launches.
+  </Step>
+</Steps>
+
+That's a desktop app. It can't yet be shared with other people without a warning from their OS: [signing it](/shipping/distribution) is the next step for that.
+
+## Use the desktop
+
+Nothing above required any new code. When you want more than a browser gives you, `host` is a global in page and server code, with no import. In a plain browser tab `host.available` is `false`, so code you share with a website can check it:
+
+```svelte src/routes/+page.svelte
+<script lang="ts">
+  async function rename() {
+    if (host.available) await host.window.setTitle('Invoices');
+  }
+</script>
+
+<button onclick={rename}>Rename the window</button>
+```
+
+## Where next
+
+- [Windows and title bars](/ui/windows): hidden title bars, several windows.
+- [Host API](/host): menus, tray, notifications, files and the rest.
+- [Security](/concepts/security): what to narrow before you ship.
+- [Distribution](/shipping/distribution): signing, notarization, installers.
+- [Self-update](/shipping/self-update): shipping new versions.

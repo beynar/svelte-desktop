@@ -3,12 +3,12 @@ title: Adopting an existing app
 description: What init changes in a SvelteKit project, and what behaves differently once it runs on a loopback server inside a desktop app.
 ---
 
-Your routes, load functions, remote functions, hooks and endpoints run as they are, on Bun. The differences come from where they now run.
+Your routes, load functions, remote functions, hooks and endpoints run as they are, on Bun. The differences come from where they now run. To do the conversion, follow [Convert a SvelteKit app](/convert-sveltekit-app); this page is what's behind it.
 
 ## What `init` does
 
 ```sh
-bun add -d @kitop/shell @sveltejs/adapter-bun@1.0.0-next.2
+bun add -d @kitop/shell @sveltejs/adapter-bun@1.0.0-next.2 @types/bun
 bunx kitop init
 bun run dev
 ```

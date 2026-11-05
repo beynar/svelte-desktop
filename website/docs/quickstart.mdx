@@ -29,12 +29,12 @@ cd my-app && bun install && bun run dev
   <Tab title="Existing SvelteKit app">
 
 ```sh
-bun add -d @kitop/shell @sveltejs/adapter-bun@1.0.0-next.2
+bun add -d @kitop/shell @sveltejs/adapter-bun@1.0.0-next.2 @types/bun
 bunx kitop init
 bun run dev
 ```
 
-`init` writes `desktop.config.ts`, switches `vite.config.ts` to the `desktop()` plugin, and sets the `dev`, `build` and `test:desktop` scripts. If it prints a warning, see [Adopting an existing app](/concepts/adopting) for what it changes and what to check.
+Step by step: [Convert a SvelteKit app](/convert-sveltekit-app). `init` writes `desktop.config.ts`, switches `vite.config.ts` to the `desktop()` plugin, and sets the `dev`, `build` and `test:desktop` scripts. If it prints a warning, see [Adopting an existing app](/concepts/adopting) for what it changes and what to check.
 
   </Tab>
 </Tabs>

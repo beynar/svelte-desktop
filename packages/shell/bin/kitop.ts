@@ -68,7 +68,7 @@ async function init() {
   const lines = existsSync(gi) ? readFileSync(gi, "utf8") : "";
   if (!lines.split("\n").includes(".desktop")) writeFileSync(gi, `${lines.replace(/\n?$/, "\n")}.desktop\n`);
   ok(".gitignore: .desktop");
-  console.log(`\n  Next: bun add -d @kitop/shell@${shell.version} ${adapter} && bun run dev\n`);
+  console.log(`\n  Next: bun add -d @kitop/shell@${shell.version} ${adapter} @types/bun && bun run dev\n`);
 }
 
 async function create(dir: string | undefined) {

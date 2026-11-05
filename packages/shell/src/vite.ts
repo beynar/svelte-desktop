@@ -56,6 +56,9 @@ export interface DesktopPluginOptions {
   noWindow?: boolean;
 }
 
+/** What `sveltekit()` takes, so a config keeps its types when it moves to `desktop()`. */
+type KitOptions = Omit<NonNullable<Parameters<typeof import("@sveltejs/kit/vite").sveltekit>[0]>, "adapter">;
+
 /** SvelteKit + kitop. `kitOptions` are SvelteKit's plugin options (adapter excluded). */
 /** Types for the `host` global: a one-line src/host.d.ts, written once (keep it in git). */
 function writeHostTypes(root: string) {
@@ -64,7 +67,7 @@ function writeHostTypes(root: string) {
   writeFileSync(file, "// The `host` global (kitop): typed for page and server code.\nimport '@kitop/shell/globals';\n");
 }
 
-export async function desktop(kitOptions: Record<string, unknown> = {}, options: DesktopPluginOptions = {}): Promise<Plugin[]> {
+export async function desktop(kitOptions: KitOptions = {}, options: DesktopPluginOptions = {}): Promise<Plugin[]> {
   if (typeof Bun === "undefined") throw new Error("kitop runs on Bun: use `bunx --bun vite …`");
   const config = await loadConfig(process.cwd(), options.config);
   // In dev, the app's server runs in this process: the system's certificates and proxy for it too.
