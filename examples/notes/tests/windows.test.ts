@@ -805,6 +805,7 @@ public static class SdWin {
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, UIntPtr e);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, string l);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
@@ -843,15 +844,23 @@ function Front($h) { [SdWin]::Chord([byte[]]@(0x87)); [void][SdWin]::SetForegrou
 function Press($x, $y) { [void][SdWin]::SetCursorPos($x, $y); Start-Sleep -Milliseconds 120; [SdWin]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero) }
 function Release { [SdWin]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero) }
 function Descendant($h, [scriptblock]$pred) {
+  $root = if ($h -is [System.Windows.Automation.AutomationElement]) { $h } else { $A::FromHandle($h) }
   $last = ''
   for ($i = 0; $i -lt 40; $i++) {
-    foreach ($e in $A::FromHandle($h).FindAll($TS::Descendants, $True_)) { try { if (& $pred $e) { return $e } } catch { $last = $_.Exception.Message } }
+    foreach ($e in $root.FindAll($TS::Descendants, $True_)) { try { if (& $pred $e) { return $e } } catch { $last = $_.Exception.Message } }
     Start-Sleep -Milliseconds 250
   }
-  $seen = @($A::FromHandle($h).FindAll($TS::Descendants, $True_) | ForEach-Object { "$($_.Current.ControlType.ProgrammaticName) '$($_.Current.Name)' #$($_.Current.AutomationId)" }) -join '; '
+  $seen = @($root.FindAll($TS::Descendants, $True_) | ForEach-Object { "$($_.Current.ControlType.ProgrammaticName) '$($_.Current.Name)' #$($_.Current.AutomationId)" }) -join '; '
   throw "nothing matches in the window. Saw: $seen. Last error: $last"
 }
-function Invoke-El($e) { $p = $null; [void]$e.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$p); $p.Invoke() }
+# The runner's UI Automation shows standard Win32 controls as panes with no patterns: a button takes BM_CLICK.
+function Invoke-El($e) {
+  $p = $null
+  if ($e.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$p)) { $p.Invoke(); return }
+  $w = $e.Current.NativeWindowHandle
+  if ($w -eq 0) { throw "'$($e.Current.Name)' has no pattern and no window" }
+  [void][SdWin]::PostMessage([IntPtr]$w, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
+}
 switch ($Mode) {
   'rect' { $h = Wait-Window $s.title; $r = Rect $h; @{ x = $r.L; y = $r.T; width = $r.R - $r.L; height = $r.B - $r.T; dpi = [SdWin]::GetDpiForWindow($h) } | ConvertTo-Json -Compress }
   'post-close' { $h = Wait-Window $s.title; [void][SdWin]::PostMessage($h, 0x10, [IntPtr]::Zero, [IntPtr]::Zero); 'posted' }
@@ -864,13 +873,14 @@ switch ($Mode) {
     Start-Sleep -Milliseconds 200; Release; 'dragged'
   }
   'keys' { if ($s.title) { Front (Wait-Window $s.title) }; [SdWin]::Chord([byte[]]@($s.keys)); 'pressed' }
-  'dialog-button' { $h = Wait-Window $s.title; $b = Descendant $h { param($e) $e.Current.ControlType.ProgrammaticName -eq 'ControlType.Button' -and $e.Current.Name -eq $s.button }; Invoke-El $b; 'pressed' }
-  'file-dialog' { # The file name box of the common dialog (1001 saving, 1148 opening), then its default button.
+  'dialog-button' { $h = Wait-Window $s.title; $b = Descendant $h { param($e) $e.Current.AutomationId -like 'CommandButton_*' -and $e.Current.Name -eq $s.button }; Invoke-El $b; 'pressed' }
+  'file-dialog' { # The Edit in the file name box of the common dialog (WM_SETTEXT), then its default button.
     $h = Wait-Window $s.title
-    $edit = Descendant $h { param($e) $e.Current.ControlType.ProgrammaticName -eq 'ControlType.Edit' -and @('1001', '1148') -contains $e.Current.AutomationId }
-    $vp = $null; [void]$edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp); $edit.SetFocus(); $vp.SetValue($s.path)
+    $box = Descendant $h { param($e) $e.Current.AutomationId -eq 'FileNameControlHost' }
+    $edit = Descendant $box { param($e) $e.Current.ClassName -eq 'Edit' }
+    [void][SdWin]::SendMessage([IntPtr]$edit.Current.NativeWindowHandle, 0x000C, [IntPtr]::Zero, $s.path)
     Start-Sleep -Milliseconds 300
-    $ok = Descendant $h { param($e) $e.Current.ControlType.ProgrammaticName -eq 'ControlType.Button' -and $e.Current.AutomationId -eq '1' }
+    $ok = Descendant $h { param($e) $e.Current.AutomationId -eq '1' }
     Invoke-El $ok; 'chosen'
   }
 }
