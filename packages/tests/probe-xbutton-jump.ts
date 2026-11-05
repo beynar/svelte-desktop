@@ -1,0 +1,38 @@
+import { TestGpuixRenderer } from '@gpuix/native';
+import { installGlobals, doc, materializeRoot } from '@svelte-desktop/gpuix/gdom';
+import { setRenderer, flush } from '@svelte-desktop/gpuix/native';
+installGlobals();
+const renderer = new TestGpuixRenderer(640, 600);
+setRenderer(renderer as any);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const pump = async () => { flush(); renderer.flush(); await sleep(30); };
+const root = doc.createElement('div');
+doc.body.appendChild(root);
+materializeRoot(root);
+const layer = doc.createElement('div');
+layer.setAttribute('style', 'position:relative;width:400px;height:400px');
+root.appendChild(layer);
+const btn = doc.createElement('x-button' as any);
+btn.setAttribute('style', 'position:absolute;top:60px;left:0;width:100px;height:50px');
+btn.addEventListener('click', () => {});
+layer.appendChild(btn);
+// control: a plain div with identical geometry + click
+const div = doc.createElement('div');
+div.setAttribute('style', 'position:absolute;top:160px;left:0;width:100px;height:50px');
+div.addEventListener('click', () => {});
+layer.appendChild(div);
+await pump();
+const bb = (renderer as any).getElementBounds((btn as any).nativeId);
+const db = (renderer as any).getElementBounds((div as any).nativeId);
+console.log('before-down btn bounds', JSON.stringify(bb));
+console.log('before-down div bounds', JSON.stringify(db));
+// press inside the button, hold, then inspect bounds
+renderer.simulateMouseDown(bb.x + bb.width / 2, bb.y + bb.height / 2);
+await pump();
+console.log('during-press btn bounds', JSON.stringify((renderer as any).getElementBounds((btn as any).nativeId)));
+console.log('during-press div bounds', JSON.stringify((renderer as any).getElementBounds((div as any).nativeId)));
+renderer.drainEvents();
+renderer.simulateMouseUp(bb.x + bb.width / 2, bb.y + bb.height / 2);
+await pump();
+console.log('after-up events', JSON.stringify(renderer.drainEvents()));
+console.log('after-up btn bounds', JSON.stringify((renderer as any).getElementBounds((btn as any).nativeId)));

@@ -5,7 +5,8 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
-		"build": "vite build",
+		"build": "vite build && svelte-native-package .svelte-native/app.js SvelteNotes dev.svelte-desktop.notes --out-dir dist --external @gpuix/native-darwin-arm64",
+		"package": "bun run build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -14,6 +15,7 @@
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^8.0.0-next.3",
 		"@sveltejs/adapter-bun": "1.0.0-next.2",
+		"@svelte-desktop/vite": "workspace:*",
 		"@sveltejs/kit": "^3.0.0-next.0",
 		"@sveltejs/vite-plugin-svelte": "^7.2.0",
 		"svelte": "^5.56.7",
@@ -23,6 +25,15 @@
 	},
 	"imports": {
 		"#lib": "./src/lib/index.js",
-		"#lib/*": "./src/lib/*"
+		"#lib/*": "./src/lib/*",
+		"#kit": "@svelte-desktop/svelte/gen/kit/index.js",
+		"#remote": "@svelte-desktop/svelte/gen/remote.js",
+		"#stores": "@svelte-desktop/platform/stores"
+	},
+	"dependencies": {
+		"@gpuix/native": "0.8.0",
+		"@svelte-desktop/gpuix": "workspace:*",
+		"@svelte-desktop/platform": "workspace:*",
+		"@svelte-desktop/svelte": "workspace:*"
 	}
 }

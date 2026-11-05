@@ -1,0 +1,44 @@
+{
+	"name": "@svelte-desktop/vite",
+	"version": "0.0.1",
+	"description": "Vite plugin that compiles a SvelteKit-shaped src/routes app for the svelte-desktop native GPUI renderer — no DOM, no webview.",
+	"type": "module",
+	"main": "./vite-plugin.js",
+	"exports": {
+		".": "./vite-plugin.js",
+		"./adapter": "./adapter.js",
+		"./runtime/*": "./runtime/*"
+	},
+	"bin": {
+		"svelte-native": "./build.js",
+		"svelte-native-dev": "./dev.js"
+	},
+	"files": [
+		"vite-plugin.js",
+		"manifest.js",
+		"paths.js",
+		"emit.js",
+		"adapter.js",
+		"build.js",
+		"dev.js",
+		"runtime"
+	],
+	"scripts": {
+		"test": "bun test",
+		"build": "bun build.js",
+		"dev": "bun dev.js"
+	},
+	"peerDependencies": {
+		"svelte": "^5.0.0",
+		"vite": ">=5.0.0"
+	},
+	"devDependencies": {
+		"svelte": "^5.57.0",
+		"vite": "^8.1.0",
+		"@types/bun": "latest"
+	},
+	"dependencies": {
+		"@svelte-desktop/svelte": "workspace:*",
+		"ws": "^8.18.0"
+	}
+}

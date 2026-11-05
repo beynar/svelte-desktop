@@ -1,0 +1,35 @@
+diff --git a/src/runtime.ts b/src/runtime.ts
+index 8a6f5b1a26cebdd1e66d9acef00b0e7de9607136..cc84fbd49444ee201873038f5d332aa33bac35a1 100644
+--- a/src/runtime.ts
++++ b/src/runtime.ts
+@@ -91,6 +91,30 @@ export async function runApplication(
+     (
+       globalThis as typeof globalThis & { __QUICKGUI_UPDATER_OPTIONS__?: object }
+     ).__QUICKGUI_UPDATER_OPTIONS__ = options.updater ?? {};
++    // A worker-initiated exit (process.exit from app code, or the loop draining)
++    // must retract the event notifier before this VM dies: the host keeps
++    // dispatching on the main thread and would call into a dead JSContext,
++    // segfaulting the process. Destroying the app ends the host loop so runHost
++    // returns; the queued "stopped" message carries the code back to it. Order
++    // matters — destroy before finish, since finish() marks the app exited and
++    // destroyHostedApp would then skip the native call.
++    process.once("exit", (code) => {
++      try {
++        app?.destroy();
++      } catch {
++        /* the host is already down */
++      }
++      try {
++        binding.finish(code);
++      } catch {
++        /* the notifier is already cleared */
++      }
++      try {
++        scope.postMessage({ type: "stopped", code });
++      } catch {
++        /* the parent is already gone */
++      }
++    });
+     const directory = dirname(process.execPath);
+     binding.initialize(
+       {

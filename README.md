@@ -51,7 +51,7 @@ To turn your own app into a desktop app, follow [Convert a SvelteKit app](websit
 | `examples/dashboard`, `examples/panes` | Tabs, panes and a larger layout |
 | `website` | The documentation. Run it with `cd website && bun install && bun run dev` |
 
-Other top-level folders are earlier experiments, kept for reference. kitop doesn't use them.
+kitop uses nothing else in this repository. `app`, `documentation` and `packages/{gpuix,platform,svelte,tests,vite}` are a separate project that renders Svelte through GPUI instead of a web view ([its notes](experiments/gpui-README.md)). `experiments`, `spikes` and `results` are earlier work, kept for reference.
 
 ## Tests
 

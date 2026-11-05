@@ -1,4 +1,5 @@
 import { command, form, query } from '$app/server';
+import { dialog } from '@svelte-desktop/platform';
 import { Database } from 'bun:sqlite';
 import { homedir, hostname, platform, arch } from 'node:os';
 import { join } from 'node:path';
@@ -31,13 +32,12 @@ export const getState = query(async () => {
 });
 
 export const openNativeDialog = command(async () => {
-	const bridge = native();
-	if (!bridge) return { native: false as const };
-	const response = await bridge.showMessageBox({
+	const { response } = await dialog.showMessageBox({
 		type: 'info',
 		message: 'Hello from a SvelteKit remote function',
-		detail: 'This native dialog was opened by the Electrobun main process via command().',
-		buttons: ['Nice', 'Dismiss']
+		detail: 'This native dialog was opened via command() through the GPUI platform layer.',
+		buttons: ['Nice', 'Dismiss'],
+		cancelId: 1
 	});
 	return { native: true as const, response };
 });
@@ -48,7 +48,7 @@ export const increment = command(async () => {
 });
 
 export const addNote = form('unchecked', async (data) => {
-	const text = String((data as { text?: string }).text ?? '').trim();
+	const text = String(data.get('text') ?? '').trim();
 	if (!text) return { error: 'empty note' };
 	db.run('INSERT INTO notes (text, created_at) VALUES (?, ?)', [
 		text,
@@ -56,4 +56,20 @@ export const addNote = form('unchecked', async (data) => {
 	]);
 	await getState().refresh();
 	return { ok: true };
+});
+
+export const addQuickNote = command(async (text: string) => {
+	const t = String(text ?? '').trim();
+	if (!t) return { error: 'empty note' };
+	db.run('INSERT INTO notes (text, created_at) VALUES (?, ?)', [
+		t,
+		new Date().toISOString()
+	]);
+	await getState().refresh();
+	return { ok: true };
+});
+
+export const deleteNote = command(async (id: number) => {
+	db.run('DELETE FROM notes WHERE id = ?', [id]);
+	await getState().refresh();
 });

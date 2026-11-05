@@ -1,0 +1,26 @@
+{
+  "name": "@svelte-desktop/svelte",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./kit/index.js",
+    "./gen/*": "./gen/*",
+    "./*": "./*"
+  },
+  "imports": {
+    "#kit": "./gen/kit/index.js",
+    "#remote": "./gen/remote.js",
+    "#stores": "@svelte-desktop/platform/stores"
+  },
+  "dependencies": {
+    "@svelte-desktop/gpuix": "workspace:*",
+    "@svelte-desktop/platform": "workspace:*",
+    "clsx": "^2.1.1",
+    "devalue": "^5.8.1",
+    "esm-env": "^1.2.1",
+    "svelte": "^5.57.0"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  }
+}

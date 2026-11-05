@@ -1,0 +1,40 @@
+import { TestGpuixRenderer } from '@gpuix/native';
+import { installGlobals, doc, materializeRoot } from '@svelte-desktop/gpuix/gdom';
+import { setRenderer, flush } from '@svelte-desktop/gpuix/native';
+installGlobals();
+const renderer = new TestGpuixRenderer(640, 600);
+setRenderer(renderer as any);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const pump = async () => { flush(); renderer.flush(); await sleep(30); };
+const root = doc.createElement('div');
+doc.body.appendChild(root);
+materializeRoot(root);
+const layer = doc.createElement('div');
+layer.setAttribute('style', 'position:relative;width:400px;height:400px');
+root.appendChild(layer);
+const btn = doc.createElement('x-button' as any);
+btn.setAttribute('style', 'position:absolute;top:60px;left:0;width:100px;height:50px');
+btn.addEventListener('click', () => {});
+layer.appendChild(btn);
+await pump();
+const bb = (renderer as any).getElementBounds((btn as any).nativeId);
+for (let i = 0; i < 6; i++) {
+	renderer.drainEvents();
+	renderer.simulateClick(bb.x + bb.width / 2, bb.y + bb.height / 2);
+	await pump();
+	const evs = renderer.drainEvents().filter((e: any) => e.eventType === 'click');
+	console.log(`click#${i}: ${evs.length ? 'FIRED' : 'MISSED'}`);
+}
+// and an in-flow x-button for contrast
+const flow = doc.createElement('div');
+flow.setAttribute('style', 'margin-top:300px');
+layer.appendChild(flow);
+const btn2 = doc.createElement('x-button' as any);
+btn2.addEventListener('click', () => {});
+flow.appendChild(btn2);
+await pump();
+const bb2 = (renderer as any).getElementBounds((btn2 as any).nativeId);
+renderer.drainEvents();
+renderer.simulateClick(bb2.x + bb2.width / 2, bb2.y + bb2.height / 2);
+await pump();
+console.log('in-flow btn', JSON.stringify(bb2), '->', JSON.stringify(renderer.drainEvents().filter((e: any) => e.eventType === 'click')));

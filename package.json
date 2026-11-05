@@ -1,19 +1,33 @@
 {
-  "name": "svelte-desktop",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "blume dev",
-    "build": "blume build",
-    "doctor": "blume doctor",
-    "demo": "cd gpuix-poc && bun build.ts && bun src/main-showcase.ts",
-    "test": "cd gpuix-poc && bun src/conformance.ts && bun src/conformance-nkit.ts && bun src/kit-conformance.ts && bun src/conformance-qg.ts && bun src/smoke-pages.ts",
-    "bench": "cd gpuix-poc && bun src/bench.ts && bun src/mission-bridge.ts && bun src/mission-sqlite.ts",
-    "package": "cd gpuix-poc && bun build.ts && bun build --compile src/mission-startup.ts --outfile build/desktop-demo && cd ../app && bun run build",
-    "codegen": "bun packages/native/codegen.ts",
-    "report": "cat docs/recommendation.md"
-  },
-  "dependencies": {
-    "blume": "^1.6.5"
-  }
+	"name": "kitop",
+	"private": true,
+	"type": "module",
+	"workspaces": [
+		"packages/gpuix",
+		"packages/platform",
+		"packages/svelte",
+		"packages/tests",
+		"packages/vite",
+		"app"
+	],
+	"scripts": {
+		"dev": "cd documentation && blume dev",
+		"build": "cd documentation && blume build",
+		"doctor": "cd documentation && blume doctor",
+		"gen": "cd packages/svelte && bun build.ts",
+		"demo": "bun run gen && cd packages/tests && bun main-showcase.ts",
+		"test": "cd packages/platform && bun test src/native-api.test.ts && cd ../tests && bun conformance.ts && bun conformance-nkit.ts && bun kit-conformance.ts && bun conformance-qg.ts && bun smoke-pages.ts",
+		"test:unit": "bun test packages/tests/*.test.ts packages/platform packages/gpuix",
+		"bench": "cd packages/tests && bun bench.ts && bun mission-bridge.ts && bun mission-sqlite.ts",
+		"package": "cd app && bun run build",
+		"codegen": "cd experiments/native-codegen && bun codegen.ts",
+		"report": "cat documentation/recommendation.md"
+	},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"blume": "^0.5.0"
+	},
+	"patchedDependencies": {
+		"@quickgui/native@0.1.4-next.1": "packages/tests/patches/@quickgui%2Fnative@0.1.4-next.1.patch"
+	}
 }

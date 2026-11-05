@@ -1,0 +1,80 @@
+[package]
+name = "sgfx"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+anyhow = "1"
+base64 = "0.22"
+csscolorparser = "0.8.3"
+log = "0.4"
+env_logger = "0.11"
+parking_lot = "0.12"
+futures = "0.3"
+rustc-hash = "2"
+thiserror = "2"
+pulldown-cmark = { version = "0.12", default-features = false }
+unicode-segmentation = "1"
+web-time = "1"
+semver = "1"
+minisign-verify = "0.2"
+tempfile = "3"
+percent-encoding = "2"
+time = { version = "0.3", features = ["parsing", "formatting"] }
+url = { version = "2", features = ["serde"] }
+
+# gpuix's GPUI fork — remorses/zed @gpuix, pinned to gpuix 0.8.0's submodule.
+# The crates.io gpui release keeps the embedded-platform + offscreen-test
+# APIs gpuix needs pub(crate): current_platform, MacPlatform::new_embedded,
+# Application::{with_platform,run_embedded}, VisualTestAppContext,
+# open_offscreen_window. Git deps resolve workspace members by name.
+gpui = { git = "https://github.com/remorses/zed", rev = "81c99f816b4a5f69d3c014774068034c24d1d7af", default-features = false, features = ["font-kit", "profiler"] }
+gpui_platform = { git = "https://github.com/remorses/zed", rev = "81c99f816b4a5f69d3c014774068034c24d1d7af", default-features = false, features = ["font-kit"] }
+gpui_macos = { git = "https://github.com/remorses/zed", rev = "81c99f816b4a5f69d3c014774068034c24d1d7af", default-features = false, features = ["font-kit"] }
+reqwest_client = { git = "https://github.com/remorses/zed", rev = "81c99f816b4a5f69d3c014774068034c24d1d7af" }
+http_client = { git = "https://github.com/remorses/zed", rev = "81c99f816b4a5f69d3c014774068034c24d1d7af" }
+
+syntect = { version = "5.3", default-features = false, features = ["regex-onig"] }
+two-face = { version = "0.5.2", default-features = false, features = ["syntect-onig"] }
+
+napi = { version = "3", features = ["napi8", "serde-json"] }
+napi-derive = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-text = "=21.0.0"
+core-graphics = "=0.24.0"
+tar = "0.4"
+flate2 = "1"
+# AppKit/IOKit bridges for platform extensions (tray, hotkeys, battery,
+# dock, notifications) — already in the tree via gpui_macos.
+objc = "=0.2.7"
+cocoa = "=0.25.0"
+block = "=0.1.6"
+raw-window-handle = "0.6"
+
+[build-dependencies]
+napi-build = "2"
+
+[features]
+default = ["test-support"]
+test-support = ["gpui/test-support", "gpui_platform/test-support", "gpui_macos/test-support", "gpui_macos/font-kit"]
+
+[profile.release]
+lto = true
+
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.flate2]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3

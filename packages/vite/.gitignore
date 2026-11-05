@@ -1,0 +1,4 @@
+node_modules/
+.svelte-native/
+test/fixtures/app/.svelte-native/
+test/fixtures/app/node_modules/

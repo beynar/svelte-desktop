@@ -1,0 +1,158 @@
+---
+title: Recipes
+description: "`recipe(config)` — variant axes, compound variants, and multi-slot themes, resolved and cached natively. Calls ship only a ~30-byte variant tuple."
+sidebar:
+  order: 2
+---
+
+`recipe(config)` registers the whole config with the native engine at
+definition time. Calls then ship only the variant tuple — roughly 30 bytes
+on the wire, resolved and cached natively per effective tuple.
+
+Two shapes: a **multi-slot** recipe when the config carries a `slots:` map,
+and a **single-slot** recipe when it doesn't. Both return attachment
+factories.
+
+## Multi-slot recipes
+
+One shared variant tuple drives every slot — variant values are slot-maps,
+so a variant can style several regions at once (the tailwind-variants
+model). `recipes/button.js` is the real thing:
+
+```ts
+export const buttonTheme = recipe({
+	slots: {
+		root: {
+			flex: true, items: 'center', justify: 'center', radius: 'md',
+			focusVisible: { ring: 2, ringColor: 'color/50' },
+		},
+		prefix: affix,
+		suffix: affix,
+	},
+	variants: {
+		size: {
+			small:  { root: { control: 'sm', px: 'md', text: 'xs' },
+			          prefix: { icon: 'sm' }, suffix: { icon: 'sm' } },
+			normal: { root: { control: 'md', px: 'lg', text: 'sm' },
+			          prefix: { icon: 'md' }, suffix: { icon: 'md' } },
+		},
+		variant: {
+			solid:   { root: { stateLayer: true, bg: 'color', fg: 'color-contrast' } },
+			outline: { root: { stateLayer: true, bg: 'color/0', border: 'color', fg: 'color-readable' } },
+			ghost:   { root: { stateLayer: true, fg: 'color-readable', bg: 'color/0' } },
+		},
+		disabled: { true: { root: { opacity: 0.5, pointerEvents: 'none' } }, false: null },
+	},
+	defaultVariants: { variant: 'solid', size: 'normal' },
+	compoundVariants: [
+		{ color: 'neutral', variant: 'outline', slots: ['root'], style: { border: 'neutral-muted' } },
+	],
+}, 'button');
+```
+
+Calling it with a variant tuple returns one binding per slot — each is a
+function producing the slot's attachment:
+
+```svelte
+<script>
+	import { buttonTheme } from './recipes/button.js';
+	let { variant = 'solid', size = 'normal', color = 'primary',
+	      disabled = false } = $props();
+
+	const slots = $derived(buttonTheme({ variant, size, color, disabled }));
+</script>
+
+<button {@attach slots.root()}>
+	{#if prefix}<span {@attach slots.prefix()}>{@render prefix()}</span>{/if}
+	{@render children()}
+	{#if suffix}<span {@attach slots.suffix()}>{@render suffix()}</span>{/if}
+</button>
+```
+
+A slot call takes optional extra props — `slots.root({ style: {...} })` lands
+as the per-call style escape on that slot's recipe. `color` rides both
+lanes on every slot env: the variant tuple (compound matching) and the
+element's `color` ctx (`color-*` refs).
+
+Compound variants have two targeting forms — `slots: [...]` applies one
+shared `style` to the listed slots; a slot-mapped `style: {slot: frag}`
+targets per slot.
+
+## Single-slot recipes
+
+Without `slots:`, `recipe()` binds directly — the call itself returns the
+attachment:
+
+```ts
+const chip = recipe({
+	base: { radius: 'full', px: 'md', py: 'xs' },
+	variants: {
+		tone: { neutral: { bg: 'surface-floating' }, accent: { bg: 'primary-muted' } },
+	},
+	defaultVariants: { tone: 'neutral' },
+});
+```
+
+```svelte
+<span {@attach chip({ tone: 'accent' })}>…</span>
+```
+
+## Semantics
+
+Resolution order is svelai's: `base` → variants in declaration order →
+matching `compoundVariants` → per-call `style` escape. A `null` variant
+entry is a *declaration marker* (the axis exists; this choice adds no
+style). Boolean axes use `true`/`false` keys and take real booleans at the
+call site. In a multi-slot recipe, a variant value that doesn't name a
+slot leaves a `null` marker on that slot's axis — declared, adds no style,
+so compounds still match shared axes everywhere.
+
+`slots({ root: cfg, icon: cfg }, label)` remains for per-slot configs that
+declare *different* axes per slot — the `slots:` shape shares one axes
+table by design (that is the point: one tuple drives all slots). The
+per-slot theme bag `{ root: recipe(…), prefix: recipe(…) }` also still
+works with `componentTheme`.
+
+## Composing `style` and `recipe`
+
+`style()` envs unwrap to their fragment stream in **every** recipe frag
+position — a recipe can be built from composed styles, not just literals:
+
+```ts
+const interactive = style({
+	cursor: 'pointer', select: 'none',
+	hover: { bg: 'surface-floating' },
+	active: { translateY: 'px' },
+});
+
+const chip = recipe({
+	base: interactive,                          // env → base
+	variants: {
+		tone: {
+			neutral: mergeStyleDesc(interactive, { bg: 'surface' }), // env → variant value
+			accent:  { bg: 'primary-muted' },
+		},
+	},
+	compoundVariants: [
+		{ tone: 'accent', style: interactive },   // env → compound style
+	],
+});
+
+chip({ tone: 'neutral', style: interactive });  // env → per-call escape
+```
+
+In a multi-slot recipe an env variant value applies its frags to **every**
+slot; a slot-map picks per slot. The `style:` escape is a single-frag
+position natively, so a `mergeStyleDesc` env collapses ordered — `null`
+retracts, pseudo buckets merge key-wise.
+
+The other direction composes too: `mergeStyleDesc(style({…}),
+recipeEnv)`/`style()` rides instance overrides behind a recipe binding —
+`ct.slot`/`ct.root` do exactly this when theme levels supply fragments.
+
+The types follow: `recipe` captures the axes, so `chip({ tone: 'huge' })`
+is a **compile error**, and the runtime still warn-once's it. Typo'd
+`defaultVariants`/`compoundVariants` keys flag at module load.
+
+Next: [Theming](/styling/theming) — the app-level switch, scoped themes, and
+the component theme ladder.

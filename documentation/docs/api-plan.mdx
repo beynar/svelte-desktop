@@ -1,0 +1,359 @@
+---
+title: API Plan — best-of-class desktop surface
+description: Tauri v2 + Electron analysis, what to steal, what to skip, and the phased plan to close every remaining gap.
+sidebar:
+  order: 11
+---
+
+# API Plan — the best desktop API, informed by Tauri v2
+
+This document is the forward plan for `svelte-desktop/stores` + the platform
+broker. It combines: (a) what we already ship and probed live, (b) a feature
+audit of Tauri v2's JavaScript API and security model, and (c) the phased
+implementation queue with effort estimates and hard blockers.
+
+## Where we stand
+
+Shipped and live-probed (73/75 probe checks, 41/41 unit tests, macOS):
+
+| Domain | Surface |
+|---|---|
+| app | info, paths, quit/relaunch/hide, recentDocs, dock badge/bounce, login item, activation policy, single-instance lock, lifecycle events (`reopened`, `willQuit`, `willRestart`) |
+| window | bounds (pos+size), title, focus, fullscreen, maximize, attention, represented file, vibrant variants, `setPosition`, `setCloseVeto`+`willClose`, `boundsChanged` stream |
+| screen | displays, primary, nearest, cursor position, scale factor, `displaysChanged` |
+| clipboard | text/formats/image/paths + HTML/RTF rich lanes |
+| dialog | messageBox, open, save (no filters — gpui lacks `PathPromptOptions.filters`) |
+| menu | app menu, dock menu, `menu.popup` (modal context menu) |
+| notifications | show/dismiss/actions + `notificationResponse` |
+| tray | `set`/`remove`/`isSet` — title, tooltip, image, template, menus, `trayClick` |
+| shortcuts | Carbon global hotkeys — register/unregister/isRegistered, `shortcutPressed`/`Released` |
+| theme | get/set/dark + `appearanceChanged` |
+| system | os info, host, locale, keyboard layout + `keyboardLayoutChanged`, accent color, accessibility flags |
+| power | thermal, idle, uptime + battery, sleep assertions (block/unblock), `systemSleep`, `screenLocked`/`Unlocked` |
+| deepLink | register scheme + `openUrls` |
+| secureStorage | Keychain get/set/delete |
+| misc | shell (openExternal/openPath/showItemInFolder/trashItem/beep), capture (feature off), diagnostics, capabilities, update, windowState (size+position persist/restore) |
+
+Reactive model is ahead of both Electron and Tauri: `$state` fields +
+methods + typed `on()` per namespace, zero ceremony (import = init).
+
+## Tauri v2 analysis — what to steal
+
+Tauri's surface was audited end-to-end (env vars, `api/*` namespaces, plugin
+set, ACL). Ordered by value to us:
+
+### 1. Handle-based mutable resources — steal the shape
+
+Every Tauri menu/tray/window object is a `Resource` (rid + `close()` +
+`Symbol.asyncDispose`) with **live mutation**: `menuItem.setText()`,
+`setEnabled()`, `setChecked()`, `setAccelerator()`, `setIcon()`. Our menus
+are whole-replacement — rebuilding a 30-item menu to toggle one checkbox.
+
+**Steal:** item-level mutation ops keyed by id — `menu.update({id, text?,
+enabled?, checked?, accelerator?})` — no handle objects needed (our
+in-process model makes rids unnecessary), but `await using` sugar for
+tray/hotkey/sleep-assertion ids is free ergonomics.
+
+### 2. `onCloseRequested` + `preventDefault()` — steal the framing
+
+Tauri: `win.onCloseRequested(e => e.preventDefault())` — the veto rides on
+the event, not a pre-armed flag. Ours is `setCloseVeto(true)` + `willClose`,
+which works but is two-step and easy to forget to disarm.
+
+**Steal:** `window.on('closeRequested', e => e.preventDefault())`. Honest
+constraint: native `on_window_should_close` needs a synchronous answer, so
+`preventDefault()` still arms the atomic flag — but the flag becomes an
+implementation detail behind event semantics, auto-armed per close request
+rather than globally toggled.
+
+### 3. Window ops we lack — the biggest concrete gap
+
+Tauri's `Window` class exposes ~70 methods. Missing from ours, all
+implementable in AppKit **without a gpui fork**:
+
+- `center()`, `isMinimized`, `unminimize`, `toggleMaximize`, `hide`/`show`
+  (orderOut / makeKeyAndOrderFront — distinct from app.hide)
+- `setAlwaysOnTop`, `setAlwaysOnBottom` (NSWindow.level)
+- `setMinSize`, `setMaxSize`, `setSizeConstraints`
+- `setResizable`, `setClosable`, `setMinimizable`, `setMaximizable`
+  (styleMask bits) + `is*` getters
+- `setTitleBarStyle` (titlebarAppearsTransparent + titleVisibility — the
+  "traffic lights over content" look)
+- `setDecorations`, `setMovable`, `setHasShadow`, `setOpacity`
+- `setIgnoresMouseEvents` (click-through — needed for overlay widgets)
+- `setContentProtected` (NSWindow.sharingType — opt out of screenshots/
+  screen-share; Tauri has it, Electron doesn't)
+- `setVisibleOnAllWorkspaces` (collectionBehavior)
+- `setFocusable`, `setEnabled`, `setDocumentEdited`
+- `setCursorIcon`, `setCursorVisible`, `setCursorPosition`, `setCursorGrab`
+- `setSimpleFullscreen` (vs. native Spaces fullscreen)
+- `setProgressBar` on the Dock tile (normal/indeterminate/paused/error)
+- `setSkipTaskbar` → macOS equivalent is dock visibility (have via
+  activation policy)
+- `innerSize`/`outerSize`/`innerPosition`/`outerPosition` — our bounds are
+  outer-frame today; add content-frame accessors
+
+**Fork-required** (gpui changes, same pattern as `set_position`):
+`setTheme` per window, window `destroy` vs `close` semantics, `emit`/`emitTo`
+window scoping, file drag-drop events into the window (`DRAG_ENTER`/`OVER`/
+`DROP`/`LEAVE` — gpui has `ExternalPaths` drag support to wire), and dialog
+`filters` (needs `PathPromptOptions` field).
+
+### 4. Menu depth — roles, native icons, inspection
+
+- `PredefinedMenuItem` — OS roles (Copy/Paste/Cut/SelectAll/Undo/Redo/Quit/
+  About/CloseWindow/Minimize/Fullscreen/Separator…) — steal as
+  `menu.item({role:'copy'})`, mapped to NSMenuItem standard actions.
+- `NativeIcon` — 55 named NSImage symbols (`'add'`, `'share'`,
+  `'trashFull'`…) — steal as `icon: {native:'share'}` on menu/tray items,
+  resolved via `NSImage imageNamed:` (or SF Symbols on modern macOS).
+- `AboutMetadata` (name/version/copyright/credits) — `app.aboutPanel()` or
+  a `menu` role.
+- `Menu.default()`, `Menu.get(id)`, `items()` — inspectable menu tree.
+- `setAsWindowsMenuForNSApp` / `setAsHelpMenuForNSApp` — macOS conventions.
+
+### 5. `checkPermissions` / `requestPermissions` — real and needed
+
+Tauri exposes runtime permission checks (mobile heritage), but the desktop
+subset is genuinely load-bearing:
+
+- **Screen recording** — `CGPreflightScreenCaptureAccess` /
+  `CGRequestScreenCaptureAccess` — *required* before any `capture` work.
+- **Accessibility** — `AXIsProcessTrusted` (+ `AXIsProcessTrustedWithOptions`
+  prompt:true) — required for `CGEventTap`-class input monitoring.
+- **Notifications** — `UNUserNotificationCenter` authorization status +
+  `requestAuthorization` — our notifications currently assume granted.
+- **Full disk access, camera, microphone** — preflight-only.
+
+**Steal:** `system.checkPermission('screenRecording'|'accessibility'|
+'notifications'|'fullDiskAccess'|'camera'|'microphone')` →
+`granted|denied|notDetermined`, `system.requestPermission(...)`,
+`system.openSettings('privacy-screenCapture')` deep links. This is a
+prerequisite for `capture` and honest `notifications` — high priority.
+
+### 6. ACL capabilities — steal a lite version
+
+Tauri's model: JSON capability files granting `${plugin}:${permission}` to
+windows matched by glob, with **scoped grants**
+(`fs:allow-write-text-file` + `allow: [{path: "$HOME/**"}]`), platform
+targeting, remote URL allowlists. Designed for their untrusted-webview
+threat model.
+
+We're in-process trusted code — the renderer *is* the app — so a full ACL
+is overkill. But a lite gate has real value: `desktop.config.ts` allowlist
+(`platform: { allow: ['shell.openExternal', 'dialog.open'] }`) → non-listed
+ops return typed `denied` instead of executing. One config check in
+`callRaw`, zero new machinery, `capabilities.describe` stays the report.
+
+### 7. Scoped + bidirectional events — needed for multi-window
+
+`emitTo(label, event, payload)` routes to a specific window/webview; JS can
+also emit *to* native. Ours is native→JS broadcast only. When multi-window
+lands: `{windowId}` on events, `window.emitTo`, and `emit` for JS→native
+useful to `$native` codegen'd code. `once()` sugar is free.
+
+### 8. Resource-lifecycle & misc polish
+
+- `Channel<T>` — a serializable per-call streaming handle passed as an
+  invoke arg; native pushes N messages. Generalizes our `platformResult`
+  pending lane — use for `capture` enumeration, update download progress,
+  `shell.trashItem` async results.
+- `window-state` `StateFlags` — opt-in flags (SIZE|POSITION|MAXIMIZED|
+  VISIBLE|FULLSCREEN|ALL) instead of all-or-nothing.
+- `positioner` plugin — `window.position('trayCenter'|'cursorRight'|…)` —
+  trivial once tray icon rect is emitted.
+- `store` plugin — persisted JSON KV (`store.get/set/save`). Ours: pure-TS
+  over `app.getPath('appSupportDir')` + `Bun.file`, reactive `$state`
+  mirror. Cheap, high-frequency need.
+- `Image` handle type — rgba/size shared across tray/menu/window-icon/
+  notifications; today image ops are path-strings per call site.
+- `app.getBundleType()` (`'app'|'dmg'|'binary'|…`), `app.defaultWindowIcon()`,
+  `app.supportsMultipleWindows()` (capability-shaped answer — cute),
+  `isDesktop`/`isNative` env flag for code shared with the web.
+- `mocks` — they ship a first-party `mockIPC`/`mockWindows` test kit; we
+  have `initPlatformForTests` + `PlatformTransport` — document a
+  `mockPlatform` export so app tests don't hand-roll the transport.
+- `secureStorage.authenticate(reason)` — `LAContext.evaluatePolicy`
+  (Touch ID / watch unlock) — genuinely differentiating, ~50 lines ObjC.
+
+### 9. What NOT to copy
+
+- **Webview layer** — `webview`, `webviewWindow`, `Webview`, `convertFileSrc`,
+  cookies, sessions, `protocol.handle` — meaningless without Chromium.
+- **`invoke(cmd, args)`** — stringly-typed escape hatch; our typed
+  `callRaw` per service is strictly better.
+- **`window.__TAURI__` global injection / `withGlobalTauri`** — our
+  import-only model is cleaner and tree-shakeable.
+- **Plugin-per-feature fragmentation** — 30+ `@tauri-apps/plugin-*`
+  packages with per-plugin permissions files; our namespaces ship built-in.
+- **Mobile plugins** — haptics/nfc/geolocation/barcode-scanner.
+- **Full ACL** — the window-glob/remote-URL machinery (see §6 for the lite
+  version that actually fits our threat model).
+- **`TAURI_ENV_*` compile-time vars** — we have `system.info`/runtime state;
+  build-time equivalents (`SD_ENV_*`) only if bundling ever needs them.
+
+## The "best API ever" target
+
+Combine what we have that they don't with the steals above:
+
+```ts
+import { app, window, menu, tray, shortcuts, store, system } from 'svelte-desktop/stores';
+
+window.bounds                       // $state — live on OS drags
+window.on('closeRequested', e => e.preventDefault());
+menu.update({ id: 'toggle', checked: true });          // live item mutation
+menu.item({ role: 'pasteAndMatchStyle' });             // OS role
+tray.set({ icon: { native: 'share' }, menu, tooltip });
+await shortcuts.register({ accelerator: 'CmdOrCtrl+K' }); // await using → auto-unregister
+await system.requestPermission('screenRecording');
+store.set('lastDir', dir);           // persisted JSON KV, reactive
+windows.create({ label: 'prefs', width: 480 });        // phase 7
+window.emitTo('prefs', 'theme-changed', { dark: true });
+```
+
+Principles: reactive `$state` where a value exists; typed `on()` where an
+event exists; methods that return honest typed errors; handles that clean
+up with `using`; nothing stringly-typed; capabilities report truth.
+
+## Implementation queue
+
+> **Status 2026-09-18 — Phases 1-6 DONE and probe-verified (124/127, 0 fails).**
+> Phase 7 blocker found + fixed on the quickgui side; gpuix-side blockers
+> fully mapped. Phases 8-9 pending. Per-phase notes inline below.
+
+Ordered by (value ÷ effort), with blockers noted.
+
+### Phase 1 — Window depth (no fork needed, ~1.5 days)
+> **DONE** — `window_ext.rs`: all listed ops live except `setFocusable` (→ `unsupported`, no per-window setter) and `setCursorIcon`/`setCursorGrab` (deferred). `setMinSize`/`setMaxSize` included. Probed: bounds/center/positionTo/chrome/effects/cursor roundtrips all green.
+
+
+All pure AppKit in `platform/macos_ext.rs` or `window_svc`:
+
+- `window.center`, `window.hide`/`show` (orderOut/makeKeyAndOrderFront),
+  `window.minimize`/`unminimize`/`isMinimized`, `window.toggleMaximize`
+- `window.setAlwaysOnTop(flag)`/`setAlwaysOnBottom` (NSWindow.level)
+- `window.setMinSize`/`setMaxSize`, `setResizable`/`setClosable`/
+  `setMinimizable`/`setMaximizable` + `is*` reads (styleMask)
+- `window.setTitleBarStyle('default'|'transparent'|'hidden'|'hiddenInset')`
+- `window.setOpacity`, `window.setMovable`, `window.setDecorations`,
+  `window.setHasShadow`
+- `window.setIgnoresMouseEvents` (click-through overlays)
+- `window.setContentProtected` (NSWindow.sharingType)
+- `window.setVisibleOnAllWorkspaces` (collectionBehavior)
+- `window.setFocusable`, `window.setDocumentEdited`
+- `window.setCursorIcon`/`setCursorVisible`/`setCursorPosition`/`setCursorGrab`
+- `window.innerSize`/`innerPosition`/`outerSize`/`outerPosition`
+  (frame vs contentLayoutRect)
+- `app.setDockProgress({status, completed?, total?})` — NSDockTile progress
+- `window.setSimpleFullscreen` (non-Spaces fullscreen)
+
+### Phase 2 — Event semantics (~1 day)
+> **DONE** — `events_ext.rs`: `appActivated`/`appDeactivated` (dual-center), `focusChanged` `{focused}` (NSWindow key-status — gpui activation observers are pub(crate)), `scaleFactorChanged` `{scaleFactor}` (deduped), `secondInstance` `{argv,cwd}` via NSDistributedNotificationCenter + `second_instance_post()` in the lock-denied path. `onCloseRequested(cb)` reframes the veto (auto-arm + async disarm). `once()` in all 11 event namespaces. `events.emit`/`emitTo` (local; windowId scoping is phase 7). Drag-drop: zero-fork path confirmed (gpui `on_drop::<ExternalPaths>`) — view wire DONE: `fileDrop` `{x,y,paths}` emits from the element tree; gdom maps `drop`/`dragenter`/`dragover`/`dragleave` ↔ `fileDrop`/`fileDrag*` and synthesizes `dataTransfer` (`{types:['Files'], frozen {name,path} files, uri-list getData}`) — a registered `drop` listener accepts drops outright, no `dragover.preventDefault()` gate (documented divergence). Known gap: `fileDragLeave` is synthesized (gpui has no drag-end/leave callback) — a session ending with no drop leaves the last-entered element "inside"; it re-enters correctly next session but misses one `fileDragEnter`.
+
+
+- `closeRequested` event with `preventDefault()` (reframes `setCloseVeto`
+  — keep the op as an escape hatch, auto-arm via event)
+- `window.emit`/`emitTo` + `{windowId}` in payloads (single-window
+  windowId today; scoping becomes real in phase 7) + `once()` sugar
+- `app.on('didBecomeActive'|'didResignActive')` — NSApplication-level focus
+  (distinct from window focus)
+- `secondInstance` emission — NSApplication delegate hook, carries
+  `{argv, cwd}` like Electron; singleInstance gains real meaning
+- `scaleFactorChanged` — verify whether display-migration already surfaces
+  via `boundsChanged`; emit distinctly if not
+- `window.on('focusChanged'|'blur')` — audit `observe_window` registration
+  for what gpui already gives us
+- Drag-drop into window (`dragEnter`/`dragOver`/`dragDrop`/`dragLeave` with
+  `ExternalPaths`) — gpui fork item, verify what exists
+
+### Phase 3 — Permissions + capture readiness (~1 day)
+> **DONE** — `permissions.rs`: `system.checkPermission`/`requestPermission`/`openSettings` for all six names; `notifications.getPermissionStatus`/`requestPermission` alias it. `initPlatform({allow})` allowlist → `denied` envelopes (JS-side `callRaw` gate). Notification permission is real (UNUserNotificationCenter pending lane, bundle-identity-gated). `notifications.show` does not yet pre-check authorization — open item.
+
+
+- `system.checkPermission(name)` / `system.requestPermission(name)` /
+  `system.openSettings(pane)` — screenRecording, accessibility,
+  notifications, fullDiskAccess, camera, microphone
+- Notification authorization check inside `notifications.show` (honest
+  `denied` instead of silent drop)
+- `desktop.config.ts` → `platform.allow` list → `denied` gate in `callRaw`
+  (lite ACL; `capabilities.describe` stays the report)
+
+### Phase 4 — Menu/tray depth (~1 day)
+> **DONE** — `menu_ext.rs`: `menu.update`/`get`/`items` (NSApp.mainMenu + dock walk, spec-correlated), ~20 roles (responder-chain selectors + NSApp targets + setServicesMenu), ~55 `NSImageName*` native icons + file icons, `app.aboutPanel` (options dict), accelerator grammar incl F1-F35/numpad, `trayClick` carries `{x,y,w,h}` → `window.positionTo` tray presets consume it. `menu.default()` not built (app_menu::default_menus is the de-facto default — trivial to expose if wanted). Unified `Image` shape: `{native}|{path}` on tray/popup items — gpui menus can't carry images (structural limit, documented).
+
+
+- `menu.update({id, …})` item mutation (rebuild-by-id is acceptable v1 if
+  NSMenu lookup is awkward — but the op exists either way)
+- `menu.item({role})` predefined items + `app.aboutPanel(metadata)`
+- `icon: {native: name}` on menu/tray items (NSImage imageNamed / SF Symbol)
+- `menu.default()`, `menu.get(id)`
+- `tray` events carrying the status-item button rect → `window.positionTo()`
+  presets ('trayCenter' etc.) for tray-attached popover windows
+- Unify image handling into one `Image` shape across tray/menu/notifications
+  (path | native name | rgba bytes)
+
+### Phase 5 — Store + polish (~0.5 day)
+> **DONE** — `store` (JSON KV + reactive mirror + 250ms autosave), `dpi.ts` (Logical/Physical × Position/Size), `windowState` flags (SIZE|POSITION|MAXIMIZED|VISIBLE), `isNative`, `app.getBundleType`→`{type:"binary"|"app"}`, `app.defaultWindowIcon`→pngBase64, `mockPlatform`+`PlatformTransport` exports, `Channel<T>` arg encoding (`__channel__:<id>` — consumed by no op yet; streaming ops TBD), `await using` on ShortcutRegistration/SleepBlocker/TrayHandle, `secureStorage.authenticate` (LAContext biometrics, pending lane).
+
+
+- `store` namespace — persisted JSON KV, reactive mirror
+- `dpi` types — `Logical*`/`Physical*` Position/Size with scale conversion
+  (pure TS)
+- `windowState` flags option (SIZE|POSITION|MAXIMIZED|VISIBLE|ALL)
+- `isNative` env flag, `app.getBundleType`, `app.defaultWindowIcon`
+- `mockPlatform` documented test export
+- `Channel<T>` arg type in `callRaw` for streaming ops (update progress,
+  capture enumeration)
+- `using`/`Symbol.asyncDispose` on hotkey/sleep-assertion/tray handles
+- `secureStorage.authenticate(reason)` — LAContext Touch ID
+
+### Phase 6 — Capture (ScreenCaptureKit, ~1-2 days, macOS 12.3+)
+> **DONE** — `capture_ext.rs`: direct dlopen-gated ScreenCaptureKit (no scap dep — all SCK classes weak-linked for pre-12.3 safety). `isSupported`/`getSources` (SCShareableContent pending)/`captureSource` (SCScreenshotManager → PNG b64, macOS 14+; below → `unavailable`). TCC-denied → `unavailable` honestly. `stream`/`captureWindow` → `unsupported` (SCStream deferred).
+
+
+`capture.getSources`/`captureSource` via `SCShareableContent` + stills;
+gated on phase-3 `screenRecording` permission. The gpui `capture` feature
+flag stays off — we do it in `macos_ext` directly.
+
+### Phase 7 — Multi-window (DONE on macOS, adversarially verified)
+> **IMPLEMENTED** — `WINDOWS` registry (id→`{handle,label,close_veto}`, primary=0, monotonic ids), `args.windowId` dispatch routing (non-neg int; float/string → `invalid_args`), `GpuixView.window_id` + stamped event callback, multi-root `RetainedTree.roots`, per-window `BatchOutcome` invalidation. TS: `windows.{create,list,get,focus,close}` + trailing `windowId` on all ops, `emitTo/onWindow`, `onCreated/onClosed/onCloseRequested`, gdom `windowRoots` + setRoot trailing id. Events carry `windowId` (element via view stamp, platform via data).
+> **Isolation pass (round 2)** — all process-local paint TLS partitioned per window (`(window_id, value)` tags + per-frame per-window drains): scroll handles, virtual-list states/pending scrolls/reported anchors, automation bounds, text-selection registries, search ordinals. `PAINT_WINDOW` cell lets paint callbacks resolve ownership without plumbing `window_id` through every builder. Per-window `SharedSelection` (was shared — a press armed in one window could promote on a drag in another). Shared `AutomationClock` (one Arc across all views — `clockPause` freezes all). `simulate_*` ops gained trailing `windowId` (default: key window).
+> **Correctness fixes caught by the hardened probe** — `NEXT_WINDOW_ID` now allocates only after full option validation (rejected creates burned ids); `GpuixView::new` actually stores the passed shared clock (param was silently unused); gdom `materializeRoot` replays the root's own attrs/`_customProps`/listeners via shared `emitElementProps` (pre-mount `setAttribute('tabindex')` vanished → no focus handle); `setRoot` validates window+element existence and prevents cross-window root sharing; `destroy_element` unbinds roots anywhere in the destroyed subtree; `windows.create` validates positive finite dims + unique labels.
+> Probe `probe-multiwindow.ts` — **26/26**: create→created-event→list/get→mount→paint→secondary bounds+focus→real clicks both windows→emitTo/onWindow isolation incl. window 0→dup-label/dim/fractional/dead-id errors→closed event+teardown→post-close element death→monotonic re-alloc→clean last-window-close exit.
+> Design note: programmatic `windows.close` bypasses `close_veto` deliberately (veto = "ask JS"; the JS close call IS the decision) — matches Electron where `win.close()` fires 'close' handlers but app-driven closes are the app's choice.
+> Known edges: gpui `window not found` ERROR noise on close (pending-notify `.log_err()`, benign); `events.emitTo` numeric-id bridge delivers to `onWindow` listeners, not `events.on` (different buses — documented in sig). `secondInstance` argv forwarding pending.
+
+### Phase 8 — AX materialization (product gap, ~1 week)
+> **PENDING** — transport done; `role`/`aria-*` props land in the retained tree but are not materialized into `NSAccessibilityElement` children yet.
+
+
+Consume `role`/`aria-*` custom props into real `accessibilityElement`
+children — VoiceOver support. Transport is done; renderer work.
+
+### Phase 9 — gpui fork upstream + Linux/Windows (deferred)
+> **PATCH EXPORTED** — `native/patches/gpui-fork.patch` (24.7KB, 23 files, `git apply --check` clean): set_position + observe_window_bounds + div-hover + PathPromptOptions.filters. Upstream to `remorses/zed` pending. Linux/Windows backends not started.
+
+
+Upstream `set_position`/`observe_window_bounds`/`PathPromptOptions.filters`
+to `remorses/zed`; then Windows/Linux backends can share the fork.
+
+## Non-goals (confirmed)
+
+- Webview/webContents/session/cookies/cache/protocol-serving/devtools/
+  printing — Chromium-land.
+- `net`, `crashReporter`, `inAppPurchase`, `pushNotifications`, `TouchBar`,
+  mobile plugins.
+- Full Tauri ACL (window-glob capabilities, remote URL grants) — lite
+  allowlist only.
+- A plugin system — namespaces ship built-in.
+
+## Cross-cutting honesty rules
+
+- `capabilities.describe` must stay truthful — every new op registers its
+  real status; `specified`/`unsupported`/`unavailable`/`implemented`
+  mean what they say.
+- Modal UI (`menu.popup`, dialogs) stays skipped in automated probes.
+- Every new event is documented with its exact payload shape at the emit
+  site — no speculative payloads.
+- Unbundled-binary behavior (`setLoginItem`, `setActivationPolicy`,
+  single-instance) is probed and reported as-is, not hidden.

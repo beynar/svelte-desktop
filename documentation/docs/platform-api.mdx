@@ -1,0 +1,316 @@
+---
+title: Platform API
+description: Brokered native services — app, window, clipboard, dialogs, menus, Keychain, notifications — through one napi call and a typed TypeScript facade. Live-probed on macOS.
+sidebar:
+  order: 10.5
+---
+
+# Platform API — brokered native services over the GPUI renderer
+
+Status: **V1 slice implemented and live-probed on macOS** (2026-09-16).
+Evidence: `results/run-2026-09-16-platform/platform.jsonl` — 55/56 probes ok,
+0 unexpected failures, 1 skipped (modal dialogs, by design).
+The public surface is **`svelte-desktop/stores`** — reactive namespaces,
+one object per domain; the wire-level service ops sit beneath it.
+
+## Architecture
+
+```
+JS typed facade (gpuix-poc/src/native-api/)
+        │  {id, service, op, args} JSON
+        ▼
+GpuixRenderer.platformCall(request: string) -> string        [napi]
+        │
+        ├── macOS (embedded):  update_window(|view, window, cx| …)
+        │                      or GPUI_APP.update when no window
+        └── win/linux (gpuix-ui thread):
+                             UiCommand::PlatformCall → SyncSender reply (2s)
+        ▼
+native/src/platform.rs dispatcher
+        ├── now   → {"ok":true,"value"} | {"ok":false,"error":{code,message}}
+        └── async → {"pending":true,"id"} now; result later as a
+                    `platformResult` event on the existing EventPayload TSFN
+```
+
+Replies and events reuse the **existing** channels — `platform_call` is one new
+napi method, `EventPayload.data` one new optional field, `PLATFORM_EVENT_ID`
+(`0x7fffff02`) one new sentinel routed by `dispatchPayload` in `gdom.ts` to the
+`native-api` bus. No second dispatch system.
+
+On macOS the GPUI app runs embedded on the JS thread, so dispatch is a direct
+`update_window`/`App::update`. On Windows/Linux/FreeBSD the call travels as a
+`UiCommand` to the `gpuix-ui` thread and waits on the same bounded
+`SyncSender` channel every other command uses.
+
+## Error model
+
+All service failures are values, never exceptions across napi:
+
+```json
+{"ok":false,"error":{"code":"invalid_args|unknown|unsupported|unavailable|denied|internal","message":"…"}}
+```
+
+`unsupported` = not implementable on this OS through this backend (contract
+stable — callers may feature-detect). `unavailable` = implementable but
+refused right now (unbundled URL-scheme registration, missing gpui feature
+flag, missing file). `denied` = policy/user refusal. `invalid_args` = caller
+error. `unknown` = no such service/op. Transport failures (no app, dead UI
+thread) are the only napi `Err`s.
+
+## Public API — `svelte-desktop/stores`
+
+`src/native-api/stores.svelte.ts` is a rune module — `compileModule`'d into
+`src/gen/native-api/stores.js` and exposed as **`svelte-desktop/stores`**
+(tsconfig `paths` + the `#stores` package alias both resolve it). This is
+the public surface: one specifier, one object per domain.
+
+```ts
+import { app, theme, window, secureStorage } from 'svelte-desktop/stores';
+
+// {theme.dark ? '🌙' : '☀️'}            — reactive in markup
+// {app.version}                         — reactive in markup
+// secureStorage.setPassword(…)          — methods live on the same object
+```
+
+**No init call needed** — importing the module is enough. The moment
+`initPlatform(renderer)` binds a backend, every namespace self-initializes
+in parallel and its fields populate reactively. `initStores()` stays
+exported as a manual refresh-all / test seam (concurrent calls share the
+in-flight boot).
+
+**The normalization rule**: each namespace object carries *both* — every
+nullary value-getter is a `$state` field, and parameterized queries /
+side-effecting actions are methods on the same object (`app.getPath`,
+`window.setSize`, `theme.set`, `update.check`). `shell`, `dialog` and
+`secureStorage` are re-exported verbatim — pure action namespaces, no
+`$state` — and `secureStorage` is the deliberate exception: secrets never
+enter reactive memory. Namespaces with real platform events expose a
+typed `on(event, cb)` — autocomplete narrows the event names, the payload
+is checked, and it returns an unsubscribe fn.
+
+Every reactive namespace shares the shape: `ready` + `error` `$state`
+fields and an `init()`. Namespaces that fail capture the error on
+`ns.error` rather than poisoning the rest.
+
+| namespace | `$state` fields | methods | live feed |
+|---|---|---|---|
+| `app` | `info`, `name`/`version`/`packaged`/`platform`, `reopenCount`, `lastReopenedAt`, `quitting`, `restarting`, `dockBadge`, `secondInstanceCount`, `active`, `lastSecondInstance` | `getPath`, `setName`, `setIdentity`, `quit`, `relaunch`, `exit`, `hide`, `show`, `hideOthers`, `showAll`, `addRecentDocument`, `setDockBadge`, `bounceDock`, `setLoginItem`, `setActivationPolicy`, `requestSingleInstanceLock`, `setDockProgress`, `getBundleType`, `defaultWindowIcon`, `aboutPanel`, `on('reopened'\|'willQuit'\|'willRestart'\|'secondInstance'\|'appActivated'\|'appDeactivated')` | `reopened`, `willQuit`, `willRestart`, **`secondInstance`**¹, `appActivated`, `appDeactivated` |
+| `window` | `live`, `bounds`/`size`/`state`/`position`, `title`, `focused`, `maximized`, `fullscreen`, `scaleFactor`, `cursor`, `focused`(via `focusChanged`) | `refresh`, `setTitle`, `setSize`, `setPosition`, `setBounds`, `center`, `hide`, `show`, `positionTo`, `restore`, `minimize`, `unminimize`, `isMinimized`, `toggleMaximize`, `setFullscreen`, `toggleFullscreen`, `setSimpleFullscreen`, `setAlwaysOnTop`, `setAlwaysOnBottom`, `blur`, `isHovered`, `isActive`, `focus`, `requestAttention`, `setRepresentedFilename`, `setCloseVeto`, `onCloseRequested`, `close`, `showCharacterPalette`, `innerSize`, `innerPosition`, `outerSize`, `outerPosition`, `setMinSize`, `setMaxSize`, `setResizable`, `setClosable`, `setMinimizable`, `setMaximizable`, `setTitleBarStyle`, `setDecorations`, `setHasShadow`, `invalidateShadow`, `setOpacity`, `setMovable`, `setMovableByWindowBackground`, `setIgnoresMouseEvents`, `setContentProtected`, `setVisibleOnAllWorkspaces`, `setDocumentEdited`, `setTheme`, `setCursorHidden`, `setCursorPosition`, `on('boundsChanged'\|'willClose'\|'focusChanged'\|'scaleFactorChanged')` — every method takes an optional trailing `windowId` | **`boundsChanged`**, `willClose`, **`focusChanged`**, **`scaleFactorChanged`** (all carry `{windowId}`) |
+| `windows` | — | `create(opts)` → `{windowId,label}`, `list()` → `[{windowId,label,title,focused,bounds,state}]`, `get(label)` → `info|null`, `focus(windowId?)`, `close(windowId?)`, `setTitle(title, windowId?)`, `on('created'\|'closed')` | **`created`** `{windowId,label}`, **`closed`** `{windowId}` |
+| `windowState` | `persisted`, `saving` | `load`, `save`, `restore` | save/load/restore |
+| `screen` | `displays`, `primary`, `nearestWindow`, `scaleFactor`, `displayCount`, `cursorPoint` | `refresh`, `getCursorScreenPoint`, `on('displaysChanged')` | **`displaysChanged`** |
+| `clipboard` | `text`, `formats`, `hasText`, `html`, `rtf` | `refresh`, `writeText`, `clear`, `has`, `readImage`, `writeImage`, `readPaths`, `readHtml`/`writeHtml`, `readRtf`/`writeRtf` | own write/clear |
+| `theme` | `current`, `preference`, `dark`, `name` | `set`, `shouldUseDarkColors`, `on('appearanceChanged')` | **`appearanceChanged`** |
+| `system` | `info`, `layout`/`arch`/`os`, `accentColor`, `accessibility` | `getKeyboardLayout`, `getAccentColor`, `getAccessibility`, `checkPermission`, `requestPermission`, `openSettings`, `on('keyboardLayoutChanged')` | **`keyboardLayoutChanged`** |
+| `power` | `thermal`, `idleSeconds`, `lastWakeAt`, `wakeCount`, `battery` | `refresh`, `getSystemIdleTime`, `getThermalState`, `getBattery`, `blockSleep`/`unblockSleep`, `acquireSleepBlocker`, `on('thermalStateChanged'\|'systemWake'\|'systemSleep'\|'screenLocked'\|'screenUnlocked')` | **`thermalStateChanged`**, **`systemWake`**, `systemSleep`, `screenLocked`, `screenUnlocked` |
+| `deepLink` | `urls`, `last` | `register`, `on('openUrls')` | **`openUrls`** |
+| `menu` | `lastAction`, `actionLog` | `setAppMenu`, `setDockMenu`, `addRecentDocument`, `popup`, `update`, `get`, `items`, `aboutPanel`, `on('menuAction')` | **`menuAction`** |
+| `tray` | `title`, `tooltip`, `imagePath`, `active`, `lastRect` | `set`, `remove`, `acquire`, `dispose`, `on('trayClick')` | `trayClick`² `{x,y,width,height}` |
+| `shortcuts` | `registered` | `register`, `unregister`, `unregisterAll`, `acquire`, `on('shortcutPressed')` | **`shortcutPressed`**, `shortcutReleased` |
+| `notifications` | `lastResponse` | `show`, `dismiss`, `getPermissionStatus`, `requestPermission`, `on('notificationResponse')` | **`notificationResponse`** |
+| `capture` | `supported`, `sources` | `refresh`, `isSupported`, `getSources`, `captureSource` | pull |
+| `store` | `data`, `path` | `get`, `set`, `delete`, `clear`, `load`, `flush` | autosave (250ms debounce) |
+| `events` | — | `on`, `once`, `emit`, `emitTo` | local bus |
+| `dpi` | — | `LogicalPosition`/`PhysicalPosition`/`LogicalSize`/`PhysicalSize` classes + `toLogical`/`toPhysical` | — |
+| `diagnostics` | `info`, `pid`, `uptimeSeconds` | `refresh` | pull |
+| `capabilities` | `report` | `opStatus`, `describe` | pull |
+| `update` | `checking`, `available`, `checkedAt`, `checkError`, `upToDate` | `check` | opt-in (network) |
+| `shell` | — | `openExternal`, `openPath`, `showItemInFolder`, `trashItem`, `beep` | — |
+| `dialog` | — | `showMessageBox`, `showOpenDialog`, `showSaveDialog` | — |
+| `secureStorage` | — | `setPassword`, `getPassword`, `deletePassword`, `authenticate` | — |
+
+¹ `secondInstance` is emitted via `NSDistributedNotificationCenter`
+(`svelte-desktop-second-instance`, payload `{argv, cwd}`) — a secondary
+instance posts before exiting while the primary listens. Bundle-idless dev
+binaries still report `{acquired:true}` on the lock.
+
+² `trayClick` fires only when the tray has no menu attached — with a menu,
+AppKit opens the menu and swallows the click.
+
+## Multi-window
+
+`windows.create(opts)` opens a real second NSWindow on a fresh `GpuixView`
+sharing the one retained element tree. The primary window is `windowId 0`;
+secondary ids are monotonic `u32`s, never reused, allocated only after all
+options validate (a rejected create burns no id). `label` is the JS lookup
+key for `get(label)`/`emitTo` — unique per live window, duplicates reject
+`invalid_args`.
+
+Each window mounts its own gdom root: `createWindowRoot(windowId)` returns a
+mount target whose subtree binds to that window via `['setRoot', id, w]`;
+closing the window destroys the subtree through the normal
+`closed → destroyWindowRoot` path (primary roots are tracked the same way).
+
+`windowId` routing rules, everywhere:
+
+- An **explicit** `windowId` targets that window — unknown → `unavailable`,
+  fractional/negative/non-finite → `invalid_args`.
+- **Absent** on a window op → the *key* window (where real input would
+  land), falling back to the lowest live id.
+- **App-scoped** ops (`windows.create`/`list`/`get`) ignore `windowId`
+  entirely and work with zero windows open.
+- **Element-scoped** napi ops (`focusElement`, `scrollTo`, bounds,
+  `setWindowKeyEvents`) resolve the element's owning window through the
+  tree — they act on the right view regardless of which is key.
+- `simulate_*` (`simulateClick`, `simulateMouse*`, `simulateScrollWheel`,
+  `simulateKeystrokes`, `simulateKeyDown`/`Up`) take an optional trailing
+  `windowId` with the same semantics (default: key window).
+
+Isolation: every window gets its own selection state, focus handles,
+scroll/virtual-list mirrors, and automation bounds (all tagged by the
+painting window id). The automation clock is app-global — `clockPause`
+freezes every window at once. `windows.close` bypasses `close_veto`
+deliberately (veto = "ask JS"; a JS close call *is* the decision); the
+OS red button honors it and emits `willClose`. Closing the last window
+exits the process (`LastWindowClosed`).
+
+Events: `emitTo(windowId, event, payload)` + `onWindow(windowId, event, cb)`
+scope the local bus by `data.windowId` (window `0` included); `created`/
+`closed` fire through `onPlatform`.
+
+Also exported: `initPlatform`, `onPlatform`, `onAnyPlatform`,
+`emitTo`, `onWindow`, `platformReady`, `NativeApiError`, and all service
+types. gdom exports `createWindowRoot(windowId)` / `destroyWindowRoot` /
+`windowRoots` for the multi-window mount surface.
+
+Honest limits:
+
+- `boundsChanged` events emitted *during* a synchronous platform op (e.g.
+  a programmatic `setPosition` inside `platformCall`) can be dropped — the
+  gpui `on_moved` handler's re-entrant `handle.update` fails while the
+  window borrow is held. Own writes refresh `live` anyway via `#syncLater`.
+- `theme.preference` tracks what `set()` applied; the OS-level preference
+  isn't readable.
+- Clipboard has no OS change-event — `clipboard.text` is the last
+  read/written value, refreshed via `refresh()`. Rich formats (`html`,
+  `rtf`) live in `$state` via own writes/reads but `formats`/`has` only
+  see gpui-modeled types (text/image/paths), not custom UTIs.
+- `willClose` veto is pre-armed (`setCloseVeto`) rather than a per-close
+  callback — the gpui should-close callback returns bool synchronously and
+  can't await a JS round-trip.
+- `menu.popup` and dialogs use real OS tracking loops — they block
+  automation the same way modals do.
+- `dialog` `filters` are wired (`PathPromptOptions.filters` in the gpui
+  fork — union of extensions → `setAllowedFileTypes:`); per-filter UTI
+  pickers aren't modeled (raw extensions only).
+- `app.setActivationPolicy` may return `internal` on unbundled binaries —
+  NSApplication refuses policy changes without a bundle.
+- `system.checkPermission('notifications')`/`requestPermission` and
+  `notifications.getPermissionStatus`/`requestPermission` return
+  `unavailable` on unbundled binaries — `UNUserNotificationCenter` raises
+  an uncatchable ObjC exception without a bundle identity, so the call is
+  gated on `bundleIdentifier` presence.
+- `capture.getSources`/`captureSource` return `unavailable` while the
+  screen-recording TCC grant is denied — check
+  `system.checkPermission('screenRecording')` first.
+- `system.requestPermission('camera'|'microphone')` requires the matching
+  `NS*UsageDescription` key in Info.plist — declare it at package time with
+  `package-app.ts --usage camera="…"`. The key is read before the
+  AVFoundation call because TCC aborts the process when it's missing; the
+  op returns `unavailable` with the missing-key message instead.
+- `system.requestPermission('fullDiskAccess')` is `unsupported` by design —
+  macOS offers no programmatic request; `checkPermission` is a heuristic
+  (readable TCC.db → `granted`, else `unknown`) and the request error
+  points at `system.openSettings({pane:'privacy-fullDiskAccess'})`.
+- `menu.update`/`get` find items by `representedObject` id or by
+  spec-correlated position in `NSApp.mainMenu`/dock menu — items created
+  through `role` with app-level action types (quit/hide/…) aren't
+  id-addressable; `os_action` roles (copy/paste/…) are.
+- `{icon}` on menu items applies to NSMenuItem-built menus (tray, popup);
+  `setAppMenu`/`setDockMenu` go through `gpui::MenuItem` which has no image
+  field — the icon is silently ignored there.
+- `app.setLoginItem` returns `unavailable` on unbundled binaries
+  (SMAppService needs a bundle id, macOS 13+).
+
+## Wire protocol — service ops (`native-api/index.ts`)
+
+The namespaces above delegate to these transport-level ops. App code does
+not call them directly; they exist so `platform_call` has a typed,
+envelope-shaped surface. Note the public renames: `windows`→`window`,
+`updater`→`update`.
+
+| service | ops | verified live |
+|---|---|---|
+| `app` | whenReady, getInfo, getName, getVersion, getPath, setName, setIdentity, quit, relaunch, exit, hide/show/hideOthers/showAll, addRecentDocument, setDockBadge, bounceDock, setLoginItem, setActivationPolicy, requestSingleInstanceLock, onReopen/onOpenUrls/onWillQuit/onWillRestart/onSecondInstance | getInfo/getPath/badge/bounce/lock probed; loginItem/policy honest-fail unbundled |
+| `windows` | getBounds, getSize, setSize, getPosition, setPosition, setCloseVeto, getTitle, setTitle, minimize, maximize/unmaximize/toggleMaximize, isMaximized, isFullscreen, setFullscreen/toggleFullscreen, isFocused, focus, requestAttention, setRepresentedFilename, close, showCharacterPalette, getScaleFactor, getCursorPoint | position move+restore probed; `boundsChanged` streamed |
+| `screen` | getAllDisplays, getPrimaryDisplay, getDisplayNearestWindow, getCursorScreenPoint, scaleFactor | probed — dual-display bounds/workArea/uuid |
+| `clipboard` | readText, writeText, clear, availableFormats, has, readImage, writeImage, readPaths, readHtml/writeHtml, readRtf/writeRtf | text + html + rtf roundtrips probed |
+| `shell` | openExternal (scheme allowlist), openPath, showItemInFolder, trashItem, beep | denied `javascript:` + trash + beep probed |
+| `dialog` | showMessageBox, showOpenDialog, showSaveDialog — all genuinely async (`pending` → `platformResult`); `filters` typed, unapplied in gpui | capability-checked only; modal UI blocks automation |
+| `theme` | get, set(system\|light\|dark\|vibrant*), shouldUseDarkColors, onChange | set→get roundtrip probed; `appearanceChanged` event observed ×2 |
+| `system` | info, getKeyboardLayout, getAccentColor, getAccessibility, onKeyboardLayoutChange | probed (layout: "French", accent rgba, a11y flags) |
+| `power` | getThermalState, getSystemIdleTime, getBattery, blockSleep, unblockSleep, onSystemWake, onThermalStateChange, onSystemSleep, onScreenLocked, onScreenUnlocked | battery + assertion roundtrip probed |
+| `secureStorage` | setPassword, getPassword, deletePassword — macOS Keychain | full write→read→delete→read-null roundtrip through the **pending** path |
+| `notifications` | show, dismiss, onResponse | show/dismiss probed |
+| `deepLink` | register(scheme), onOpen | `unavailable` unbundled — correct; works in `.app` |
+| `menu` | setAppMenu, setDockMenu, addRecentDocument, popup, onAction | menus applied; `PlatformMenuAction` routes to `menuAction` event |
+| `tray` | set/create, remove/destroy, isSet, exists — NSStatusItem | set→remove probed (visible item in menu bar) |
+| `shortcuts` | register, unregister, unregisterAll, isRegistered — Carbon `RegisterEventHotKey` | register→unregister probed; bogus key → `invalid_args` |
+| `capture` | isSupported, getSources | `isSupported:false` + `unavailable` — gpui built without the feature flag |
+| `diagnostics` | info (pid, uptime, os, arch, renderer) | probed |
+| `capabilities` | describe — machine-readable per-op truth table | probed |
+| `updater` | `check(version, {endpoints, pubkey})` → `AvailableUpdate.downloadAndInstall()` | wraps the existing napi `checkUpdate`; untested (no feed) |
+| `windowState` | save/load/restore — pure-JS JSON persistence under `app.getPath('userData')` | probed; size+position restore |
+
+## Events
+
+`onPlatform(name, cb)` / `onAnyPlatform(cb)` subscribe on the bus; payloads
+arrive in `EventPayload.data`. Names: `openUrls`, `reopened`, `systemWake`,
+`thermalStateChanged`, `keyboardLayoutChanged`, `appearanceChanged`,
+`notificationResponse`, `willQuit`, `willRestart`, `menuAction`,
+`boundsChanged`, `willClose`, `displaysChanged`, `systemSleep`,
+`screenLocked`, `screenUnlocked`, `trayClick`, `shortcutPressed`,
+`shortcutReleased`, `secondInstance` (reserved, not yet emitted),
+`platformResult` (internal — resolves pending calls). App-level callbacks are
+registered once at `renderer.init` in both the embedded and threaded paths;
+OS-level observers (workspace/distributed notifications, Carbon handler,
+display reconfiguration) install at `register_app_callbacks`.
+
+## Files
+
+- `native/src/platform.rs` — dispatcher, error envelope, all services,
+  launch-callback registration, event sink
+- `native/src/platform/power_ext.rs` — battery (IOPS), sleep assertions
+  (IOPMAssertion), sleep/lock/display-change observers
+- `native/src/platform/tray.rs` — NSStatusItem + menu/action target
+- `native/src/platform/hotkeys.rs` — Carbon `RegisterEventHotKey` + accelerator
+  parser + pressed/released events
+- `native/src/platform/macos_ext.rs` — dock badge/bounce, activation policy,
+  login item, single-instance, accent color, a11y reads, trash/beep,
+  context-menu popup
+- `native/src/renderer.rs` — `UiCommand::PlatformCall`, `platform_call`,
+  init-path registration, `GpuixView` appearance observer + menu-action seam
+- `native/src/element_tree.rs` — `EventPayload.data`
+- `gpuix-poc/src/gdom.ts` — `PLATFORM_EVENT_ID` routing + `setPlatformEventSink`
+- `gpuix-poc/src/native-api/bus.ts` — transport, pending map, event emitter
+- `gpuix-poc/src/native-api/index.ts` — typed services
+- `gpuix-poc/src/native-api/windowState.ts` — JS-side persistence
+- `gpuix-poc/src/native-api/stores.svelte.ts` — rune namespaces
+  (`svelte-desktop/stores` / `#stores` → `gen/native-api/stores.js` + `.d.ts`)
+- `gpuix-poc/src/native-api/native-api.test.ts` — 41 unit tests (fake transport)
+- `gpuix-poc/src/mission-platform.ts` — live probe → `results/*/platform.jsonl`
+- `gpuix-poc/build.ts` — `native-api/stores.svelte.ts` in the compile list +
+  the specifier rewrite back into `src/native-api/` + `stores.d.ts` emission
+
+## Caveats
+
+- Async ops need the executor pumped — `renderer.tick()` must keep running
+  (the frame loop already does; the probe learned this the hard way).
+- `deepLink.register` and notification delivery require a bundled `.app`.
+- `capture.*` reports honest `unavailable` until gpui's screen-capture feature
+  is enabled in the native crate's build.
+- `setSize`/fullscreen apply on the next frame — reads are stale until then;
+  fullscreen transitions are animated (~1s) so rapid toggle→read can lag.
+- The pinned gpui checkout carries a local patch (to upstream into the
+  `remorses/zed` fork): `PlatformWindow::set_position` +
+  `Window::set_position`/`observe_window_bounds` (gpui platform.rs,
+  window.rs; impl in `gpui_macos/src/window.rs`). Editing vendored checkouts
+  needs `cargo clean -p gpui -p gpui_macos -p gpui_platform` — cargo doesn't
+  track their mtimes.
+- `window.set_position` must NOT hold `MacWindowState` across
+  `setFrameTopLeftPoint` — `windowDidMove` fires synchronously and its
+  delegate re-locks the same mutex (same-thread deadlock observed).
+- Deploying the `.node` into `node_modules` must use copy-to-temp + `mv`
+  (new inode): `cp` truncates in place and the kernel rejects the stale
+  signature → `SIGKILL (Code Signature Invalid)` on load.
+- No panics cross the napi boundary; the dispatcher returns error envelopes.

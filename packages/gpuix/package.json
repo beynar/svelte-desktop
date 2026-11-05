@@ -1,0 +1,31 @@
+{
+  "name": "@svelte-desktop/gpuix",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/native.ts",
+    "./gen/*": "./gen/*",
+    "./scripts/*": "./scripts/*",
+    "./*.js": "./src/*.js",
+    "./*.ts": "./src/*.ts",
+    "./*": "./src/*.ts"
+  },
+  "bin": {
+    "svelte-native-package": "./scripts/package-app.ts",
+    "svelte-native-icon": "./scripts/app-icon.ts"
+  },
+  "dependencies": {
+    "@gpuix/native": "0.8.0",
+    "@gpuix/native-darwin-arm64": "0.8.0",
+    "@gpuix/react": "^0.7.0",
+    "clsx": "^2.1.1",
+    "lightningcss": "1.33.0",
+    "svelte": "^5.57.0",
+    "@svelte-desktop/svelte": "workspace:*",
+    "tailwind-merge": "^3.7.0",
+    "tailwind-variants": "^3.3.1"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  }
+}

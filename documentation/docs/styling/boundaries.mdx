@@ -1,0 +1,36 @@
+---
+title: Internals & boundaries
+description: What runs where in the style pipeline, the JS mirror behind the drift probe, and the honest limits of the engine.
+sidebar:
+  order: 4
+---
+
+## What runs where
+
+| Responsibility | Owner |
+|---|---|
+| Raw `StyleProps` payloads, variant choices, theme props | your components |
+| Fragment ordering + envelope routing (concatenation only — no resolution) | `style.js` / `theming.svelte.js` / `gdom.ts` |
+| Vocabulary→field mapping, shorthand expansion, ring, buckets | `style_props.rs` |
+| Recipe merge (base→variants→compounds), variant caching | `recipe.rs` |
+| Token/palette/theme resolution, `retheme_subtree` | `tokens.rs` / `retained_tree.rs` |
+| Definition audit (`definitionIssues`, `droppedProps`) | `style.js` (grammar) + sweep (palette) |
+
+The JS mirror `resolveStyleProps` exists only for validation and the drift
+probe — `probe-drift.ts` asserts it stays field-identical to the Rust engine
+across the vocabulary corpus.
+
+## Boundaries
+
+- **Class-lane drops are intentional**: `data-*`, `peer-*`, arbitrary
+  pseudos have no native channel — they're collected into `definitionIssues`
+  with `lane: 'class'`, visible in the audit, not painted.
+- **`null` is delete, everywhere it can act**: `mergeProps` deletes the
+  vocabulary key; in a fragment stream it deletes the fields that key owns
+  (the unset channel that replaced the old JS-side ladder merge); in a
+  recipe variant table it's a declaration marker — the axis exists, the
+  choice adds nothing. `false`/`undefined` always skip.
+- Numbers are **px**, not Tailwind's ×4. `p: 4` is 4px; `p: '4'` is the
+  ×spacing convention.
+
+See [Limitations](/limitations) for the rest of the honest list.

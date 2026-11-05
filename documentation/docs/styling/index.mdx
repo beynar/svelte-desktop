@@ -1,0 +1,41 @@
+---
+title: Styling
+description: The nkit style engine — StyleX-shaped payloads resolved in Rust. An introduction to how `style()`, `recipe()`, and `<Theme>` divide labor between your Svelte components and the native engine.
+sidebar:
+  label: Introduction
+---
+
+nkit styling is **StyleX-shaped, Rust-executed**. Your components never compute
+a resolved style — they ship *symbolic payloads* (vocabulary names like
+`p: 'lg'`, `bg: 'primary'`, variant tuples like `size: 'small'`) and the
+native engine does the rest: vocabulary mapping, conflict resolution, token
+and palette resolution, theme re-resolution. The JavaScript side holds no
+style logic worth the name.
+
+```
+component                    gdom bridge                 Rust engine
+─────────────────────────────────────────────────────────────────────────
+style({ p: 'lg' })        →   setStyleProps [raw frags]  →   style_props.rs
+recipe({...})         →   registerRecipe {config}        (vocab→fields,
+r({ size: 'sm' })     →   setRecipe "name"+variants      ordered expansion)
+class="…"             →   setStyle {desc fields}         recipe.rs (merge)
+                                                        tokens.rs (palette)
+                                                     →  StyleDesc → paint
+```
+
+Three layers compose per element, in order — legacy `setStyle` desc, then the
+recipe layer selected by variant props, then your `StyleProps` fragments on
+top. All three merge *symbolically* (still token names) and resolve once.
+
+## In this section
+
+- [Style props](/styling/style-props) — `style(props)`, the `{@attach}` lane,
+  the full vocabulary table, and the application-order conflict rule.
+- [Recipes](/styling/recipes) — `recipe(config)`: variant axes, compound
+  variants, multi-slot themes, and how types flow through.
+- [Theming](/styling/theming) — `<Theme>` at the root, scoped subtree themes,
+  the `color` context, and the component theme ladder.
+- [Icons](/styling/icons) — `<Icon>`: registry names, raw markup, files, or
+  nested SVG children; `svgIcon()` and `registerIcons()` conventions.
+- [Internals & boundaries](/styling/boundaries) — what runs where, the JS
+  mirror used by the drift probe, and the honest limits of the engine.

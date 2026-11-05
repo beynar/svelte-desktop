@@ -2729,3 +2729,23 @@ checkout edits with shell grep before trusting a rebuild.
 
 Measured: probe PASS (stormFrames=3/40, p50=7.1ms background-window floor,
 max 21ms). Fresh dev host frontmost: 130ms total, p50=1.1ms, p90=7.8ms.
+
+## 2026-11-03 — files-print: macOS downloads, print and bookmarks
+
+Extended the existing shell webview download owner with destination decisions,
+retained history and cancel-based pause/resume. WebKit bytes stay native; public
+resumeData is an opaque checkpoint reference. A hidden file preserves the first
+durable checkpoint: subsequent resumes rewind to it because newly produced resume
+data after an already resumed transfer gave inconsistent offsets on macOS 26.5.1.
+Unknown-length resume is refused; resumed output length is checked before completion.
+Print options use NSPrintInfo and preserve paginated PDFs; PDF ranges are selected
+before the output atomically replaces its destination. Dialog security-scoped
+bookmarks share the direct files bookmark creator/resolver and balanced release.
+
+Validation: packaged dashboard probes 7/7 (40 assertions), including exact 4 MiB
+bytes across repeated pause/cancel/resume, PDF 2 pages at 420×595 points, direct
+bookmark access, active destination ownership and all three Native demo cards. A separate resume-after-relaunch
+probe passed. Native and docs builds passed; shell suite 133 pass / 3 documented
+pre-existing failures. Targeted strict TS has only the existing push/protocol.ts
+BufferSource errors. Probe source and logs: /tmp/sd-research/files-print-*.
+Temporary repository probes and their history/file fixtures were removed.

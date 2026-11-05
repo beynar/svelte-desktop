@@ -1,0 +1,141 @@
+---
+title: Theming
+description: "`theme()` at the root or `<Theme>` for scoped subtrees, the `color` context, and the full component theme override ladder — all resolved natively."
+sidebar:
+  order: 3
+---
+
+## `theme()` — the app-level switch
+
+Call it once at init in your root component — no wrapper element, no
+attachment. It builds the `ThemeState`, provides it to descendants, wires
+OS/system detection + persistence, and ships the resolved declaration
+straight to Rust through the `setTheme` op, where it seeds every element's
+ancestor theme fold:
+
+```svelte
+<script>
+	import { theme } from './theming.svelte.js';
+	import App from './App.svelte';
+
+	const app = theme({
+		themes: ['light', 'dark'],
+		defaultTheme: 'system',
+		storageKey: 'myapp-theme',
+		designTokens: {
+			light: { radius: 'small' },
+			dark:  { radius: 'large', 'state-hover-opacity': 0.2 },
+		},
+		components: { button: { root: { base: { radius: 'full' } } } },
+		defaultColor: 'primary',
+	});
+</script>
+
+<App />
+```
+
+`theme()` returns the reactive `ThemeState` — `app.resolvedTheme`,
+`app.theme = 'light'` (selects + persists), `app.system`,
+`app.preferReducesMotion`, `app.components`, `app.addEventListener` for the
+window-event registry. Options are read once; reactive changes go through
+the state object (`app.components = …`, `app.size = …`).
+
+`storageKey` persists to `~/.config/nkit/`, `enableSystem` tracks macOS
+appearance via the `appearanceChanged` platform event, `colorScheme` maps
+custom theme names onto the light/dark palettes.
+
+## `<Theme>` — the component form
+
+Same wiring as a wrapper component. Its root element carries the `theme`
+custom prop, so it's also the **scoped-subtree lane** — a `<Theme>` nested
+anywhere themes just its children, folding over the app-level declaration:
+
+```svelte
+<Theme
+	themes={['light', 'dark']}
+	defaultTheme="system"
+	storageKey="myapp-theme"
+	designTokens={{ light: { radius: 'small' }, dark: { radius: 'large' } }}
+	components={{ button: { root: { base: { radius: 'full' } } } }}
+	defaultColor="primary"
+>
+	{#snippet children(theme)}
+		<App />
+	{/snippet}
+</Theme>
+```
+
+A swap mutates the shared palette **in place** and clears token caches —
+every mounted element re-resolves its retained symbolic payload natively.
+No style re-emission from JS.
+
+## Scoped themes — the `theme` prop
+
+Any element can carry `theme` for itself + descendants — a plain attribute
+that lands as a custom prop natively; `retheme_subtree` re-resolves the
+subtree against the new chain:
+
+```svelte
+<div theme={{ colors: { brand: '#123456' } }}>
+	<span {@attach style({ fg: 'brand' })}>resolves brand natively</span>
+</div>
+```
+
+A nested `theme()` call scopes the same way: under an existing theme
+context it provides a new `ThemeState` for its descendants and skips the
+global `setTheme` emit. Drop `t.decl` on the subtree's root to scope the
+native resolution too:
+
+```svelte
+<script>
+	const t = theme({ designTokens: { dark: { colors: { primary: '#f0f' } } } });
+</script>
+
+<div theme={t.decl}>…</div>
+```
+
+## The `color` context
+
+`ctx.color` is the component-color bridge — `style(props, { color })` or the
+`data-color` attribute both land on the native `color` custom prop, so
+`color-*` placeholder refs (`'color-muted'`, `'color/50'`) resolve per
+subtree. That's how one `variant: 'solid'` serves seven button colors.
+
+## Component theme ladder
+
+`componentTheme(name, instTheme, slots)` gives components the full
+override ladder: recipe defaults → theme `components` registry (nested
+`theme()` / `<Theme components>` scopes it per subtree) → instance `theme`
+prop → instance `style` prop. Levels
+aren't merged in JS — `ct.slot()` ships each level as its own ordered
+fragment and the engine resolves the whole stream: last write wins per
+field, `null` deletes what a key would write (`{ p: null }` clears all four
+paddings), ring state spans the stream so `{ ring: 2 }` at theme level
+recombines with `{ ringColor: 'danger' }` at instance level.
+
+```svelte
+<script>
+	import { style, mergeStyleDesc } from './style.js';
+	import { resolveTokens } from './tokens.js';
+	import { nativeProps } from './apply.js';
+	import { componentTheme } from './theming.svelte.js';
+	import { buttonTheme } from './recipes/button.js';
+
+	let { variant, color, size, disabled = false, class: klass = '', style = null,
+	      theme = null, children, ...rest } = $props();
+
+	const ct = componentTheme('button', theme, ['prefix', 'suffix']);
+	const vp = $derived(ct.props({ variant, color, size, disabled }));
+	const ctx = $derived({ color: vp.color });
+	const resolved = $derived(
+		mergeStyleDesc(style(ct.root(buttonTheme, vp, style), ctx), resolveTokens(klass, ctx)),
+	);
+</script>
+
+<button {@attach resolved} tabIndex={0} {disabled} {...rest}>
+	{@render children()}
+</button>
+```
+
+Next: [Internals & boundaries](/styling/boundaries) — the ownership table and
+the honest limits.

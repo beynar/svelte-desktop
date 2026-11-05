@@ -1,0 +1,84 @@
+---
+title: Style props
+description: "`style(props)` — symbolic style fragments applied via `{@attach}`. The vocabulary table, application-order conflict resolution, and fragment composition."
+sidebar:
+  order: 1
+---
+
+`style(props)` returns a native envelope that is itself a **Svelte attachment** —
+apply it with `{@attach}` (imports below are relative to `src/nkit/` — the
+kit's own layout):
+
+```svelte
+<script>
+	import { style } from './style.js';
+
+	const card = style({
+		bg: 'surface-raised', radius: 'xl', p: 'lg',
+		hover: { bg: 'surface-floating' },
+		focusVisible: { ring: 2, ringColor: 'color/50' },
+	});
+</script>
+
+<div {@attach card}>…</div>
+```
+
+The envelope routes through the element's `styleProps` prop and clears on
+teardown or re-run — a `$derived` style re-attaches cleanly. The same value
+drives two equivalent forms: the prop-spread lane `<div {...card.style}>`
+and the legacy action `<div use:applyStyle={card}>`. Pick per taste; they
+emit identical ops and compose freely.
+
+Token *names* cross the wire — `bg: 'primary'` arrives as the string
+`"primary"` and resolves against the live palette in Rust. That's what makes
+theme swaps free: nothing re-emits.
+
+## The vocabulary, in one look
+
+| Family | Keys | Values |
+|---|---|---|
+| spacing | `p px py pt pr pb pl ps pe`, `m mx my mt …` | `0 micro xs sm md lg xl layout-*`, numbers (px), numeric strings (×spacing) |
+| sizing | `w h minW minH maxW maxH`, `control`, `icon`, `aspect` | `full auto fit`, `%`, `px`, `control-sm|md|lg`, `icon-xs…xl` |
+| flex/grid | `flex row col wrap grow shrink basis items self justify content gap gridCols gridRows` | `basis` takes `'1/2'` fractions → percent |
+| box | `bg fg border borderW borderT/R/B/L radius ring ringColor ringInset shadow opacity overflow` | `color-*` ctx refs, `name/alpha` suffixes, literals |
+| text | `text fontW font align lineHeight whitespace ellipsis lineClamp underline lineThrough decoration italic` | named scales `xs…9xl`, `normal medium semibold bold` |
+| position | `absolute fixed position top right bottom left inset` | insets resolve on the spacing scale |
+| interaction | `raised lift stateLayer cursor select pointerEvents` | `raised`: `none 0…5 xs…2xl` through the elevation engine |
+| pseudos | `hover active focus focusWithin focusVisible` | nested `StyleProps`, merge key-wise |
+
+Unknown keys don't silently no-op — they land in `droppedProps` and, for
+registered definitions, `definitionIssues`. `{ raduis: 'lg' }` reports
+`raduis` at `defineStyles`/`recipe` time.
+
+## Conflict resolution is application order
+
+Shorthands expand to longhands *at write time*, in authored order — the
+StyleX rule, not a fixed stylesheet order:
+
+```ts
+style([{ px: 'xl' }, { p: 'md' }])  // padding: md everywhere (p written last)
+style([{ p: 'md' }, { px: 'xl' }])  // top/bottom md, left/right xl
+```
+
+Within a fragment, `{ p: 'lg', px: 'xl' }` ≠ `{ px: 'xl', p: 'lg' }` — key
+order is load-bearing and survives the wire (`preserve_order`).
+
+## Composition
+
+`mergeStyleDesc(a, b)` concatenates fragment streams — later wins, pseudo
+buckets merge key-wise. `mergeProps` is the userland combinator for raw
+props objects (`null` deletes a key, `undefined` skips) — the theme ladder
+no longer uses it: its levels ship as separate fragments and the engine
+resolves them in order.
+
+```ts
+const base = style({ p: 'md', hover: { bg: 'surface-floating' } });
+const active = style({ p: 'lg', hover: { fg: 'color-readable' } });
+const both = mergeStyleDesc(base, active);
+// → padding lg; hover = { bg: surface-floating, fg: color-readable }
+```
+
+A `class` string still wins over props — the token-resolved desc joins the
+fragment stream as a `@desc` marker at its authored position.
+
+Next: [Recipes](/styling/recipes) — variants resolved in Rust.

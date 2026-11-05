@@ -23,3 +23,36 @@
 {"ts":1789460856247,"test":"double unmount","ok":true,"detail":""}
 {"ts":1789460856247,"test":"double flush","ok":true,"detail":""}
 {"ts":1789460856247,"test":"emit-during-dispatch deferred","ok":true,"detail":""}
+{"ts":1789463713779,"test":"malformed: not-an-array","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789463713779,"test":"malformed: bad opcode","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789463713779,"test":"malformed: map-not-tuple","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789463713780,"test":"malformed: wrong arg type","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789463713780,"test":"malformed: truncated","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789463713815,"test":"oversized: 100k ops (3.2MB)","ok":true,"detail":"29.8ms"}
+{"ts":1789463713992,"test":"1000x mount/unmount","ok":true,"detail":"177ms total"}
+{"ts":1789463713993,"test":"event storm 10k","ok":true,"detail":"0.9ms"}
+{"ts":1789463713994,"test":"double unmount","ok":true,"detail":""}
+{"ts":1789463713994,"test":"double flush","ok":true,"detail":""}
+{"ts":1789463713994,"test":"emit-during-dispatch deferred","ok":true,"detail":""}
+{"ts":1789465782070,"test":"malformed: not-an-array","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789465782071,"test":"malformed: bad opcode","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789465782071,"test":"malformed: map-not-tuple","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789465782071,"test":"malformed: wrong arg type","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789465782071,"test":"malformed: truncated","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789465782104,"test":"oversized: 100k ops (3.2MB)","ok":true,"detail":"23.5ms"}
+{"ts":1789465782222,"test":"1000x mount/unmount","ok":true,"detail":"116ms total"}
+{"ts":1789465782223,"test":"event storm 10k","ok":true,"detail":"0.7ms"}
+{"ts":1789465782223,"test":"double unmount","ok":true,"detail":""}
+{"ts":1789465782223,"test":"double flush","ok":true,"detail":""}
+{"ts":1789465782223,"test":"emit-during-dispatch deferred","ok":true,"detail":""}
+{"ts":1789505081545,"test":"malformed: not-an-array","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789505081545,"test":"malformed: bad opcode","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789505081546,"test":"malformed: map-not-tuple","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789505081546,"test":"malformed: wrong arg type","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789505081546,"test":"malformed: truncated","ok":true,"detail":"rejected with typed error, no panic"}
+{"ts":1789505087608,"test":"oversized: 100k ops (3.2MB)","ok":true,"detail":"6046.7ms"}
+{"ts":1789505087922,"test":"1000x mount/unmount","ok":true,"detail":"313ms total"}
+{"ts":1789505087923,"test":"event storm 10k","ok":true,"detail":"0.7ms"}
+{"ts":1789505087923,"test":"double unmount","ok":true,"detail":""}
+{"ts":1789505087924,"test":"double flush","ok":true,"detail":""}
+{"ts":1789505087924,"test":"emit-during-dispatch deferred","ok":true,"detail":""}

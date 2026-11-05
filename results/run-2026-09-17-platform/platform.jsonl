@@ -1,0 +1,61 @@
+{"ts":1789645981607,"probe":"capabilities.describe","ok":true,"result":{"platform":"macos","arch":"aarch64","services":{"app":{"getInfo":"implemented","getName":"implemented","getVersion":"implemented","getPath":"implemented","quit":"implemented","relaunch":"implemented","exit":"implemented","hide":"implemented","show":"implemented","activate":"implemented","hideOthers":"implemented","showAll":"implemented","setName":"implemented","setIdentity":"implemented","addRecentDocument":"implemented","whenReady":"implemented"},"window":{"getBounds":"implemented","getSize":"implemented","setSize":"implemented","getTitle":"implemented","setTitle":"implemented","minimize":"implemented","maximize":"implemented","unmaximize":"implemented","toggleMaximize":"implemented","isMaximized":"implemented","isFullscreen":"implemented","setFullscreen":"implemented","toggleFullscreen":"implemented","isActive":"implemented","focus":"implemented","requestAttention":"implemented","setRepresentedFilename":"implemented","close":"implemented","showCharacterPalette":"implemented","getScaleFactor":"implemented","getCursorPoint":"implemented","isMinimized":"unsupported","restore":"unsupported","setPosition":"unsupported","setBounds":"unsupported","setAlwaysOnTop":"unsupported","blur":"unsupported","isHovered":"unsupported","setEdited":"unsupported","isDocumentEdited":"unsupported","center":"unsupported"},"screen":{"getAllDisplays":"implemented","getPrimaryDisplay":"implemented","getDisplayNearestWindow":"implemented","scaleFactor":"implemented","getCursorScreenPoint":"macos-only"},"clipboard":{"readText":"implemented","writeText":"implemented","clear":"implemented","availableFormats":"implemented","has":"implemented","readImage":"implemented","writeImage":"implemented","readPaths":"implemented"},"shell":{"openExternal":"implemented","openPath":"implemented","showItemInFolder":"implemented","beep":"unsupported","trashItem":"unsupported"},"dialog":{"showMessageBox":"implemented","showOpenDialog":"implemented","showSaveDialog":"implemented"},"theme":{"get":"implemented","set":"implemented","shouldUseDarkColors":"implemented"},"system":{"info":"implemented","getKeyboardLayout":"implemented"},"power":{"getThermalState":"implemented","getSystemIdleTime":"macos-only"},"secureStorage":{"setPassword":"implemented","getPassword":"implemented","deletePassword":"implemented"},"notifications":{"show":"implemented","dismiss":"implemented","getPermissionStatus":"unsupported","requestPermission":"unsupported"},"deepLink":{"register":"implemented"},"menu":{"setAppMenu":"implemented","setDockMenu":"implemented","addRecentDocument":"implemented"},"capture":{"isSupported":"implemented","getSources":"implemented","stream":"unsupported"},"diagnostics":{"info":"implemented"},"capabilities":{"describe":"implemented"},"events":{"on":"implemented","off":"implemented","once":"implemented"},"tray":{"*":"unsupported"},"shortcuts":{"*":"unsupported"},"singleInstance":{"*":"unsupported"},"autostart":{"*":"unsupported"},"permissions":{"*":"unsupported"},"resources":{"*":"unsupported"},"protocol":{"*":"unsupported"},"windowState":{"*":"unsupported"},"dock":{"*":"unsupported"}}}}
+{"ts":1789645981607,"probe":"diagnostics.info","ok":true,"result":{"pid":56842,"uptimeSeconds":0.161469375,"os":"macos","family":"unix","arch":"aarch64","renderer":"gpuix","rendererVersion":"0.0.0"}}
+{"ts":1789645981607,"probe":"app.whenReady","ok":true,"result":true}
+{"ts":1789645981607,"probe":"app.getInfo","ok":true,"result":{"name":"gpuix-app","version":"0.0.0","identifier":"ai.gpuix.app","appPath":"/Users/arnaud/.bun/bin","packaged":false,"platform":"macos","arch":"aarch64"}}
+{"ts":1789645981607,"probe":"app.getName","ok":true,"result":"gpuix-app"}
+{"ts":1789645981607,"probe":"app.getVersion","ok":true,"result":"0.0.0"}
+{"ts":1789645981607,"probe":"app.getPath(userData)","ok":true,"result":"/Users/arnaud/Library/Application Support/ai.gpuix.app"}
+{"ts":1789645981607,"probe":"app.getPath(temp)","ok":true,"result":"/var/folders/2c/xh5rx2d91wd_lk8rvnnhlr4m0000gn/T/"}
+{"ts":1789645981607,"probe":"app.getPath(desktop)","ok":true,"result":"/Users/arnaud/Desktop"}
+{"ts":1789645981608,"probe":"app.getPath(bogus)","ok":true,"expected":"invalid_args","code":"invalid_args","error":"unknown app path `bogus` — expected home|appPath|exe|temp|appData|userData|logs|caches|documents|downloads|desktop|music|pictures|videos"}
+{"ts":1789645981610,"probe":"app.addRecentDocument","ok":true,"result":null}
+{"ts":1789645981610,"probe":"windows.getSize","ok":true,"result":{"width":520,"height":401}}
+{"ts":1789645981610,"probe":"windows.getBounds","ok":true,"result":{"bounds":{"x":768,"y":465,"width":520,"height":433},"state":"normal"}}
+{"ts":1789645981610,"probe":"windows.getTitle","ok":true,"result":"gpuix platform probe"}
+{"ts":1789645981617,"probe":"windows.setTitle","ok":true,"result":null}
+{"ts":1789645981617,"probe":"windows.getTitle(after set)","ok":true,"result":"probe title"}
+{"ts":1789645981617,"probe":"windows.getScaleFactor","ok":true,"result":2}
+{"ts":1789645981617,"probe":"windows.isFocused","ok":true,"result":true}
+{"ts":1789645981617,"probe":"windows.isMaximized","ok":true,"result":false}
+{"ts":1789645981617,"probe":"windows.isFullscreen","ok":true,"result":false}
+{"ts":1789645981617,"probe":"windows.getCursorPoint","ok":true,"result":{"x":-152.4765625,"y":332.8359375}}
+{"ts":1789645981699,"probe":"windows.setSize","ok":true,"result":{"width":560,"height":420}}
+{"ts":1789645983141,"probe":"windows.fullscreen roundtrip","ok":true,"result":{"on":true,"off":false}}
+{"ts":1789645983143,"probe":"windows.setRepresentedFilename","ok":true,"result":null}
+{"ts":1789645983143,"probe":"screen.getAllDisplays","ok":true,"result":[{"id":1,"uuid":"37d8832a-2d66-02ca-b9f7-8f30a301b230","bounds":{"x":0,"y":0,"width":2056,"height":1329},"workArea":{"x":0,"y":39,"width":2056,"height":1290},"isPrimary":true},{"id":2,"uuid":"61eadb1f-9406-4e31-b15e-5d9fa59393e3","bounds":{"x":0,"y":0,"width":3008,"height":1692},"workArea":{"x":0,"y":30,"width":3008,"height":1662},"isPrimary":false},{"id":3,"uuid":"c3175fc3-347e-46f7-9ca3-9a65f039a14c","bounds":{"x":0,"y":0,"width":3008,"height":1692},"workArea":{"x":0,"y":30,"width":3008,"height":1662},"isPrimary":false}]}
+{"ts":1789645983143,"probe":"screen.getPrimaryDisplay","ok":true,"result":{"id":1,"uuid":"37d8832a-2d66-02ca-b9f7-8f30a301b230","bounds":{"x":0,"y":0,"width":2056,"height":1329},"workArea":{"x":0,"y":39,"width":2056,"height":1290},"isPrimary":true}}
+{"ts":1789645983143,"probe":"screen.getDisplayNearestWindow","ok":true,"result":{"id":1,"uuid":"37d8832a-2d66-02ca-b9f7-8f30a301b230","bounds":{"x":0,"y":0,"width":2056,"height":1329},"workArea":{"x":0,"y":39,"width":2056,"height":1290},"isPrimary":false}}
+{"ts":1789645983143,"probe":"screen.getCursorScreenPoint","ok":true,"result":{"x":615.5234375,"y":830.05859375}}
+{"ts":1789645983143,"probe":"screen.scaleFactor","ok":true,"result":2}
+{"ts":1789645983144,"probe":"clipboard roundtrip","ok":true,"result":{"text":"platform-probe-clip","formats":["text/plain"]}}
+{"ts":1789645983145,"probe":"clipboard.has(text/plain)","ok":true,"result":true}
+{"ts":1789645983146,"probe":"clipboard.clear+read","ok":true,"result":null}
+{"ts":1789645983146,"probe":"theme.get","ok":true,"result":{"appearance":"dark","dark":true}}
+{"ts":1789645983146,"probe":"theme.shouldUseDarkColors","ok":true,"result":true}
+{"ts":1789645983167,"platformEvent":"appearanceChanged","data":{"appearance":"light","dark":false}}
+{"ts":1789645983242,"platformEvent":"appearanceChanged","data":{"appearance":"dark","dark":true}}
+{"ts":1789645983318,"probe":"theme.set(opposite)→get→restore","ok":true,"result":{"before":"dark","during":"light"}}
+{"ts":1789645983320,"probe":"initStores() — every namespace ready or error-captured","ok":true,"result":{"total":15,"errors":[],"notReady":0,"appName":"gpuix-app","windowTitle":"probe title","displays":3,"clip":null,"theme":"dark","layout":"French","thermal":"fair","pid":56842,"services":26,"persisted":{"bounds":{"x":768,"y":465,"width":560,"height":452},"savedAt":1789599059995}}}
+{"ts":1789645983326,"platformEvent":"appearanceChanged","data":{"appearance":"light","dark":false}}
+{"ts":1789645983408,"probe":"theme event-driven $state (raw set → event → store)","ok":true,"result":{"before":"dark","eventDriven":"light","dark":true}}
+{"ts":1789645983408,"probe":"windowState save → persisted $state","ok":true,"result":{"persisted":{"bounds":{"x":768,"y":465,"width":560,"height":452},"savedAt":1789645983408},"saved":{"bounds":{"x":768,"y":465,"width":560,"height":452},"savedAt":1789645983408}}}
+{"ts":1789645983408,"probe":"system.info","ok":true,"result":{"os":"macos","family":"unix","arch":"aarch64","keyboardLayout":"French"}}
+{"ts":1789645983409,"probe":"system.getKeyboardLayout","ok":true,"result":{"name":"French"}}
+{"ts":1789645983409,"probe":"power.getThermalState","ok":true,"result":{"state":"fair"}}
+{"ts":1789645983409,"probe":"power.getSystemIdleTime","ok":true,"result":1466945.064496458}
+{"ts":1789645983412,"platformEvent":"appearanceChanged","data":{"appearance":"dark","dark":true}}
+{"ts":1789645983462,"probe":"secureStorage roundtrip","ok":true,"result":{"read":"s3cret-probe","after":null}}
+{"ts":1789645983467,"probe":"secureStorage.getPassword(missing)","ok":true,"result":null}
+{"ts":1789645983467,"probe":"notifications.show","ok":true,"result":{"tag":"probe"}}
+{"ts":1789645983467,"probe":"notifications.dismiss","ok":true,"result":null}
+{"ts":1789645983471,"probe":"deepLink.register(gpuixprobe)","ok":true,"expected":"unavailable","code":"unavailable","error":"deepLink.register `gpuixprobe` failed: Can only register URL scheme in bundled apps"}
+{"ts":1789645983475,"probe":"menu.setAppMenu","ok":true,"result":null}
+{"ts":1789645983475,"probe":"menu.setDockMenu","ok":true,"result":null}
+{"ts":1789645983475,"probe":"capture.isSupported","ok":true,"result":false}
+{"ts":1789645983478,"probe":"capture.getSources","ok":true,"expected":"unavailable","code":"unavailable","error":"gpui was compiled without the screen-capture feature"}
+{"ts":1789645983479,"probe":"shell.openExternal(javascript:)","ok":true,"expected":"denied","code":"denied","error":"shell.openExternal refuses scheme `javascript` — use openPath for files"}
+{"ts":1789645983479,"probe":"shell.openExternal(notaurl)","ok":true,"expected":"invalid_args","code":"invalid_args","error":"shell.openExternal: `notaurl` is not a URL: relative URL without a base"}
+{"ts":1789645983479,"probe":"shell.openPath(missing)","ok":true,"expected":"unavailable","code":"unavailable","error":"shell.openPath: `/nonexistent/gpuix-probe-path` does not exist"}
+{"ts":1789645983480,"probe":"windowState save→load→restore","ok":true,"result":{"saved":{"x":768,"y":465,"width":560,"height":452},"loaded":{"x":768,"y":465,"width":560,"height":452},"restored":{"x":768,"y":465,"width":560,"height":452},"size":{"width":560,"height":420}}}
+{"ts":1789645983480,"probe":"dialog.show*","ok":null,"note":"skipped — modal UI blocks automation; covered by capabilities.describe"}
+{"ts":1789645983680,"summary":{"total":56,"ok":55,"fail":0,"skip":1,"eventsSeen":["appearanceChanged","appearanceChanged","appearanceChanged","appearanceChanged"]}}

@@ -1,0 +1,18 @@
+{
+	"extends": "$app/tsconfig",
+	"compilerOptions": {
+		"strict": true,
+		"types": [
+			"$app/types",
+			"bun"
+		]
+	},
+	"include": [
+		"src",
+		"test",
+		"*"
+	],
+	"exclude": [
+		"src/service-worker"
+	]
+}

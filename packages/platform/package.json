@@ -1,0 +1,20 @@
+{
+  "name": "@svelte-desktop/platform",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./stores": "./gen/stores.js",
+    "./gen/*": "./gen/*",
+    "./*.js": "./src/*.js",
+    "./*.ts": "./src/*.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@gpuix/native": "0.8.0",
+    "@svelte-desktop/gpuix": "workspace:*"
+  },
+  "peerDependencies": {
+    "svelte": "^5.57.0"
+  }
+}

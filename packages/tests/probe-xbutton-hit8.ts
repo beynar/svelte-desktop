@@ -1,0 +1,35 @@
+import { TestGpuixRenderer } from '@gpuix/native';
+import { installGlobals, doc, materializeRoot } from '@svelte-desktop/gpuix/gdom';
+import { setRenderer, flush } from '@svelte-desktop/gpuix/native';
+installGlobals();
+const renderer = new TestGpuixRenderer(640, 600);
+setRenderer(renderer as any);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const pump = async () => { flush(); renderer.flush(); await sleep(30); };
+
+const root = doc.createElement('div');
+doc.body.appendChild(root);
+materializeRoot(root);
+const layer = doc.createElement('div');
+layer.setAttribute('style', 'position:relative;width:300px;height:200px');
+root.appendChild(layer);
+const under = doc.createElement('div');
+under.setAttribute('style', 'position:absolute;top:0;left:0;width:300px;height:200px;background-color:#123456');
+for (const t of ['click', 'mouseDown', 'mouseUp']) under.addEventListener(t, () => {});
+layer.appendChild(under);
+const b = doc.createElement('x-button' as any);
+b.setAttribute('style', 'position:absolute;top:60px;left:0;width:100px;height:50px');
+for (const t of ['click', 'mouseDown', 'mouseUp']) b.addEventListener(t, () => {});
+layer.appendChild(b);
+console.log('ids under=%d btn=%d', (under as any).nativeId, (b as any).nativeId);
+await pump();
+const bb = (renderer as any).getElementBounds((b as any).nativeId);
+renderer.drainEvents();
+renderer.simulateClick(bb.x + bb.width / 2, bb.y + bb.height / 2);
+await pump();
+console.log('click btn ->', JSON.stringify(renderer.drainEvents()));
+// second click on the same button (already focused)
+renderer.drainEvents();
+renderer.simulateClick(bb.x + bb.width / 2, bb.y + bb.height / 2);
+await pump();
+console.log('click btn again ->', JSON.stringify(renderer.drainEvents()));

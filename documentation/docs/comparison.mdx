@@ -1,0 +1,75 @@
+---
+title: Comparison
+description: gpuix+Svelte against the alternatives — gpuix-svelte, Electrobun+SvelteKit, Tauri, and Electron.
+sidebar:
+  order: 8
+---
+
+Both sides of this repo exist to make this comparison concrete: `app/` +
+`shell/` are a working SvelteKit-in-Electrobun build; `gpuix-poc/` is the
+native-renderer experiment.
+
+| | **gpuix + Svelte (this repo)** | **gpuix-svelte** (khromov) | **Electrobun + SvelteKit** | **Tauri** | **Electron** |
+|---|---|---|---|---|---|
+| Renderer | **Native GPUI (GPU), owned Rust** | Native GPUI via published `@gpuix/native` (read-only) | WKWebView | System webview | Chromium |
+| Svelte seam | Fake DOM (gdom) — stock compiler output | Custom-renderer API (svelte PR #18042, vendored build) | Real DOM | Real DOM | Real DOM |
+| Svelte fidelity | Language ✓ (incl. `bind:`, `{@html}`) / browser platform ✗ | Language subset (`bind:` refused by compiler) / browser platform ✗ | 100% real DOM | 100% | 100% |
+| Styling | Token engine (svelai-parity) + `style()` props + class tokens, native resolution | Bounded CSS subset: inline styles, classes, `:hover`/`:active`, CSS vars | Full CSS | Full CSS | Full CSS |
+| JS runtime | Bun (in-proc) | Node ≥24 + Bun | Bun (in-proc) | Webview JS | Node + Chromium |
+| IPC / data layer | In-proc remote-fn pattern | — (renderer package only) | Remote fns over loopback | `invoke` | `ipcRenderer` |
+| Memory (measured) | **~173 MB** packaged | — | ~205 MB | ~80–150 MB | 300–500 MB |
+| Bundle (measured) | **82.6 MB single binary** / .app | Standalone compile + .app + scripted signing/notarize | ~20 MB app | 5–15 MB | ~85 MB pkg |
+| First paint | ~293 ms median (n=20) | — | — | — | — |
+| Paint ceiling | **Zed-editor grade** | **Zed-editor grade** | Safari-grade | webview | Chromium |
+| "npm i a svelte lib" | Partial — DOM-compiled components run if they stay inside the emulated API (streamdown mounts) | ❌ structural — precompiled DOM internals; needs source + recompile | ✅ | ✅ | ✅ |
+| SvelteKit surface | 49/49 in-process | None (router/demo-app layer only) | 100% real | 100% | 100% |
+| Component library | ~45 nkit components + theme/recipe engine | `Scroller` + `Portal` | — | — | — |
+| Extras | bun:sqlite, FFI, AX materialization, two backends (gpuix/quickgui) | Hot reload, WASM/WebGPU web target, published package + starter + tutorial | — | — | — |
+| Maturity | 0.7.0, solo author | Experimental pkg, pinned svelte PR build | v2, small | 2.x stable | Battleship |
+
+## How to read it
+
+- **gpuix is the only row where the UI isn't a webview.** That's the entire
+  point — native GPU text/layout at editor speed with Svelte authoring. You
+  trade the DOM's thirty years of semantics for a young element model.
+- **Electrobun is strictly safer for content/form-heavy apps**: full DOM,
+  full SvelteKit, remote functions for free, and it's already packaged.
+- The realistic endgame may be **hybrid** — gpuix for perf-critical surfaces,
+  or this fake-DOM approach matured into a real renderer package plus a
+  purpose-built native component set.
+
+## gpuix-svelte — same idea, different seam
+
+`khromov/gpuix-svelte` isn't a platform alternative — it's the *same*
+Svelte→GPUI bet, executed narrower and cleaner. The meaningful differences:
+
+- **The seam.** They use Svelte's unreleased custom-renderer API (vendored,
+  pinned to the PR branch) — no DOM emulation exists at all. We emulate the
+  DOM (gdom) so stock compiler output runs unchanged. Their approach deletes
+  the DOM-fidelity tail entirely; ours pays it to buy compatibility.
+- **What that buys each side.** `bind:` is *refused by the compiler* on
+  custom renderers — every input is manual event plumbing. Third-party
+  DOM-compiled components can't run (their shipped JS is baked to DOM
+  internals). Ours runs `bind:`, `{@html}`, and source-compatible libraries
+  like streamdown unchanged.
+- **The native boundary.** They consume the published `.node` read-only —
+  the sealed-box problem our renderer-verdict documents. We own the Rust
+  renderer: custom element vocabulary (x-button/input/markdown/diff),
+  token/theme engine with native re-resolution, AriaProperties.
+- **Where they're ahead.** Published npm package + starter + tutorial, hot
+  reload, WASM/WebGPU browser target, scripted codesign/notarize — the
+  product surface ours lacks. And a 4-case headless suite vs our ~480 checks.
+- **Convergence path.** When PR #18042 lands stable, `.native.svelte`
+  components could compile through their seam as a second frontend — gdom
+  survives for the DOM-dependent paths. The bind: gap is liftable via a
+  source-level desugar (`bind:value` → `value` + `oninput`).
+
+Verdict on the sibling: better *packaging of the renderer slice*; not a
+platform. It validates the direction without obsoleting the broader
+SvelteKit/Bun/native-services goal this repo is testing.
+
+## Verdict
+
+**GO** — with the ledger above. For a text/app-chrome-heavy tool (editor,
+terminal, dashboard) the native path is compelling. For anything that needs
+the web platform, the Electrobun build already works today.

@@ -1,21 +1,15 @@
-import adapter from '@sveltejs/adapter-bun';
-import { sveltekit } from '@sveltejs/kit/vite';
+import { svelteNative } from '@svelte-desktop/vite';
 import { defineConfig } from 'vite';
 
+// `vite dev` boots the native GPUI window (emit → build → spawn, restart on
+// change). `vite build` emits the spawnable bundle to .svelte-native/app.js.
 export default defineConfig({
 	plugins: [
-		sveltekit({
-			adapter: adapter(),
+		svelteNative({
+			title: 'svelte·desktop — notes',			
 			compilerOptions: {
-				runes: ({ filename }) =>
-					filename.split(/[/\\]/).includes('node_modules') ? undefined : true,
-				experimental: {
-					async: true
-				}
+				experimental: { async: true },
 			},
-			experimental: {
-				remoteFunctions: true
-			}
-		})
-	]
+		}),
+	],
 });

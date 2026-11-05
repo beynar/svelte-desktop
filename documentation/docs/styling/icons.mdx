@@ -1,0 +1,76 @@
+---
+title: Icons
+description: "`<Icon>` — the tintable icon primitive: registry names, raw markup, files, or nested SVG children. `svgIcon()` composes documents, `registerIcons()` extends the set."
+sidebar:
+  order: 4
+---
+
+The `<svg>` element is a **tintable monochrome icon renderer** — it paints one
+SVG document, and `currentColor` inside the markup resolves to the element's
+`color`. `<Icon>` is the component API over it:
+
+```svelte
+import Icon from '@svelte-desktop/gpuix/gen/nkit/Icon.js';
+import { icons, svgIcon, registerIcons } from '@svelte-desktop/gpuix/gen/nkit/icons.js';
+```
+
+## Four content channels
+
+```svelte
+<Icon name="check" />                         <!-- built-in registry -->
+<Icon source={searchSvg} />                   <!-- raw markup (`?raw` import) -->
+<Icon src="/abs/path/icon.svg" />             <!-- file path or data: URL -->
+<Icon viewBox="0 0 16 16">                    <!-- nested Svelte markup -->
+	<path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="2" />
+</Icon>
+```
+
+Precedence: **children > source > name**. The `children` channel is plain
+nested SVG — the subtree stays in the fake DOM and serializes into the
+document on every mutation, so `{#if}`/`{#each}`/`{dynamic}` inside `<Icon>`
+re-render like anywhere else.
+
+## Size and tint
+
+```svelte
+<Icon name="x" size={16} />        <!-- px -->
+<Icon name="x" size="large" />     <!-- small | normal | large → icon scale -->
+<Icon name="warning" color="warning" />
+```
+
+`color` names a **palette** entry — the icon's `currentColor` resolves to it.
+Omit `color` and the icon inherits the parent's `color` — including
+stylesheet `:hover` states, so `.btn:hover` recolors a nested `<Icon>` like
+real `currentColor` CSS. The `class` prop feeds both channels: utility tokens
+resolve to styles *and* the raw string lands as DOM classes for stylesheet
+selectors.
+
+Icons are decorative by default (`aria-hidden`). Pass `label` to promote to
+an accessible image (`role="img"` + `aria-label`).
+
+## The registry convention
+
+`icons` is a flat `name → svg-document` map (lucide-style 24×24 stroke set).
+Two ways to add app icons:
+
+```ts
+// compose inner markup with the same wrapper the built-ins use
+registerIcons({ send: svgIcon('<path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/>') });
+
+// or import a .svg file as raw text (`?raw`) and register the document
+registerIcons({ logo: logoSvg });
+<Icon name="send" />
+```
+
+`svgIcon(content, opts?)` wraps inner markup in a complete document —
+defaults match the set (`viewBox 0 0 24 24`, `fill="none"`,
+`stroke="currentColor"`, width 2, round caps/joins); override for solid or
+differently-gridded sets. `registerIcons` merges — app names can shadow
+built-ins.
+
+## What the native side sees
+
+Every channel resolves to one `<svg>` element + one document (`source` prop
+for markup, `src` for files/URLs). Children never materialize as separate
+native elements — `<path>` inside `<Icon>` is fake-DOM only, so no
+hit-testing inside the paint; put listeners on `<Icon>` itself.

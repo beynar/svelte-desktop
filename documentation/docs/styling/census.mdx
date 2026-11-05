@@ -1,0 +1,142 @@
+---
+title: Property census
+description: What CSS can be expressed natively — the expressible vocabulary, the deliberately refused list, and where each lives in the pipeline.
+sidebar:
+  order: 5
+---
+
+The honest map of what the style engine accepts, per lane. **Expressible**
+means the value reaches the GPU through real native styling — not a
+workaround. **Refused** means the key is either dropped with a diagnostic
+(`definitionIssues` / the `dropped` audit) or parses but maps to no native
+capability. Refused keys never silently no-op a whole style — a bad value
+drops *itself*, not the fragment around it.
+
+Three lanes feed the same `StyleDesc` wire format:
+
+- **`style()` / StyleProps** — the closed vocabulary (`checkStyleProps`)
+- **class tokens** — `class="p-4 tracking-tight"` (`resolveTokens`)
+- **stylesheets** — `stylesheet.register` CSS text (`stylesheet.rs`)
+
+## Layout
+
+| Property | Lane | Status |
+|---|---|---|
+| `display` (`flex`, `grid`, `none`) | all | ✅ |
+| `flexDirection` (`row`/`col`/`column`) | all | ✅ |
+| `flexWrap`, `flexGrow`, `flexShrink`, `flexBasis` | all | ✅ |
+| `alignItems`/`Self`/`Content`, `justifyContent` | all | ✅ |
+| `gap`, `rowGap`, `columnGap` | all | ✅ spacing tokens resolve |
+| `gridTemplateColumns`/`Rows` (count, `grid-cols-N`) | all | ✅ count only — no track sizing |
+| `gridColumnMin`/`gridRowMin` | sheet | ✅ (`grid-cols-[…]` counts columns) |
+| `position` (`absolute`/`fixed`) | all | ✅ `sticky` maps to `absolute`; `relative`/`static` drop |
+| `top`/`right`/`bottom`/`left`, `inset` | all | ✅ |
+| `zIndex` | — | ❌ no gpui `Style` field — paint order is DOM order; overlays use `<anchored>` `priority` (deferred paint lane) or a real OS window |
+| `order`, `placeItems`, `placeSelf`, `float`, `clear` | — | ❌ no native concept |
+| `gridColumn`/`gridRow` spans, `auto-rows-*`, `row-*`, `col-*` | class | ❌ intentionally dropped |
+| `aspectRatio` | all | ✅ number or `W/H` |
+
+## Sizing & spacing
+
+| Property | Lane | Status |
+|---|---|---|
+| `width`/`height`, `min`/`max` variants | all | ✅ px, `%`, `auto`, `full`, `fit`, geometry tokens (`control-md`, `icon-lg`…) |
+| `padding`/`margin` + all longhands, `p-*`/`m-*` | all | ✅ numbers = px, strings = spacing scale |
+| logical props (`insetBlock`, `marginInline`, `paddingBlock`…) | sheet | ✅ mapped to physical fields |
+| `boxSizing` | — | ❌ border-box is the only model |
+| `min()`/`max()`/`clamp()` inside values | — | ❌ `unsafe_value` drop |
+
+## Typography
+
+| Property | Lane | Status |
+|---|---|---|
+| `fontSize` (`text-*` scale, px) | all | ✅ |
+| `fontWeight` (name or number) | all | ✅ |
+| `fontFamily` | all | ✅ comma stacks → first family |
+| `fontStyle` (`italic`/`not-italic`) | all | ✅ |
+| `textAlign` (`left`/`center`/`right`/`start`) | all | ✅ `justify` parses, paints as left |
+| `lineHeight` | all | ✅ px; unitless CSS `line-height` → `lineHeightScale` |
+| `lineHeightScale` (`leading-*`) | props+class | ✅ × font size, like CSS `<number>` |
+| `letterSpacing` (`tracking-*`) | all | ✅ px — gpui fork `kCTKernAttributeName` |
+| `fontFeatures` (`tabular-nums`, `font-feature-settings`) | props+class+sheet | ✅ `{tnum:1}` / `"liga" off` map |
+| `textTransform` (`uppercase`/`lowercase`/`capitalize`/`normal-case`) | props+class+sheet | ✅ transforms the string pre-shape — inherited |
+| `textDecoration` (`underline`/`lineThrough`/`no-underline`) + `textDecorationColor` | all | ✅ |
+| `whiteSpace` (`nowrap`/`pre`), `textOverflow` (`ellipsis`), `lineClamp` | all | ✅ `truncate` composes all three |
+| `wordSpacing` | sheet parses | ❌ no word-gap mechanism (kern applies to all glyphs) |
+| `fontVariant` shorthand, `fontStretch`, `fontSizeAdjust`, `textIndent`, `verticalAlign`, `textShadow` | — | ❌ no gpui field (`textShadow` has a PropertyCode on the qg lane only) |
+| `letterSpacing` inside `em`/`%` units | — | ❌ px only |
+
+## Color & background
+
+| Property | Lane | Status |
+|---|---|---|
+| `color`, `backgroundColor`, `borderColor` | all | ✅ palette refs (`primary`, `color-muted`), hex/alpha, `ctx-*` |
+| `background` | all | ✅ solid + `{stops:[…]}` gradient object |
+| `selectionColor` | all | ✅ text-selection wash |
+| `opacity` (`opacity-N` percent) | all | ✅ |
+| `backgroundImage`, `backgroundSize`/`Position`/`Repeat` | — | ❌ no image background channel (use `x-img`) |
+| `color-mix()`, `oklch from` | — | ❌ refused value grammar |
+| `currentColor` keyword | — | ❌ use `color` ctx refs (`color-*`) |
+
+## Border, radius, shadow
+
+| Property | Lane | Status |
+|---|---|---|
+| `borderWidth`/`border-w-*` + per-side `borderT/R/B/L` | all | ✅ |
+| `borderColor` (`border-*`) | all | ✅ per-side colors (`borderTopColor`…) are sheet-lane only |
+| `borderRadius` (`rounded-*`) + per-corner + edge pairs (`radiusTl/Tr/Bl/Br`, `radiusT/B/L/R`, `rounded-tl-*`) | all | ✅ |
+| `boxShadow` (`shadow-*`, `ring*`, `raised-*`, `lift-*`) | all | ✅ structured layers; `ring` is a real outset member |
+| `outline` | — | ❌ (focus ring via `ring`/`focus` bucket) |
+| `borderStyle` (`dashed`/`dotted`) | — | ❌ solid only |
+| `borderCollapse`, `borderSpacing` | — | ❌ |
+
+## Effects & compositing
+
+| Property | Lane | Status |
+|---|---|---|
+| `stateLayer` | props+class | ✅ native pressed/hover wash flag |
+| `raised`/`lift` | props+class | ✅ native shadow+hairline pseudo-field |
+| `transform`/`rotate`/`scale`/`translate` | — | ❌ no `Style.transform` in gpui |
+| `filter`, `backdropFilter`, `mixBlendMode`, `isolation` | — | ❌ |
+| `transition`/`duration`/`ease`/`animate-*`, `@keyframes` | class+sheet | ❌ dropped — no animation channel yet |
+| `backdropBlur`, `blur` | — | ❌ |
+| `visibility` (`visible`/`hidden`) | all | ✅ |
+| `overflow`/`overflowX`/`overflowY` | all | ✅ `auto`→`scroll` |
+| `objectFit` | `x-img` prop | ✅ element-level (fill/contain/cover/none/scale-down) |
+
+## Interaction & pseudo states
+
+| Property | Lane | Status |
+|---|---|---|
+| `cursor` | all | ✅ mapped names |
+| `userSelect` (`select-*`) | all | ✅ inherited `none`/`text` |
+| `pointerEvents` (`pointer-events-none`) | all | ✅ `none`/`auto` |
+| `hover`/`active`/`focus`/`focusWithin` buckets | props+sheet | ✅ native state swaps — `focusVisible` props-only (qg has no code) |
+| `tabIndex` | prop | ✅ focus order |
+| `caretColor`, `accentColor`, `scrollBehavior`, `touchAction` | — | ❌ |
+| `data-*`/`aria-*`/`peer-*`/`has-*`/`group-*` class prefixes | class | ❌ intentional boundary drops (use the pseudo-bucket fields) |
+
+## Values — what the grammar refuses everywhere
+
+`var(`, `url(`, `clamp(`, `attr(`, `env(`, `color-mix(`, `gradient(`,
+`conic(`, `min(`, `max(`, `mix(`, `oklch from`, `inherit`/`initial`/`unset`
+(no cascade — `revert`/`revert-layer` are skipped the same way).
+
+`calc(` is the exception: it **evaluates** for numeric/dimension fields
+(`width: calc(100% - 8px)` works — same-unit arithmetic, `%` survives
+against a px base). On non-numeric fields it's refused.
+
+## ARIA / accessibility props
+
+These are element props (`aria-*` attributes), not style fields — they land
+on `custom_props` and materialize into AccessKit nodes:
+
+| Prop | Status |
+|---|---|
+| `role` (full token map → `Role`) | ✅ |
+| `aria-label`/`aria-description`/`aria-valuetext`/`aria-keyshortcuts`/`aria-placeholder`/`aria-roledescription` | ✅ |
+| `aria-expanded`/`selected`/`pressed`/`checked` (tristates)/`disabled`/`busy`/`hidden`/`modal`/`readonly`/`required` | ✅ |
+| `aria-level`/`posinset`/`setsize`/`rowindex`/`colindex`/`rowcount`/`colcount`/`valuenow`/`valuemin`/`valuemax` | ✅ |
+| `aria-orientation`, `aria-live`, `aria-invalid`, `aria-haspopup` | ✅ enum-mapped |
+| `aria-activedescendant` | ✅ (set on the descendant, gpui-style) |
+| `aria-controls`/`owns`/`describedby`/`details` | ❌ reference attrs — accesskit takes `NodeId`s, no author-id resolution at build time |
