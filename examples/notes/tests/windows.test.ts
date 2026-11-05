@@ -10,6 +10,8 @@
 // over COM from PowerShell and Activate()d with the arguments the toast XML carries.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { launch, type AppHandle } from '@kitop/shell/test';
@@ -841,11 +843,13 @@ function Front($h) { [SdWin]::Chord([byte[]]@(0x87)); [void][SdWin]::SetForegrou
 function Press($x, $y) { [void][SdWin]::SetCursorPos($x, $y); Start-Sleep -Milliseconds 120; [SdWin]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero) }
 function Release { [SdWin]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero) }
 function Descendant($h, [scriptblock]$pred) {
+  $last = ''
   for ($i = 0; $i -lt 40; $i++) {
-    foreach ($e in $A::FromHandle($h).FindAll($TS::Descendants, $True_)) { try { if (& $pred $e) { return $e } } catch {} }
+    foreach ($e in $A::FromHandle($h).FindAll($TS::Descendants, $True_)) { try { if (& $pred $e) { return $e } } catch { $last = $_.Exception.Message } }
     Start-Sleep -Milliseconds 250
   }
-  throw "nothing matches in the window"
+  $seen = @($A::FromHandle($h).FindAll($TS::Descendants, $True_) | ForEach-Object { "$($_.Current.ControlType.ProgrammaticName) '$($_.Current.Name)' #$($_.Current.AutomationId)" }) -join '; '
+  throw "nothing matches in the window. Saw: $seen. Last error: $last"
 }
 function Invoke-El($e) { $p = $null; [void]$e.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$p); $p.Invoke() }
 switch ($Mode) {
@@ -860,13 +864,13 @@ switch ($Mode) {
     Start-Sleep -Milliseconds 200; Release; 'dragged'
   }
   'keys' { if ($s.title) { Front (Wait-Window $s.title) }; [SdWin]::Chord([byte[]]@($s.keys)); 'pressed' }
-  'dialog-button' { $h = Wait-Window $s.title; $b = Descendant $h { param($e) $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $e.Current.Name -eq $s.button }; Invoke-El $b; 'pressed' }
+  'dialog-button' { $h = Wait-Window $s.title; $b = Descendant $h { param($e) $e.Current.ControlType.ProgrammaticName -eq 'ControlType.Button' -and $e.Current.Name -eq $s.button }; Invoke-El $b; 'pressed' }
   'file-dialog' { # The file name box of the common dialog (1001 saving, 1148 opening), then its default button.
     $h = Wait-Window $s.title
-    $edit = Descendant $h { param($e) $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and @('1001', '1148') -contains $e.Current.AutomationId }
+    $edit = Descendant $h { param($e) $e.Current.ControlType.ProgrammaticName -eq 'ControlType.Edit' -and @('1001', '1148') -contains $e.Current.AutomationId }
     $vp = $null; [void]$edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp); $edit.SetFocus(); $vp.SetValue($s.path)
     Start-Sleep -Milliseconds 300
-    $ok = Descendant $h { param($e) $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $e.Current.AutomationId -eq '1' }
+    $ok = Descendant $h { param($e) $e.Current.ControlType.ProgrammaticName -eq 'ControlType.Button' -and $e.Current.AutomationId -eq '1' }
     Invoke-El $ok; 'chosen'
   }
 }
@@ -893,6 +897,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows: beyond notifications', () =>
 	const hits = new Map<string, number>();
 	let ext = ''; // another origin than the app's, on this machine
 	let closedPort = 0;
+	let slowUrl = '';
 	const SLOW_SIZE = 40 * 32 * 1024;
 
 	const op = <T = any>(service: string, name: string, args: Record<string, unknown> = {}, ms = 20_000) =>
@@ -950,21 +955,25 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows: beyond notifications', () =>
 				if (pathname === '/file.txt') return new Response('downloaded body', { headers: attachment });
 				if (pathname === '/inline.txt') return new Response('not an attachment', { headers: { 'content-type': 'text/plain' } });
 				if (pathname === '/frame') return html('<iframe src="/framed"></iframe>');
-				if (pathname === '/slow.bin') {
-					const chunk = new Uint8Array(32 * 1024).fill(97);
-					let sent = 0;
-					return new Response(new ReadableStream({
-						async pull(c) {
-							if (sent++ >= 40) return c.close();
-							await Bun.sleep(100);
-							c.enqueue(chunk);
-						},
-					}), { headers: { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="slow.bin"', 'content-length': String(SLOW_SIZE) } });
-				}
+				if (pathname === '/blocked') log('a request for /blocked', req.method, Object.fromEntries(req.headers));
 				return html(`<p>${pathname}</p>`);
 			},
 		});
 		ext = `http://127.0.0.1:${server.port}`;
+		// Bun.serve drops the Content-Length of a streamed response, and the size is part of what's checked.
+		const chunk = new Uint8Array(32 * 1024).fill(97);
+		const slow = createServer((_req, res) => {
+			res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="slow.bin"', 'content-length': String(SLOW_SIZE) });
+			let sent = 0;
+			const timer = setInterval(() => {
+				if (sent++ < 40) return void res.write(chunk);
+				clearInterval(timer);
+				res.end();
+			}, 100);
+			res.on('close', () => clearInterval(timer));
+		});
+		await new Promise<void>((done) => slow.listen(0, '127.0.0.1', done));
+		slowUrl = `http://127.0.0.1:${(slow.address() as AddressInfo).port}/slow.bin`;
 		const gone = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('') });
 		closedPort = gone.port!;
 		gone.stop(true);
@@ -1224,9 +1233,14 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows: beyond notifications', () =>
 	check('dialog: a confirm answers by its buttons', async () => {
 		const title = 'E2E confirm';
 		const reply = op('dialog', 'showConfirm', { windowId: 0, title, message: 'Sure?' }, 30_000);
-		await Bun.sleep(500);
-		await win('dialog-button', { title, button: 'Cancel' });
-		expect(await reply).toBe(false);
+		try {
+			await Bun.sleep(500);
+			await win('dialog-button', { title, button: 'Cancel' });
+			expect(await reply).toBe(false);
+		} finally {
+			await win('close-if-any', { title }).catch(() => {});
+			await reply.catch(() => {});
+		}
 	});
 
 	check('dialog: save and open dialogs, a path typed in the real dialog, and a cancel', async () => {
@@ -1646,7 +1660,7 @@ Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64Strin
 
 	check('downloads: a slow one reports progress, pauses, resumes to every byte; another is canceled and leaves no file', async () => {
 		await home();
-		const url = `${ext}/slow.bin`;
+		const url = slowUrl;
 		const pausedAt = join(dir, 'slow-paused.bin');
 		const progress = app.nextEvent<{ url: string; receivedBytes: number; totalBytes: number; fraction: number }>('downloadProgress', (e) => e.url === url, 20_000);
 		const dl = await op<{ id: string }>('webview', 'download', { windowId: 0, url, path: pausedAt }, 25_000);
@@ -1742,8 +1756,8 @@ Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64Strin
 			expect(blocked).toMatchObject({ isMainFrame: true, viewId: 'e2e-nav' });
 			await op('webview', 'navigationDecision', { requestId: blocked.requestId, allow: false });
 			await Bun.sleep(800);
-			expect(hits.get('/blocked') ?? 0).toBe(0);
 			expect(await inView('e2e-nav', 'location.pathname')).toBe('/start');
+			expect(hits.get('/blocked') ?? 0).toBe(0);
 			expect(await code('webview', 'navigationDecision', { requestId: blocked.requestId, allow: true })).toBe('unavailable');
 
 			request = asked('/allowed');

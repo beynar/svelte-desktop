@@ -59,8 +59,7 @@ export interface InstallLocation {
 }
 
 /** True when running from a `bun build --compile` executable rather than `bun file.ts`. */
-export function isCompiledBinary(): boolean {
-	const main = typeof Bun !== "undefined" ? Bun.main : "";
+export function isCompiledBinary(main = typeof Bun !== "undefined" ? Bun.main : ""): boolean {
 	return main.startsWith("/$bunfs/") || /^[A-Z]:[\\/]~BUN[\\/]/i.test(main);
 }
 

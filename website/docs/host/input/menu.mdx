@@ -81,7 +81,7 @@ The same item type is used by application, context, Dock and tray menus. Always 
 
 macOS also accepts `services`, `showAll`, `unhide`, `startSpeaking` and `stopSpeaking`; the other platforms accept or skip them without an equivalent action.
 
-On macOS, role names are case-insensitive. Accelerators accept modifiers such as `CmdOrCtrl`, `Cmd`, `Ctrl`, `Alt` and `Shift`, named keys such as `Plus`, `Space`, `Tab`, `Enter`, `Escape`, `Up` and `F1`, or a character. `CmdOrCtrl` means Command on macOS and Control on Linux and Windows. For shortcuts that work outside the application, use [`host.shortcuts`](/host/input/shortcuts). To suppress menu accelerators in one window, use [input policy](/host/input/input-policy).
+On macOS, role names are case-insensitive. Accelerators accept modifiers such as `CmdOrCtrl`, `Cmd`, `Ctrl`, `Alt` and `Shift`, named keys such as `Plus`, `Space`, `Tab`, `Enter`, `Escape`, `Up` and `F1`, or a character. `CmdOrCtrl` means Command on macOS and Control on Linux and Windows. An accelerator that can't be read makes the call reject with `invalid_args` on Linux and Windows; macOS doesn't check it. For shortcuts that work outside the application, use [`host.shortcuts`](/host/input/shortcuts). To suppress menu accelerators in one window, use [input policy](/host/input/input-policy).
 
 ### Radio groups
 

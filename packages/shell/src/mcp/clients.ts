@@ -4,7 +4,9 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { shellEnv } from "../shell-env.ts";
+import { isCompiledBinary } from "../updater/platform.ts";
 import { IDENTITY_ENV, toolsFile, type McpIdentity } from "./files.ts";
 
 export const MCP_CLIENTS = ["claude-desktop", "claude-code", "codex", "cursor"] as const;
@@ -50,8 +52,8 @@ const identity = (): McpIdentity | null => {
 
 /** A built app starts itself with --mcp; under `vite dev`, Bun runs the bridge from its source. */
 export function serverCommand(id: McpIdentity, main = Bun.main, execPath = process.execPath): Server {
-  if (main.startsWith("/$bunfs/") || /^[A-Z]:\\~BUN\\/.test(main)) return { command: process.env.APPIMAGE ?? execPath, args: ["--mcp"] };
-  return { command: execPath, args: [new URL("./bridge.ts", import.meta.url).pathname, JSON.stringify(id)] };
+  if (isCompiledBinary(main)) return { command: process.env.APPIMAGE ?? execPath, args: ["--mcp"] };
+  return { command: execPath, args: [fileURLToPath(new URL("./bridge.ts", import.meta.url)), JSON.stringify(id)] };
 }
 
 export const serverName = (appName: string) => appName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "app";

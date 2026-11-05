@@ -323,6 +323,9 @@ test("names and places", () => {
   expect(clientConfigPath("codex", "linux", "/h", {})).toBe("/h/.codex/config.toml");
   expect(clientConfigPath("codex", "linux", "/h", { CODEX_HOME: "/c" })).toBe("/c/config.toml");
   expect(serverCommand(identity, "/$bunfs/root/app", "/Apps/N.app/Contents/MacOS/N")).toEqual({ command: "/Apps/N.app/Contents/MacOS/N", args: ["--mcp"] });
+  for (const main of ["B:\\~BUN\\root\\app.exe", "B:/~BUN/root/app.exe"]) {
+    expect(serverCommand(identity, main, "C:\\Apps\\N.exe")).toEqual({ command: "C:\\Apps\\N.exe", args: ["--mcp"] });
+  }
   const dev = serverCommand(identity, "/x/vite.js", "/bin/bun");
   expect(dev.command).toBe("/bin/bun");
   expect(dev.args[0]).toEndWith("/mcp/bridge.ts");

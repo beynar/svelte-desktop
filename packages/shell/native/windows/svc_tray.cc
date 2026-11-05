@@ -224,6 +224,14 @@ static void remove_temp_notify() {
   g_temp_notify = false;
 }
 
+// A native name belongs to one platform: an SF Symbol means nothing here, and an app shares its
+// code across platforms. The app's icon stands in, since another icon beats no item at all. A file
+// that won't load stays an error.
+static bool names_native_icon(const json &spec) {
+  if (spec.is_object()) return spec.contains("native") || spec.contains("symbol");
+  return spec.is_string() && spec.get<std::string>().find_first_of("/\\.:~") == std::string::npos;
+}
+
 static void tray_set(CallPtr c) {
   const json &a = c->args;
   std::string error;
@@ -232,8 +240,7 @@ static void tray_set(CallPtr c) {
   int size = GetSystemMetrics(SM_CXSMICON);
   if (a.contains("imageName") && a["imageName"].is_string()) {
     iconGiven = true;
-    icon = load_icon(json{{"native", a["imageName"]}}, size, "tray.set", error);
-    if (!icon) return c->fail("invalid_args", error);
+    icon = load_icon(json{{"native", a["imageName"]}}, size, "tray.set", error); // unknown: the app's icon
   } else if ((a.contains("imagePath") && a["imagePath"].is_string()) || (a.contains("image") && a["image"].is_string())) {
     iconGiven = true;
     icon = load_icon(json{{"path", a.contains("imagePath") ? a["imagePath"] : a["image"]}}, size, "tray.set", error);
@@ -241,7 +248,7 @@ static void tray_set(CallPtr c) {
   } else if (a.contains("icon") && !a["icon"].is_null()) {
     iconGiven = true;
     icon = load_icon(a["icon"], size, "tray.set", error);
-    if (!icon) return c->fail("invalid_args", error);
+    if (!icon && !names_native_icon(a["icon"])) return c->fail("invalid_args", error);
   } else if ((a.contains("imageName") && a["imageName"].is_null()) || (a.contains("imagePath") && a["imagePath"].is_null()) ||
              (a.contains("icon") && a["icon"].is_null())) {
     iconGiven = true; // explicit null: back to the app icon

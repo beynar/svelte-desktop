@@ -357,10 +357,12 @@ static bool append_item(HMENU menu, const json &spec, MenuOwner owner, const std
   if (!accel.empty()) {
     UINT vk, mods;
     std::string display, e;
-    if (parse_accelerator(accel, vk, mods, display, e)) {
-      text += "\t" + display;
-      if (owner == MenuOwner::App && !is_edit_role(role)) g_accels.push_back({vk, mods, cmd});
+    if (!parse_accelerator(accel, vk, mods, display, e)) {
+      error = ctx + ": " + e;
+      return false;
     }
+    text += "\t" + display;
+    if (owner == MenuOwner::App && !is_edit_role(role)) g_accels.push_back({vk, mods, cmd});
   }
   g_cmds[cmd] = item;
   if (spec.contains("id") && spec["id"].is_string()) g_ids[spec["id"].get<std::string>()] = cmd;

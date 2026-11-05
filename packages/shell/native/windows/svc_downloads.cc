@@ -193,7 +193,8 @@ static void update_bytes(Download *d) {
   if (!d->op) return;
   INT64 received = 0, total = -1;
   if (SUCCEEDED(d->op->get_BytesReceived(&received))) d->received = std::max<int64_t>(d->received, received);
-  if (SUCCEEDED(d->op->get_TotalBytesToReceive(&total)) && total >= 0) d->total = total;
+  // Without a Content-Length it answers 0, not the -1 it documents: both mean unknown.
+  if (SUCCEEDED(d->op->get_TotalBytesToReceive(&total)) && total > 0) d->total = total;
 }
 
 static void drop_operation(Download *d) {
