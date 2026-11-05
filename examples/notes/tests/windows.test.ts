@@ -213,7 +213,7 @@ switch ($Mode) {
     $hasTitle = { param($e) $e.Current.Name -like ('*' + $s.title + '*') }
     $inPopup = { param($e) $e.Current.ClassName -eq 'FlexibleToastView' -and $e.Current.Name -like ('*' + $s.title + '*') }
     $toast = $null
-    if (-not $s.center) { for ($i = 0; $i -lt 20 -and -not $toast; $i++) { $toast = Find (Hosts) $inPopup; if (-not $toast) { Start-Sleep -Milliseconds 500 } } } # the popup can take a while
+    if (-not $s.center) { for ($i = 0; $i -lt 60 -and -not $toast; $i++) { $toast = Find (Hosts) $inPopup; if (-not $toast) { Start-Sleep -Milliseconds 500 } } } # the popup can take a while, the first one after Do Not Disturb most of all
     if ($s.center) { # the entry in the notification center: open it, expand collapsed groups, click the entry
       $out.where = 'center'
       [SdInput]::Chord(0x5B, 0x4E); Start-Sleep -Milliseconds 1500
@@ -234,8 +234,9 @@ switch ($Mode) {
       }
     } elseif (-not $toast) {
       if ($s.noCenter) { $out.error = 'no popup'; ($out | ConvertTo-Json -Compress); exit 0 }
-      [SdInput]::Chord(0x5B, 0x4E); Start-Sleep -Milliseconds 1500 # Win+N: notification center
-      $out.where = 'center'; $toast = Find (Hosts) $hasTitle
+      [SdInput]::Chord(0x5B, 0x4E) # Win+N: notification center
+      $out.where = 'center'
+      for ($i = 0; $i -lt 24 -and -not $toast; $i++) { Start-Sleep -Milliseconds 500; $toast = Find (Hosts) $hasTitle }
     }
     if (-not $toast) { $out.error = 'toast not found'; ($out | ConvertTo-Json -Compress); exit 0 }
     $out.toast = Desc $toast

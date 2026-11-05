@@ -81,6 +81,13 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force $env:WINDOWS_SHOTS | Out-Null
           bun test --timeout 180000 tests/windows.test.ts
+      - name: Probe, temporary (<something>.localhost)
+        if: always()
+        continue-on-error: true
+        working-directory: examples/notes
+        env:
+          WINDOWS_APP: ${{ github.workspace }}\notes-app
+        run: bun test --timeout 120000 tests/localhost-probe.test.ts
       - name: Screenshots
         if: always()
         uses: actions/upload-artifact@v4
