@@ -5,7 +5,8 @@ name: windows
 
 on:
   push:
-    branches: [bun-webview-shell]
+    branches: [main, bun-webview-shell]
+  pull_request:
   workflow_dispatch:
 
 concurrency:

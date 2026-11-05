@@ -4,6 +4,10 @@ Builds on the portable core (`../portable`). Cross-compiled from macOS/Linux wit
 llvm-mingw in Docker: `native/build-windows.sh x64 arm64` → `native/build/windows-<arch>/shell.dll`.
 Packaging is in `src/build/package-windows.ts` (`build: { target: 'windows' }`).
 
+## Verified on Windows
+CI runs `examples/notes/tests/windows.test.ts` on a real Windows runner (`.github/workflows/windows.yml`):
+WebView2, WinRT toasts, the COM toast activator. What's listed below as not run yet still hasn't been.
+
 ## Verified without Windows
 - Clean build (`-Wall -Wextra`, llvm-mingw, WebView2 SDK headers); every `shell.h` export
   present; only system DLLs + UCRT imported; the built-in WebView2 loader (no WebView2Loader.dll).
@@ -16,7 +20,7 @@ Packaging is in `src/build/package-windows.ts` (`build: { target: 'windows' }`).
   uninstaller — install/uninstall checked under Wine), Authenticode with osslsigncode,
   signed `update.json` (`windows-x64`, `windows-arm64`).
 
-## Risks to check on the first real Windows run
+## Risks to check beyond what CI covers
 1. WebView2 environment creation goes through the runtime's internal entry point
    (`CreateWebViewEnvironmentWithOptionsInternal`), as webview/webview's built-in loader does.
 2. COM apartment: WebView2 needs STA on the UI thread; if Bun initialised the main thread

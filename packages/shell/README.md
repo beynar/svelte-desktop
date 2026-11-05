@@ -41,7 +41,7 @@ Requirements: macOS 12+, Bun ≥ 1.4, Xcode command line tools, `@sveltejs/adapt
 
 | | |
 |---|---|
-| **Your app, unchanged** | SvelteKit SSR + remote functions + `bun:sqlite`, served on a random loopback port behind a session-cookie gate (Host check, one-time secret, HttpOnly cookie) |
+| **Your app, unchanged** | SvelteKit SSR + remote functions + `bun:sqlite`, served on a loopback port of its own behind a session-cookie gate (Host check, one-time secret, HttpOnly cookie) |
 | **Dev mode** | `vite dev` opens the native window on the Vite server: HMR in the window, Web Inspector, server code reaches native APIs through an RPC bridge, native plugin rebuilt and window restarted on change, `desktop.config.ts` edits restart. Closing the window ends `vite dev`. |
 | **Native API** | 245 ops in 22 services (incl. aliases), typed, from pages **and** server code, plus reactive stores (`import { theme, window, tray } from '@kitop/shell/stores'`). [Platform API](#platform-api) |
 | **Your own native code** | `native/*.swift` / `*.m` / `*.c` → a plugin dylib, commands in Rust, Go, Swift, Objective-C or C, one typed API from pages and server (`native.svc.op()`); `native/addons/*.c` → Node-API addons (`loadAddon`); `sidecars` for executables. [Native code](#native-code) |

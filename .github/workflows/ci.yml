@@ -1,0 +1,80 @@
+# The shell on macOS and Linux, on every push and pull request. Windows has its own workflow, since
+# its build goes through a Docker toolchain and its e2e needs two jobs: windows.yml.
+name: ci
+
+on:
+  push:
+    branches: [main, bun-webview-shell]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: 1.4.4
+
+jobs:
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install
+        working-directory: packages/shell
+        run: bun install
+      - name: Unit tests
+        working-directory: packages/shell
+        run: bun test src
+
+  linux:
+    # Native suites and the built examples, in the image under a headless session.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Build the image
+        run: packages/shell/test/docker/run.sh image
+      - name: Native platform suites
+        run: packages/shell/test/docker/run.sh platform
+      - name: End to end
+        run: packages/shell/test/docker/run.sh e2e
+
+  macos:
+    # The built app, in the runner's logged-in session. What needs the user at the screen
+    # (a real permission prompt, the keychain) stays out.
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install
+        run: |
+          (cd packages/shell && bun install)
+          (cd examples/notes && bun install)
+          (cd examples/panes && bun install)
+      - name: Build notes (plugins in Swift, Rust, Go and Python included)
+        working-directory: examples/notes
+        run: bunx --bun vite build
+      - name: The packaged app answers MCP, with no window
+        working-directory: examples/notes
+        run: bun test --timeout 60000 tests/mcp.test.ts tests/relaunch.test.ts
+      - name: Build panes
+        working-directory: examples/panes
+        run: bunx --bun vite build
+      - name: Split panes
+        working-directory: examples/panes
+        run: bun test --timeout 60000 tests/panes.test.ts

@@ -9,6 +9,7 @@
 import { readAppFile, writeAppFile } from './app-files';
 
 const FILE_NAME = 'kitop-store.json';
+const CORRUPT_NAME = `${FILE_NAME}.corrupt`;
 const SAVE_DEBOUNCE_MS = 250;
 
 let data: Record<string, unknown> = {};
@@ -29,6 +30,16 @@ function scheduleSave(): void {
 		// is the propagating lane for callers that need the error.
 		void persist().catch(() => {});
 	}, SAVE_DEBOUNCE_MS);
+}
+
+// A page going away (its window closing, a reload) doesn't lose what it just set.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+	window.addEventListener('pagehide', () => {
+		if (!timer) return;
+		clearTimeout(timer);
+		timer = null;
+		void persist().catch(() => {});
+	});
 }
 
 export const store = {
@@ -73,7 +84,10 @@ export const store = {
 			parsed = JSON.parse(text);
 		} catch {
 			// Corrupt file falls back to {} — matches windowState.load()'s
-			// tolerance; a broken store must not brick the namespace.
+			// tolerance; a broken store must not brick the namespace. Its content stays
+			// beside it: the next save would otherwise erase what might be recovered.
+			console.error(`store: ${FILE_NAME} isn't valid JSON: starting empty, its content is kept in ${CORRUPT_NAME}`);
+			await writeAppFile('userData', CORRUPT_NAME, text).catch(() => {});
 		}
 		data =
 			parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)

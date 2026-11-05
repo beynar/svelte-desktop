@@ -150,7 +150,6 @@ const BUN_ENTITLEMENTS: Record<string, boolean> = {
   "com.apple.security.cs.allow-jit": true,
   "com.apple.security.cs.allow-unsigned-executable-memory": true,
   "com.apple.security.cs.disable-executable-page-protection": true,
-  "com.apple.security.cs.allow-dyld-environment-variables": true,
   // Bun extracts embedded N-API addons / bun:ffi libraries to a temp dir before dlopen.
   "com.apple.security.cs.disable-library-validation": true,
 };

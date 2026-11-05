@@ -175,7 +175,7 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
   if (!socket) {
     proc.kill();
     server.stop(true);
-    throw new Error(`launch: the app did not connect within ${timeout} ms\n${stdout.slice(-2000)}`);
+    throw new Error(`launch: the app did not connect within ${timeout} ms. A build signed to be distributed has no test channel: build with KITOP_TEST_BUILD=1 to test it.\n${stdout.slice(-2000)}`);
   }
   return makeHandle({
     origin: h.origin,

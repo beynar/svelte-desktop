@@ -17,7 +17,8 @@
 // native/addons/*.c|cc|cpp → <name>.node (napi_* resolved from the host .exe via a
 // delay-load hook, as node-gyp does). Swift / Objective-C plugins are macOS-only.
 import { $ } from "bun";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
 import { compileStaged, sizeFlags } from "./bun-compile.ts";
@@ -480,9 +481,15 @@ function publisher(c: ResolvedConfig): string {
 // ---------------------------------------------------------------------------
 // Signing (Authenticode, osslsigncode)
 
-interface SignSetup { pfx: string; password: string; timestamp: string }
+interface PfxSetup { pfx: string; password: string; timestamp: string }
+type SignSetup = PfxSetup | { command: string[] };
 
 function signSetup(c: ResolvedConfig): SignSetup | null {
+  const command = c.sign?.windows?.command;
+  if (command?.length) {
+    if (!command.some((a) => a.includes("{file}"))) throw new Error("sign.windows.command: no {file} in it, so it wouldn't sign anything");
+    return { command };
+  }
   const pfx = c.sign?.windows?.certificateFile ?? process.env.WINDOWS_CERT_PFX;
   if (!pfx) return null;
   const abs = resolve(c.root, pfx);
@@ -490,14 +497,29 @@ function signSetup(c: ResolvedConfig): SignSetup | null {
   return { pfx: abs, password: c.sign?.windows?.password ?? process.env.WINDOWS_CERT_PASSWORD ?? "", timestamp: c.sign?.windows?.timestampUrl ?? "http://timestamp.digicert.com" };
 }
 
+/** Signs each file with the app's tool. Its output stays out of the build's log unless it fails. */
+export async function signWithCommand(files: string[], command: string[]): Promise<void> {
+  for (const file of files) {
+    const proc = Bun.spawn(command.map((a) => a.replaceAll("{file}", file)), { stdout: "pipe", stderr: "pipe" });
+    const [code, out, err] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    if (code !== 0) throw new Error(`sign.windows.command failed for ${basename(file)} (exit ${code}):\n${out}${err}`);
+  }
+}
+
 async function signFiles(files: string[], s: SignSetup, name: string): Promise<void> {
   if (!files.length) return;
+  if ("command" in s) return signWithCommand(files, s.command);
   const host = await onPath("osslsigncode");
   if (!host && !(await hasDocker())) throw new Error("Windows signing needs osslsigncode (on PATH or in the Docker toolchain)");
+  // In a private file: a command's arguments are visible to every process on the machine.
+  const passDir = mkdtempSync(join(tmpdir(), "kitop-sign-"));
+  const passFile = join(passDir, "pass");
+  writeFileSync(passFile, s.password, { mode: 0o600 });
+  try {
   for (const f of files) {
     const signed = `${f}.signed`;
     rmSync(signed, { force: true });
-    const args = ["sign", "-pkcs12", host ? s.pfx : `/certdir/${basename(s.pfx)}`, "-pass", s.password, "-n", name, "-h", "sha256", "-ts", s.timestamp];
+    const args = ["sign", "-pkcs12", host ? s.pfx : `/certdir/${basename(s.pfx)}`, "-readpass", host ? passFile : "/passdir/pass", "-n", name, "-h", "sha256", "-ts", s.timestamp];
     let ok: boolean, out: string;
     if (host) {
       const r = await $`osslsigncode ${args} -in ${f} -out ${signed}`.nothrow().quiet();
@@ -506,13 +528,16 @@ async function signFiles(files: string[], s: SignSetup, name: string): Promise<v
     } else {
       const quote = (a: string) => `'${a.replace(/'/g, `'\\''`)}'`;
       ({ ok, out } = await inToolchain(
-        [[dirname(s.pfx), "/certdir:ro"], [dirname(f), "/f"]],
+        [[dirname(s.pfx), "/certdir:ro"], [passDir, "/passdir:ro"], [dirname(f), "/f"]],
         `osslsigncode ${args.map(quote).join(" ")} -in /f/${quote(basename(f))} -out /f/${quote(basename(signed))}`,
       ));
     }
     if (!ok || !existsSync(signed)) throw new Error(`osslsigncode failed for ${basename(f)}:\n${out}`);
     rmSync(f);
     await $`mv ${signed} ${f}`.quiet();
+  }
+  } finally {
+    rmSync(passDir, { recursive: true, force: true });
   }
 }
 

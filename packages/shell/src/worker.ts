@@ -8,13 +8,16 @@ import { installDesktopApi } from "./server.ts";
 import { startGate } from "./gate.ts";
 import { createDesktopRuntime, type DesktopRuntime } from "./desktop-api.ts";
 import { connectTestChannel } from "./test-channel.ts";
+import { listenOnAppPort } from "./app-port.ts";
 import { redirectConsole } from "./logging.ts";
 import type { McpEndpoint, McpIdentity } from "./mcp/files.ts";
 import { startPath } from "./start-path.ts";
 import "./platform/protocol.ts";
 import { initPlatform, deliverPlatformEvent } from "./platform/bus.ts";
 import { appLifecycle } from "./platform/app-lifecycle.ts";
-import { createUpdater, type UpdateInfo } from "./updater/index.ts";
+import type { UpdateInfo } from "./updater/index.ts";
+import { isCompiledBinary } from "./updater/platform.ts";
+import { confirmWhenHealthy, shellUpdater } from "./updater/startup.ts";
 import type { InitMessage, ShellEvent } from "./types.ts";
 import type { WebSocketHandlers } from "./websocket.ts";
 
@@ -29,14 +32,16 @@ export interface WorkerOptions {
   websocket?: WebSocketHandlers<any>;
   /** src/mcp.ts: the app's MCP server, started by the adapter's entry (only that app carries the SDK). */
   mcp?: (identity: McpIdentity) => McpEndpoint;
+  /** `launch()` can drive this build (test-channel.ts). Off in a build signed to be distributed. */
+  testChannel?: boolean;
 }
 
 const UPDATE_PATH = "/__desktop/update/";
 
-export function startWorker({ handler, routes = {}, websocket, mcp }: WorkerOptions) {
+export function startWorker({ handler, routes = {}, websocket, mcp, testChannel = true }: WorkerOptions) {
   self.addEventListener("message", async (e: MessageEvent) => {
     const msg = e.data;
-    if (msg?.type === "init") await init(msg as InitMessage, handler, routes, websocket, mcp);
+    if (msg?.type === "init") await init(msg as InitMessage, handler, routes, websocket, mcp, testChannel);
     if (msg?.type === "shutdown") await shutdown();
   });
 }
@@ -53,6 +58,7 @@ const SECRET_PARAMS = /([?&#](?:code|state|access_token|id_token|refresh_token|c
 const redact = (s: string) => s.replace(SECRET_PARAMS, "$1…");
 
 function dispatch(event: ShellEvent) {
+  if (event.type === "ready") updateHealth?.pageReady();
   if (debug) console.log(`[shell] event ${event.type === "platform" && event.name === "protocolRequest" ? "protocolRequest" : redact(JSON.stringify(event))}`);
   // Platform API traffic: pages get platform events straight from native;
   // here they feed the Worker's bus (server code's `@kitop/shell/platform`).
@@ -80,7 +86,7 @@ async function handleRequest(handler: KitHandler, req: Request, srv: Server<any>
   }
 }
 
-async function init(msg: InitMessage, handler: KitHandler, routes: Record<string, any>, websocket?: WebSocketHandlers<any>, mcp?: WorkerOptions["mcp"]) {
+async function init(msg: InitMessage, handler: KitHandler, routes: Record<string, any>, websocket?: WebSocketHandlers<any>, mcp?: WorkerOptions["mcp"], testChannel = true) {
   if (msg.logFile) redirectConsole(msg.logFile, "worker");
   native = openNative(msg.lib);
   sink = new JSCallback(
@@ -102,20 +108,21 @@ async function init(msg: InitMessage, handler: KitHandler, routes: Record<string
   });
   const updates = msg.update ? setupUpdater(msg) : null;
 
-  const gate = startGate({
+  const gate = listenOnAppPort(msg.identifier, (port) => startGate({
     handler: (req, srv) => handleRequest(handler, req, srv),
     routes,
     secret: msg.secret,
     appName: msg.appName,
     websocket,
     debug,
+    port,
     extra: (req, url, origin) => {
       if (!url.pathname.startsWith(UPDATE_PATH) || req.method !== "POST") return;
       // Same-origin only: the session cookie is SameSite=Strict, Origin pins it further.
       if (req.headers.get("origin") !== origin) return new Response("Forbidden", { status: 403 });
       return updateRoute(updates, url.pathname.slice(UPDATE_PATH.length));
     },
-  });
+  }));
   server = gate.server;
   const origin = gate.origin;
   native.shell_set_app_origin(cstr(origin));
@@ -125,7 +132,7 @@ async function init(msg: InitMessage, handler: KitHandler, routes: Record<string
   // cleanup while its asynchronous willQuit phase still holds that reply.
   if (process.platform === "darwin") appLifecycle.onWillQuit(() => runQuitCleanup());
   installDesktopApi(runtime.api);
-  connectTestChannel({ origin, appName: msg.appName });
+  if (testChannel) connectTestChannel({ origin, appName: msg.appName });
   if (mcp) {
     const served = mcp({ identifier: msg.identifier, appName: msg.appName, version: msg.version });
     void served.publish();
@@ -137,23 +144,17 @@ async function init(msg: InitMessage, handler: KitHandler, routes: Record<string
 }
 
 // ---------------------------------------------------------------------------
-// Updater: configured by the adapter's `update` option. Healthy start confirms
-// a freshly applied update; an unconfirmed one rolls back on the next start.
+// Updater: configured by the adapter's `update` option. The UI thread counts each launch (main.ts);
+// a page staying up confirms a freshly applied update (updater/startup.ts).
 
 type Updates = ReturnType<typeof setupUpdater>;
 const UPDATER_KEY = Symbol.for("kitop.updater");
+let updateHealth: ReturnType<typeof confirmWhenHealthy> | undefined;
 
 function setupUpdater(msg: InitMessage) {
   const cfg = msg.update!;
-  const updater = createUpdater({
-    manifestUrl: cfg.manifestUrl,
-    publicKey: cfg.publicKey,
-    channel: cfg.channel,
-    currentVersion: msg.version,
-    appName: msg.identifier,
-    // process.exit() in a Worker only ends the Worker: quit through the UI thread.
-    quit: () => native.shell_quit(),
-  });
+  // process.exit() in a Worker only ends the Worker: quit through the UI thread.
+  const updater = shellUpdater(cfg, msg.version, msg.identifier, () => native.shell_quit());
   let last: UpdateInfo | null = null;
   const wire = (i: UpdateInfo) => ({
     currentVersion: i.currentVersion,
@@ -178,8 +179,7 @@ function setupUpdater(msg: InitMessage) {
   };
   (globalThis as any)[UPDATER_KEY] = api;
   // Bundled builds only: a bare binary under `bun` has nothing to roll back/confirm.
-  if (Bun.main.startsWith("/$bunfs/"))
-    updater.rollbackIfNeeded().then(async (rolledBack) => { if (!rolledBack) await updater.confirm(); }).catch((err) => console.error("[shell] updater startup:", err));
+  if (isCompiledBinary()) updateHealth = confirmWhenHealthy(updater);
   return api;
 }
 
@@ -196,7 +196,7 @@ async function updateRoute(updates: Updates | null, op: string) {
 
 let quitCleanup: Promise<void> | undefined;
 function runQuitCleanup() {
-  return quitCleanup ??= runtime?.runBeforeQuit() ?? Promise.resolve();
+  return quitCleanup ??= Promise.all([updateHealth?.quitting(), runtime?.runBeforeQuit()]).then(() => {});
 }
 
 async function shutdown() {

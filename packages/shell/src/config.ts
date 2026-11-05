@@ -39,8 +39,14 @@ export interface SignConfig {
   /** macOS provisioning profile (.provisionprofile) embedded in the bundle — needed by restricted
    *  entitlements such as Push Notifications (`push.apns`). */
   provisioningProfile?: string;
-  /** Windows Authenticode signing (osslsigncode). Also enabled by $WINDOWS_CERT_PFX (+ $WINDOWS_CERT_PASSWORD). */
+  /** Windows Authenticode signing: `command` (a key in a cloud service or a hardware token), or a
+   *  certificate file through osslsigncode. Also enabled by $WINDOWS_CERT_PFX (+ $WINDOWS_CERT_PASSWORD). */
   windows?: {
+    /** Your signing tool, run once per file, which it signs in place: `{file}` is that file. Takes
+     *  precedence over `certificateFile`. Certificate authorities have only issued keys on hardware
+     *  or in cloud services since 2023, so most new certificates need this.
+     *  Example: `['AzureSignTool', 'sign', '--azure-key-vault-url', url, '{file}']`. */
+    command?: string[];
     /** PKCS#12 (.pfx/.p12) code-signing certificate, relative to the project. Default: $WINDOWS_CERT_PFX. */
     certificateFile?: string;
     /** Certificate password. Default: $WINDOWS_CERT_PASSWORD. */

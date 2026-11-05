@@ -10,8 +10,9 @@
 // and the packaging pipeline (src/build/package.ts) turns it into a signed .app,
 // zip, DMG and release artifacts.
 //
-// Do not set `kit.paths.origin`: the app is served on a random loopback port.
+// Do not set `kit.paths.origin`: the app is served on a loopback port of its own (app-port.ts).
 import fs from 'node:fs';
+import { keepsTestChannel } from './build/test-channel-policy.ts';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig } from './config.ts';
@@ -40,7 +41,7 @@ export default function desktopAdapter(options) {
 		name: 'kitop',
 		async adapt(builder) {
 			if (builder.config.paths?.origin) {
-				builder.log.warn('kitop: kit.paths.origin is ignored; the app runs on a random loopback port');
+				builder.log.warn('kitop: kit.paths.origin is ignored; the app runs on a loopback port of its own');
 			}
 			const real_build = Bun.build;
 			Bun.build = async (bunConfig) => {
@@ -180,7 +181,7 @@ import { routes } from './adapter/routes.js';
 import './desktop-jobs.js';
 import './desktop-services.js';
 ${socket ? `import websocket from ${JSON.stringify(socket)};\n` : ''}${has_mcp ? `import mcpServer from ${JSON.stringify(built_mcp)};\nimport { createMcpHandler } from '@modelcontextprotocol/server';\nimport { startMcpEndpoint } from ${src('mcp/app.ts')};\n` : ''}import { startWorker } from ${src('worker.ts')};
-startWorker({ handler, routes${socket ? ', websocket' : ''}${has_mcp ? ', mcp: (identity) => startMcpEndpoint(identity, createMcpHandler, () => mcpServer)' : ''} });
+startWorker({ handler, routes${socket ? ', websocket' : ''}${has_mcp ? ', mcp: (identity) => startMcpEndpoint(identity, createMcpHandler, () => mcpServer)' : ''}, testChannel: ${keepsTestChannel(c)} });
 `
 	);
 	fs.writeFileSync(path.join(dir, 'desktop.json'), JSON.stringify(runtime, null, '\t'));

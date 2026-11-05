@@ -2,6 +2,7 @@
 	"name": "@kitop/shell",
 	"version": "0.0.1",
 	"private": true,
+	"license": "MIT",
 	"type": "module",
 	"description": "Desktop apps from an unmodified SvelteKit app: one Vite plugin, one config file, a signed single-binary .app.",
 	"exports": {
