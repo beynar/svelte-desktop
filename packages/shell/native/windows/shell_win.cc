@@ -194,6 +194,19 @@ HWND hidden_window() { return g_hidden; }
 void add_hidden_hook(MsgHook hook) { g_hidden_hooks.push_back(std::move(hook)); }
 void add_quit_hook(std::function<void()> hook) { g_quit_hooks.push_back(std::move(hook)); }
 
+static std::map<UINT_PTR, std::function<void()>> g_after;
+void run_after(UINT ms, std::function<void()> fn) {
+  UINT_PTR timer = SetTimer(nullptr, 0, ms, [](HWND, UINT, UINT_PTR id, DWORD) {
+    KillTimer(nullptr, id);
+    auto it = g_after.find(id);
+    if (it == g_after.end()) return;
+    auto run = std::move(it->second);
+    g_after.erase(it);
+    run();
+  });
+  if (timer) g_after[timer] = std::move(fn);
+}
+
 static bool g_quit_on_last_window = true; // desktop.config quitOnLastWindowClosed
 static json g_main_opts;                    // the first window's options (recreate_main_window)
 void request_quit() { PostQuitMessage(0); }
@@ -423,6 +436,49 @@ static std::wstring user_data_dir() {
   return dir;
 }
 
+std::string local_file(const std::string &name) {
+  wchar_t *local = nullptr;
+  std::wstring dir;
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local)) && local) dir = local;
+  if (local) CoTaskMemFree(local);
+  dir += L"\\" + wide(app_identifier());
+  CreateDirectoryW(dir.c_str(), nullptr);
+  return utf8(dir + L"\\" + wide(name));
+}
+
+json read_json_file(const std::string &path, const json &fallback) {
+  HANDLE f = CreateFileW(wide(path).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (f == INVALID_HANDLE_VALUE) return fallback;
+  std::string bytes;
+  char buf[16384];
+  DWORD n = 0;
+  while (ReadFile(f, buf, sizeof buf, &n, nullptr) && n) bytes.append(buf, n);
+  CloseHandle(f);
+  json v = json::parse(bytes, nullptr, false);
+  return v.is_discarded() ? fallback : v;
+}
+
+void write_json_file(const std::string &path, const json &value) {
+  std::wstring target = wide(path), tmp = target + L".tmp";
+  HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (f == INVALID_HANDLE_VALUE) return;
+  std::string bytes = value.dump();
+  DWORD n = 0;
+  BOOL ok = WriteFile(f, bytes.data(), (DWORD)bytes.size(), &n, nullptr);
+  CloseHandle(f);
+  if (ok && n == bytes.size()) MoveFileExW(tmp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING);
+  else DeleteFileW(tmp.c_str());
+}
+
+std::string expand_home(const std::string &path) {
+  if (path.empty() || path[0] != '~' || (path.size() > 1 && path[1] != '/' && path[1] != '\\')) return path;
+  wchar_t *home = nullptr;
+  std::string out = path;
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Profile, 0, nullptr, &home)) && home) out = utf8(home) + path.substr(1);
+  if (home) CoTaskMemFree(home);
+  return out;
+}
+
 static void env_failed(HRESULT hr) {
   fprintf(stderr, "[shell] WebView2 environment failed: %s\n", hresult_message(hr).c_str());
   g_env_waiters.clear();
@@ -606,10 +662,12 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
         LPWSTR uri = nullptr;
         args->get_Uri(&uri);
         std::string url = take_string(uri);
+        sessions_page_unloaded(id);
         if (View *bv = find_view(id); bv && !bv->browserView.empty()) {
-          // view.*: a browser view — web URLs load, anything else is refused.
+          // view.*: a browser view — web URLs load, anything else is refused; then the app's veto.
           std::string sc = url_scheme(url);
           if (!(sc == "http" || sc == "https" || sc == "about" || sc == "data" || sc == "blob")) args->put_Cancel(TRUE);
+          else web_navigation_policy(bv, url, true, args);
           return S_OK;
         }
         if (is_internal_url(url)) return S_OK;
@@ -619,6 +677,18 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
       });
   v->webview->add_NavigationStarting(onNav, &v->tokens[1]);
   onNav->Release();
+
+  auto *onFrameNav = new Cb<ICoreWebView2NavigationStartingEventHandler, ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *>(
+      IID_ICoreWebView2NavigationStartingEventHandler, [id](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
+        View *bv = find_view(id);
+        if (!bv || bv->browserView.empty()) return S_OK;
+        LPWSTR uri = nullptr;
+        args->get_Uri(&uri);
+        web_navigation_policy(bv, take_string(uri), false, args);
+        return S_OK;
+      });
+  v->webview->add_FrameNavigationStarting(onFrameNav, &v->tokens[8]);
+  onFrameNav->Release();
 
   // view.*: once it's there. A response that turns out to be a download leaves the page where it is.
   auto *onContent = new Cb<ICoreWebView2ContentLoadingEventHandler, ICoreWebView2 *, ICoreWebView2ContentLoadingEventArgs *>(
@@ -690,19 +760,25 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
   onFail->Release();
 
   auto *onPermission = new Cb<ICoreWebView2PermissionRequestedEventHandler, ICoreWebView2 *, ICoreWebView2PermissionRequestedEventArgs *>(
-      IID_ICoreWebView2PermissionRequestedEventHandler, [](ICoreWebView2 *, ICoreWebView2PermissionRequestedEventArgs *args) -> HRESULT {
-        LPWSTR uri = nullptr;
-        args->get_Uri(&uri);
-        bool app = url_origin(take_string(uri)) == app_origin() && !app_origin().empty();
-        COREWEBVIEW2_PERMISSION_KIND kind = COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION;
-        args->get_PermissionKind(&kind);
-        if (kind == COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ || kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA ||
-            kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE || kind == COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS)
-          args->put_State(app ? COREWEBVIEW2_PERMISSION_STATE_ALLOW : COREWEBVIEW2_PERMISSION_STATE_DENY);
+      IID_ICoreWebView2PermissionRequestedEventHandler, [id](ICoreWebView2 *, ICoreWebView2PermissionRequestedEventArgs *args) -> HRESULT {
+        web_permission_requested(find_view(id), args);
         return S_OK;
       });
   v->webview->add_PermissionRequested(onPermission, &v->tokens[5]);
   onPermission->Release();
+
+  if (auto *wv27 = query<ICoreWebView2_27>(v->webview, IID_ICoreWebView2_27)) { // getDisplayMedia
+    auto *onCapture = new Cb<ICoreWebView2ScreenCaptureStartingEventHandler, ICoreWebView2 *, ICoreWebView2ScreenCaptureStartingEventArgs *>(
+        IID_ICoreWebView2ScreenCaptureStartingEventHandler, [id](ICoreWebView2 *, ICoreWebView2ScreenCaptureStartingEventArgs *args) -> HRESULT {
+          web_screen_capture_starting(find_view(id), args);
+          return S_OK;
+        });
+    wv27->add_ScreenCaptureStarting(onCapture, &v->tokens[10]);
+    onCapture->Release();
+    wv27->Release();
+  }
+
+  downloads_attach(v);
 
   // Menu accelerators while the page has keyboard focus (keys go to the browser process).
   auto *onKey = new Cb<ICoreWebView2AcceleratorKeyPressedEventHandler, ICoreWebView2Controller *, ICoreWebView2AcceleratorKeyPressedEventArgs *>(
@@ -807,6 +883,12 @@ void view_destroy(View *v) {
     v->webview->remove_NavigationCompleted(v->tokens[3]);
     v->webview->remove_ProcessFailed(v->tokens[4]);
     v->webview->remove_PermissionRequested(v->tokens[5]);
+    v->webview->remove_FrameNavigationStarting(v->tokens[8]);
+    if (auto *wv27 = query<ICoreWebView2_27>(v->webview, IID_ICoreWebView2_27)) {
+      wv27->remove_ScreenCaptureStarting(v->tokens[10]);
+      wv27->Release();
+    }
+    downloads_detach(v);
   }
   if (v->controller) {
     v->controller->remove_AcceleratorKeyPressed(v->tokens[6]);
@@ -1361,9 +1443,12 @@ static int run_loop() {
   }
   for (auto &hook : g_quit_hooks) hook();
   // The Worker gets a bounded graceful shutdown after this returns; don't leave
-  // frozen windows on screen meanwhile.
+  // frozen windows on screen meanwhile. Quitting destroys no window: save where they are first.
   for (int id : g_order)
-    if (Window *w = find_window(id)) ShowWindow(w->hwnd, SW_HIDE);
+    if (Window *w = find_window(id)) {
+      save_placement(w);
+      ShowWindow(w->hwnd, SW_HIDE);
+    }
   return 0;
 }
 
@@ -1476,6 +1561,9 @@ void backend_init_services() {
   register_diagnostics();
   register_popover();
   register_webview();
+  register_web_policy();
+  register_downloads();
+  register_sessions();
   register_deep_link();
 }
 } // namespace sd

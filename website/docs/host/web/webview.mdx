@@ -18,11 +18,11 @@ Methods with a `target` argument accept `WebviewTarget`, defaulting to `{}`. Opt
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `viewId` | `string` | Omitted | [Embedded-view](/host/windows/view) identifier. macOS only for these methods. |
+| `viewId` | `string` | Omitted | [Embedded-view](/host/windows/view) identifier. macOS and Windows for these methods. |
 | `popoverId` | `string` | Omitted | [Popover](/host/windows/popover) identifier. |
 | `windowId` | `number` | Omitted | Public [window](/host/windows/windows#finding-windows) id; `0` is the main window. |
 
-On macOS, selection order is `viewId`, `popoverId`, `windowId`, the calling page, then the main window. Linux and Windows resolve `popoverId`, `windowId`, the calling page, then the main window; they do not resolve `viewId` in these methods. Select a window or popover explicitly there. Unknown selected targets reject with `invalid_args`.
+On macOS, selection order is `viewId`, `popoverId`, `windowId`, the calling page, then the main window. Windows resolves `popoverId`, `viewId`, `windowId`, the calling page, then the main window. Linux resolves `popoverId`, `windowId`, the calling page, then the main window; it does not resolve `viewId` in these methods. Select a window or popover explicitly there. Unknown selected targets reject with `invalid_args`.
 
 `WebviewSource` has the same optional fields. Events identify their source with `windowId`, `popoverId`, or `viewId` plus the owning `windowId`.
 
@@ -215,11 +215,11 @@ Resolves `{ enabled: boolean }`. A missing `enabled` rejects with `invalid_args`
 
 Set the app-wide default download directory. `path: string | null` accepts `null` to restore `~/Downloads`; a string expands `~` and creates missing directories.
 
-Resolves `{ path: string }`. Directory creation failure rejects with `denied`. Downloads without an explicit path receive unique names, including concurrent downloads. macOS only.
+Resolves `{ path: string }`. Directory creation failure rejects with `denied`. Downloads without an explicit path receive unique names, including concurrent downloads. macOS and Windows.
 
 ### `getDownloadDirectory()`
 
-Read the default download directory. Resolves `{ path: string }`. macOS only.
+Read the default download directory. Resolves `{ path: string }`. macOS and Windows.
 
 ### `download(url, options?)`
 
@@ -237,15 +237,17 @@ const { id, url } = await host.webview.download('/export.csv');
 
 Resolves `{ id: string; url: string }` when WebKit creates the download, before completion. Schemes other than HTTP, HTTPS, `blob:` and `data:`, or nonabsolute explicit paths, reject with `invalid_args`. Observe completion with the download events below.
 
-The destination handler on [`host.downloads`](/host/web/downloads) can override the destination or cancel the request. Automatic attachment and link downloads share the same records. macOS only.
+The destination handler on [`host.downloads`](/host/web/downloads) can override the destination or cancel the request. Automatic attachment and link downloads share the same records. macOS and Windows.
+
+WebView2 has no call that starts a download, so on Windows the page does it, and the view must have one loaded. On its own origin, and for `blob:` and `data:`, that is a link with the `download` attribute. From another origin it is a hidden frame, so the response must be an attachment: otherwise the page stays where it is and the call rejects with `unavailable` after 15 seconds. It also rejects with `unavailable` if the page's frame policy blocks the request.
 
 ### `cancelDownload(id)`
 
-Cancel an active transfer. `id: string` is required. Resolves `null` as an acknowledgement; native cancellation and `downloadFailed` follow asynchronously. An unknown id rejects with `invalid_args`; a transfer that is no longer active rejects with `unavailable`. Use [`host.downloads.cancel`](/host/web/downloads) to await its final record. macOS only.
+Cancel an active transfer. `id: string` is required. Resolves `null` as an acknowledgement; native cancellation and `downloadFailed` follow asynchronously. An unknown id rejects with `invalid_args`; a transfer that is no longer active rejects with `unavailable`. Use [`host.downloads.cancel`](/host/web/downloads) to await its final record. macOS and Windows.
 
 ### `listDownloads()`
 
-Read download history, newest first, including completed, canceled, paused and interrupted transfers. Resolves [`DownloadRecord[]`](/host/web/downloads), the same records as `host.downloads.list()`. macOS only.
+Read download history, newest first, including completed, canceled, paused and interrupted transfers. Resolves [`DownloadRecord[]`](/host/web/downloads), the same records as `host.downloads.list()`. macOS and Windows.
 
 ### `print(options?)`
 
@@ -259,14 +261,14 @@ Print the selected page, with a native panel by default. `PrintOptions` extends 
 | `paperSize` | `{ width: number; height: number }` | System print settings | Required dimensions when supplied, in points (72/inch), each from 1 to 14400. |
 | `orientation` | `'portrait' \| 'landscape'` | System print settings | Applied after paper dimensions. |
 | `margins` | `{ top: number; right: number; bottom: number; left: number }` | System print settings | All four required when supplied; nonnegative points, at most 14400 each, leaving printable area. |
-| `silent` | `boolean` | `false` | macOS: print without a panel. |
-| `pdfPath` | `string` | Omitted | macOS: save a paginated PDF; implies `silent`. |
+| `silent` | `boolean` | `false` | Print without a panel. |
+| `pdfPath` | `string` | Omitted | Save a paginated PDF; implies `silent`. |
 
 The options object defaults to `{}`. On macOS, interactive printing resolves `{ started: true }` when the sheet opens; `printFinished` reports its result. Silent printing resolves `{ success: true }` after spooling. PDF saving resolves `{ success: true; path: string }` after writing. The declared return type is `{ started?: true; success?: boolean; path?: string }`.
 
 On macOS, the view must be attached to a window without another open sheet. Physical printing accepts one contiguous page range. Invalid options reject with `invalid_args`; failed/canceled jobs, unattached views or an existing sheet reject with `unavailable`. PDF ranges beyond the generated page count fail with `unavailable` after pagination.
 
-Windows supports a reduced operation: without `pdfPath`, it opens print UI and resolves `{ started: true }`; `silent: true` selects the system dialog rather than suppressing it. With `pdfPath`, it writes PDF and resolves `{ success: true; path: string }`. Printer, copies, ranges, paper size, orientation and margins are not forwarded. The required WebView2 interfaces may reject with `unsupported`; print failures reject with `unavailable`. Linux is unsupported.
+On Windows, the same options are validated the same way. `silent` prints to `printer`, or to the default printer, and resolves `{ success: true }` when the job is done. `pdfPath` writes a PDF and resolves `{ success: true; path: string }`. Without either, it opens the browser print dialog and resolves `{ started: true }`: the dialog takes no settings, so the user picks them there and no `printFinished` follows. The required WebView2 interfaces may reject with `unsupported`; print failures reject with `unavailable`. Linux is unsupported.
 
 ### `printToPDF(path, options?)`
 
@@ -282,11 +284,11 @@ await host.webview.printToPDF('/Users/me/notes.pdf', {
 
 `path: string` is required. The second argument is `Omit<PrintOptions, 'pdfPath' | 'silent'>`, defaulting to `{}`; its fields are described above. Resolves `{ path: string }`.
 
-macOS expands `~` and supports the print options and validation above. Windows uses the WebView2 PDF interface with default settings and does not forward the layout options; a missing path rejects with `invalid_args`, an old runtime with `unsupported`, and a write failure with `unavailable`. Linux is unsupported.
+macOS and Windows expand `~` and support the print options and validation above, apart from `printer` and `copies`, which a PDF ignores. On Windows, a missing path rejects with `invalid_args`, an old runtime with `unsupported`, and a write failure with `unavailable`. Linux is unsupported.
 
 ### `getPrinters()`
 
-List installed printer names. Resolves `string[]`, possibly empty. macOS only.
+List installed printer names. Resolves `string[]`, possibly empty. macOS and Windows.
 
 ### `respondToDialog(options?)`
 
@@ -349,11 +351,11 @@ Each helper takes a callback and returns `() => void` to unsubscribe. The same e
 | `onFileDrop` | `fileDrop` | `FileDropEvent` | Files dropped with real paths. macOS. |
 | `onContextMenu` | `contextMenu` | `ContextMenuEvent`, below | Context-menu request, regardless of mode. macOS. |
 | `onJsDialog` | `jsDialog` | `JsDialogEvent`, below | Native JavaScript dialog opens. macOS. |
-| `onDownloadStarted` | `downloadStarted` | `DownloadStartedEvent`, below | Destination chosen and transfer starts. macOS. |
-| `onDownloadProgress` | `downloadProgress` | `DownloadProgressEvent`, below | Transfer progress. macOS. |
-| `onDownloadFinished` | `downloadFinished` | `DownloadFinishedEvent`, below | Download finishes. macOS. |
-| `onDownloadFailed` | `downloadFailed` | `DownloadFailedEvent`, below | Download fails or is canceled. macOS. |
-| `onPrintFinished` | `printFinished` | `WebviewSource & { success: boolean; path?: string }` | Print/PDF job finishes; PDF includes its path. macOS. |
+| `onDownloadStarted` | `downloadStarted` | `DownloadStartedEvent`, below | Destination chosen and transfer starts. macOS and Windows. |
+| `onDownloadProgress` | `downloadProgress` | `DownloadProgressEvent`, below | Transfer progress. macOS and Windows. |
+| `onDownloadFinished` | `downloadFinished` | `DownloadFinishedEvent`, below | Download finishes. macOS and Windows. |
+| `onDownloadFailed` | `downloadFailed` | `DownloadFailedEvent`, below | Download fails or is canceled. macOS and Windows. |
+| `onPrintFinished` | `printFinished` | `WebviewSource & { success: boolean; path?: string }` | Print/PDF job finishes; PDF includes its path. macOS and Windows. |
 | `onCloseRequested` | `closeRequested` | `WebviewSource` | A popover page calls `window.close()`. macOS and Linux. |
 | `onOpenFiles` | `openFiles` | `{ paths: string[] }` | Documents opened with the app. All three platforms. |
 
@@ -406,15 +408,15 @@ Download byte totals and fractions are `-1` when unknown; a known fraction is fr
 | `setBackgroundThrottling`, `setAudioMuted`, `pauseMedia`, `getMediaState` | ✓³ | — | — |
 | `setContextMenu`, `getContextMenu` | ✓ | — | partial⁴ |
 | `setFileDrop` | ✓ | — | — |
-| `setDownloadDirectory`, `getDownloadDirectory`, `download`, `cancelDownload`, `listDownloads` | ✓ | — | — |
-| `print`, `printToPDF` | ✓ | — | partial⁵ |
-| `getPrinters` | ✓ | — | — |
+| `setDownloadDirectory`, `getDownloadDirectory`, `download`, `cancelDownload`, `listDownloads` | ✓ | — | ✓⁸ |
+| `print`, `printToPDF` | ✓ | — | ✓⁵ |
+| `getPrinters` | ✓ | — | ✓ |
 | `respondToDialog`, `getDialog` | ✓ | — | — |
 | `executeJavaScript` | ✓ | partial⁶ | partial⁶ |
 | `capturePage` | ✓ | ✓ | partial⁷ |
 | `getOpenedFiles` | ✓ | ✓ | ✓ |
 | `onLifecycle`, `onFileDragEnter`, `onFileDragLeave`, `onFileDrop`, `onContextMenu`, `onJsDialog` | ✓ | — | — |
-| `onDownloadStarted`, `onDownloadProgress`, `onDownloadFinished`, `onDownloadFailed`, `onPrintFinished` | ✓ | — | — |
+| `onDownloadStarted`, `onDownloadProgress`, `onDownloadFinished`, `onDownloadFailed`, `onPrintFinished` | ✓ | — | ✓ |
 | `onCloseRequested` | ✓ | ✓ | — |
 | `onOpenFiles` | ✓ | ✓ | ✓ |
 
@@ -422,9 +424,10 @@ Download byte totals and fractions are `-1` when unknown; a known fraction is fr
 2. Setting a user agent on Windows needs the corresponding WebView2 settings interface.
 3. Muting needs available WebKit SPI; unavailable audio observations report `false`.
 4. Windows supports `default`/`none`, not custom items or editable-menu policy; global changes cover current views only.
-5. Windows uses default print/PDF settings; `silent` still opens UI without a PDF path. Requires the corresponding WebView2 interfaces.
+5. The print dialog takes no settings: options apply to `silent` and PDF output. Requires the corresponding WebView2 interfaces. Print options haven't run on Windows yet.
 6. Linux and Windows ignore `world` and run in the page world.
 7. Windows ignores output `width`.
+8. From another origin, `download` needs an attachment. See [`download`](#downloadurl-options). This hasn't run on Windows yet.
 
 Linux and Windows target support is limited as described under [Targets](#targets). Event support is listed in the events table; subscribing does not make an unsupported event available.
 

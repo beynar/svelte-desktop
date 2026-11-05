@@ -1,6 +1,7 @@
 # Windows build of examples/notes (cross-compiled on Linux: Bun --compile + shell.dll with
 # llvm-mingw in Docker + NSIS), then its e2e on a real Windows runner (WebView2, WinRT
-# toasts, the COM toast activator): examples/notes/tests/windows.test.ts.
+# toasts, the COM toast activator, the shell's other services, web content control):
+# examples/notes/tests/windows.test.ts.
 name: windows
 
 on:
@@ -46,7 +47,7 @@ jobs:
   test:
     needs: build
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

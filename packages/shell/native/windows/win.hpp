@@ -61,6 +61,15 @@ bool jhas(const json &o, const char *key);
 
 /// Run at shell_run exit (remove tray icons, release hotkeys, reset power requests).
 void add_quit_hook(std::function<void()> hook);
+/// Once, on the UI thread, in `ms` milliseconds.
+void run_after(UINT ms, std::function<void()> fn);
+/// %LOCALAPPDATA%/<identifier>/<name>, the folder created.
+std::string local_file(const std::string &name);
+json read_json_file(const std::string &path, const json &fallback);
+/// Whole or not at all: through a temporary file.
+void write_json_file(const std::string &path, const json &value);
+/// "~/x" -> the user's folder.
+std::string expand_home(const std::string &path);
 
 // ---------------------------------------------------------------------------
 // COM callback objects for WebView2's handler interfaces (single Invoke).
@@ -129,7 +138,7 @@ struct View {
   bool askingToReload = false;         // the "not responding" question is on screen
   bool failed = false;                 // controller creation failed for good
   bool ready = false;                  // controller set up and bridge script registered
-  EventRegistrationToken tokens[8]{};  // [7]: DocumentTitleChanged (view.* only)
+  EventRegistrationToken tokens[11]{}; // [7]: DocumentTitleChanged (view.* only), [8]: FrameNavigationStarting, [9]: DownloadStarting, [10]: ScreenCaptureStarting
   std::string browserView;             // view.* id: any origin may load ("" = app page)
 };
 
@@ -321,7 +330,24 @@ void register_shortcuts();
 void register_diagnostics();
 void register_popover();
 void register_webview();
+void register_web_policy();
+void register_downloads();
+void register_sessions();
 void register_deep_link();
+
+/// Web policy (svc_web_policy.cc): held until the server answers or its deadline.
+void web_permission_requested(View *v, ICoreWebView2PermissionRequestedEventArgs *args);
+void web_screen_capture_starting(View *v, ICoreWebView2ScreenCaptureStartingEventArgs *args);
+void web_navigation_policy(View *v, const std::string &url, bool main_frame, ICoreWebView2NavigationStartingEventArgs *args);
+/// Downloads (svc_downloads.cc).
+void downloads_attach(View *v);
+void downloads_detach(View *v);
+/// Cookie watchers of a page leaving (svc_cookies.cc).
+void sessions_page_unloaded(int native_id);
+/// The web view a webview.* call targets (svc_webview.cc); nullptr after failing the call.
+View *view_for_call(const CallPtr &c);
+/// WebviewSource of a web view: windowId, popoverId, viewId (svc_webview.cc).
+json view_source(View *v);
 
 /// Shell dialog helpers shared with shell_dialog (svc_dialog.cc).
 void run_message_box(const json &opts, HWND parent, std::function<void(int button)> done);

@@ -39,7 +39,7 @@ export const webContent = {
 		unregister: (id: string) => callPlatform<null>('webview', 'unregisterScript', { id }),
 		list: () => callPlatform<UserScript[]>('webview', 'listScripts'),
 	},
-	/** Server only. Adds a veto to the shell's existing navigation safety checks. */
+	/** Server only. Adds a veto to the shell's existing navigation safety checks. On Windows it holds the UI thread's callbacks: don't wait on a web view in it. */
 	async setNavigationPolicy(policy: NavigationPolicy | null): Promise<void> {
 		if (typeof window !== 'undefined') throw new NativeApiError('denied', 'navigation policy belongs to server code');
 		navigationState.off?.();

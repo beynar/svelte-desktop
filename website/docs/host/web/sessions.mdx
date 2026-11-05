@@ -3,7 +3,7 @@ title: host.sessions
 description: Manage website profiles, cookies and per-session proxies.
 ---
 
-`host.sessions` manages the website data stores used by [web views](/host/web/webview). Use named profiles for separate accounts or private browsing. This service has no reactive state and is macOS only.
+`host.sessions` manages the website data stores used by [web views](/host/web/webview). Use named profiles for separate accounts or private browsing. This service has no reactive state. Named profiles and proxies are macOS only; Windows manages the cookies of the default profile. See [Platform support](#platform-support).
 
 How-to: [Sessions and private profiles](/ui/web-view#sessions-and-private-profiles-macos).
 
@@ -88,7 +88,7 @@ Resolves `SessionProxyInfo | null`. Returns the host-owned configuration, not re
 
 ### `capabilities()`
 
-Resolves `SessionCapabilities` for the running macOS version.
+Resolves `SessionCapabilities` for the running OS version. On Windows every field is `false`.
 
 | Property | Type | Description |
 | --- | --- | --- |
@@ -172,7 +172,16 @@ Subscribes to cookie changes across profiles and returns `() => void` to unsubsc
 
 `onChanged` can miss very short-lived changes, so it is not an audit log. To catch `document.cookie` changes that WebKit does not report, the shell polls profiles with open views once per second, only while someone listens through `cookies.onChanged`. `host.on('sessionCookieChanged', callback)` does not enable that polling; use `cookies.onChanged`.
 
-All methods are macOS only. Private profiles work on any supported macOS; `persistent: true` and `setProxy` need macOS 14+.
+## Platform support
+
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `create`, `remove`, `setProxy` | ✓¹ | — | — |
+| `list`, `getProxy`, `capabilities` | ✓ | — | ✓² |
+| `cookies.get`, `cookies.set`, `cookies.remove`, `cookies.onChanged` | ✓ | — | ✓² |
+
+1. Private profiles work on any supported macOS; `persistent: true` and `setProxy` need macOS 14+.
+2. The default profile only: `list` gives that one, `getProxy` gives `null`, and another `session` rejects with `invalid_args`. WebView2 has no cookie event, so `cookies.onChanged` compares the whole profile once a second while someone listens. This hasn't run on Windows yet.
 
 ## Example
 

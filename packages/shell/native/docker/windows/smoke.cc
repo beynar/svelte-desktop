@@ -119,6 +119,38 @@ int main() {
       "{\"id\":27,\"service\":\"window\",\"op\":\"getTitleBarStyle\"}",
       "{\"id\":28,\"service\":\"window\",\"op\":\"setTitleBarStyle\",\"args\":{\"style\":\"default\"}}",
       "{\"id\":29,\"service\":\"window\",\"op\":\"getTitleBarStyle\"}",
+      // Web content control, what runs without a web view: registered, validated, saved.
+      "{\"id\":33,\"service\":\"webview\",\"op\":\"listPermissionDecisions\"}",
+      "{\"id\":34,\"service\":\"webview\",\"op\":\"setPermissionDecision\",\"args\":{\"origin\":\"https://MEET.example:443/room\",\"permission\":\"camera\",\"decision\":\"deny\"}}",
+      "{\"id\":35,\"service\":\"webview\",\"op\":\"listPermissionDecisions\"}",
+      "{\"id\":36,\"service\":\"webview\",\"op\":\"setPermissionDecision\",\"args\":{\"origin\":\"https://meet.example\",\"permission\":\"usb\",\"decision\":\"deny\"}}",
+      "{\"id\":37,\"service\":\"webview\",\"op\":\"revokePermissionDecision\",\"args\":{\"origin\":\"https://meet.example\",\"permission\":\"camera\"}}",
+      "{\"id\":38,\"service\":\"webview\",\"op\":\"listPermissionDecisions\"}",
+      "{\"id\":39,\"service\":\"webview\",\"op\":\"configurePolicy\",\"args\":{\"kind\":\"auth\",\"enabled\":true}}",
+      "{\"id\":40,\"service\":\"webview\",\"op\":\"configurePolicy\",\"args\":{\"kind\":\"permission\",\"enabled\":true,\"timeoutMs\":10}}",
+      "{\"id\":41,\"service\":\"webview\",\"op\":\"configurePolicy\",\"args\":{\"kind\":\"permission\",\"enabled\":true,\"timeoutMs\":100}}",
+      "{\"id\":42,\"service\":\"webview\",\"op\":\"respondPolicy\",\"args\":{\"requestId\":\"nope\",\"answer\":\"allow\"}}",
+      "{\"id\":43,\"service\":\"webview\",\"op\":\"setNavigationPolicy\",\"args\":{\"enabled\":true}}",
+      "{\"id\":44,\"service\":\"webview\",\"op\":\"navigationDecision\",\"args\":{\"requestId\":\"nope\",\"allow\":true}}",
+      "{\"id\":45,\"service\":\"webview\",\"op\":\"setNavigationPolicy\",\"args\":{\"enabled\":false}}",
+      "{\"id\":46,\"service\":\"webview\",\"op\":\"setDownloadDirectory\",\"args\":{\"path\":\"C:\\\\smoke-downloads\"}}",
+      "{\"id\":47,\"service\":\"webview\",\"op\":\"getDownloadDirectory\"}",
+      "{\"id\":48,\"service\":\"webview\",\"op\":\"listDownloads\"}",
+      "{\"id\":49,\"service\":\"webview\",\"op\":\"cancelDownload\",\"args\":{\"id\":\"nope\"}}",
+      "{\"id\":50,\"service\":\"webview\",\"op\":\"resumeDownload\",\"args\":{\"id\":\"nope\"}}",
+      "{\"id\":51,\"service\":\"webview\",\"op\":\"getDownload\",\"args\":{\"id\":\"nope\"}}",
+      "{\"id\":52,\"service\":\"webview\",\"op\":\"decideDownload\",\"args\":{\"id\":\"nope\",\"handlerId\":\"h\",\"decision\":\"cancel\"}}",
+      "{\"id\":53,\"service\":\"webview\",\"op\":\"setDownloadHandler\",\"args\":{}}",
+      "{\"id\":54,\"service\":\"webview\",\"op\":\"getPrinters\"}",
+      "{\"id\":55,\"service\":\"webview\",\"op\":\"printToPDF\",\"args\":{\"windowId\":0,\"path\":\"C:\\\\x.pdf\"}}",
+      "{\"id\":56,\"service\":\"sessions\",\"op\":\"list\"}",
+      "{\"id\":57,\"service\":\"sessions\",\"op\":\"capabilities\"}",
+      "{\"id\":58,\"service\":\"sessions\",\"op\":\"cookiesGet\",\"args\":{\"session\":\"other\"}}",
+      "{\"id\":59,\"service\":\"sessions\",\"op\":\"cookiesGet\",\"args\":{\"name\":\"__kitop\"}}",
+      "{\"id\":60,\"service\":\"sessions\",\"op\":\"cookiesGet\",\"args\":{}}",
+      "{\"id\":61,\"service\":\"sessions\",\"op\":\"create\",\"args\":{\"id\":\"x\",\"persistent\":false}}",
+      "{\"id\":62,\"service\":\"webview\",\"op\":\"download\",\"args\":{\"windowId\":0,\"url\":\"/x\"}}",
+      "{\"id\":63,\"service\":\"webview\",\"op\":\"_permissionPolicyForTesting\",\"args\":{\"windowId\":0,\"permission\":\"camera\"}}",
   };
   const int total = (int)(sizeof requests / sizeof requests[0]);
   for (const char *r : requests) {
@@ -153,6 +185,42 @@ int main() {
   expect(27, "\"frameless\":true");
   expect(27, "\"style\":\"hidden\"");
   expect(29, "\"frameless\":false");
+  expect(25, "\"setNavigationPolicy\":\"implemented\"");
+  expect(25, "\"setPermissionDecision\":\"implemented\"");
+  expect(25, "\"decideDownload\":\"implemented\"");
+  expect(25, "\"cookiesSet\":\"implemented\"");
+  expect(33, "\"value\":[]");
+  expect(34, "\"ok\":true");
+  expect(35, "\"origin\":\"https://meet.example\"");
+  expect(35, "\"decision\":\"deny\"");
+  expect(36, "\"code\":\"invalid_args\"");
+  expect(37, "\"ok\":true");
+  expect(38, "\"value\":[]");
+  expect(39, "\"code\":\"unsupported\"");
+  expect(40, "\"code\":\"invalid_args\"");
+  expect(41, "\"ok\":true");
+  expect(42, "\"code\":\"unavailable\"");
+  expect(43, "\"ok\":true");
+  expect(44, "\"code\":\"unavailable\"");
+  expect(45, "\"ok\":true");
+  expect(46, "smoke-downloads");
+  expect(47, "smoke-downloads");
+  expect(48, "\"value\":[]");
+  expect(49, "\"code\":\"invalid_args\"");
+  expect(50, "\"code\":\"invalid_args\"");
+  expect(51, "\"value\":null");
+  expect(52, "\"code\":\"unavailable\"");
+  expect(53, "\"code\":\"invalid_args\"");
+  expect(54, "\"ok\":true");
+  expect(55, "\"code\":\"unavailable\"");
+  expect(56, "\"id\":\"default\"");
+  expect(57, "\"persistentNamed\":false");
+  expect(58, "\"code\":\"invalid_args\"");
+  expect(59, "\"code\":\"denied\"");
+  expect(60, "\"code\":\"unavailable\"");
+  expect(61, "\"code\":\"unsupported\"");
+  expect(62, "\"code\":\"unavailable\"");
+  expect(63, "\"code\":\"denied\"");
 
   // Close veto: WM_CLOSE emits willClose and keeps the window; window.close bypasses it.
   auto close = sym<int (*)(int)>(m, "shell_window_close");

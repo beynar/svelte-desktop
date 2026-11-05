@@ -40,7 +40,7 @@ On macOS, page code written for the browser asks the system the first time it us
 | `getDisplayMedia()` | `screenRecording` | If access is missing, the shell requests it and denies this attempt; grant it in System Settings, then retry |
 | `Notification.requestPermission()`, `new Notification()` | `notifications` | The system prompt; `new Notification` shows a native notification, with `click` and `close` events |
 
-The app's own origin keeps this behavior. Other origins, including third-party frames and embedded views, are denied unless server-owned policy allows them. The per-origin policy below is macOS only; it does not control WebKitGTK or WebView2.
+The app's own origin keeps this behavior. Other origins, including third-party frames and embedded views, are denied unless server-owned policy allows them. The per-origin policy below works on macOS and Windows; it does not control WebKitGTK.
 
 ```svelte
 <p>Camera: {host.permissions.camera}</p>   <!-- 'granted' | 'denied' | 'notDetermined' | 'unknown', reactive -->
@@ -95,7 +95,7 @@ The native guide panel is macOS only. On Linux and Windows, `guide()` opens sett
 
 The dev window runs from `bun`, not from your app's bundle: macOS asks on behalf of the app that started it (your terminal), with that app's own wording, and remembers the answer for it. The reasons from your config still apply. What needs a bundle doesn't ask at all there — notifications, location, speech recognition: try them in the built app (`.desktop/dist`), where the prompts name your app and show your reasons.
 
-## Per-origin web policy (macOS)
+## Per-origin web policy
 
 Other origins are denied by default. To let an external site use the camera or microphone, install a handler in **server code**; a page can't install one.
 

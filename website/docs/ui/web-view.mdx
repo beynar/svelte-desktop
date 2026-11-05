@@ -15,8 +15,8 @@ API reference: [`host.webview`](/host/web/webview), [content rules and scripts](
 | --- | --- |
 | `alert`, `confirm`, `prompt` | Native sheets that never block the run loop. Each emits `jsDialog`. |
 | `<input type="file">` | A native open panel, filtered by `accept` (folders with `webkitdirectory`). |
-| `getUserMedia`, `navigator.geolocation`, `SpeechRecognition` | Allowed on the app origin, then OS consent. Other origins need a [policy](#web-permissions-macos). |
-| `getDisplayMedia` | Allowed on the app origin, then Screen Recording consent: if it's missing, the first attempt is denied while macOS asks. Other origins need a [policy](#web-permissions-macos). |
+| `getUserMedia`, `navigator.geolocation`, `SpeechRecognition` | Allowed on the app origin, then OS consent. Other origins need a [policy](#web-permissions). |
+| `getDisplayMedia` | Allowed on the app origin, then Screen Recording consent: if it's missing, the first attempt is denied while macOS asks. Other origins need a [policy](#web-permissions). |
 | `Notification` | The app's notifications (`host.notifications`). |
 | `window.open`, external links | Open in the default browser. |
 | `window.close()` | Closes the window, respecting the close veto; in a popover it emits `closeRequested`. |
@@ -38,7 +38,7 @@ Call `preventDefault()` on the DOM `drop` event as usual. `host.webview.setFileD
 
 ## Downloads
 
-On macOS, `<a download>`, attachments and responses the web view can't display are saved to the download directory (`~/Downloads` by default) under a unique name. Start one yourself and follow it:
+On macOS and Windows, `<a download>`, attachments and responses the web view can't display are saved to the download directory (`~/Downloads` by default) under a unique name. Start one yourself and follow it:
 
 ```ts
 const { id } = await host.webview.download('/export.csv'); // uses the page's cookies
@@ -71,7 +71,7 @@ await host.webview.printToPDF('/Users/me/notes.pdf', {
 });
 ```
 
-Omit `printer` for the system default. `pdfPath` on `print` saves a PDF silently. Invalid options reject before a job starts, and failed or canceled jobs reject with `unavailable`. The view must be attached to a window. The extended options need macOS; see the [reference](/host/web/webview#printoptions) for limits on copies, ranges and margins.
+Omit `printer` for the system default. `pdfPath` on `print` saves a PDF silently. Invalid options reject before a job starts, and failed or canceled jobs reject with `unavailable`. The view must be attached to a window. The extended options need macOS or Windows; see the [reference](/host/web/webview#printoptions) for limits on copies, ranges and margins.
 
 ## Find and zoom
 
@@ -171,7 +171,7 @@ await host.view.destroy('account-preview');
 await host.sessions.remove('account-two');
 ```
 
-Create profiles after the main app has authenticated: the app's session cookie is copied in so app routes stay authenticated. A profile isn't a sandbox for untrusted app code. Persistent named profiles and per-profile proxies (`host.sessions.setProxy`) need macOS 14. See the [sessions reference](/host/web/sessions) for cookies, proxies and removal rules.
+Create profiles after the main app has authenticated: the app's session cookie is copied in so app routes stay authenticated. A profile isn't a sandbox for untrusted app code. Persistent named profiles and per-profile proxies (`host.sessions.setProxy`) need macOS 14. See the [sessions reference](/host/web/sessions) for cookies, proxies and removal rules. Windows manages the cookies of the default profile, without named profiles or proxies.
 
 ## Native input policy (macOS)
 
@@ -192,7 +192,7 @@ off();
 
 Intercepted keys are consumed natively; `onBeforeInput` is told afterwards and can't prevent them. Use normal DOM listeners for ordinary editing. See [input policy](/host/input/input-policy) for key names and modifiers.
 
-## Web permissions (macOS)
+## Web permissions
 
 Pages on other origins can't use the camera, microphone, location or screen unless **server code** allows it:
 
@@ -204,7 +204,7 @@ host.ready(async () => {
 });
 ```
 
-Without a handler, only the app origin is allowed. Once installed, a handler answers for your app's own origin too, so allow what your own pages use. `allow` still needs usage descriptions and OS consent. See the [web policy reference](/host/web/web-policy) for saved decisions and frame checks.
+Without a handler, only the app origin is allowed. Once installed, a handler answers for your app's own origin too, so allow what your own pages use. `allow` still needs usage descriptions and OS consent. See the [web policy reference](/host/web/web-policy) for saved decisions and frame checks. macOS and Windows.
 
 ## Authentication challenges and TLS (macOS)
 
@@ -246,4 +246,4 @@ await host.webview.setNavigationPolicy(async ({ url }) =>
 );
 ```
 
-Both are covered in [content rules and scripts](/host/web/web-content), along with user scripts and content worlds (`host.webview.scripts`).
+Both are covered in [content rules and scripts](/host/web/web-content), along with user scripts and content worlds (`host.webview.scripts`). The navigation policy also works on Windows; the rest of this section is macOS only.

@@ -1,5 +1,7 @@
 // The Windows build (KITOP_TARGET=windows bunx --bun vite build) on a Windows
-// machine: WebView2 window, host global, WinRT toasts, the COM toast activator.
+// machine: WebView2 window, host global, WinRT toasts, the COM toast activator; then the rest of
+// the shell (windows, menus, tray, dialogs, clipboard, views, DPI, jobs, MCP, relaunch) and web
+// content control (permissions, downloads, printing, navigation policy, cookies).
 //   WINDOWS_E2E=1 [WINDOWS_APP=<app folder>] bun test --timeout 120000 tests/windows.test.ts
 // Skipped unless WINDOWS_E2E is set (CI: .github/workflows/windows.yml).
 //
@@ -7,7 +9,7 @@
 // (INotificationActivationCallback, CLSID derived from the identifier) is created
 // over COM from PowerShell and Activate()d with the arguments the toast XML carries.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { launch, type AppHandle } from '@kitop/shell/test';
@@ -783,4 +785,1118 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows: when the web process fails',
 			await app.close();
 		}
 	}, 180_000);
+});
+
+// ---------------------------------------------------------------------------
+// Windows beyond notifications: what the shell does on a real desktop, and web content control.
+// Each test is bounded and says what it found; a call that gets no answer fails its test, and
+// once the app stops answering the rest fail at once instead of waiting their turn.
+
+const INPUT_PS1 = String.raw`param([string]$Mode, [string]$Spec)
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices; using System.Text;
+public static class SdWin {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, UIntPtr e);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+  public static IntPtr Find(string title) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows((h, l) => {
+      if (!IsWindowVisible(h)) return true;
+      var t = new StringBuilder(512); GetWindowText(h, t, 512);
+      if (t.ToString() == title) { found = h; return false; }
+      return true; }, IntPtr.Zero);
+    return found;
+  }
+  public static void Chord(byte[] keys) {
+    foreach (var k in keys) { keybd_event(k, 0, 0, UIntPtr.Zero); System.Threading.Thread.Sleep(30); }
+    Array.Reverse(keys);
+    foreach (var k in keys) { keybd_event(k, 0, 2, UIntPtr.Zero); System.Threading.Thread.Sleep(30); }
+  }
+}
+"@
+[void][SdWin]::SetProcessDPIAware()
+$s = Get-Content -Raw $Spec | ConvertFrom-Json
+$A = [System.Windows.Automation.AutomationElement]
+$TS = [System.Windows.Automation.TreeScope]
+$True_ = [System.Windows.Automation.Condition]::TrueCondition
+function Wait-Window($title) {
+  for ($i = 0; $i -lt 40; $i++) { $h = [SdWin]::Find($title); if ($h -ne [IntPtr]::Zero) { return $h }; Start-Sleep -Milliseconds 250 }
+  throw "no window titled '$title'"
+}
+function Rect($h) { $r = New-Object SdWin+RECT; [void][SdWin]::GetWindowRect($h, [ref]$r); return $r }
+function Front($h) { [SdWin]::Chord([byte[]]@(0x87)); [void][SdWin]::SetForegroundWindow($h); Start-Sleep -Milliseconds 300 } # F24: any input lifts the foreground lock; Alt would open a menu bar
+function Press($x, $y) { [void][SdWin]::SetCursorPos($x, $y); Start-Sleep -Milliseconds 120; [SdWin]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero) }
+function Release { [SdWin]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero) }
+function Descendant($h, [scriptblock]$pred) {
+  for ($i = 0; $i -lt 40; $i++) {
+    foreach ($e in $A::FromHandle($h).FindAll($TS::Descendants, $True_)) { try { if (& $pred $e) { return $e } } catch {} }
+    Start-Sleep -Milliseconds 250
+  }
+  throw "nothing matches in the window"
+}
+function Invoke-El($e) { $p = $null; [void]$e.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$p); $p.Invoke() }
+switch ($Mode) {
+  'rect' { $h = Wait-Window $s.title; $r = Rect $h; @{ x = $r.L; y = $r.T; width = $r.R - $r.L; height = $r.B - $r.T; dpi = [SdWin]::GetDpiForWindow($h) } | ConvertTo-Json -Compress }
+  'post-close' { $h = Wait-Window $s.title; [void][SdWin]::PostMessage($h, 0x10, [IntPtr]::Zero, [IntPtr]::Zero); 'posted' }
+  'close-if-any' { $h = [SdWin]::Find($s.title); if ($h -ne [IntPtr]::Zero) { [void][SdWin]::PostMessage($h, 0x10, [IntPtr]::Zero, [IntPtr]::Zero); 'closed' } else { 'none' } }
+  'click' { $h = Wait-Window $s.title; Front $h; $r = Rect $h; $n = if ($s.times) { $s.times } else { 1 }; for ($i = 0; $i -lt $n; $i++) { Press ($r.L + $s.dx) ($r.T + $s.dy); Release; Start-Sleep -Milliseconds 90 }; 'clicked' }
+  'drag' { # The press goes through the page, which then starts the move loop: leave it the time.
+    $h = Wait-Window $s.title; Front $h; $r = Rect $h
+    Press ($r.L + $s.dx) ($r.T + $s.dy); Start-Sleep -Milliseconds 700
+    for ($i = 1; $i -le 12; $i++) { [void][SdWin]::SetCursorPos(($r.L + $s.dx + ($s.byX * $i / 12)), ($r.T + $s.dy + ($s.byY * $i / 12))); Start-Sleep -Milliseconds 40 }
+    Start-Sleep -Milliseconds 200; Release; 'dragged'
+  }
+  'keys' { if ($s.title) { Front (Wait-Window $s.title) }; [SdWin]::Chord([byte[]]@($s.keys)); 'pressed' }
+  'dialog-button' { $h = Wait-Window $s.title; $b = Descendant $h { param($e) $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $e.Current.Name -eq $s.button }; Invoke-El $b; 'pressed' }
+  'file-dialog' { # The file name box of the common dialog (1001 saving, 1148 opening), then its default button.
+    $h = Wait-Window $s.title
+    $edit = Descendant $h { param($e) $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and @('1001', '1148') -contains $e.Current.AutomationId }
+    $vp = $null; [void]$edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp); $edit.SetFocus(); $vp.SetValue($s.path)
+    Start-Sleep -Milliseconds 300
+    $ok = Descendant $h { param($e) $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $e.Current.AutomationId -eq '1' }
+    Invoke-El $ok; 'chosen'
+  }
+}
+`;
+
+async function win(mode: string, spec: object) {
+	const file = join(tmp, `w${Math.random().toString(36).slice(2)}.json`);
+	writeFileSync(file, JSON.stringify(spec));
+	const r = await ps(INPUT_PS1, mode, file);
+	if (r.code !== 0) throw new Error(`${mode} failed: ${r.err || r.out}`);
+	return r.out;
+}
+
+const within = <T>(ms: number, what: string, p: Promise<T>) =>
+	Promise.race([p, Bun.sleep(ms).then(() => { throw Object.assign(new Error(`${what}: no answer within ${ms} ms`), { code: 'timeout' }); })]);
+const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64');
+const near = (a: number, b: number, by = 2) => Math.abs(a - b) <= by;
+const Pdf = { pages: (b: Buffer) => (b.toString('latin1').match(/\/Type\s*\/Page\b/g) ?? []).length, box: (b: Buffer) => /\/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)/.exec(b.toString('latin1'))?.slice(1).map(Number) };
+
+describe.skipIf(!process.env.WINDOWS_E2E)('windows: beyond notifications', () => {
+	let app: AppHandle;
+	let stopped = ''; // the test where the app stopped answering
+	const dir = process.platform === 'win32' ? mkdtempSync(join(tmpdir(), 'sd-web-')) : '';
+	const hits = new Map<string, number>();
+	let ext = ''; // another origin than the app's, on this machine
+	let closedPort = 0;
+	const SLOW_SIZE = 40 * 32 * 1024;
+
+	const op = <T = any>(service: string, name: string, args: Record<string, unknown> = {}, ms = 20_000) =>
+		within(ms, `${service}.${name}`, app.platform<T>(service, name, args));
+	/** The error code of a call that has to fail ('ok' if it didn't). */
+	const code = (service: string, name: string, args: Record<string, unknown> = {}) =>
+		op(service, name, args).then(() => 'ok', (e: { code?: string }) => e.code ?? String(e));
+	const check = (name: string, fn: () => Promise<unknown>, ms = 60_000) =>
+		test(name, async () => {
+			if (stopped) throw new Error(`not run: the app stopped answering in "${stopped}"`);
+			try {
+				await fn();
+			} catch (e) {
+				if ((e as { code?: string }).code === 'timeout') {
+					stopped = name;
+					log('STOPPED ANSWERING', name, String(e));
+					log('app output', app?.stdout?.slice(-2000));
+				}
+				throw e;
+			}
+		}, ms);
+	const until = async (what: string, fn: () => Promise<boolean>, ms = 10_000) => {
+		for (const end = Date.now() + ms; Date.now() < end; await Bun.sleep(100)) if (await fn().catch(() => false)) return;
+		throw new Error(`timed out: ${what}`);
+	};
+	const inView = <T = any>(id: string, code: string, ms = 20_000) => op<T>('view', 'executeJavaScript', { id, code }, ms);
+	const openView = async (id: string, path: string) => {
+		const loaded = app.nextEvent('viewLoaded', (e: { id: string }) => e.id === id, 20_000);
+		await op('view', 'create', { id, windowId: 0, url: ext + path, bounds: { x: 0, y: 0, width: 400, height: 300 } });
+		await loaded;
+	};
+	const closeView = (id: string) => op('view', 'destroy', { id }).catch(() => {});
+	const mainTitle = 'E2E main window';
+	const home = async () => {
+		await op('window', 'setTitle', { windowId: 0, title: mainTitle });
+		await op('window', 'show', { windowId: 0 });
+		if ((await app.eval<string>('location.pathname')) !== '/') await app.goto('/');
+		await app.waitFor('#counter', { timeout: 20_000 });
+	};
+
+	beforeAll(async () => {
+		expect(existsSync(APP)).toBe(true);
+		// The suite before closes its app; a copy still going would take this launch for a second instance.
+		const left = await ps(`Get-CimInstance Win32_Process -Filter "name='SvelteNotes.exe'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; $_.ProcessId }`);
+		if (left.out) log('stopped a copy still running', left.out);
+		const server = Bun.serve({
+			hostname: '127.0.0.1',
+			port: 0,
+			idleTimeout: 60,
+			fetch(req) {
+				const { pathname } = new URL(req.url);
+				hits.set(pathname, (hits.get(pathname) ?? 0) + 1);
+				const html = (body: string) => new Response(`<!doctype html><title>${pathname}</title>${body}`, { headers: { 'content-type': 'text/html' } });
+				const attachment = { 'content-type': 'text/plain', 'content-disposition': 'attachment; filename="report.txt"' };
+				if (pathname === '/file.txt') return new Response('downloaded body', { headers: attachment });
+				if (pathname === '/inline.txt') return new Response('not an attachment', { headers: { 'content-type': 'text/plain' } });
+				if (pathname === '/frame') return html('<iframe src="/framed"></iframe>');
+				if (pathname === '/slow.bin') {
+					const chunk = new Uint8Array(32 * 1024).fill(97);
+					let sent = 0;
+					return new Response(new ReadableStream({
+						async pull(c) {
+							if (sent++ >= 40) return c.close();
+							await Bun.sleep(100);
+							c.enqueue(chunk);
+						},
+					}), { headers: { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="slow.bin"', 'content-length': String(SLOW_SIZE) } });
+				}
+				return html(`<p>${pathname}</p>`);
+			},
+		});
+		ext = `http://127.0.0.1:${server.port}`;
+		const gone = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('') });
+		closedPort = gone.port!;
+		gone.stop(true);
+		app = await launch({ app: APP, timeout: 90_000 });
+		await app.waitFor('#counter', { timeout: 30_000 });
+		await home();
+	}, 150_000);
+	afterAll(async () => {
+		await app?.close().catch(() => {});
+	}, 30_000);
+
+	check('report: the running platform and every operation it registers', async () => {
+		const report = await op<{ platform: string; arch: string; services: Record<string, Record<string, string>> }>('capabilities', 'describe');
+		log('diagnostics', await op('diagnostics', 'info'));
+		for (const [service, ops] of Object.entries(report.services)) log('ops', service, Object.keys(ops).join(' '));
+		expect(report.platform).toBe('windows');
+		for (const name of ['configurePolicy', 'respondPolicy', 'setPermissionDecision', 'setNavigationPolicy', 'navigationDecision', 'download', 'decideDownload', 'pauseDownload', 'resumeDownload', 'listDownloads', 'printToPDF', 'print', 'getPrinters'])
+			expect({ name, status: report.services.webview?.[name] }).toEqual({ name, status: 'implemented' });
+		for (const name of ['list', 'capabilities', 'cookiesGet', 'cookiesSet', 'cookiesRemove', 'watchCookies'])
+			expect({ name, status: report.services.sessions?.[name] }).toEqual({ name, status: 'implemented' });
+		// What isn't finished says so, instead of half-working.
+		expect(await code('sessions', 'create', { id: 'x', persistent: false })).toBe('unsupported');
+		expect(await code('webview', 'setContentRules', { id: 'x', rules: [] })).toBe('unsupported');
+		expect(await code('webview', 'configurePolicy', { kind: 'auth', enabled: true })).toBe('unsupported');
+	});
+
+	// ── windows ─────────────────────────────────────────────────────────────
+
+	check('window: a second window, its page, labels, closed', async () => {
+		const created = app.nextEvent<{ label: string; windowId: number }>('created', (e) => e.label === 'e2e-second', 15_000);
+		const made = await op<{ windowId: number; label: string }>('window', 'create', { label: 'e2e-second', path: '/about', x: 80, y: 80, width: 640, height: 480 });
+		expect((await created).windowId).toBe(made.windowId);
+		expect(made.windowId).not.toBe(0);
+		await until('its page', async () => (await op('webview', 'executeJavaScript', { windowId: made.windowId, code: 'location.pathname' })) === '/about', 20_000);
+		expect(await op<unknown[]>('window', 'list')).toHaveLength(2);
+		expect(await op('window', 'get', { label: 'e2e-second' })).toMatchObject({ windowId: made.windowId, label: 'e2e-second' });
+		expect(await op('window', 'get', { label: 'nobody' })).toBeNull();
+		expect(await code('window', 'create', { label: 'e2e-second', path: '/' })).toBe('invalid_args');
+		expect(await code('window', 'getTitle', { windowId: 99999 })).toBe('invalid_args');
+		const closed = app.nextEvent('closed', (e: { windowId: number }) => e.windowId === made.windowId, 15_000);
+		await op('window', 'close', { windowId: made.windowId });
+		await closed;
+		await until('it left the list', async () => (await op<unknown[]>('window', 'list')).length === 1);
+	});
+
+	check('window: bounds, size, position, limits, in DIPs against what Win32 reports', async () => {
+		const id = { windowId: 0 };
+		await op('window', 'setBounds', { ...id, x: 100, y: 60, width: 800, height: 600 });
+		const { bounds } = await op<{ bounds: { x: number; y: number; width: number; height: number } }>('window', 'getBounds', id);
+		expect([near(bounds.x, 100), near(bounds.y, 60), near(bounds.width, 800), near(bounds.height, 600)]).toEqual([true, true, true, true]);
+		const real = JSON.parse(await win('rect', { title: mainTitle }));
+		const scale = await op<number>('window', 'getScaleFactor', id);
+		log('Win32 rect', real, 'scale', scale);
+		expect(scale).toBeCloseTo(real.dpi / 96, 3);
+		expect(near(real.width / scale, 800)).toBe(true);
+		expect(near(real.x / scale, 100)).toBe(true);
+		await op('window', 'setPosition', { ...id, x: 140, y: 90 });
+		expect(near((await op<{ x: number }>('window', 'getPosition', id)).x, 140)).toBe(true);
+		await op('window', 'setSize', { ...id, width: 700, height: 500 });
+		const size = await op<{ width: number; height: number }>('window', 'getSize', id);
+		expect(near(size.width, 700)).toBe(true);
+		expect(near(await app.eval<number>('innerWidth'), 700, 4)).toBe(true); // the page follows
+		const moved = app.nextEvent('boundsChanged', (e: { windowId: number }) => e.windowId === 0, 8000);
+		await op('window', 'center', id);
+		await moved;
+		// Limits: desktop.config's minWidth, then ones set now.
+		await op('window', 'setMinSize', { ...id, width: 600, height: 450 });
+		expect(await op('window', 'getMinSize', id)).toEqual({ width: 600, height: 450 });
+		await op('window', 'setSize', { ...id, width: 300, height: 200 });
+		expect((await op<{ width: number }>('window', 'getSize', id)).width).toBeGreaterThanOrEqual(598);
+		await op('window', 'setMinSize', { ...id, width: 520, height: 400 });
+		await op('window', 'setBounds', { ...id, x: 100, y: 60, width: 900, height: 650 });
+	});
+
+	check('window: minimize, maximize, fullscreen, hide, each undone', async () => {
+		const id = { windowId: 0 };
+		await op('window', 'minimize', id);
+		await until('minimized', async () => (await op<{ minimized: boolean }>('window', 'isMinimized', id)).minimized);
+		await op('window', 'unminimize', id);
+		await until('restored', async () => !(await op<{ minimized: boolean }>('window', 'isMinimized', id)).minimized);
+		await op('window', 'maximize', id);
+		await until('maximized', () => op<boolean>('window', 'isMaximized', id));
+		expect((await op<{ state: string }>('window', 'getBounds', id)).state).toBe('maximized');
+		await op('window', 'unmaximize', id);
+		await until('unmaximized', async () => !(await op<boolean>('window', 'isMaximized', id)));
+		const before = (await op<{ bounds: { width: number } }>('window', 'getBounds', id)).bounds;
+		const display = await op<{ bounds: { width: number; height: number } }>('screen', 'getDisplayNearestWindow', id);
+		await op('window', 'setFullscreen', { ...id, fullscreen: true });
+		await until('fullscreen', () => op<boolean>('window', 'isFullscreen', id));
+		expect(near((await op<{ bounds: { width: number } }>('window', 'getBounds', id)).bounds.width, display.bounds.width)).toBe(true);
+		await op('window', 'setFullscreen', { ...id, fullscreen: false });
+		await until('windowed', async () => !(await op<boolean>('window', 'isFullscreen', id)));
+		expect(near((await op<{ bounds: { width: number } }>('window', 'getBounds', id)).bounds.width, before.width)).toBe(true);
+		await op('window', 'hide', id);
+		await until('hidden', async () => !(await op<boolean>('window', 'isVisible', id)));
+		await op('window', 'show', id);
+		await until('shown', () => op<boolean>('window', 'isVisible', id));
+		log('focused after show', await op('window', 'isFocused', id));
+	});
+
+	check('window: the close button with a veto armed stays open and says so; window.close goes through', async () => {
+		const made = await op<{ windowId: number }>('window', 'create', { label: 'e2e-veto', path: '/about', width: 500, height: 400 });
+		const id = { windowId: made.windowId };
+		const title = 'E2E veto window';
+		await until('its page', async () => (await op('webview', 'executeJavaScript', { ...id, code: 'document.readyState' })) === 'complete', 20_000);
+		await op('window', 'setTitle', { ...id, title });
+		expect(await op('window', 'setCloseVeto', { ...id, enabled: true })).toEqual({ armed: true });
+		expect(await op('window', 'hasCloseVeto', id)).toBe(true);
+		const asked = app.nextEvent('willClose', (e: { windowId: number }) => e.windowId === made.windowId, 15_000);
+		await win('post-close', { title }); // WM_CLOSE, what the X sends
+		await asked;
+		expect((await op<Array<{ windowId: number }>>('window', 'list')).some((w) => w.windowId === made.windowId)).toBe(true);
+		const closed = app.nextEvent('closed', (e: { windowId: number }) => e.windowId === made.windowId, 15_000);
+		await op('window', 'close', id);
+		await closed;
+	});
+
+	check('window: z-order and chrome flags read back; ops macOS has say unsupported', async () => {
+		const id = { windowId: 0 };
+		await op('window', 'setAlwaysOnTop', { ...id, enabled: true });
+		expect(await op('window', 'isAlwaysOnTop', id)).toBe(true);
+		await op('window', 'setAlwaysOnTop', { ...id, enabled: false });
+		expect(await op('window', 'isAlwaysOnTop', id)).toBe(false);
+		await op('window', 'setOpacity', { ...id, opacity: 0.5 });
+		expect(await op('window', 'getOpacity', id)).toEqual({ opacity: 0.5 });
+		await op('window', 'setOpacity', { ...id, opacity: 1 });
+		await op('window', 'setResizable', { ...id, enabled: false });
+		expect(await op('window', 'isResizable', id)).toEqual({ resizable: false });
+		await op('window', 'setResizable', { ...id, enabled: true });
+		await op('window', 'setContentProtected', { ...id, enabled: true });
+		expect(await op('window', 'isContentProtected', id)).toEqual({ contentProtected: true });
+		await op('window', 'setContentProtected', { ...id, enabled: false });
+		expect(await code('window', 'setTheme', { ...id, theme: 'bogus' })).toBe('invalid_args');
+		await op('window', 'setTheme', { ...id, theme: 'dark' });
+		expect(await op('window', 'getTheme', id)).toBe('dark');
+		await op('window', 'setTheme', { ...id, theme: 'system' });
+		expect(await code('window', 'setVibrancy', { ...id, material: 'sidebar' })).toBe('unsupported');
+	});
+
+	check('title bar: hiddenInset is frameless with no native controls; the style switches at runtime', async () => {
+		const id = { windowId: 0 };
+		expect(await op('window', 'getTitleBarStyle', id)).toEqual({ style: 'hiddenInset', frameless: true }); // desktop.config
+		const mode = () => app.eval<{ bar: string; controls: string }>(`({ bar: document.documentElement.dataset.desktopTitlebar, controls: document.documentElement.dataset.desktopControls })`);
+		expect(await mode()).toEqual({ bar: 'hiddenInset', controls: 'none' });
+		await op('window', 'setTitleBarStyle', { ...id, style: 'default' });
+		expect(await op('window', 'getTitleBarStyle', id)).toEqual({ style: 'default', frameless: false });
+		await until('the page knows', async () => (await mode()).controls === 'native');
+		await op('window', 'setTitleBarStyle', { ...id, style: 'hiddenInset' });
+		expect(await code('window', 'setTitleBarStyle', { ...id, style: 'bogus' })).toBe('invalid_args');
+		await until('frameless again', async () => (await mode()).controls === 'none');
+	});
+
+	check('title bar: a real drag on a drag region moves the window; a double click maximizes it', async () => {
+		const id = { windowId: 0 };
+		await op('window', 'setBounds', { ...id, x: 100, y: 100, width: 800, height: 600 });
+		await app.eval(`(() => { const d = document.createElement('div'); d.id = 'e2e-drag'; d.dataset.desktopDrag = ''; d.style.cssText = 'position:fixed;left:0;right:0;top:0;height:60px;z-index:99999;background:#f0f'; document.body.append(d); })()`);
+		try {
+			const before = (await op<{ bounds: { x: number; y: number } }>('window', 'getBounds', id)).bounds;
+			await win('drag', { title: mainTitle, dx: 300, dy: 40, byX: 120, byY: 70 });
+			await Bun.sleep(300);
+			const after = (await op<{ bounds: { x: number; y: number } }>('window', 'getBounds', id)).bounds;
+			log('drag', before, '->', after);
+			await shot('titlebar-drag.png');
+			expect(after.x).toBeGreaterThan(before.x + 40);
+			expect(after.y).toBeGreaterThan(before.y + 20);
+			await win('click', { title: mainTitle, dx: 300, dy: 40, times: 2 });
+			await until('maximized by the double click', () => op<boolean>('window', 'isMaximized', id), 5000);
+			await op('window', 'unmaximize', id);
+		} finally {
+			await app.eval(`document.querySelector('#e2e-drag')?.remove()`).catch(() => {});
+			await op('window', 'setBounds', { ...id, x: 100, y: 60, width: 900, height: 650 }).catch(() => {});
+		}
+	});
+
+	// ── menus, tray, popover ────────────────────────────────────────────────
+
+	check('menu: bar set, read, updated; an accelerator pressed for real and a popup driven by keys reach menuAction', async () => {
+		const previous = await op('menu', 'getAppMenu');
+		try {
+			expect(await code('menu', 'setAppMenu', { menus: [{ name: 'Bad', items: [{ label: 'x', accelerator: 'NotAKey+++' }] }] })).toBe('invalid_args');
+			await op('menu', 'setAppMenu', { menus: [{ name: 'E2E', items: [
+				{ label: 'Say hi', id: 'e2e-hi', accelerator: 'Ctrl+Shift+F8' },
+				{ type: 'separator' },
+				{ label: 'Check', id: 'e2e-check', type: 'checkbox', checked: false },
+			] }] });
+			const bar = await op<Array<{ label?: string; submenu?: Array<{ id?: string }> }>>('menu', 'items');
+			log('menu items', JSON.stringify(bar));
+			expect(bar.flatMap((m) => m.submenu ?? []).some((i) => i.id === 'e2e-hi')).toBe(true);
+			await op('menu', 'update', { id: 'e2e-check', label: 'Checked', checked: true, enabled: false });
+			expect(await op('menu', 'get', { id: 'e2e-check' })).toEqual({ id: 'e2e-check', text: 'Checked', enabled: false, checked: true });
+			expect(await code('menu', 'update', { id: 'nobody', label: 'x' })).toBe('invalid_args');
+			expect(await op('menu', 'insert', { name: 'Extra', items: [{ label: 'One', id: 'e2e-extra' }] })).toEqual({ inserted: true, name: 'Extra' });
+			expect(await op('menu', 'get', { id: 'e2e-extra' })).toMatchObject({ text: 'One' });
+			expect(await op('menu', 'remove', { name: 'Extra' })).toEqual({ removed: true, name: 'Extra' });
+
+			await app.eval(`(() => { const d = document.createElement('div'); d.id = 'e2e-cover'; d.style.cssText = 'position:fixed;inset:0;z-index:99999'; document.body.append(d); })()`);
+			await win('click', { title: mainTitle, dx: 400, dy: 300 }); // the page has the keyboard
+			await app.eval(`document.querySelector('#e2e-cover')?.remove()`);
+			const hi = app.nextEvent('menuAction', (e: { id: string }) => e.id === 'e2e-hi', 10_000);
+			await win('keys', { title: mainTitle, keys: [0x11, 0x10, 0x77] }); // Ctrl+Shift+F8
+			await hi;
+
+			const picked = app.nextEvent('menuAction', (e: { id: string }) => e.id === 'e2e-popup', 15_000);
+			const popup = op('menu', 'popup', { items: [{ label: 'Popup item', id: 'e2e-popup' }] }, 25_000);
+			await Bun.sleep(1200);
+			await win('keys', { keys: [0x28] }); // Down
+			await win('keys', { keys: [0x0d] }); // Enter
+			await picked;
+			expect(await popup).toEqual({ dismissed: true });
+		} finally {
+			await win('keys', { keys: [0x1b] }).catch(() => {}); // a popup left open
+			await op('menu', 'setAppMenu', { menus: Array.isArray(previous) ? previous : [] }).catch(() => {});
+		}
+	});
+
+	check('tray and popover: the app\'s icon, its bound popover opened by a click, tooltip and menu changed, removed', async () => {
+		await until('the app set its tray', () => op<boolean>('tray', 'isSet'), 15_000);
+		log('tray rect', await op('tray', 'getBounds'));
+		await until('the popover is ready', async () => !!(await op<Array<{ id: string; ready: boolean }>>('popover', 'list')).find((p) => p.id === 'status-item')?.ready, 20_000);
+		const inside = await op<{ text: string; id: string }>('webview', 'executeJavaScript', { popoverId: 'status-item', code: `({ text: document.body.innerText, id: window.__shellPopover.id })` });
+		expect(inside.id).toBe('status-item');
+		expect(inside.text).toContain('Quick note');
+		const shown = app.nextEvent('popoverShown', (e: { id: string }) => e.id === 'status-item', 10_000);
+		const clicked = app.nextEvent('trayClick', undefined, 10_000);
+		expect(await op('tray', 'performClick')).toEqual({ clicked: true });
+		await Promise.all([shown, clicked]);
+		await shot('tray-popover.png');
+		expect(await op('popover', 'isShown', { id: 'status-item' })).toBe(true);
+		const hidden = app.nextEvent('popoverHidden', (e: { id: string }) => e.id === 'status-item', 10_000);
+		await op('popover', 'hide', { id: 'status-item' });
+		await hidden;
+		expect(await op('tray', 'set', { tooltip: 'E2E tooltip', menu: [{ label: 'Tray item', id: 'e2e-tray' }] })).toEqual({ set: true });
+		expect(await op('tray', 'set', { menu: null })).toEqual({ set: true });
+		expect(await code('tray', 'set', { badgeColor: 'not-a-color' })).toBe('invalid_args');
+		expect(await op('tray', 'remove')).toEqual({ removed: true });
+		expect(await op('tray', 'isSet')).toBe(false);
+		expect(await code('tray', 'performClick')).toBe('unavailable');
+		expect(await op('tray', 'set', { tooltip: 'Svelte Notes', popover: 'status-item' })).toEqual({ set: true });
+	});
+
+	// ── dialogs ─────────────────────────────────────────────────────────────
+
+	check('dialog: a message box answered by pressing its second button', async () => {
+		const title = 'E2E message box';
+		const reply = op('dialog', 'showMessageBox', { windowId: 0, title, message: 'Which one?', buttons: ['First', 'Second', 'Third'], cancelId: 2 }, 30_000);
+		try {
+			await Bun.sleep(500);
+			await shot('dialog-message.png');
+			expect(await win('dialog-button', { title, button: 'Second' })).toContain('pressed');
+			expect(await reply).toEqual({ response: 1, canceled: false });
+		} finally {
+			await win('close-if-any', { title }).catch(() => {});
+			await reply.catch(() => {});
+		}
+	});
+
+	check('dialog: a confirm answers by its buttons', async () => {
+		const title = 'E2E confirm';
+		const reply = op('dialog', 'showConfirm', { windowId: 0, title, message: 'Sure?' }, 30_000);
+		await Bun.sleep(500);
+		await win('dialog-button', { title, button: 'Cancel' });
+		expect(await reply).toBe(false);
+	});
+
+	check('dialog: save and open dialogs, a path typed in the real dialog, and a cancel', async () => {
+		const target = join(dir, 'chosen.txt');
+		let title = 'E2E save';
+		let reply = op<{ canceled: boolean; path: string | null }>('dialog', 'showSaveDialog', { windowId: 0, title, defaultPath: dir }, 40_000);
+		try {
+			await Bun.sleep(1000);
+			await shot('dialog-save.png');
+			await win('file-dialog', { title, path: target });
+			const saved = await reply;
+			log('save dialog', saved);
+			expect(saved.canceled).toBe(false);
+			expect(saved.path!.toLowerCase()).toBe(target.toLowerCase());
+		} finally {
+			await win('close-if-any', { title }).catch(() => {});
+			await reply.catch(() => {});
+		}
+		writeFileSync(target, 'chosen');
+		title = 'E2E open';
+		const opened = op<{ canceled: boolean; paths: string[] }>('dialog', 'showOpenDialog', { windowId: 0, title, defaultPath: dir }, 40_000);
+		try {
+			await Bun.sleep(1000);
+			await win('file-dialog', { title, path: target });
+			expect((await opened).paths.map((p) => p.toLowerCase())).toEqual([target.toLowerCase()]);
+		} finally {
+			await win('close-if-any', { title }).catch(() => {});
+			await opened.catch(() => {});
+		}
+		title = 'E2E cancel';
+		reply = op('dialog', 'showSaveDialog', { windowId: 0, title }, 40_000);
+		await Bun.sleep(1000);
+		await win('post-close', { title });
+		expect(await reply).toEqual({ canceled: true, path: null });
+	}, 120_000);
+
+	// ── clipboard ───────────────────────────────────────────────────────────
+
+	check('clipboard: text across processes, html, rtf, image, files, clear', async () => {
+		const text = 'héllo wörld ✓';
+		await op('clipboard', 'writeText', { text });
+		expect(await op('clipboard', 'readText')).toBe(text);
+		// Another process, not this app's own round trip. (Scripts stay ASCII: PowerShell 5 reads them as ANSI.)
+		const read = await ps(`[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Clipboard -Raw)))`);
+		expect(read.out).toBe(b64(text));
+		const written = await ps(String.raw`param([string]$V)
+Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($V)))`, b64('from powershell é'));
+		expect(written.code).toBe(0);
+		expect((await op<string>('clipboard', 'readText')).trim()).toBe('from powershell é');
+		await op('clipboard', 'writeHtml', { html: '<b>bold</b>' });
+		expect(await op('clipboard', 'readHtml')).toContain('<b>bold</b>');
+		expect(await op('clipboard', 'has', { format: 'text/html' })).toBe(true);
+		await op('clipboard', 'writeRtf', { rtf: '{\\rtf1 hi}' });
+		expect(await op('clipboard', 'readRtf')).toContain('\\rtf1');
+		const png = pngDataUrl(4, 3, () => [10, 20, 30, 255]).split(',')[1]!;
+		await op('clipboard', 'writeImage', { bytes: png });
+		const image = await op<{ bytes: string; format: string }>('clipboard', 'readImage');
+		const decoded = Buffer.from(image.bytes, 'base64');
+		expect(image.format).toBe('png');
+		expect([decoded.readUInt32BE(16), decoded.readUInt32BE(20)]).toEqual([4, 3]);
+		expect(await code('clipboard', 'writeImage', { bytes: 'not an image' })).toBe('invalid_args');
+		const file = join(dir, 'clip.txt');
+		writeFileSync(file, 'x');
+		await op('clipboard', 'writePaths', { paths: [file] });
+		expect(await op('clipboard', 'readPaths')).toEqual([file]);
+		expect(await op('clipboard', 'availableFormats')).toContain('files');
+		await op('clipboard', 'clear');
+		expect(await op('clipboard', 'availableFormats')).toEqual([]);
+		expect(await op('clipboard', 'readPaths')).toBeNull();
+	});
+
+	// ── views ───────────────────────────────────────────────────────────────
+
+	check('view: another site in the window, its events, bounds, visibility, what it can reach', async () => {
+		const title = app.nextEvent('viewTitle', (e: { id: string; title: string }) => e.id === 'e2e-view' && e.title === '/one', 20_000);
+		const loaded = app.nextEvent('viewLoaded', (e: { id: string; url: string }) => e.id === 'e2e-view', 20_000);
+		expect(await op('view', 'create', { id: 'e2e-view', windowId: 0, url: `${ext}/one`, bounds: { x: 10, y: 20, width: 400, height: 300 } })).toEqual({ id: 'e2e-view', windowId: 0 });
+		expect((await loaded).url).toBe(`${ext}/one`);
+		await title;
+		await shot('view-external.png');
+		expect(await op('view', 'getInfo', { id: 'e2e-view' })).toMatchObject({ id: 'e2e-view', url: `${ext}/one`, title: '/one', hidden: false });
+		expect((await op<Array<{ id: string }>>('view', 'list')).map((v) => v.id)).toContain('e2e-view');
+		// The bridge script is there, but it answers the app's origin only: no `host`, no events.
+		expect(await inView('e2e-view', `({ marker: window.__desktopView, host: typeof host, origin: location.origin })`)).toEqual({ marker: 'e2e-view', host: 'undefined', origin: ext });
+		expect(await op('view', 'getBounds', { id: 'e2e-view' })).toEqual({ x: 10, y: 20, width: 400, height: 300 });
+		await op('view', 'setBounds', { id: 'e2e-view', x: 30, y: 40, width: 320, height: 240 });
+		expect(await op('view', 'getBounds', { id: 'e2e-view' })).toEqual({ x: 30, y: 40, width: 320, height: 240 });
+		await until('the page got the new size', async () => near(await inView<number>('e2e-view', 'innerWidth'), 320, 4), 5000);
+		await op('view', 'hide', { id: 'e2e-view' });
+		expect(await op('view', 'getInfo', { id: 'e2e-view' })).toMatchObject({ hidden: true });
+		await op('view', 'show', { id: 'e2e-view' });
+		const navigated = app.nextEvent('viewNavigated', (e: { id: string; url: string }) => e.id === 'e2e-view' && e.url.endsWith('/two'), 15_000);
+		await op('view', 'navigate', { id: 'e2e-view', url: `${ext}/two` });
+		await navigated;
+		await until('it reports the new page', async () => (await op<{ url: string }>('webview', 'getInfo', { viewId: 'e2e-view' })).url === `${ext}/two`);
+		expect(await op('webview', 'getInfo', { viewId: 'e2e-view' })).toMatchObject({ windowId: 0, viewId: 'e2e-view' });
+		expect(await code('view', 'navigate', { id: 'nobody', url: ext })).toBe('invalid_args');
+		expect(await op('view', 'destroy', { id: 'e2e-view' })).toEqual({ destroyed: true });
+		expect((await op<Array<{ id: string }>>('view', 'list')).map((v) => v.id)).not.toContain('e2e-view');
+	});
+
+	check('view: an app route runs as the app, a failed load is reported, autoresize follows the window', async () => {
+		await op('window', 'setBounds', { windowId: 0, x: 100, y: 60, width: 900, height: 650 });
+		const loaded = app.nextEvent('viewLoaded', (e: { id: string }) => e.id === 'e2e-app', 20_000);
+		await op('view', 'create', { id: 'e2e-app', windowId: 0, route: '/about', autoresize: 'both', bounds: { x: 0, y: 0, width: 300, height: 200 } });
+		await loaded;
+		await until('host in the view', async () => (await inView<string>('e2e-app', 'typeof host')) === 'object', 15_000);
+		expect(await inView('e2e-app', `location.pathname`)).toBe('/about');
+		const before = await op<{ width: number; height: number }>('view', 'getBounds', { id: 'e2e-app' });
+		await op('window', 'setSize', { windowId: 0, width: 760, height: 560 });
+		await until('it follows', async () => (await op<{ width: number }>('view', 'getBounds', { id: 'e2e-app' })).width < before.width);
+		const failed = app.nextEvent<{ id: string; error: string }>('viewFailed', (e: { id: string }) => e.id === 'e2e-dead', 25_000);
+		await op('view', 'create', { id: 'e2e-dead', windowId: 0, url: `http://127.0.0.1:${closedPort}/`, bounds: { x: 0, y: 0, width: 100, height: 100 } });
+		log('viewFailed', await failed);
+		await closeView('e2e-dead');
+		await closeView('e2e-app');
+		await op('window', 'setBounds', { windowId: 0, x: 100, y: 60, width: 900, height: 650 });
+	});
+
+	// ── screen, DPI, capture ────────────────────────────────────────────────
+
+	check('screen and DPI: displays, what the page and Win32 say, real captures', async () => {
+		const displays = await op<Array<{ bounds: { width: number }; workArea: { height: number; width: number }; scaleFactor: number; isPrimary: boolean }>>('screen', 'getAllDisplays');
+		log('displays', displays);
+		expect(displays.length).toBeGreaterThan(0);
+		expect(displays.filter((d) => d.isPrimary)).toHaveLength(1);
+		const primary = await op<{ scaleFactor: number; bounds: { width: number } }>('screen', 'getPrimaryDisplay');
+		expect(primary.bounds.width).toBeGreaterThan(0);
+		expect(await op('screen', 'scaleFactor')).toBe(primary.scaleFactor);
+		const cursor = await op<{ x: number; y: number }>('screen', 'getCursorScreenPoint');
+		expect(typeof cursor.x).toBe('number');
+		const scale = await op<number>('window', 'getScaleFactor', { windowId: 0 });
+		expect(await app.eval<number>('devicePixelRatio')).toBeCloseTo(scale, 2);
+		// The web view is the size of the window's client area, whatever the scale.
+		const inner = await op<{ width: number }>('window', 'innerSize', { windowId: 0 });
+		expect(near(await app.eval<number>('innerWidth'), inner.width, 2)).toBe(true);
+
+		const png = await op<{ data: string; format: string; width: number }>('webview', 'capturePage', { windowId: 0 });
+		expect(Buffer.from(png.data, 'base64').subarray(1, 4).toString()).toBe('PNG');
+		expect(near(png.width, inner.width * scale, 4)).toBe(true);
+		const jpeg = await op<{ data: string; format: string; width: number; height: number }>('webview', 'capturePage', { windowId: 0, format: 'jpeg', rect: { x: 0, y: 0, width: 100, height: 50 } });
+		expect(jpeg.format).toBe('jpeg');
+		expect(near(jpeg.width, 100 * scale, 2)).toBe(true);
+		expect(Buffer.from(jpeg.data, 'base64')[0]).toBe(0xff);
+		expect(await code('webview', 'capturePage', { windowId: 0, rect: { x: 100000, y: 0, width: 10, height: 10 } })).toBe('invalid_args');
+
+		const sources = await op<Array<{ id: number; type: string; label: string }>>('capture', 'getSources');
+		expect(sources.some((s) => s.type === 'display')).toBe(true);
+		expect(sources.some((s) => s.type === 'window' && s.label === mainTitle)).toBe(true);
+		const still = await op<{ width: number; pngBase64: string }>('capture', 'captureSource', { id: sources.find((s) => s.type === 'display')!.id, type: 'display' }, 30_000);
+		expect(still.width).toBeGreaterThan(0);
+		expect(Buffer.from(still.pngBase64, 'base64').subarray(1, 4).toString()).toBe('PNG');
+		const windowStill = await op<{ pngBase64: string }>('capture', 'captureSource', { id: sources.find((s) => s.label === mainTitle)!.id, type: 'window' }, 30_000);
+		writeFileSync(join(SHOTS, 'capture-window.png'), Buffer.from(windowStill.pngBase64, 'base64'));
+	});
+
+	// ── jobs and MCP: child processes of the packaged exe ───────────────────
+
+	check('background jobs: own process, progress, result, cancel, failure, concurrency', async () => {
+		await home();
+		const api = <T>(path: string, init?: RequestInit) => within(40_000, path, app.eval<T>(`fetch(${JSON.stringify(path)}, ${JSON.stringify(init ?? {})}).then((r) => r.json())`));
+		const start = (body: unknown) => api<{ id: string; state: string }>('/api/jobs', { method: 'POST', body: JSON.stringify(body) });
+		const halfway = app.nextEvent<{ channel: string; data: { event?: { data: { halfway: number } } } }>('message', (m) => m.channel === 'jobs' && !!m.data?.event, 30_000);
+		const a = await start({ name: 'count', args: { to: 6, delay: 30 } });
+		const done = await api<{ state: string; result: { counted: number; pid: number }; progress: number; log: string[]; error?: string }>(`/api/jobs?id=${a.id}&wait=1`);
+		log('job', done);
+		expect(done).toMatchObject({ state: 'done', progress: 1, result: { counted: 6 } });
+		const { pid } = await op<{ pid: number }>('diagnostics', 'info');
+		expect(done.result.pid).not.toBe(pid);
+		expect(done.log.join('\n')).toContain('counted to 6');
+		expect((await halfway).data.event!.data).toEqual({ halfway: 3 });
+		const f = await start({ name: 'fail' });
+		expect(await api(`/api/jobs?id=${f.id}&wait=1`)).toMatchObject({ state: 'failed', error: 'this job always fails' });
+		const slow = await start({ name: 'count', args: { to: 100, delay: 50 } });
+		await Bun.sleep(800);
+		expect(await api(`/api/jobs?id=${slow.id}`, { method: 'DELETE' })).toEqual({ canceled: true });
+		expect(await api(`/api/jobs?id=${slow.id}&wait=1`)).toMatchObject({ state: 'canceled' });
+		const c1 = await start({ name: 'count', args: { to: 5, delay: 40 }, concurrency: 1 });
+		const c2 = await start({ name: 'count', args: { to: 5, delay: 40 }, concurrency: 1 });
+		expect(c2.state).toBe('queued');
+		const [r1, r2] = await Promise.all([api<{ endedAt: number }>(`/api/jobs?id=${c1.id}&wait=1`), api<{ startedAt: number }>(`/api/jobs?id=${c2.id}&wait=1`)]);
+		expect(r2.startedAt).toBeGreaterThanOrEqual(r1.endedAt);
+	}, 120_000);
+
+	check('MCP: what an agent starts (the exe with --mcp): tools listed, a call runs in the running app', async () => {
+		await home();
+		const server = await within(20_000, 'mcp-status', app.eval<{ available: boolean; name: string; command: string; args: string[]; tools: string[] }>(`fetch('/api/mcp-status').then((r) => r.json())`));
+		log('mcp', server);
+		expect(server).toMatchObject({ available: true, name: 'svelte-notes', args: ['--mcp'], tools: ['list_notes', 'add_note'] });
+		expect(existsSync(server.command)).toBe(true);
+		const meta = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} };
+		const proc = Bun.spawn([server.command, ...server.args], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+		try {
+			const reader = proc.stdout.getReader();
+			let buffered = '';
+			const next = async () => {
+				while (!buffered.includes('\n')) {
+					const { value, done } = await reader.read();
+					if (done) throw new Error(`the bridge closed: ${await new Response(proc.stderr).text()}`);
+					buffered += new TextDecoder().decode(value);
+				}
+				const at = buffered.indexOf('\n');
+				const line = buffered.slice(0, at);
+				buffered = buffered.slice(at + 1);
+				return JSON.parse(line);
+			};
+			const ask = (id: number, method: string, params: object = {}) => {
+				proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params: { ...params, _meta: meta } })}\n`);
+				proc.stdin.flush();
+				return within(30_000, `mcp ${method}`, next()).catch((e) => { throw Object.assign(e, { code: undefined }); }); // the bridge, not the app
+			};
+			const windows = (await op<unknown[]>('window', 'list')).length;
+			const { result } = await ask(1, 'tools/list');
+			expect(result.tools.map((t: { name: string }) => t.name)).toEqual(['list_notes', 'add_note']);
+			const text = `from an agent ${Date.now()}`;
+			const added = await ask(2, 'tools/call', { name: 'add_note', arguments: { text } });
+			expect(added.result.isError).toBeUndefined();
+			const listed = await ask(3, 'tools/call', { name: 'list_notes', arguments: { limit: 1 } });
+			expect(listed.result.structuredContent.notes[0].text).toBe(text);
+			const wrong = await ask(4, 'tools/call', { name: 'add_note', arguments: { text: 3 } });
+			expect(wrong.result.isError).toBe(true);
+			expect((await op<unknown[]>('window', 'list')).length).toBe(windows);
+		} finally {
+			proc.kill();
+		}
+	}, 120_000);
+
+	// ── web content control ─────────────────────────────────────────────────
+
+	const locate = (view: string) => inView<string>(view, `new Promise((r) => navigator.geolocation.getCurrentPosition(() => r('position'), (e) => r('error:' + e.code), { timeout: 3000 }))`, 30_000);
+	const configure = (enabled: boolean, timeoutMs = 15_000) => op('webview', 'configurePolicy', { kind: 'permission', enabled, timeoutMs });
+
+	check('permissions: no handler, another origin is refused without asking; the app\'s own origin is allowed', async () => {
+		await openView('e2e-perm', '/perm');
+		try {
+			const asked = app.nextEvent('webPermissionRequest', undefined, 3000).then(() => true, () => false);
+			expect(await locate('e2e-perm')).toBe('error:1');
+			expect(await asked).toBe(false);
+			expect(await op('webview', '_permissionPolicyForTesting', { viewId: 'e2e-perm', permission: 'camera' })).toBe('deny');
+			expect(await op('webview', '_permissionPolicyForTesting', { windowId: 0, permission: 'camera' })).toBe('allow');
+			log('notification permission, app page', await app.eval(`Notification.requestPermission()`));
+			expect(await inView('e2e-perm', `Notification.requestPermission()`)).toBe('denied');
+		} finally {
+			await closeView('e2e-perm');
+		}
+	});
+
+	check('permissions: setPermissionHandler sees the request, its answer holds it, once; a late answer has expired', async () => {
+		await openView('e2e-perm', '/perm');
+		await configure(true);
+		try {
+			type Req = { requestId: string; origin: string; permission: string; frame: unknown; viewId: string; windowId: number };
+			let request = app.nextEvent<Req>('webPermissionRequest', (r) => r.permission === 'location', 15_000);
+			let result = locate('e2e-perm');
+			const r = await request;
+			expect(r).toMatchObject({ origin: ext, permission: 'location', frame: null, viewId: 'e2e-perm', windowId: 0 });
+			await Bun.sleep(300);
+			await op('webview', 'respondPolicy', { requestId: r.requestId, answer: 'deny' });
+			expect(await result).toBe('error:1');
+			expect(await code('webview', 'respondPolicy', { requestId: r.requestId, answer: 'allow' })).toBe('unavailable');
+			// Allowed: past the web layer. What comes then is the OS's (no location service on a runner).
+			request = app.nextEvent<Req>('webPermissionRequest', (x) => x.permission === 'location', 15_000);
+			result = locate('e2e-perm');
+			await op('webview', 'respondPolicy', { requestId: (await request).requestId, answer: 'allow' });
+			log('location after allow', await result);
+			// An unanswered request is refused at the deadline, and asks again next time: nothing was saved.
+			await configure(true, 300);
+			request = app.nextEvent<Req>('webPermissionRequest', (x) => x.permission === 'location', 15_000);
+			result = locate('e2e-perm');
+			const late = await request;
+			expect(await result).toBe('error:1');
+			expect(await code('webview', 'respondPolicy', { requestId: late.requestId, answer: 'allow' })).toBe('unavailable');
+			expect(await code('webview', 'configurePolicy', { kind: 'permission', enabled: true, timeoutMs: 10 })).toBe('invalid_args');
+		} finally {
+			await configure(false).catch(() => {});
+			await closeView('e2e-perm');
+		}
+	}, 90_000);
+
+	check('permissions: saved decisions come before the handler and are server only; camera and display capture go through the same policy', async () => {
+		await openView('e2e-perm', '/perm');
+		await configure(true);
+		try {
+			await op('webview', 'setPermissionDecision', { origin: `${ext}/any/path`, permission: 'location', decision: 'deny' });
+			expect(await op('webview', 'listPermissionDecisions')).toContainEqual({ origin: ext, permission: 'location', decision: 'deny' });
+			const asked = app.nextEvent('webPermissionRequest', undefined, 3000).then(() => true, () => false);
+			expect(await locate('e2e-perm')).toBe('error:1');
+			expect(await asked).toBe(false);
+			expect(await op('webview', '_permissionPolicyForTesting', { viewId: 'e2e-perm', permission: 'location' })).toBe('deny');
+			await op('webview', 'setPermissionDecision', { origin: ext, permission: 'location', decision: 'allow' });
+			expect(await op('webview', '_permissionPolicyForTesting', { viewId: 'e2e-perm', permission: 'location' })).toBe('allow');
+			await op('webview', 'revokePermissionDecision', { origin: ext, permission: 'location' });
+			expect(await op('webview', 'listPermissionDecisions')).toEqual([]);
+			expect(await code('webview', 'setPermissionDecision', { origin: 'file:///x', permission: 'location', decision: 'deny' })).toBe('invalid_args');
+			expect(await code('webview', 'setPermissionDecision', { origin: ext, permission: 'usb', decision: 'deny' })).toBe('invalid_args');
+			expect(await code('webview', 'setPermissionDecision', { origin: ext, permission: 'location', decision: 'maybe' })).toBe('invalid_args');
+			await home();
+			expect(await app.eval(`host.webview.listPermissionDecisions().then(() => 'ok', (e) => e.code)`)).toBe('denied');
+
+			// A runner has no camera: WebView2 may say so before it asks. Report which.
+			const camera = app.nextEvent<{ requestId: string; permission: string }>('webPermissionRequest', (x) => x.permission === 'camera', 5000).then((x) => x, () => null);
+			const media = inView('e2e-perm', `navigator.mediaDevices.getUserMedia({ video: true }).then(() => 'stream', (e) => e.name)`, 25_000);
+			const cameraRequest = await camera;
+			log('camera request', cameraRequest);
+			if (cameraRequest) await op('webview', 'respondPolicy', { requestId: cameraRequest.requestId, answer: 'deny' });
+			log('getUserMedia', await media);
+			if (cameraRequest) expect(await media).toBe('NotAllowedError');
+
+			const capture = app.nextEvent<{ requestId: string; origin: string; permission: string }>('webPermissionRequest', (x) => x.permission === 'screenRecording', 8000);
+			const display = inView('e2e-perm', `navigator.mediaDevices.getDisplayMedia().then(() => 'stream', (e) => e.name)`, 25_000);
+			const asking = await capture;
+			expect(asking.origin).toBe(ext);
+			await op('webview', 'respondPolicy', { requestId: asking.requestId, answer: 'deny' });
+			expect(await display).toBe('NotAllowedError');
+		} finally {
+			await op('webview', 'revokePermissionDecision', { origin: ext, permission: 'location' }).catch(() => {});
+			await configure(false).catch(() => {});
+			await closeView('e2e-perm');
+		}
+	}, 90_000);
+
+	const downloadsDir = () => join(dir, 'downloads');
+	const stateOf = (id: string) => op<{ state: string; receivedBytes: number; totalBytes: number; canResume: boolean; path?: string; suggestedFilename: string; mimeType: string | null; fraction: number; error?: string; windowId?: number }>('webview', 'getDownload', { id });
+	const reached = async (id: string, state: string, ms = 20_000) => {
+		await until(`download ${id} ${state}`, async () => (await stateOf(id)).state === state, ms);
+		return stateOf(id);
+	};
+
+	check('downloads: from the page, its events, a record, unique names, an explicit path', async () => {
+		await home();
+		const folder = downloadsDir();
+		expect(await op('webview', 'setDownloadDirectory', { path: folder })).toEqual({ path: folder });
+		expect(await op('webview', 'getDownloadDirectory')).toEqual({ path: folder });
+		const url = `${ext}/file.txt`;
+		const started = app.nextEvent<{ id: string; url: string; path: string; suggestedFilename: string; windowId: number }>('downloadStarted', (e) => e.url === url, 20_000);
+		const finished = app.nextEvent<{ id: string; url: string; path: string; bytes: number }>('downloadFinished', (e) => e.url === url, 20_000);
+		const dl = await op<{ id: string; url: string }>('webview', 'download', { windowId: 0, url }, 25_000); // another origin: an attachment
+		expect(dl.url).toBe(url);
+		expect(await started).toMatchObject({ id: dl.id, suggestedFilename: 'report.txt', windowId: 0, path: join(folder, 'report.txt') });
+		const fin = await finished;
+		expect(fin).toMatchObject({ id: dl.id, path: join(folder, 'report.txt'), bytes: 15 });
+		expect(readFileSync(fin.path, 'utf8')).toBe('downloaded body');
+		expect(await reached(dl.id, 'completed')).toMatchObject({ receivedBytes: 15, fraction: 1, canResume: false, windowId: 0, mimeType: 'text/plain' });
+		expect((await op<Array<{ id: string }>>('webview', 'listDownloads'))[0]!.id).toBe(dl.id);
+
+		const second = app.nextEvent<{ url: string; path: string }>('downloadFinished', (e) => e.url === url, 20_000);
+		await op('webview', 'download', { windowId: 0, url }, 25_000);
+		expect((await second).path).toBe(join(folder, 'report (1).txt'));
+
+		const target = join(dir, 'explicit', 'named.txt');
+		const third = app.nextEvent<{ path: string }>('downloadFinished', (e) => e.path === target, 20_000);
+		await op('webview', 'download', { windowId: 0, url, path: target }, 25_000);
+		await third;
+		expect(readFileSync(target, 'utf8')).toBe('downloaded body');
+
+		// The page's own origin, relative; a blob made in the page; a link clicked by the page.
+		const blob = await app.eval<string>(`URL.createObjectURL(new Blob(['blob body'], { type: 'text/plain' }))`);
+		const fromBlob = join(dir, 'from-blob.txt');
+		const fourth = app.nextEvent<{ path: string }>('downloadFinished', (e) => e.path === fromBlob, 20_000);
+		await op('webview', 'download', { windowId: 0, url: blob, path: fromBlob }, 25_000);
+		await fourth;
+		expect(readFileSync(fromBlob, 'utf8')).toBe('blob body');
+		const fifth = app.nextEvent<{ url: string; path: string }>('downloadFinished', (e) => e.url === url && e.path.includes('report (2)'), 20_000);
+		await app.eval(`(() => { const f = document.createElement('iframe'); f.style.display = 'none'; f.src = ${JSON.stringify(url)}; document.body.append(f); })()`);
+		await fifth;
+
+		expect(await code('webview', 'download', { windowId: 0, url: 'ftp://x/y' })).toBe('invalid_args');
+		expect(await code('webview', 'download', { windowId: 0, url, path: 'relative.txt' })).toBe('invalid_args');
+		expect(await code('webview', 'cancelDownload', { id: 'nope' })).toBe('invalid_args');
+		expect(await op('webview', 'getDownload', { id: 'nope' })).toBeNull();
+	}, 120_000);
+
+	check('downloads: another origin that isn\'t an attachment is refused and the page stays where it is', async () => {
+		await home();
+		const before = await app.eval('location.href');
+		expect(await op('webview', 'download', { windowId: 0, url: `${ext}/inline.txt` }, 25_000).then(() => 'ok', (e: { code: string }) => e.code)).toBe('unavailable');
+		expect(await app.eval('location.href')).toBe(before);
+	});
+
+	check('downloads: a handler picks the destination or cancels; a bad decision cancels', async () => {
+		await home();
+		const url = `${ext}/file.txt`;
+		const handlerId = 'e2e-handler';
+		await op('webview', 'setDownloadHandler', { handlerId });
+		try {
+			type Req = { id: string; handlerId: string; suggestedFilename: string; mimeType: string | null; size: number; windowId: number };
+			let requested = app.nextEvent<Req>('downloadRequested', (e) => e.handlerId === handlerId, 20_000);
+			await op('webview', 'download', { windowId: 0, url }, 25_000);
+			const first = await requested;
+			expect(first).toMatchObject({ suggestedFilename: 'report.txt', mimeType: 'text/plain', windowId: 0 });
+			expect((await stateOf(first.id)).state).toBe('requested');
+			const chosen = join(dir, 'handler', 'chosen.txt');
+			const done = app.nextEvent<{ id: string }>('downloadFinished', (e) => e.id === first.id, 20_000);
+			expect(await code('webview', 'decideDownload', { id: first.id, handlerId: 'someone-else', decision: 'default' })).toBe('unavailable');
+			await op('webview', 'decideDownload', { id: first.id, handlerId, decision: { path: chosen } });
+			await done;
+			expect(readFileSync(chosen, 'utf8')).toBe('downloaded body');
+
+			requested = app.nextEvent<Req>('downloadRequested', (e) => e.handlerId === handlerId, 20_000);
+			await op('webview', 'download', { windowId: 0, url }, 25_000);
+			const second = await requested;
+			const failed = app.nextEvent<{ id: string; canceled: boolean; error: string }>('downloadFailed', (e) => e.id === second.id, 15_000);
+			await op('webview', 'decideDownload', { id: second.id, handlerId, decision: 'cancel' });
+			expect(await failed).toMatchObject({ canceled: true });
+			expect(await reached(second.id, 'canceled')).toMatchObject({ canResume: false });
+			expect(await code('webview', 'decideDownload', { id: second.id, handlerId, decision: 'default' })).toBe('unavailable');
+
+			requested = app.nextEvent<Req>('downloadRequested', (e) => e.handlerId === handlerId, 20_000);
+			await op('webview', 'download', { windowId: 0, url }, 25_000);
+			const third = await requested;
+			expect(await code('webview', 'decideDownload', { id: third.id, handlerId, decision: { path: 'relative.txt' } })).toBe('invalid_args');
+			expect((await stateOf(third.id)).state).toBe('canceled');
+		} finally {
+			await op('webview', 'clearDownloadHandler', { handlerId }).catch(() => {});
+		}
+	}, 90_000);
+
+	check('downloads: a slow one reports progress, pauses, resumes to every byte; another is canceled and leaves no file', async () => {
+		await home();
+		const url = `${ext}/slow.bin`;
+		const pausedAt = join(dir, 'slow-paused.bin');
+		const progress = app.nextEvent<{ url: string; receivedBytes: number; totalBytes: number; fraction: number }>('downloadProgress', (e) => e.url === url, 20_000);
+		const dl = await op<{ id: string }>('webview', 'download', { windowId: 0, url, path: pausedAt }, 25_000);
+		const p = await progress;
+		log('progress', p);
+		expect(p.receivedBytes).toBeGreaterThan(0);
+		expect(p.totalBytes).toBe(SLOW_SIZE);
+		expect(p.fraction).toBeGreaterThan(0);
+		const paused = await op<{ state: string; canResume: boolean }>('webview', 'pauseDownload', { id: dl.id });
+		log('paused', paused);
+		expect(paused.state).toBe('paused');
+		expect(paused.canResume).toBe(true);
+		expect(await code('webview', 'pauseDownload', { id: dl.id })).toBe('unavailable');
+		const held = (await stateOf(dl.id)).receivedBytes;
+		await Bun.sleep(1000);
+		expect((await stateOf(dl.id)).receivedBytes - held).toBeLessThan(SLOW_SIZE / 2);
+		const finished = app.nextEvent<{ id: string; bytes: number }>('downloadFinished', (e) => e.id === dl.id, 30_000);
+		expect(await op('webview', 'resumeDownload', { id: dl.id })).toMatchObject({ state: 'downloading' });
+		expect((await finished).bytes).toBe(SLOW_SIZE);
+		expect(statSync(pausedAt).size).toBe(SLOW_SIZE);
+		expect(await code('webview', 'resumeDownload', { id: dl.id })).toBe('unavailable');
+
+		const canceledAt = join(dir, 'slow-canceled.bin');
+		const failed = app.nextEvent<{ url: string; canceled: boolean }>('downloadFailed', (e) => e.url === url, 20_000);
+		const other = await op<{ id: string }>('webview', 'download', { windowId: 0, url, path: canceledAt }, 25_000);
+		await Bun.sleep(500);
+		expect(await op('webview', 'cancelDownload', { id: other.id, snapshot: true })).toMatchObject({ state: 'canceled', canResume: false });
+		expect((await failed).canceled).toBe(true);
+		await until('no partial file', async () => !existsSync(canceledAt), 5000);
+		await op('webview', 'setDownloadDirectory', { path: null });
+	}, 90_000);
+
+	const longPage = `(() => { const d = document.createElement('div'); d.id = 'e2e-long'; d.style.height = '4000px'; d.textContent = 'printed'; document.body.append(d); })()`;
+
+	check('printing: PDFs, default and with options; bad options refused before anything starts', async () => {
+		await home();
+		await app.eval(longPage);
+		try {
+			const finished = app.nextEvent<{ success: boolean; path: string; windowId: number }>('printFinished', (e) => e.path === join(dir, 'all.pdf'), 30_000);
+			expect(await op('webview', 'printToPDF', { windowId: 0, path: join(dir, 'all.pdf') }, 40_000)).toEqual({ path: join(dir, 'all.pdf') });
+			expect(await finished).toMatchObject({ success: true, windowId: 0 });
+			const read = (name: string) => readFileSync(join(dir, name));
+			const all = read('all.pdf');
+			expect(all.subarray(0, 5).toString()).toBe('%PDF-');
+			log('all.pdf', all.length, 'bytes', Pdf.pages(all), 'pages, box', Pdf.box(all));
+			await op('webview', 'printToPDF', { windowId: 0, path: join(dir, 'first.pdf'), pageRanges: [{ from: 1, to: 1 }] }, 40_000);
+			const first = read('first.pdf');
+			log('first.pdf', first.length, 'bytes', Pdf.pages(first), 'pages');
+			expect(first.length).toBeLessThan(all.length);
+			await op('webview', 'printToPDF', { windowId: 0, path: join(dir, 'land.pdf'), orientation: 'landscape' }, 40_000);
+			await op('webview', 'printToPDF', { windowId: 0, path: join(dir, 'small.pdf'), paperSize: { width: 300, height: 400 }, margins: { top: 10, right: 10, bottom: 10, left: 10 } }, 40_000);
+			const land = Pdf.box(read('land.pdf')), small = Pdf.box(read('small.pdf')), portrait = Pdf.box(all);
+			log('boxes', { portrait, land, small });
+			expect(read('land.pdf').equals(all)).toBe(false);
+			if (portrait && land) expect(land[0]!).toBeGreaterThan(land[1]!);
+			if (small) expect([near(small[0]!, 300, 3), near(small[1]!, 400, 3)]).toEqual([true, true]);
+			expect(await op('webview', 'print', { windowId: 0, pdfPath: join(dir, 'via-print.pdf') }, 40_000)).toEqual({ success: true, path: join(dir, 'via-print.pdf') });
+			expect(read('via-print.pdf').subarray(0, 5).toString()).toBe('%PDF-');
+
+			const refused = (o: Record<string, unknown>) => code('webview', 'printToPDF', { windowId: 0, path: join(dir, 'no.pdf'), ...o });
+			expect(await refused({ orientation: 'sideways' })).toBe('invalid_args');
+			expect(await refused({ copies: 0 })).toBe('invalid_args');
+			expect(await refused({ paperSize: { width: 0, height: 100 } })).toBe('invalid_args');
+			expect(await refused({ margins: { top: 1 } })).toBe('invalid_args');
+			expect(await refused({ paperSize: { width: 100, height: 100 }, margins: { top: 60, right: 0, bottom: 60, left: 0 } })).toBe('invalid_args');
+			expect(await refused({ pageRanges: [{ from: 3, to: 2 }] })).toBe('invalid_args');
+			expect(await refused({ pageRanges: [] })).toBe('invalid_args');
+			expect(existsSync(join(dir, 'no.pdf'))).toBe(false);
+			expect(await code('webview', 'printToPDF', { windowId: 0 })).toBe('invalid_args');
+		} finally {
+			await app.eval(`document.querySelector('#e2e-long')?.remove()`).catch(() => {});
+		}
+	}, 120_000);
+
+	check('printing: the installed printers are listed; silent print refuses a printer that isn\'t there', async () => {
+		const printers = await op<string[]>('webview', 'getPrinters');
+		log('printers', printers);
+		expect(Array.isArray(printers)).toBe(true);
+		expect(await code('webview', 'print', { windowId: 0, silent: true, printer: 'No such printer' })).toBe('invalid_args');
+		expect(await code('webview', 'print', { windowId: 0, silent: true, pageRanges: [{ from: 1, to: 1 }, { from: 3, to: 4 }] })).toBe('invalid_args');
+	});
+
+	check('navigation policy: a view\'s navigations wait for the server, main frame and frames; the app\'s origin is exempt', async () => {
+		await home();
+		await openView('e2e-nav', '/start');
+		await op('webview', 'setNavigationPolicy', { enabled: true });
+		try {
+			type Nav = { requestId: string; url: string; isMainFrame: boolean; viewId: string };
+			const asked = (path: string) => app.nextEvent<Nav>('webContentNavigation', (e) => e.url === ext + path, 15_000);
+			let request = asked('/blocked');
+			await op('view', 'navigate', { id: 'e2e-nav', url: `${ext}/blocked` });
+			const blocked = await request;
+			expect(blocked).toMatchObject({ isMainFrame: true, viewId: 'e2e-nav' });
+			await op('webview', 'navigationDecision', { requestId: blocked.requestId, allow: false });
+			await Bun.sleep(800);
+			expect(hits.get('/blocked') ?? 0).toBe(0);
+			expect(await inView('e2e-nav', 'location.pathname')).toBe('/start');
+			expect(await code('webview', 'navigationDecision', { requestId: blocked.requestId, allow: true })).toBe('unavailable');
+
+			request = asked('/allowed');
+			let loaded = app.nextEvent('viewLoaded', (e: { id: string; url: string }) => e.id === 'e2e-nav' && e.url.endsWith('/allowed'), 15_000);
+			await op('view', 'navigate', { id: 'e2e-nav', url: `${ext}/allowed` });
+			await op('webview', 'navigationDecision', { requestId: (await request).requestId, allow: true });
+			await loaded;
+			expect(hits.get('/allowed')).toBe(1);
+
+			// Its frames: the page loads, the frame in it doesn't.
+			request = asked('/frame');
+			const frame = asked('/framed');
+			loaded = app.nextEvent('viewLoaded', (e: { id: string; url: string }) => e.id === 'e2e-nav' && e.url.endsWith('/frame'), 20_000);
+			await op('view', 'navigate', { id: 'e2e-nav', url: `${ext}/frame` });
+			await op('webview', 'navigationDecision', { requestId: (await request).requestId, allow: true });
+			const inner = await frame;
+			expect(inner.isMainFrame).toBe(false);
+			await op('webview', 'navigationDecision', { requestId: inner.requestId, allow: false });
+			await loaded;
+			expect(hits.get('/framed') ?? 0).toBe(0);
+
+			// Unanswered: refused at the deadline, and the app went on meanwhile.
+			request = asked('/unanswered');
+			await op('view', 'navigate', { id: 'e2e-nav', url: `${ext}/unanswered` });
+			const unanswered = await request;
+			expect(await op('window', 'getTitle', { windowId: 0 })).toBe(mainTitle); // the UI thread answers while it waits
+			await Bun.sleep(11_000);
+			expect(await code('webview', 'navigationDecision', { requestId: unanswered.requestId, allow: true })).toBe('unavailable');
+			expect(hits.get('/unanswered') ?? 0).toBe(0);
+
+			// The app's own origin is never asked, in a view either.
+			const none = app.nextEvent('webContentNavigation', undefined, 4000).then(() => true, () => false);
+			const appLoaded = app.nextEvent('viewLoaded', (e: { id: string }) => e.id === 'e2e-nav', 15_000);
+			await op('view', 'navigate', { id: 'e2e-nav', route: '/about' });
+			await appLoaded;
+			expect(await none).toBe(false);
+
+		} finally {
+			await op('webview', 'setNavigationPolicy', { enabled: false }).catch(() => {});
+			await closeView('e2e-nav');
+		}
+		const off = app.nextEvent('webContentNavigation', undefined, 3000).then(() => true, () => false);
+		await openView('e2e-nav', '/free');
+		expect(await off).toBe(false);
+		await closeView('e2e-nav');
+	}, 90_000);
+
+	check('cookies: the default profile set, read by the page, removed; the shell\'s own is out of reach', async () => {
+		await openView('e2e-cookies', '/cookies');
+		const url = `${ext}/`;
+		try {
+			expect(await op('sessions', 'list')).toEqual([{ id: 'default', persistent: true }]);
+			expect(await op('sessions', 'capabilities')).toEqual({ private: false, persistentNamed: false, proxy: false, proxyAuthentication: false, pac: false, customBypass: false });
+			expect(await op('sessions', 'getProxy')).toBeNull();
+			await op('sessions', 'cookiesSet', { url, name: 'e2e', value: 'one' });
+			expect(await inView('e2e-cookies', 'document.cookie')).toContain('e2e=one');
+			const [read] = await op<Array<Record<string, unknown>>>('sessions', 'cookiesGet', { url, name: 'e2e' });
+			log('cookie', read);
+			expect(read).toMatchObject({ name: 'e2e', value: 'one', domain: '127.0.0.1', path: '/', secure: false, httpOnly: false, sessionOnly: true });
+			const expires = Math.floor(Date.now() / 1000) + 3600;
+			await op('sessions', 'cookiesSet', { url, name: 'e2e-hidden', value: 'two', httpOnly: true, expires, sameSite: 'Strict' });
+			const [hidden] = await op<Array<{ httpOnly: boolean; sessionOnly: boolean; expires: number; sameSite: string }>>('sessions', 'cookiesGet', { url, name: 'e2e-hidden' });
+			expect(hidden).toMatchObject({ httpOnly: true, sessionOnly: false, sameSite: 'Strict' });
+			expect(near(hidden!.expires, expires, 2)).toBe(true);
+			expect(await inView('e2e-cookies', 'document.cookie')).not.toContain('e2e-hidden');
+			await inView('e2e-cookies', `document.cookie = 'from-page=yes; path=/'`);
+			expect((await op<Array<{ name: string }>>('sessions', 'cookiesGet', { url })).map((c) => c.name)).toContain('from-page');
+			const every = await op<Array<{ name: string }>>('sessions', 'cookiesGet');
+			expect(every.map((c) => c.name)).toContain('e2e');
+			expect(every.map((c) => c.name)).not.toContain('__kitop');
+			expect(await code('sessions', 'cookiesGet', { name: '__kitop' })).toBe('denied');
+			expect(await code('sessions', 'cookiesSet', { url: app.origin, name: '__kitop', value: 'x' })).toBe('denied');
+			expect(await code('sessions', 'cookiesGet', { session: 'other' })).toBe('invalid_args');
+			expect(await code('sessions', 'cookiesSet', { url, name: 'a=b', value: 'x' })).toBe('invalid_args');
+			expect(await code('sessions', 'cookiesSet', { url, name: 'a', value: 'x', domain: 'other.example' })).toBe('invalid_args');
+			expect(await code('sessions', 'cookiesSet', { url, name: 'a', value: 'x', secure: true })).toBe('invalid_args');
+			expect(await code('sessions', 'cookiesSet', { url: 'ftp://x/', name: 'a', value: 'x' })).toBe('invalid_args');
+			expect(await op('sessions', 'cookiesRemove', { url, name: 'e2e' })).toEqual({ removed: 1 });
+			expect(await op('sessions', 'cookiesRemove', { url, name: 'e2e' })).toEqual({ removed: 0 });
+			expect(await inView('e2e-cookies', 'document.cookie')).not.toContain('e2e=one');
+		} finally {
+			for (const name of ['e2e', 'e2e-hidden', 'from-page']) await op('sessions', 'cookiesRemove', { url, name }).catch(() => {});
+			await closeView('e2e-cookies');
+		}
+	});
+
+	check('cookies: changes are reported while someone listens, native ones and a page\'s own', async () => {
+		await openView('e2e-cookies', '/cookies');
+		const url = `${ext}/`;
+		type Changed = { session: string; cookie: { name: string; value: string }; removed: boolean };
+		const changed = (name: string, removed: boolean) => app.nextEvent<Changed>('sessionCookieChanged', (e) => e.cookie.name === name && e.removed === removed, 8000);
+		await op('sessions', 'watchCookies', { enabled: true });
+		try {
+			await Bun.sleep(1500); // the comparison starts from what's there
+			let event = changed('e2e-watch', false);
+			await op('sessions', 'cookiesSet', { url, name: 'e2e-watch', value: '1' });
+			expect(await event).toMatchObject({ session: 'default', cookie: { value: '1' } });
+			event = changed('e2e-page', false);
+			await inView('e2e-cookies', `document.cookie = 'e2e-page=1; path=/'`);
+			await event;
+			event = changed('e2e-watch', true);
+			await op('sessions', 'cookiesRemove', { url, name: 'e2e-watch' });
+			await event;
+		} finally {
+			await op('sessions', 'watchCookies', { enabled: false }).catch(() => {});
+			await op('sessions', 'cookiesRemove', { url, name: 'e2e-page' }).catch(() => {});
+			await closeView('e2e-cookies');
+		}
+	});
+
+	// ── relaunch ────────────────────────────────────────────────────────────
+
+	const openDb = `new Promise((resolve, reject) => {
+		const open = indexedDB.open('relaunch', 1);
+		open.onupgradeneeded = () => open.result.createObjectStore('s');
+		open.onsuccess = () => resolve(open.result);
+		open.onerror = () => reject(open.error);
+	})`;
+
+	check('relaunch: localStorage, IndexedDB, the port, a saved permission and the download history are still there', async () => {
+		await home();
+		const stamp = String(Date.now());
+		const origin = await app.eval<string>('location.origin');
+		await app.eval(`(async () => {
+			localStorage.setItem('relaunch', '${stamp}');
+			const db = await ${openDb};
+			await new Promise((done) => { const tx = db.transaction('s', 'readwrite'); tx.objectStore('s').put('${stamp}', 'k'); tx.oncomplete = done; });
+		})()`);
+		await op('webview', 'setPermissionDecision', { origin: 'https://saved.example', permission: 'microphone', decision: 'allow' });
+		const history = await op<Array<{ id: string; state: string }>>('webview', 'listDownloads');
+		expect(history.length).toBeGreaterThan(0);
+		await op('window', 'setBounds', { windowId: 0, x: 130, y: 70, width: 820, height: 610 });
+		await Bun.sleep(1500); // what web views write to disk comes a moment after
+		await app.close();
+		await Bun.sleep(1500);
+		app = await launch({ app: APP, timeout: 90_000 });
+		await app.waitFor('#counter', { timeout: 30_000 });
+		expect(await app.eval('location.origin')).toBe(origin);
+		expect(await app.eval(`localStorage.getItem('relaunch')`)).toBe(stamp);
+		expect(await app.eval(`(async () => { const db = await ${openDb}; return new Promise((done) => { const get = db.transaction('s').objectStore('s').get('k'); get.onsuccess = () => done(get.result); }); })()`)).toBe(stamp);
+		expect(await op('webview', 'listPermissionDecisions')).toContainEqual({ origin: 'https://saved.example', permission: 'microphone', decision: 'allow' });
+		await op('webview', 'revokePermissionDecision', { origin: 'https://saved.example', permission: 'microphone' });
+		const after = await op<Array<{ id: string; state: string; canResume: boolean }>>('webview', 'listDownloads');
+		log('downloads after relaunch', after.map((d) => d.state).join(' '));
+		expect(after.map((d) => d.id)).toEqual(history.map((d) => d.id));
+		expect(after.every((d) => !d.canResume)).toBe(true); // a transfer belongs to the run it started in
+		expect(after.every((d) => !['requested', 'downloading', 'pausing', 'paused'].includes(d.state))).toBe(true);
+		await home();
+	}, 180_000);
+
+	check('relaunch: the window comes back where it was (autosaveName)', async () => {
+		const { bounds } = await op<{ bounds: { x: number; y: number; width: number; height: number } }>('window', 'getBounds', { windowId: 0 });
+		log('bounds after relaunch', bounds);
+		expect([near(bounds.x, 130, 4), near(bounds.y, 70, 4), near(bounds.width, 820, 4), near(bounds.height, 610, 4)]).toEqual([true, true, true, true]);
+	});
 });

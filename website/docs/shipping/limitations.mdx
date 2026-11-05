@@ -15,10 +15,14 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 | Feature | macOS | Linux | Windows |
 | --- | --- | --- | --- |
 | [Custom resource protocols](/features/protocols) | Supported | Unsupported | Unsupported |
-| Website sessions, cookie management and per-session proxies | Supported | Unsupported | Unsupported |
-| Server-owned web permission and authentication handlers | Supported | Unsupported | Unsupported |
-| Registered web scripts, content rules and navigation policy | Supported | Unsupported | Unsupported |
-| Native download management and file bookmarks | Supported | Unsupported | Unsupported |
+| Website sessions and per-session proxies | Supported | Unsupported | Unsupported |
+| Cookie management | Supported | Unsupported | Default profile |
+| Server-owned web permission handlers | Supported | Unsupported | Supported |
+| Server-owned authentication handlers and certificate exceptions | Supported | Unsupported | Unsupported |
+| Registered web scripts and content rules | Supported | Unsupported | Unsupported |
+| Navigation policy | Supported | Unsupported | Supported |
+| Native download management | Supported | Unsupported | Supported |
+| File bookmarks | Supported | Unsupported | Unsupported |
 | Native input policy | Supported | Unsupported | Unsupported |
 | Web-view printing and PDF export | Supported | Unsupported | Supported with a recent WebView2 runtime |
 
@@ -35,7 +39,9 @@ These are shell API limits. The page still has the web APIs its installed web en
 
 ## Windows
 
-- **Only partly tested on real Windows:** CI runs the app and its notifications on a Windows runner. Title-bar dragging, background jobs, views, printing and high-DPI setups aren't covered, so test your app on a real PC.
+- **Only partly tested on real Windows:** CI runs the app and its notifications on a Windows runner. Tests for windows, title-bar dragging, menus, tray, dialogs, clipboard, views, background jobs, MCP and relaunch are written for that runner and haven't run yet. High-DPI and multi-monitor setups aren't covered, since the runner has one display at 100%. Test your app on a real PC.
+- **Web content control is new and hasn't run on Windows yet:** permission handlers, download management, print options, navigation policy and cookies compile for x64 and arm64 and have their tests, but none of this WebView2 code has executed on a Windows machine. Expect corrections.
+- **Windows differs where WebView2 does:** a paused download resumes only in the run that started it, `host.webview.download` needs an attachment from another origin, and a navigation policy holds the navigation with a bounded wait. See [downloads](/host/web/downloads#platform-support) and [navigation policy](/host/web/web-content#platform-support).
 - The WebView2 runtime must be installed. The shell offers an Evergreen download link when it is missing; it does not bundle the runtime.
 - Rust and Go plugins need a Windows host. See [Distribution](/shipping/distribution#windows).
 - Windows repeating notifications queue at most 128 occurrences over the next 30 days, topped up while the app runs. They do not repeat indefinitely while closed.

@@ -48,7 +48,7 @@ export type SessionCapabilities = {
 	customBypass: boolean;
 };
 
-/** macOS website profiles. The default profile belongs to the shell. */
+/** Website profiles: macOS. On Windows, the default profile's cookies. The default profile belongs to the shell. */
 export const sessions = {
 	create: (options: { id: string; persistent: boolean }) => callPlatform<SessionInfo>('sessions', 'create', options),
 	list: () => callPlatform<SessionInfo[]>('sessions', 'list'),

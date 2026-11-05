@@ -3,7 +3,7 @@ title: host.webview permissions, auth and certificates
 description: Server-owned web permission decisions, HTTP authentication challenges and exact certificate exceptions.
 ---
 
-These members of `host.webview` set policy for web content in windows, embedded views, popovers and sheets. All methods on this page are **server only** and macOS-only; page calls reject with `denied`, even if `bridge.allow` permits `webview.*`: that list controls native bridge calls, not a website's access to the camera or location. Policy is shared across views and [sessions](/host/web/sessions). Requests and credentials travel to the server, not to page event listeners. By default, with no saved decision and no handler, a page may use a permission only on the app's own origin; every other origin is denied. To let an external site use the camera or microphone, register a handler or save a decision.
+These members of `host.webview` set policy for web content in windows, embedded views, popovers and sheets. All methods on this page are **server only**; page calls reject with `denied`, even if `bridge.allow` permits `webview.*`: that list controls native bridge calls, not a website's access to the camera or location. Policy is shared across views and [sessions](/host/web/sessions). Requests and credentials travel to the server, not to page event listeners. By default, with no saved decision and no handler, a page may use a permission only on the app's own origin; every other origin is denied. To let an external site use the camera or microphone, register a handler or save a decision. Permissions also work on Windows; authentication, certificates and client identities are macOS only. See [Platform support](#platform-support).
 
 How-to: [Web view](/ui/web-view#authentication-challenges-and-tls-macos).
 
@@ -62,7 +62,7 @@ await host.webview.setPermissionDecision({
 | `permission` | `WebPermission` | Required | Permission name from the union above. |
 | `decision` | `WebPermissionDecision` | Required | `allow`, `deny` or `prompt`. |
 
-Resolves `null`. Invalid origins, permission names or decisions reject with `invalid_args`. Records live in app-identifier-scoped user defaults, survive relaunches and apply across sessions. They govern later permission checks; they do not revoke an active capture stream.
+Resolves `null`. Invalid origins, permission names or decisions reject with `invalid_args`. Records live in app-identifier-scoped user defaults (on Windows, a file in the app's local data folder), survive relaunches and apply across sessions. They govern later permission checks; they do not revoke an active capture stream.
 
 ### `listPermissionDecisions()`
 
@@ -189,7 +189,14 @@ await host.webview.revokeCertificate({
 
 ## Platform support
 
-All methods are macOS only; on Linux and Windows they return `unsupported`. They do not add WebUSB, HID or serial support. These are handler registrations and request/reply flows, not page-broadcast events. Use the callbacks above to receive requests.
+| Method | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| `setPermissionHandler`, `setPermissionDecision`, `listPermissionDecisions`, `revokePermissionDecision` | ✓ | — | ✓ |
+| `onAuthChallenge`, `allowCertificate`, `revokeCertificate`, `listClientIdentities` | ✓ | — | — |
+
+What isn't available returns `unsupported`. These methods do not add WebUSB, HID or serial support. These are handler registrations and request/reply flows, not page-broadcast events. Use the callbacks above to receive requests.
+
+On Windows, `camera`, `microphone` and `location` come from WebView2's permission event and `screenRecording` from its screen capture event; `speech` never asks. The permission event names the requesting origin but not its frame, so `frame` is `null` and frame origins aren't compared; screen capture reports its frame. `prompt` leaves the request to WebView2's own dialog, except for screen capture, where it means the same as `allow`. WebView2 is told not to save answers in its profile, so a handler keeps being asked. Clipboard and notification requests have no `WebPermission` name: the app's own origin is allowed and others are denied, with no handler involved. This code hasn't run on Windows yet.
 
 ## Example
 
