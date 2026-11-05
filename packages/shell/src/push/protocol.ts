@@ -53,7 +53,7 @@ export function b64url(bytes: Uint8Array | ArrayBuffer): string {
 }
 
 /** null for anything that isn't base64url. */
-export function fromB64url(s: string): Uint8Array | null {
+export function fromB64url(s: string): Uint8Array<ArrayBuffer> | null {
 	if (!/^[A-Za-z0-9_-]*$/.test(s)) return null;
 	try {
 		const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));

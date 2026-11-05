@@ -94,20 +94,23 @@ export class PushError extends Error {
 const enc = new TextEncoder();
 
 /** Keys and secrets from configs and targets: base64url, or a clear error. */
-function fromB64url(s: string): Uint8Array {
+// WebCrypto takes bytes on an ArrayBuffer, which TypeScript tells apart from a SharedArrayBuffer.
+type Bytes = Uint8Array<ArrayBuffer>;
+
+function fromB64url(s: string): Bytes {
 	const bytes = decodeB64url(s);
 	if (!bytes) throw new Error(`push: not base64url: ${s.slice(0, 16)}…`);
 	return bytes;
 }
 
-function concat(...parts: Uint8Array[]): Uint8Array {
+function concat(...parts: Uint8Array[]): Bytes {
 	const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
 	let o = 0;
 	for (const p of parts) (out.set(p, o), (o += p.length));
 	return out;
 }
 
-function pemBody(pem: string): Uint8Array {
+function pemBody(pem: string): Bytes {
 	return Uint8Array.from(atob(pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '')), (c) => c.charCodeAt(0));
 }
 
@@ -142,7 +145,7 @@ function p256Jwk(publicKey: Uint8Array, d?: string): JsonWebKey {
 	return { kty: 'EC', crv: 'P-256', x: b64url(publicKey.subarray(1, 33)), y: b64url(publicKey.subarray(33, 65)), ...(d && { d }), ext: true };
 }
 
-async function hkdf(salt: Uint8Array, ikm: Uint8Array, info: Uint8Array, length: number): Promise<Uint8Array> {
+async function hkdf(salt: Bytes, ikm: Bytes, info: Bytes, length: number): Promise<Bytes> {
 	const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
 	return new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, key, length * 8));
 }
@@ -155,7 +158,7 @@ export async function encryptWebPush(
 	plaintext: Uint8Array,
 	keys: { p256dh: string; auth: string },
 	seams: { salt?: Uint8Array; senderPrivate?: string; senderPublic?: string } = {},
-): Promise<Uint8Array> {
+): Promise<Bytes> {
 	if (plaintext.length > MAX_PLAINTEXT) throw new Error(`web push: message larger than ${MAX_PLAINTEXT} bytes (push services accept 4096-byte bodies)`);
 	const uaPublic = fromB64url(keys.p256dh);
 	const authSecret = fromB64url(keys.auth);
@@ -171,7 +174,7 @@ export async function encryptWebPush(
 	const uaKey = await crypto.subtle.importKey('raw', uaPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
 	const ecdhSecret = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: uaKey }, asPrivate, 256));
 	const ikm = await hkdf(authSecret, ecdhSecret, concat(enc.encode('WebPush: info\0'), uaPublic, asPublic), 32);
-	const salt = seams.salt ?? crypto.getRandomValues(new Uint8Array(16));
+	const salt = (seams.salt ?? crypto.getRandomValues(new Uint8Array(16))) as Bytes;
 	const cek = await hkdf(salt, ikm, enc.encode('Content-Encoding: aes128gcm\0'), 16);
 	const nonce = await hkdf(salt, ikm, enc.encode('Content-Encoding: nonce\0'), 12);
 	const key = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['encrypt']);
@@ -191,7 +194,8 @@ export async function encryptWebPush(
  * The receiving side of RFC 8291: decrypt an aes128gcm body with the subscription's private
  * key (ECDH P-256) and auth secret. Used by the desktop client of the self-hosted push.
  */
-export async function decryptWebPush(body: Uint8Array, privateKey: CryptoKey, publicKey: Uint8Array, authSecret: Uint8Array): Promise<Uint8Array> {
+export async function decryptWebPush(bodyBytes: Uint8Array, privateKey: CryptoKey, publicKey: Uint8Array, authSecret: Uint8Array): Promise<Uint8Array> {
+	const body = bodyBytes as Bytes;
 	if (body.length < 21) throw new Error('web push: body too short');
 	const salt = body.subarray(0, 16);
 	const rs = new DataView(body.buffer, body.byteOffset + 16, 4).getUint32(0);
@@ -200,7 +204,7 @@ export async function decryptWebPush(body: Uint8Array, privateKey: CryptoKey, pu
 	const asPublic = body.subarray(21, 21 + idlen);
 	const asKey = await crypto.subtle.importKey('raw', asPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
 	const secret = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: asKey }, privateKey, 256));
-	const ikm = await hkdf(authSecret, secret, concat(enc.encode('WebPush: info\0'), publicKey, asPublic), 32);
+	const ikm = await hkdf(authSecret as Bytes, secret, concat(enc.encode('WebPush: info\0'), publicKey, asPublic), 32);
 	const cek = await hkdf(salt, ikm, enc.encode('Content-Encoding: aes128gcm\0'), 16);
 	const nonce = await hkdf(salt, ikm, enc.encode('Content-Encoding: nonce\0'), 12);
 	const key = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['decrypt']);

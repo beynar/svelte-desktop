@@ -1,8 +1,8 @@
 import { defineMeta } from "blume";
 
 export default defineMeta({
-  title: "CLI, config and troubleshooting",
+  title: "Reference",
   icon: "book-open",
   order: 6,
-  pages: ["cli", "config", "troubleshooting"],
+  pages: ["cli", "config", "troubleshooting", "versioning"],
 });

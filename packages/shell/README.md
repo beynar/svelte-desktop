@@ -31,11 +31,16 @@ export default defineConfig({
 });
 ```
 
-New project: `bunx kitop create my-app` (SvelteKit app, config, Swift plugin sample, tests).
-Existing project: `bunx kitop init` writes both files, rewrites
-`sveltekit(` → `desktop(`, adds scripts and `.gitignore`. `bunx kitop doctor`
-checks Bun, Xcode tools, the config, signing identities and the notary profile.
-Requirements: macOS 12+, Bun ≥ 1.4, Xcode command line tools, `@sveltejs/adapter-bun`.
+New project: `bunx -p @kitop/shell kitop create my-app` (SvelteKit app, config, Swift plugin
+sample, tests), pinned to that version of the package.
+Existing project: `bun add -d @kitop/shell @sveltejs/adapter-bun@1.0.0-next.2`, then
+`bunx kitop init` writes both files, rewrites `sveltekit(` → `desktop(`, adds scripts and
+`.gitignore`. `bunx kitop doctor` checks Bun, Xcode tools, the required versions, the config,
+signing identities and the notary profile, and exits non-zero when a check fails.
+Requirements: macOS 12+, Bun ≥ 1.4, Xcode command line tools, SvelteKit 3 (`^3.0.0-next.0`),
+`@sveltejs/adapter-bun` at exactly `1.0.0-next.2`, Svelte `^5.56.0`. The package is TypeScript,
+Svelte and native sources: nothing is prebuilt, and the first `dev` or `build` compiles the native
+shell on your machine. [Versions](https://svelte-desktop-docs.beynar.workers.dev/reference/versioning).
 
 ## What you get
 
@@ -502,3 +507,10 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 
 `trim`/`aot` need a Bun that has them (canary today): with it, notes is 51 MB instead of 86 (`--trim` drops the Bun command line, ~45 MB; background jobs don't need it). Cross builds aren't trimmed (the target's runtime can't be). Notarization needs your Developer ID
 (the pipeline is implemented, not exercised here). See [AUDIT.md](AUDIT.md).
+
+## Releasing
+
+The package is `private` until its owner decides otherwise, and everything else is ready: delete the
+`"private": true` line, then `bun publish`. `bun run check:package` runs first (`prepublishOnly`) and fails if the
+package is incomplete. `test/docker/run.sh pack` installs the tarball in a new project and runs the app.
+A later version also needs `version` set and its section in `CHANGELOG.md`; the check asks for both.

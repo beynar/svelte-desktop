@@ -78,7 +78,8 @@ export function startGate(o: GateOptions): { server: Server<any>; origin: string
     // loopback-only server has no idle clients to shed.
     idleTimeout: 0,
     routes: o.routes ?? {},
-    ...(o.websocket ? { websocket: socketCallbacks() } : {}),
+    // Absent means no sockets; Bun's types only know the shape where it's there.
+    ...((o.websocket ? { websocket: socketCallbacks() } : {}) as { websocket: ReturnType<typeof socketCallbacks> }),
     async fetch(req, srv): Promise<Response | undefined> {
       if (req.headers.get("host") !== host) return new Response("Misdirected Request", { status: 421 });
       const url = new URL(req.url);

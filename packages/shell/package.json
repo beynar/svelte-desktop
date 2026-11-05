@@ -1,49 +1,174 @@
 {
 	"name": "@kitop/shell",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"private": true,
 	"license": "MIT",
 	"type": "module",
 	"description": "Desktop apps from an unmodified SvelteKit app: one Vite plugin, one config file, a signed single-binary .app.",
+	"keywords": [
+		"sveltekit",
+		"svelte",
+		"desktop",
+		"bun",
+		"webview",
+		"vite-plugin"
+	],
+	"homepage": "https://svelte-desktop-docs.beynar.workers.dev",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/beynar/svelte-desktop.git",
+		"directory": "packages/shell"
+	},
+	"bugs": "https://github.com/beynar/svelte-desktop/issues",
+	"engines": {
+		"bun": ">=1.4.0"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"bin",
+		"src",
+		"!src/**/*.test.ts",
+		"!src/mcp/fixture-app.ts",
+		"native",
+		"!native/build",
+		"scripts/updater-cli.ts",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"check:package": "bun scripts/check-package.ts",
+		"prepublishOnly": "bun scripts/check-package.ts"
+	},
 	"exports": {
-		".": "./src/index.ts",
-		"./server": "./src/server.ts",
-		"./websocket": "./src/websocket.ts",
-		"./client": "./src/client.ts",
-		"./worker": "./src/worker.ts",
-		"./worker-env": "./src/worker-env.ts",
-		"./adapter": "./src/adapter.js",
-		"./updater": "./src/updater/index.ts",
-		"./push": "./src/push/server.ts",
-		"./push-server": "./src/push/push-server.ts",
-		"./push-protocol": "./src/push/protocol.ts",
-		"./push/service-worker.js": "./src/push/service-worker.js",
-		"./native": "./src/native.ts",
-		"./tabs": "./src/tabs/index.ts",
-		"./tabs/WindowTabs.svelte": "./src/tabs/WindowTabs.svelte",
-		"./platform": "./src/platform/index.ts",
-		"./stores": "./src/platform/stores.svelte.ts",
-		"./platform/MenuBar.svelte": "./src/platform/components/MenuBar.svelte",
-		"./platform/window-state": "./src/platform/windowState.ts",
-		"./platform/store": "./src/platform/store.ts",
-		"./platform/StatusItem.svelte": "./src/platform/components/StatusItem.svelte",
-		"./platform/Popover.svelte": "./src/platform/components/Popover.svelte",
-		"./platform/PopoverContent.svelte": "./src/platform/components/PopoverContent.svelte",
-		"./vite": "./src/vite.ts",
-		"./config": "./src/config.ts",
-		"./test": "./src/test.ts",
-		"./globals": "./src/host/global.d.ts",
-		"./tailwind": "./src/tailwind.js",
-		"./ai": "./src/ai.ts",
-		"./ai-sdk": "./src/ai-sdk.ts"
+		".": {
+			"types": "./src/index.ts",
+			"default": "./src/index.ts"
+		},
+		"./server": {
+			"types": "./src/server.ts",
+			"default": "./src/server.ts"
+		},
+		"./websocket": {
+			"types": "./src/websocket.ts",
+			"default": "./src/websocket.ts"
+		},
+		"./client": {
+			"types": "./src/client.ts",
+			"default": "./src/client.ts"
+		},
+		"./worker": {
+			"types": "./src/worker.ts",
+			"default": "./src/worker.ts"
+		},
+		"./worker-env": {
+			"types": "./src/worker-env.ts",
+			"default": "./src/worker-env.ts"
+		},
+		"./adapter": {
+			"types": "./src/adapter.d.ts",
+			"default": "./src/adapter.js"
+		},
+		"./updater": {
+			"types": "./src/updater/index.ts",
+			"default": "./src/updater/index.ts"
+		},
+		"./push": {
+			"types": "./src/push/server.ts",
+			"default": "./src/push/server.ts"
+		},
+		"./push-server": {
+			"types": "./src/push/push-server.ts",
+			"default": "./src/push/push-server.ts"
+		},
+		"./push-protocol": {
+			"types": "./src/push/protocol.ts",
+			"default": "./src/push/protocol.ts"
+		},
+		"./push/service-worker.js": {
+			"default": "./src/push/service-worker.js"
+		},
+		"./native": {
+			"types": "./src/native.ts",
+			"default": "./src/native.ts"
+		},
+		"./tabs": {
+			"types": "./src/tabs/index.ts",
+			"svelte": "./src/tabs/index.ts",
+			"default": "./src/tabs/index.ts"
+		},
+		"./tabs/WindowTabs.svelte": {
+			"svelte": "./src/tabs/WindowTabs.svelte",
+			"default": "./src/tabs/WindowTabs.svelte"
+		},
+		"./platform": {
+			"types": "./src/platform/index.ts",
+			"default": "./src/platform/index.ts"
+		},
+		"./stores": {
+			"types": "./src/platform/stores.svelte.ts",
+			"svelte": "./src/platform/stores.svelte.ts",
+			"default": "./src/platform/stores.svelte.ts"
+		},
+		"./platform/MenuBar.svelte": {
+			"svelte": "./src/platform/components/MenuBar.svelte",
+			"default": "./src/platform/components/MenuBar.svelte"
+		},
+		"./platform/window-state": {
+			"types": "./src/platform/windowState.ts",
+			"default": "./src/platform/windowState.ts"
+		},
+		"./platform/store": {
+			"types": "./src/platform/store.ts",
+			"default": "./src/platform/store.ts"
+		},
+		"./platform/StatusItem.svelte": {
+			"svelte": "./src/platform/components/StatusItem.svelte",
+			"default": "./src/platform/components/StatusItem.svelte"
+		},
+		"./platform/Popover.svelte": {
+			"svelte": "./src/platform/components/Popover.svelte",
+			"default": "./src/platform/components/Popover.svelte"
+		},
+		"./platform/PopoverContent.svelte": {
+			"svelte": "./src/platform/components/PopoverContent.svelte",
+			"default": "./src/platform/components/PopoverContent.svelte"
+		},
+		"./vite": {
+			"types": "./src/vite.ts",
+			"default": "./src/vite.ts"
+		},
+		"./config": {
+			"types": "./src/config.ts",
+			"default": "./src/config.ts"
+		},
+		"./test": {
+			"types": "./src/test.ts",
+			"default": "./src/test.ts"
+		},
+		"./globals": {
+			"types": "./src/host/global.d.ts"
+		},
+		"./tailwind": {
+			"default": "./src/tailwind.js"
+		},
+		"./ai": {
+			"types": "./src/ai.ts",
+			"default": "./src/ai.ts"
+		},
+		"./ai-sdk": {
+			"types": "./src/ai-sdk.ts",
+			"default": "./src/ai-sdk.ts"
+		},
+		"./package.json": "./package.json"
+	},
+	"bin": {
+		"kitop": "./bin/kitop.ts"
 	},
 	"peerDependencies": {
 		"@sveltejs/adapter-bun": "1.0.0-next.2",
 		"@sveltejs/kit": "^3.0.0-next.0",
 		"svelte": "^5.56.0"
-	},
-	"bin": {
-		"kitop": "./bin/kitop.ts"
 	},
 	"dependencies": {
 		"@atlaskit/pragmatic-drag-and-drop": "^4.0.0",

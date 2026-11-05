@@ -1,0 +1,85 @@
+---
+title: Versions and breaking changes
+description: What a version of @kitop/shell promises, what counts as a breaking change, and what an app needs installed.
+---
+
+`@kitop/shell` follows semantic versioning, in its `0.x` form for now: the API is still moving.
+
+| Release | What it may contain |
+| --- | --- |
+| `0.y.0` | Breaking changes, along with anything else |
+| `0.y.z` | Fixes and additions. Nothing that needs a change in your app |
+
+From `1.0.0`, a breaking change takes a major version. Every release is in the [changelog](https://github.com/beynar/svelte-desktop/blob/main/packages/shell/CHANGELOG.md).
+
+## Pin the version
+
+`kitop create` pins `@kitop/shell` to the exact version that ran it, not a range. Do the same in an existing app, and update on purpose, with the changelog open: the package compiles into your app, and in `0.x` a minor version can change what it needs from you.
+
+```sh
+bun add -d --exact @kitop/shell
+```
+
+## What counts as breaking
+
+The public API is what you reach without knowing how the package is laid out:
+
+- the entry points in `exports`, and what they export;
+- the `host` global and its reactive stores;
+- `desktop.config.ts`;
+- the `kitop` commands, their flags and their exit status;
+- the documented `KITOP_*` variables;
+- the plugin SDKs (`native/sdk`) and the C header for native plugins;
+- the versions an app must install, below;
+- the platforms and system versions supported.
+
+The rest can change in any release: files under `src/` and `native/` reached by path, the wire protocols between the shell's own processes, undocumented operations, and the output of the build beyond what [Distribution](/shipping/distribution) describes.
+
+An app that is already shipped is covered too. A change that would strand installed copies, such as the [self-update](/shipping/self-update) manifest format or the app's stable port, is a breaking change even if the API doesn't move.
+
+## How a breaking change is made
+
+- Its commit is marked with `!` (`feat(tabs)!: …`).
+- The changelog lists it under **Breaking**, with what you have to do. A rename says from what to what.
+- The docs change in the same commit.
+- It ships in the next `0.y.0`, not in a patch release. In `0.x` there is no deprecation period, unless keeping the old form is cheap.
+
+## What an app needs
+
+These are the package's `peerDependencies`. `kitop create` writes them, and `kitop doctor` fails if what's installed doesn't fit.
+
+| Requirement | Version | |
+| --- | --- | --- |
+| [Bun](https://bun.sh) | `>=1.4.0` | The package only runs on Bun. CI runs 1.4.4 |
+| `@sveltejs/kit` | `^3.0.0-next.0` | SvelteKit 3, pre-releases included |
+| `@sveltejs/adapter-bun` | `1.0.0-next.2` | A pre-release, pinned exactly. The build wraps this adapter, so this version and no other |
+| `svelte` | `^5.56.0` | |
+
+`bun add -d @sveltejs/adapter-bun` on its own doesn't install the required version: name it.
+
+```sh
+bun add -d @sveltejs/adapter-bun@1.0.0-next.2
+```
+
+Changing one of these is a breaking change, and the changelog says so.
+
+## What's in the package
+
+Sources, for TypeScript, Svelte and the native code. Nothing is compiled ahead of time, for three reasons:
+
+- Bun runs TypeScript as it is, and the package only runs on Bun, so a compile step would ship nothing an app can use.
+- Svelte components and `.svelte.ts` runes have to be compiled by the Svelte version of your app.
+- The native code is compiled for your machine and your target, by the toolchain [`kitop doctor`](/reference/cli#doctor) checks. There is no binary from us to trust, or missing for your architecture.
+
+So the first `vite dev` or `vite build` compiles the native shell into `node_modules/@kitop/shell/native/build`, which takes a while once. Installing another version starts over.
+
+| Target | Host | What it takes |
+| --- | --- | --- |
+| macOS | macOS | Xcode command line tools |
+| Linux | Linux | `g++`, `pkg-config`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, `libsecret-1-dev` |
+| Linux | macOS | Docker |
+| Windows | macOS, Linux | Docker, or a `shell.dll` you built, through `KITOP_SHELL_DLL_X64` or `KITOP_SHELL_DLL_ARM64` |
+
+`KITOP_LIBSHELL` and `KITOP_LIBSHELL_<ARCH>` do the same for macOS and Linux.
+
+Your `tsc` reads these sources too, and `skipLibCheck` doesn't cover `.ts` files. CI type-checks them through every entry point, in a new project made from the packed tarball.

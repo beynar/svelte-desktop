@@ -11,14 +11,22 @@
 //                         commands (native/python), typed for the pages
 import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import shell from "../package.json";
 import { removeAdapterOption } from "../src/build/init-edit.ts";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const root = process.cwd();
 const ok = (m: string) => console.log(`  \x1b[32m✓\x1b[0m ${m}`);
 const warn = (m: string) => console.log(`  \x1b[33m!\x1b[0m ${m}`);
-const bad = (m: string) => console.log(`  \x1b[31m✗\x1b[0m ${m}`);
+let failed = 0;
+const bad = (m: string) => {
+  failed++;
+  console.log(`  \x1b[31m✗\x1b[0m ${m}`);
+};
+// What an app must install, from the manifest so the CLI can't drift from it.
+const peers = shell.peerDependencies;
+const adapter = `@sveltejs/adapter-bun@${peers["@sveltejs/adapter-bun"]}`;
 
 async function init() {
   const pkgPath = join(root, "package.json");
@@ -60,7 +68,7 @@ async function init() {
   const lines = existsSync(gi) ? readFileSync(gi, "utf8") : "";
   if (!lines.split("\n").includes(".desktop")) writeFileSync(gi, `${lines.replace(/\n?$/, "\n")}.desktop\n`);
   ok(".gitignore: .desktop");
-  console.log(`\n  Next: bun add -d @sveltejs/adapter-bun @kitop/shell && bun run dev\n`);
+  console.log(`\n  Next: bun add -d @kitop/shell@${shell.version} ${adapter} && bun run dev\n`);
 }
 
 async function create(dir: string | undefined) {
@@ -79,12 +87,13 @@ async function create(dir: string | undefined) {
         scripts: { dev: "bunx --bun vite dev", build: "bunx --bun vite build", test: "bun test --timeout 30000 tests/", prepare: "svelte-kit sync || echo ''" },
         imports: { "#lib": "./src/lib/index.ts", "#lib/*": "./src/lib/*" },
         devDependencies: {
-          "@kitop/shell": "latest",
-          "@sveltejs/adapter-bun": "1.0.0-next.2",
-          "@sveltejs/kit": "^3.0.0-next.0",
+          // The version that wrote this project: its templates and its API go together.
+          "@kitop/shell": shell.version,
+          "@sveltejs/adapter-bun": peers["@sveltejs/adapter-bun"],
+          "@sveltejs/kit": peers["@sveltejs/kit"],
           "@sveltejs/vite-plugin-svelte": "^7.2.0",
           "@types/bun": "latest",
-          svelte: "^5.56.7",
+          svelte: peers.svelte,
           typescript: "^6.0.3",
           vite: "^8.1.5",
         },
@@ -100,7 +109,7 @@ async function create(dir: string | undefined) {
     "src/lib/hello.remote.ts": `import { command, query } from '$app/server';\nimport { isDesktop } from '@kitop/shell/server';\n\nlet clicks = 0;\nexport const getClicks = query(async () => ({ clicks, runtime: \`bun \${Bun.version}\`, desktop: isDesktop() }));\nexport const click = command(async () => {\n\tclicks++;\n\tawait getClicks().refresh();\n});\n`,
     "src/routes/+page.svelte": `<script lang="ts">\n\timport { click, getClicks } from '#lib/hello.remote';\n\timport { theme } from '@kitop/shell/stores';\n</script>\n\n<main>\n\t<h1>${title}</h1>\n\t<svelte:boundary>\n\t\t{@const s = await getClicks()}\n\t\t<p>Server: {s.runtime} · {s.desktop ? 'desktop shell' : 'browser'} · {theme.dark ? 'dark' : 'light'} mode</p>\n\t\t<button onclick={() => click()}>Clicked <span id="clicks">{s.clicks}</span> times</button>\n\t</svelte:boundary>\n</main>\n\n<style>\n\tmain { font-family: system-ui; padding: 2rem; }\n</style>\n`,
     "native/Hello.swift": `// Native plugin: commands callable from pages and server code, typed — native.hello.greet({ name }).\nimport AppKit\n\nstruct GreetArgs: Codable { let name: String }\n\nfunc desktopSetup() {\n  Desktop.command("hello.greet") { (a: GreetArgs) in "Hello \\(a.name) from Swift" }\n}\n`,
-    "tests/app.test.ts": `import { afterAll, beforeAll, expect, test } from 'bun:test';\nimport { launch, type AppHandle } from '@kitop/shell/test';\n\nlet app: AppHandle;\nbeforeAll(async () => (app = await launch(process.env.DESKTOP_TEST_DEV ? { dev: true } : {})));\nafterAll(() => app?.close());\n\ntest('button calls a remote command', async () => {\n\tawait app.click('button');\n\tawait app.waitFor(() => document.querySelector('#clicks')?.textContent === '1');\n});\n\ntest('native plugin', async () => {\n\texpect(await app.platform<string>('hello', 'greet', { name: 'test' })).toContain('from Swift');\n});\n`,
+    "tests/app.test.ts": `import { afterAll, beforeAll, expect, test } from 'bun:test';\nimport { launch, type AppHandle } from '@kitop/shell/test';\n\nlet app: AppHandle;\nbeforeAll(async () => (app = await launch(process.env.DESKTOP_TEST_DEV ? { dev: true } : {})));\nafterAll(() => app?.close());\n\ntest('button calls a remote command', async () => {\n\tawait app.click('button');\n\tawait app.waitFor(() => document.querySelector('#clicks')?.textContent === '1');\n});\n\ntest.if(process.platform === 'darwin')('native plugin', async () => {\n\texpect(await app.platform<string>('hello', 'greet', { name: 'test' })).toContain('from Swift');\n});\n`,
   };
   for (const [rel, content] of Object.entries(files)) {
     const p = join(target, rel);
@@ -109,6 +118,15 @@ async function create(dir: string | undefined) {
   }
   ok(`created ${target}`);
   console.log(`\n  cd ${dir} && bun install && bun run dev\n`);
+}
+
+/** The version of what `root` has installed, wherever node_modules is above it. */
+function installedVersion(name: string): string | undefined {
+  for (let dir = root; ; dir = dirname(dir)) {
+    const manifest = join(dir, "node_modules", name, "package.json");
+    if (existsSync(manifest)) return JSON.parse(readFileSync(manifest, "utf8")).version;
+    if (dir === dirname(dir)) return undefined;
+  }
 }
 
 async function doctor() {
@@ -132,11 +150,11 @@ async function doctor() {
   } else bad(`${process.platform} is not supported (macOS, Linux, Windows)`);
   for (const [tool, why] of [["cargo", "Rust plugins"], ["go", "Go plugins"], ["uv", "Python commands"]] as const) if (await has(tool)) ok(`${tool} (${why})`);
 
-  try {
-    Bun.resolveSync("@sveltejs/adapter-bun", root);
-    ok("@sveltejs/adapter-bun installed");
-  } catch {
-    bad("@sveltejs/adapter-bun missing — bun add -d @sveltejs/adapter-bun");
+  for (const [name, range] of Object.entries(peers)) {
+    const version = installedVersion(name);
+    if (!version) bad(`${name} missing — bun add -d ${name}@${range}`);
+    else if (!Bun.semver.satisfies(version, range)) bad(`${name} ${version} is not ${range} — bun add -d ${name}@${range}`);
+    else ok(`${name} ${version}`);
   }
   try {
     const { loadConfig } = await import("../src/config.ts");
@@ -165,6 +183,8 @@ async function doctor() {
     bad(`desktop.config: ${(err as Error).message}`);
   }
   console.log("");
+  // A failed check fails the command, so CI can gate on it. Warnings don't.
+  if (failed) process.exitCode = 1;
 }
 
 /** `kitop icon [source] [--background #hex] [--out dir]`: the icons the build ships,
@@ -255,7 +275,7 @@ try {
   } else if (cmd === "keygen") await $`bun ${join(import.meta.dir, "../scripts/updater-cli.ts")} keygen ${rest}`;
   else if (cmd === "release") await $`bun ${join(import.meta.dir, "../scripts/updater-cli.ts")} ${rest}`;
   else {
-    console.log("usage: kitop <create|init|doctor|icon|add|preflight|keygen|release> — see packages/shell/README.md");
+    console.log(`usage: kitop <create|init|doctor|icon|add|preflight|keygen|release> — see ${shell.homepage}/reference/cli`);
     process.exit(cmd ? 1 : 0);
   }
 } catch (err) {

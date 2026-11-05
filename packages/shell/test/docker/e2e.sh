@@ -45,3 +45,6 @@ A11Y_APP=dashboard A11Y_SPLIT=1 bun test --timeout 60000 /work/packages/shell/te
 
 # Real updates of the Linux app folder and AppImage, and their rollback (about 2 minutes).
 sh /work/packages/shell/test/docker/update.sh
+
+# The package as a consumer gets it: a tarball in a new project, where the examples have a link.
+sh /src/packages/shell/test/docker/pack.sh

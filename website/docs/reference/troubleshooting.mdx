@@ -58,7 +58,11 @@ The desktop plugin runs on Bun. Start Vite through Bun: `bunx --bun vite dev` (o
 
 ## `doctor` reports a failure
 
-[`bunx kitop doctor`](/reference/cli#doctor) checks Bun, the host toolchain, the config and, on macOS, the signing identities and notary profile. Fix the item it names. A failed check does not change the exit status, and warnings are fine for a first build.
+[`bunx kitop doctor`](/reference/cli#doctor) checks Bun, the host toolchain, the config and, on macOS, the signing identities and notary profile. Fix the item it names. A failed check exits with status 1; warnings don't, and are fine for a first build.
+
+## A version is "not" what's required
+
+`doctor` compares what's installed with [what an app needs](/reference/versioning#what-an-app-needs) and prints the install that fixes it. `@sveltejs/adapter-bun` is the usual one: a plain `bun add -d @sveltejs/adapter-bun` doesn't install the version the package requires.
 
 ## A native plugin doesn't build
 

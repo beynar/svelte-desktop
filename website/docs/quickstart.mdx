@@ -5,24 +5,32 @@ sidebar:
   icon: rocket
 ---
 
-**Requirements for this macOS quick start:** macOS 12+, Bun 1.4 or newer, the Xcode command line tools (`xcode-select --install`) and `@sveltejs/adapter-bun`. An existing app needs SvelteKit 3 (currently a pre-release) and Svelte 5.56 or newer. The desktop plugin runs on Bun, so Vite is always started with `bunx --bun`. This page covers macOS; the [Platforms](/#platforms) table shows the status of Linux and Windows.
+**Requirements for this macOS quick start:** macOS 12+, Bun 1.4 or newer and the Xcode command line tools (`xcode-select --install`). The desktop plugin runs on Bun, so Vite is always started with `bunx --bun`. This page covers macOS; the [Platforms](/#platforms) table shows the status of Linux and Windows.
+
+An app needs these versions. `create` writes them for you; an existing app installs the adapter below, and must already be on the other two.
+
+| Package | Version |
+| --- | --- |
+| `@sveltejs/kit` | `^3.0.0-next.0`: SvelteKit 3, pre-releases included |
+| `@sveltejs/adapter-bun` | `1.0.0-next.2` exactly: a pre-release, pinned, so name the version when you install it |
+| `svelte` | `^5.56.0` |
 
 <Tabs>
   <Tab title="New project">
 
 ```sh
-bunx kitop create my-app
+bunx -p @kitop/shell kitop create my-app
 cd my-app && bun install && bun run dev
 ```
 
-`create` needs an empty or missing directory. It writes a SvelteKit app with a remote function, `desktop.config.ts`, a Swift plugin sample and a test.
+`create` needs an empty or missing directory. It writes a SvelteKit app with a remote function, `desktop.config.ts`, a Swift plugin sample and a test, with `@kitop/shell` pinned to the version that ran it ([Versions](/reference/versioning)).
 
   </Tab>
   <Tab title="Existing SvelteKit app">
 
 ```sh
+bun add -d @kitop/shell @sveltejs/adapter-bun@1.0.0-next.2
 bunx kitop init
-bun add -d @sveltejs/adapter-bun @kitop/shell
 bun run dev
 ```
 
@@ -31,7 +39,7 @@ bun run dev
   </Tab>
 </Tabs>
 
-`bunx kitop doctor` checks Bun, the Xcode tools and the config, and on macOS the signing identity and notary profile.
+`bunx kitop doctor` checks Bun, the Xcode tools, the versions above and the config, and on macOS the signing identity and notary profile.
 
 ## Develop
 

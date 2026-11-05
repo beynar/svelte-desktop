@@ -89,6 +89,10 @@ function hydrationMarker(permissionsConfig: Record<string, string>, notification
       // The client below is imported by absolute path: serve it even when the shell sits
       // outside the app's allow list (a linked checkout, a monorepo sibling).
       server: { fs: { allow: [shellRoot] } },
+      // Installed, the package is TypeScript and runes sources the dep optimizer can't read (.svelte.ts).
+      // Not a link: Vite doesn't prebundle one, and excluding it would hide its dependencies from the
+      // scan, to be found late, when a page reloads for them.
+      ...(/[\\/]node_modules[\\/]/.test(shellRoot) ? { optimizeDeps: { exclude: ["@kitop/shell"] } } : {}),
       define: {
         __KITOP_PERMISSIONS__: JSON.stringify(permissionsConfig),
         __KITOP_NOTIFICATIONS__: JSON.stringify(notificationsConfig),

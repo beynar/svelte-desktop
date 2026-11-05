@@ -7,13 +7,17 @@ description: The kitop command and the Vite commands that drive development and 
 bunx kitop <create|init|doctor|icon|add|preflight|keygen|release>
 ```
 
+`bunx kitop` runs the command of the `@kitop/shell` installed in your project. `create` has no project yet, so it names the package.
+
 ## create
 
 ```sh
-bunx kitop create <directory>
+bunx -p @kitop/shell kitop create <directory>
 ```
 
 Scaffolds a new desktop app in an empty directory: `package.json` (with `dev`, `build` and `test` scripts), `vite.config.ts`, `desktop.config.ts`, `tsconfig.json`, a SvelteKit page using a remote function, a Swift plugin sample (`native/Hello.swift`) and a test (`tests/app.test.ts`). Then `cd <directory> && bun install && bun run dev`.
+
+`package.json` pins `@kitop/shell` to exactly the version that ran the command, and asks for the versions of SvelteKit, the adapter and Svelte that version requires ([Versions](/reference/versioning)). The Swift sample and its test only apply on macOS.
 
 ## init
 
@@ -28,7 +32,7 @@ Adds desktop support to the SvelteKit project in the current directory:
 - sets the scripts `dev` (`bunx --bun vite dev`), `build` (`bunx --bun vite build`) and `test:desktop` (`bun test --timeout 30000 tests/`), replacing any existing values;
 - adds `.desktop` to `.gitignore`.
 
-Then `bun add -d @sveltejs/adapter-bun @kitop/shell && bun run dev`.
+It ends by printing the install to run if you ran it before installing: `bun add -d @kitop/shell@<version> @sveltejs/adapter-bun@1.0.0-next.2 && bun run dev`.
 
 ## doctor
 
@@ -36,7 +40,7 @@ Then `bun add -d @sveltejs/adapter-bun @kitop/shell && bun run dev`.
 bunx kitop doctor
 ```
 
-Checks Bun (1.4 or newer, and whether its revision says canary), the host toolchain, `@sveltejs/adapter-bun`, the config and icon setting. It reports installed `cargo`, `go` and `uv` tools when found.
+Checks Bun (1.4 or newer, and whether its revision says canary), the host toolchain, the installed versions of `@sveltejs/kit`, `@sveltejs/adapter-bun` and `svelte` against what the package [requires](/reference/versioning#what-an-app-needs), the config and icon setting. It reports installed `cargo`, `go` and `uv` tools when found.
 
 | Host | Toolchain checks |
 | --- | --- |
@@ -44,7 +48,7 @@ Checks Bun (1.4 or newer, and whether its revision says canary), the host toolch
 | Linux | WebKitGTK 4.1 through `pkg-config`; `c++`, `appimagetool` |
 | Windows | `makensis`, `osslsigncode` |
 
-`doctor` warns when there's no [`bridge.allow`](/host#restricting-pages). On macOS, it also checks the signing identity (`security find-identity`) and the notary profile (`xcrun notarytool`). On every host it checks the update private-key file when `update` is set. The canary check is a revision heuristic; builds inspect the compiler's supported flags directly. Reported failed checks do not set a non-zero exit status, so `doctor` is a diagnostic report, not a CI gate.
+`doctor` warns when there's no [`bridge.allow`](/host#restricting-pages). On macOS, it also checks the signing identity (`security find-identity`) and the notary profile (`xcrun notarytool`). On every host it checks the update private-key file when `update` is set. The canary check is a revision heuristic; builds inspect the compiler's supported flags directly. A failed check (`✗`) exits with status 1, so `doctor` can gate CI. Warnings (`!`) don't.
 
 ## icon
 
