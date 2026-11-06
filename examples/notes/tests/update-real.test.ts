@@ -129,7 +129,6 @@ function start(env: Record<string, string> = {}) {
 
 /** 0.1.0 runs again, whole, knows what happened, and doesn't take 0.3.0 again. */
 async function broughtBack(hits: string[], stagingDir: string) {
-	expect(probe()).toBe('started 0.1.0\ncheck none\n');
 	expect(state()).toMatchObject({ phase: 'rolled-back', from: '0.1.0', to: '0.3.0', attempts: 2 });
 	expect(running()).toBe(true);
 	console.log('[update] helper', helperLog());
@@ -188,6 +187,7 @@ describe.skipIf(!W)('a real update', () => {
 		// The user starts it again: that second start restores 0.1.0 and hands over to it.
 		start();
 		await until('0.1.0 to run again', () => probe().includes('check none'));
+		expect(probe()).toBe('started 0.1.0\ncheck none\n');
 		await broughtBack(hits, stagingDir);
 	}, 180_000);
 
@@ -197,7 +197,10 @@ describe.skipIf(!W)('a real update', () => {
 		let stagingDir = '';
 		start({ NOTES_UPDATE_CRASH: 'throw' });
 		await until('0.3.0 to be applied', () => (stagingDir = state()?.stagingDir ?? ''));
-		await until('0.1.0 to come back, with nobody starting anything', () => probe().includes('check none'));
+		// On macOS the app restarts itself through `open`, without this test's environment: no probe to
+		// ask, so what says 0.1.0 runs is what it does once its page is up.
+		await until('0.1.0 to come back, with nobody starting anything', () => state()?.phase === 'rolled-back' && !existsSync(stagingDir));
+		if (WINDOWS) await until('0.1.0 to answer', () => probe().includes('check none'));
 		await broughtBack(hits, stagingDir);
 	}, 180_000);
 });
