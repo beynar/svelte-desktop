@@ -6,7 +6,7 @@ name: windows
 
 on:
   push:
-    branches: [main, bun-webview-shell, windows-gap]
+    branches: [main, bun-webview-shell]
   pull_request:
   workflow_dispatch:
 
