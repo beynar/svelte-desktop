@@ -1388,9 +1388,16 @@ test('a tab bar too full: dragging to its end scrolls it, and the last place can
 	const r = await app.eval<Box>(`(() => { const r = ${strip}.getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; })()`);
 	const tab = (await panes())[0]!.tabs[0]!;
 	await dragTab(tab, { x: r.x + r.width - 6, y: r.y + r.height / 2 }, { release: false });
-	await until(() => app.eval<boolean>(`${strip}.scrollLeft + ${strip}.clientWidth >= ${strip}.scrollWidth - 1`), 'scrolled to its end', 8000);
-	await until(async () => (await app.eval<{ index: number }>(`window.__tabs.panes.drop`))?.index === (await panes())[0]!.tabs.length - 1, 'the last place', 2000);
-	await app.eval(`(dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), true)`);
+	try {
+		await until(() => app.eval<boolean>(`${strip}.scrollLeft + ${strip}.clientWidth >= ${strip}.scrollWidth - 1`), 'scrolled to its end', 8000);
+		await until(async () => (await app.eval<{ index: number }>(`window.__tabs.panes.drop`))?.index === (await panes())[0]!.tabs.length - 1, 'the last place', 2000);
+	} catch (error) {
+		console.log('[panes] the bar then', await app.eval(`({ scrollLeft: ${strip}.scrollLeft, clientWidth: ${strip}.clientWidth, scrollWidth: ${strip}.scrollWidth, drop: window.__tabs.panes.drop, visibility: document.visibilityState, focus: document.hasFocus(), dragging: document.documentElement.hasAttribute('data-sd-pane-dragging') })`));
+		throw error;
+	} finally {
+		// Left going, it would take the next test's drags for its own.
+		await app.eval(`(dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), true)`);
+	}
 	// A full bar: + stays in sight, and so does the tab it shows, the last one too.
 	const inBar = (selector: string) => app.eval<boolean>(`(() => { const s = ${strip}.parentElement.getBoundingClientRect(); const r = document.querySelector('[data-sd-pane="${left!.id}"] ${selector}').getBoundingClientRect(); return r.left >= s.left - 1 && r.right <= s.right + 1; })()`);
 	expect(await inBar('[data-sd-tab-new]')).toBe(true);

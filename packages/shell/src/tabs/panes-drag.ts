@@ -69,15 +69,16 @@ export function dropAt(tabs: TabGroup<any>, id: string, x: number, y: number): P
 /** Near the end of a bar with tabs out of sight: it scrolls, so a place among them can be reached. */
 const AUTOSCROLL_EDGE = 28;
 const AUTOSCROLL_STEP = 16;
-function scrollBarAt(tabs: TabGroup<any>, x: number, y: number): boolean {
+const AUTOSCROLL_TICK = 40;
+function scrollBarAt(tabs: TabGroup<any>, x: number, y: number, steps: number): boolean {
 	for (const pane of tabs.panes!.panes) {
 		const strip = document.querySelector(`[data-sd-pane="${pane.id}"] > [data-sd-tabbar] [data-sd-tabs]`);
 		if (!strip || strip.scrollWidth <= strip.clientWidth) continue;
 		const r = strip.getBoundingClientRect();
 		if (!inside(r, x, y)) continue;
 		const before = strip.scrollLeft;
-		if (x - r.left < AUTOSCROLL_EDGE) strip.scrollLeft -= AUTOSCROLL_STEP;
-		else if (r.right - x < AUTOSCROLL_EDGE) strip.scrollLeft += AUTOSCROLL_STEP;
+		if (x - r.left < AUTOSCROLL_EDGE) strip.scrollLeft -= AUTOSCROLL_STEP * steps;
+		else if (r.right - x < AUTOSCROLL_EDGE) strip.scrollLeft += AUTOSCROLL_STEP * steps;
 		return strip.scrollLeft !== before;
 	}
 	return false;
@@ -126,9 +127,14 @@ export function paneTabDrag(node: HTMLElement, params: PaneTabDragParams) {
 			pointer = { x, y };
 			p.tabs.panes!.drop = dropAt(p.tabs, p.tab.id, x, y);
 			// The pointer resting at the end of a bar: it goes on scrolling.
+			// By the time gone by, not the ticks: a busy or throttled page gets far fewer than it asks for.
+			let last = performance.now();
 			scrolling ??= setInterval(() => {
-				if (scrollBarAt(p.tabs, pointer.x, pointer.y)) p.tabs.panes!.drop = dropAt(p.tabs, p.tab.id, pointer.x, pointer.y);
-			}, 40);
+				const now = performance.now();
+				const steps = Math.max(1, Math.round((now - last) / AUTOSCROLL_TICK));
+				last = now;
+				if (scrollBarAt(p.tabs, pointer.x, pointer.y, steps)) p.tabs.panes!.drop = dropAt(p.tabs, p.tab.id, pointer.x, pointer.y);
+			}, AUTOSCROLL_TICK);
 		},
 		onEnd({ event, x, y }) {
 			const drop = dropAt(p.tabs, p.tab.id, x, y);
