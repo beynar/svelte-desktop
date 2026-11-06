@@ -38,7 +38,7 @@ async function run(opts: ShellOptions): Promise<never> {
   const windowId = ui.shell_window_create(
     // `version`: app.getVersion on Linux/Windows (macOS reads Info.plist).
     // `args`/`cwd`: URLs and documents the app was opened with (Linux/Windows; macOS gets Apple events).
-    cstr(JSON.stringify({ title: opts.appName, appName: opts.appName, identifier: opts.identifier, version: opts.version, args: process.argv.slice(2), cwd: process.cwd(), singleInstance: opts.singleInstance ?? false, quitOnLastWindowClosed: opts.quitOnLastWindowClosed ?? true, appIcon: opts.appIcon, usageDescriptions: opts.usageDescriptions, protocols: opts.protocols, ...win })),
+    cstr(JSON.stringify({ title: opts.appName, appName: opts.appName, identifier: opts.identifier, version: opts.version, args: process.argv.slice(2), cwd: process.cwd(), singleInstance: opts.singleInstance ?? false, quitOnLastWindowClosed: opts.quitOnLastWindowClosed ?? true, appIcon: opts.appIcon, testChannel: opts.testChannel ?? false, usageDescriptions: opts.usageDescriptions, protocols: opts.protocols, ...win })),
   );
   if (windowId <= 0) {
     worker.terminate();

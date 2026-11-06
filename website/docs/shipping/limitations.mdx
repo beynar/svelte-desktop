@@ -18,7 +18,10 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 | Website sessions and per-session proxies | Supported | Supported | Unsupported |
 | Cookie management | Supported | Supported | Default profile |
 | Server-owned web permission handlers | Supported | Supported | Supported |
-| Server-owned authentication handlers and certificate exceptions | Supported | Supported, top-level loads for certificates | Unsupported |
+| Server-owned authentication handlers and certificate exceptions | Supported | Supported, top-level loads for certificates | Supported |
+| Find in page, JavaScript dialog automation, media state and control, crash recovery policy | Supported | Supported | Supported |
+| File-drop events with real paths | Supported | Supported | Supported, paths at the drop only |
+| `clearData` | Supported | Supported | Supported, sites its views loaded |
 | Registered web scripts and content rules | Supported | Supported | Unsupported |
 | Navigation policy | Supported | Supported | Supported |
 | Native download management | Supported | Supported, resume starts over | Supported |
@@ -49,8 +52,8 @@ These are shell API limits. The page still has the web APIs its installed web en
 
 ## Windows
 
-- **Tested on a Windows runner, not on a PC:** CI runs end-to-end tests on a Windows runner for notifications, windows, title-bar dragging, menus, tray, dialogs, clipboard, views, background jobs, MCP, relaunch, permissions, downloads, printing, navigation policy and cookies. High-DPI and multi-monitor setups aren't covered, since the runner has one display at 100%, and only x64 runs: arm64 is compiled. Test your app on a real PC.
-- **Windows differs where WebView2 does:** a paused download resumes only in the run that started it, `host.webview.download` needs an attachment from another origin, and a navigation policy holds the navigation with a bounded wait. See [downloads](/host/web/downloads#platform-support) and [navigation policy](/host/web/web-content#platform-support).
+- **Tested on a Windows runner, not on a PC:** CI runs end-to-end tests on a Windows runner for notifications, windows, title-bar dragging, menus, tray, dialogs, clipboard, views, background jobs, MCP, relaunch, permissions, downloads, printing, navigation policy, cookies, authentication, certificates, find, JavaScript dialogs, media, crash recovery, file drop and `clearData`. High-DPI and multi-monitor setups aren't covered, since the runner has one display at 100%, and only x64 runs: arm64 is compiled. Test your app on a real PC.
+- **Windows differs where WebView2 does:** a paused download resumes only in the run that started it, `host.webview.download` needs an attachment from another origin, a navigation policy holds the navigation with a bounded wait, `fileDragEnter` has no paths, and `clearData` reaches the sites views loaded. See [downloads](/host/web/downloads#platform-support), [navigation policy](/host/web/web-content#platform-support), [web view](/host/web/webview#platform-support) and [web policy](/host/web/web-policy#platform-support).
 - The WebView2 runtime must be installed. The shell offers an Evergreen download link when it is missing; it does not bundle the runtime.
 - Rust and Go plugins need a Windows host. See [Distribution](/shipping/distribution#windows).
 - Windows repeating notifications queue at most 128 occurrences over the next 30 days, topped up while the app runs. They do not repeat indefinitely while closed.

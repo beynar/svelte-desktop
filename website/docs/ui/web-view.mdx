@@ -26,7 +26,7 @@ The reasons in the OS prompts are defaults; set your own, or turn one off with `
 
 ## File drop
 
-The page keeps its normal DOM drag events with `File` objects. The shell adds the real paths, which the DOM can't expose (macOS and Linux; on Linux the DOM event's `files` is empty):
+The page keeps its normal DOM drag events with `File` objects. The shell adds the real paths, which the DOM can't expose (on Linux the DOM event's `files` is empty; on Windows `onFileDragEnter` has no paths yet, only `onFileDrop`):
 
 ```ts
 host.webview.onFileDrop(({ paths, x, y }) => importFiles(paths)); // x, y in CSS px
@@ -81,7 +81,7 @@ await host.webview.clearFind();
 await host.webview.setZoom(1.25); // clamped to 0.25 to 5
 ```
 
-`find` works on macOS and Linux; zoom works on all three.
+Both work on all three.
 
 ## Context menu
 
@@ -105,7 +105,7 @@ await host.webview.pauseMedia();         // every audio and video paused
 const media = await host.webview.getMediaState(); // { audible, muted, playback, camera, microphone }
 ```
 
-macOS only.
+All three, with the limits in [`getMediaState`](/host/web/webview#getmediastatetarget).
 
 ## Website data
 
@@ -117,7 +117,7 @@ await host.webview.clearData({ types: ['cookies'] });            // only their c
 const { cleared } = await host.webview.clearData({ app: true }); // the app's own storage too
 ```
 
-The app's own cookies are always kept: they hold its session with its server. Named profiles aren't cleared. To remove individual cookies, use [`host.sessions.cookies`](/host/web/sessions#cookiesgetfilter). macOS only.
+The app's own cookies are always kept: they hold its session with its server. Named profiles aren't cleared. To remove individual cookies, use [`host.sessions.cookies`](/host/web/sessions#cookiesgetfilter). All three; Windows reaches the sites its views have loaded, see [`clearData`](/host/web/webview#cleardataoptions).
 
 ## Scripting and capture
 
@@ -206,7 +206,7 @@ host.ready(async () => {
 
 Without a handler, only the app origin is allowed. Once installed, a handler answers for your app's own origin too, so allow what your own pages use. `allow` still needs usage descriptions and OS consent. See the [web policy reference](/host/web/web-policy) for saved decisions and frame checks. macOS and Windows.
 
-## Authentication challenges and TLS (macOS)
+## Authentication challenges and TLS
 
 HTTP authentication and certificate decisions are also server code. Credentials go to the server only, never to pages:
 

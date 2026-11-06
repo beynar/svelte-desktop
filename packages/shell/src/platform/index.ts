@@ -1569,9 +1569,9 @@ export interface WebviewInfo extends WebviewSource {
 	fileDrop: boolean;
 	contextMenu: ContextMenuMode;
 	inspectable?: boolean;
-	/** setBackgroundThrottling's state (macOS, Linux). */
+	/** setBackgroundThrottling's state. */
 	backgroundThrottling?: boolean;
-	/** setRecovery's state (macOS, Linux). */
+	/** setRecovery's state. */
 	recovery?: WebviewRecovery;
 }
 
@@ -1695,20 +1695,20 @@ export const webview = {
 	/** Default reload; manual leaves a terminated page stopped until explicitly reloaded. */
 	setRecovery: (recovery: WebviewRecovery, target: WebviewTarget = {}) =>
 		callPlatform<null>('webview', 'setRecovery', { ...target, recovery }),
-	/** Clear what sites stored (macOS, Linux). Other sites' data (tabs on other sites), and with `app: true`
+	/** Clear what sites stored. Other sites' data (tabs on other sites), and with `app: true`
 	 *  the app's own too — except its cookies, which hold its session with the app's server. Default
 	 *  types: all. Resolves to the sites cleared. */
 	clearData: (options: { types?: WebsiteDataType[]; app?: boolean } = {}) =>
 		callPlatform<{ cleared: string[] }>('webview', 'clearData', options),
 	/** false: the page runs at full speed when hidden or covered (timers, audio, sockets), at an energy
-	 *  cost. WebKit throttles by default (macOS, Linux). */
+	 *  cost. Throttled by default. */
 	setBackgroundThrottling: (enabled: boolean, target: WebviewTarget = {}) =>
 		callPlatform<null>('webview', 'setBackgroundThrottling', { ...target, enabled }),
-	/** The page's sound muted (it keeps playing), or back (macOS, Linux). */
+	/** The page's sound muted (it keeps playing), or back. */
 	setAudioMuted: (muted: boolean, target: WebviewTarget = {}) => callPlatform<null>('webview', 'setAudioMuted', { ...target, muted }),
-	/** Pause every audio and video of the page (macOS, Linux). */
+	/** Pause every audio and video of the page. */
 	pauseMedia: (target: WebviewTarget = {}) => callPlatform<null>('webview', 'pauseMedia', target),
-	/** What the page plays and captures (macOS, Linux). */
+	/** What the page plays and captures. */
 	getMediaState: (target: WebviewTarget = {}) =>
 		callPlatform<MediaState>('webview', 'getMediaState', target),
 	setZoom: (zoom: number, target: WebviewTarget = {}) =>

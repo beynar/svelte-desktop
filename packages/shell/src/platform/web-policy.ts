@@ -54,7 +54,7 @@ function listen() {
 	});
 }
 
-/** Server-only policy, shared by all shell views. Permissions: every OS. Auth and certificates: macOS and Linux. Client identities: macOS. */
+/** Server-only policy, shared by all shell views. Every OS; client identities: macOS and Windows. */
 export const webPolicy = {
 	async setPermissionHandler(handler: PermissionHandler | null, options: { timeoutMs?: number } = {}): Promise<void> {
 		assertServer(); listen();

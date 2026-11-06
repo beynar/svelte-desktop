@@ -422,6 +422,7 @@ std::string webview2_version() { return find_runtime().version; }
 
 static ICoreWebView2Environment *g_env = nullptr;
 static bool g_env_pending = false;
+static bool g_browser_arguments = false; // a build that isn't signed to be distributed
 static bool g_env_failed_shown = false;
 static std::vector<std::function<void(ICoreWebView2Environment *)>> g_env_waiters;
 
@@ -505,6 +506,45 @@ static void env_failed(HRESULT hr) {
 using CreateEnvInternal_t = HRESULT(STDMETHODCALLTYPE *)(bool, int, PCWSTR, IUnknown *,
                                                          ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler *);
 
+// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is read by Microsoft's loader, which this file stands in for.
+class EnvironmentOptions final : public ICoreWebView2EnvironmentOptions {
+public:
+  explicit EnvironmentOptions(std::wstring arguments) : arguments_(std::move(arguments)) {}
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++rc_; }
+  ULONG STDMETHODCALLTYPE Release() override {
+    ULONG r = --rc_;
+    if (r == 0) delete this;
+    return r;
+  }
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **pp) override {
+    if (!pp) return E_POINTER;
+    *pp = nullptr;
+    if (!IsEqualIID(riid, IID_IUnknown) && !IsEqualIID(riid, IID_ICoreWebView2EnvironmentOptions)) return E_NOINTERFACE;
+    *pp = static_cast<ICoreWebView2EnvironmentOptions *>(this);
+    AddRef();
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE get_AdditionalBrowserArguments(LPWSTR *value) override { return copy(arguments_, value); }
+  HRESULT STDMETHODCALLTYPE put_AdditionalBrowserArguments(LPCWSTR value) override { return arguments_ = value ? value : L"", S_OK; }
+  HRESULT STDMETHODCALLTYPE get_Language(LPWSTR *value) override { return copy(L"", value); }
+  HRESULT STDMETHODCALLTYPE put_Language(LPCWSTR) override { return S_OK; }
+  HRESULT STDMETHODCALLTYPE get_TargetCompatibleBrowserVersion(LPWSTR *value) override { return copy(L"86.0.616.0", value); } // any runtime with this file's entry point
+  HRESULT STDMETHODCALLTYPE put_TargetCompatibleBrowserVersion(LPCWSTR) override { return S_OK; }
+  HRESULT STDMETHODCALLTYPE get_AllowSingleSignOnUsingOSPrimaryAccount(BOOL *allow) override { return *allow = FALSE, S_OK; }
+  HRESULT STDMETHODCALLTYPE put_AllowSingleSignOnUsingOSPrimaryAccount(BOOL) override { return S_OK; }
+
+private:
+  static HRESULT copy(const std::wstring &text, LPWSTR *out) {
+    size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+    *out = static_cast<LPWSTR>(CoTaskMemAlloc(bytes));
+    if (!*out) return E_OUTOFMEMORY;
+    memcpy(*out, text.c_str(), bytes);
+    return S_OK;
+  }
+  std::atomic<ULONG> rc_{1};
+  std::wstring arguments_;
+};
+
 static void with_env(std::function<void(ICoreWebView2Environment *)> fn) {
   if (g_env) return fn(g_env);
   g_env_waiters.push_back(std::move(fn));
@@ -540,8 +580,12 @@ static void with_env(std::function<void(ICoreWebView2Environment *)> fn) {
         return S_OK;
       });
   std::wstring dir = user_data_dir();
-  HRESULT hr = create(true, rt.type, dir.c_str(), nullptr, handler);
+  wchar_t arguments[4096] = L"";
+  // Not in a distributed build: a program starting the app with --remote-debugging-port would borrow its identity.
+  EnvironmentOptions *options = g_browser_arguments && GetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", arguments, 4096) ? new EnvironmentOptions(arguments) : nullptr;
+  HRESULT hr = create(true, rt.type, dir.c_str(), options, handler);
   handler->Release();
+  if (options) options->Release();
   if (FAILED(hr)) {
     g_env_pending = false;
     env_failed(hr);
@@ -618,7 +662,7 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
     settings->put_AreDevToolsEnabled(v->debug ? TRUE : FALSE);
     settings->put_IsStatusBarEnabled(FALSE);
     settings->put_AreDefaultContextMenusEnabled(v->contextMenu || v->debug ? TRUE : FALSE);
-    settings->put_AreDefaultScriptDialogsEnabled(TRUE);
+    settings->put_AreDefaultScriptDialogsEnabled(FALSE); // svc_web_control.cc: ours can be answered
     settings->put_IsWebMessageEnabled(TRUE);
     settings->put_IsZoomControlEnabled(TRUE);
     // Browser shortcuts (F5, Ctrl+R, Ctrl+P, F12...) only in debug builds;
@@ -649,6 +693,7 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
         std::string source = take_string(src);
         if (SUCCEEDED(args->TryGetWebMessageAsString(&msg)) && msg) {
           std::string body = take_string(msg);
+          if (web_control_message(id, body, args, true)) return S_OK;
           // CoreWebView2.WebMessageReceived only carries top-level documents
           // (iframes raise ICoreWebView2Frame.WebMessageReceived instead).
           on_bridge_message(id, body, url_origin(source), true);
@@ -664,6 +709,8 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
         args->get_Uri(&uri);
         std::string url = take_string(uri);
         sessions_page_unloaded(id);
+        web_control_navigating(id);
+        web_site_seen(url);
         if (View *bv = find_view(id); bv && !bv->browserView.empty()) {
           // view.*: a browser view — web URLs load, anything else is refused; then the app's veto.
           std::string sc = url_scheme(url);
@@ -681,11 +728,13 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
 
   auto *onFrameNav = new Cb<ICoreWebView2NavigationStartingEventHandler, ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *>(
       IID_ICoreWebView2NavigationStartingEventHandler, [id](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
-        View *bv = find_view(id);
-        if (!bv || bv->browserView.empty()) return S_OK;
         LPWSTR uri = nullptr;
         args->get_Uri(&uri);
-        web_navigation_policy(bv, take_string(uri), false, args);
+        std::string url = take_string(uri);
+        web_site_seen(url);
+        View *bv = find_view(id);
+        if (!bv || bv->browserView.empty()) return S_OK;
+        web_navigation_policy(bv, url, false, args);
         return S_OK;
       });
   v->webview->add_FrameNavigationStarting(onFrameNav, &v->tokens[8]);
@@ -781,6 +830,8 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
 
   downloads_attach(v);
   web_policy_attach(v);
+  web_auth_attach(v);
+  web_control_attach(v);
 
   // Menu accelerators while the page has keyboard focus (keys go to the browser process).
   auto *onKey = new Cb<ICoreWebView2AcceleratorKeyPressedEventHandler, ICoreWebView2Controller *, ICoreWebView2AcceleratorKeyPressedEventArgs *>(
@@ -806,7 +857,7 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
         if (!v || !v->controller) return S_OK;
         if (FAILED(hr)) fprintf(stderr, "[shell] bridge script failed: %s\n", hresult_message(hr).c_str());
         view_resize(v);
-        v->controller->put_IsVisible(TRUE);
+        view_apply_visibility(v);
         theme_apply_view(v);
         flush_pending(v);
         return S_OK;
@@ -815,7 +866,7 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
   onScript->Release();
   if (FAILED(hr)) {
     view_resize(v);
-    v->controller->put_IsVisible(TRUE);
+    view_apply_visibility(v);
     flush_pending(v);
   }
 }
@@ -874,8 +925,13 @@ void view_resize(View *v) {
   v->controller->put_Bounds(r);
 }
 
+void view_apply_visibility(View *v) {
+  if (v->controller) v->controller->put_IsVisible(v->pageHidden && v->throttling ? FALSE : TRUE);
+}
+
 void view_destroy(View *v) {
   web_policy_forget(v->id);
+  web_control_detach(v->id);
   g_views.erase(v->id);
   v->pending.clear();
   v->ready = false;
@@ -966,8 +1022,16 @@ static void after_delay(int ms, std::function<void()> fn) {
 static void on_render_process_exit(int id) {
   View *v = find_view(id);
   if (!v) return;
-  int delay = v->reloads.next(now_seconds());
+  web_control_navigating(id); // the page its dialog belongs to is gone
+  std::string recovery = web_control_recovery(id);
+  bool manual = recovery == "manual";
+  int delay = manual ? 0 : v->reloads.next(now_seconds());
   emit_raw(json{{"type", "webcontent-terminated"}, {"window", id}, {"gaveUp", delay < 0}});
+  json event = view_source(v);
+  event.update(json{{"type", "terminated"}, {"url", v->lastUrl}, {"navigationId", nullptr}, {"recovery", recovery}, {"reason", "unknown"}});
+  if (!manual) event["gaveUp"] = delay < 0;
+  emit("webviewLifecycle", event);
+  if (manual) return;
   if (delay >= 0) {
     after_delay(delay, [id] {
       View *v = find_view(id);
@@ -1138,7 +1202,16 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       view_resize(&w->view);
       embedded_views_resized(w);
       if (wp != SIZE_MINIMIZED) emit_bounds(w);
+      // A hidden window sized before it first shows is still loading for that first show.
+      if (wp == SIZE_MINIMIZED || IsWindowVisible(hwnd)) {
+        w->view.pageHidden = wp == SIZE_MINIMIZED;
+        view_apply_visibility(&w->view);
+      }
       return 0;
+    case WM_SHOWWINDOW:
+      w->view.pageHidden = !wp || IsIconic(hwnd);
+      view_apply_visibility(&w->view);
+      break;
     case WM_MOVE:
       emit_bounds(w);
       return 0;
@@ -1302,6 +1375,7 @@ static int create_window(const json &o) {
   // Opening a document or a link from Explorer starts a new process: hand it to the
   // running instance (openUrls / openFiles there) and leave before any window.
   if (g_order.empty() && jbool(o, "singleInstance", false) && !claim_single_instance()) ExitProcess(0);
+  if (g_order.empty()) g_browser_arguments = jbool(o, "testChannel", false);
   if (g_order.empty() && o.contains("quitOnLastWindowClosed")) g_quit_on_last_window = jbool(o, "quitOnLastWindowClosed", true);
   auto *w = new Window;
   w->id = g_next_id++;
@@ -1381,7 +1455,7 @@ static int create_window(const json &o) {
 static int recreate_main_window() {
   if (!g_order.empty() || !g_main_opts.is_object()) return 0;
   json o = g_main_opts;
-  for (const char *k : {"args", "cwd", "singleInstance", "url", "html"}) o.erase(k);
+  for (const char *k : {"args", "cwd", "singleInstance", "testChannel", "url", "html"}) o.erase(k);
   o["label"] = "main";
   return create_app_window(o);
 }
@@ -1579,6 +1653,7 @@ void backend_init_services() {
   register_popover();
   register_webview();
   register_web_policy();
+  register_web_control();
   register_downloads();
   register_sessions();
   register_deep_link();

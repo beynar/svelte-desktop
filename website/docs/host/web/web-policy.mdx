@@ -3,9 +3,9 @@ title: host.webview permissions, auth and certificates
 description: Server-owned web permission decisions, HTTP authentication challenges and exact certificate exceptions.
 ---
 
-These members of `host.webview` set policy for web content in windows, embedded views, popovers and sheets. All methods on this page are **server only**; page calls reject with `denied`, even if `bridge.allow` permits `webview.*`: that list controls native bridge calls, not a website's access to the camera or location. Policy is shared across views and [sessions](/host/web/sessions). Requests and credentials travel to the server, not to page event listeners. By default, with no saved decision and no handler, a page may use a permission only on the app's own origin; every other origin is denied. To let an external site use the camera or microphone, register a handler or save a decision. Permissions also work on Windows; authentication, certificates and client identities are macOS only. See [Platform support](#platform-support).
+These members of `host.webview` set policy for web content in windows, embedded views, popovers and sheets. All methods on this page are **server only**; page calls reject with `denied`, even if `bridge.allow` permits `webview.*`: that list controls native bridge calls, not a website's access to the camera or location. Policy is shared across views and [sessions](/host/web/sessions). Requests and credentials travel to the server, not to page event listeners. By default, with no saved decision and no handler, a page may use a permission only on the app's own origin; every other origin is denied. To let an external site use the camera or microphone, register a handler or save a decision. Permissions, authentication and certificates work on every OS; client identities on macOS and Windows. See [Platform support](#platform-support).
 
-How-to: [Web view](/ui/web-view#authentication-challenges-and-tls-macos).
+How-to: [Web view](/ui/web-view#authentication-challenges-and-tls).
 
 ## Methods
 
@@ -138,7 +138,7 @@ Credentials use `NSURLCredentialPersistenceNone`: the framework does not save th
 
 ### `listClientIdentities()`
 
-**Server only.** Enumerate Keychain identity choices without requesting Keychain UI.
+**Server only.** Enumerate Keychain identity choices without requesting Keychain UI; on Windows, the personal certificate store.
 
 ```ts
 const identities = await host.webview.listClientIdentities();
@@ -192,8 +192,8 @@ await host.webview.revokeCertificate({
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
 | `setPermissionHandler`, `setPermissionDecision`, `listPermissionDecisions`, `revokePermissionDecision` | ✓ | ✓ | ✓ |
-| `onAuthChallenge`, `allowCertificate`, `revokeCertificate` | ✓ | ✓ | — |
-| `listClientIdentities` | ✓ | — | — |
+| `onAuthChallenge`, `allowCertificate`, `revokeCertificate` | ✓ | ✓ | ✓ |
+| `listClientIdentities` | ✓ | — | ✓ |
 
 What isn't available returns `unsupported`. These methods do not add WebUSB, HID or serial support. These are handler registrations and request/reply flows, not page-broadcast events. Use the callbacks above to receive requests.
 
@@ -208,6 +208,14 @@ On Linux:
 - There is no system store of client identities to list, so `listClientIdentities` returns `unsupported`, `identities` is empty and an `{ identity }` answer cancels. `'default'` goes on without a certificate.
 
 On Windows, `camera`, `microphone` and `location` come from WebView2's permission event and `screenRecording` from its screen capture event; `speech` never asks. The permission event names the requesting origin but not its frame, so `frame` is `null` and frame origins aren't compared; screen capture reports its frame. `prompt` leaves the request to WebView2's own dialog, except for screen capture, where it means the same as `allow`. WebView2 is told not to save answers in its profile, so a handler keeps being asked. Clipboard and notification requests have no `WebPermission` name: the app's own origin is allowed and others are denied, with no handler involved.
+
+For authentication on Windows:
+
+- With no handler, on `'default'` and on `'cancel'`, the page gets the server's own answer: a 401 with its body, not a failed load. WebView2's login box isn't used. A `fetch` therefore resolves after a `'cancel'`, where on macOS it rejects.
+- WebView2 doesn't say whether a challenge is for a proxy, so `proxy` is always `false` for `basic`, `digest` and `ntlm`. `previousFailures` counts the credentials given for that origin and realm since the last answer that gave none. A credential that works is kept by WebView2 and sent to the whole origin until the app quits.
+- A failed certificate is raised for every request, a frame's or a `fetch`'s too. With no handler or pin, or on `'cancel'`, the request fails. WebView2's error page, which has a way past it, isn't used.
+- `revokeCertificate` makes WebView2 forget every exception it was given; those still pinned come back at their next connection. A connection already open isn't closed.
+- `listClientIdentities` lists the certificates with a private key in the user's personal store (`CurrentUser\My`) that are in date. Identities in a challenge are what WebView2 offers for that server. An identity not on offer cancels. With no handler or on `'default'`, the request goes on without a certificate; WebView2's picker isn't used. WebView2 keeps the answer for a host and port until the app quits. `previousFailures` is always `0`.
 
 ## Example
 

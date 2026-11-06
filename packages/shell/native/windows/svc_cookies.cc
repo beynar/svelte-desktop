@@ -167,6 +167,33 @@ static bool filter(const CallPtr &c, std::string &url, std::string &name) {
   return true;
 }
 
+void clear_site_cookies(std::function<bool(const std::string &host)> keep, std::function<void(const std::set<std::string> &)> done) {
+  ICoreWebView2CookieManager *m = cookie_manager();
+  if (!m) return done({});
+  m->AddRef(); // kept by the completion
+  bool started = get_cookies(m, "", [m, keep, done](HRESULT, ICoreWebView2CookieList *list) {
+    std::set<std::string> hosts;
+    UINT n = 0;
+    if (list) list->get_Count(&n);
+    for (UINT i = 0; i < n; i++) {
+      ICoreWebView2Cookie *x = nullptr;
+      if (FAILED(list->GetValueAtIndex(i, &x)) || !x) continue;
+      std::string host = lower(jstr(cookie_json(x), "domain"));
+      if (!host.empty() && host[0] == '.') host.erase(0, 1);
+      if (!keep(host) && SUCCEEDED(m->DeleteCookie(x))) hosts.insert(host);
+      x->Release();
+    }
+    m->Release();
+    refresh_cookies();
+    done(hosts);
+  });
+  m->Release();
+  if (!started) {
+    m->Release();
+    done({});
+  }
+}
+
 static bool has_any(const std::string &s, const char *chars) { return s.find_first_of(chars) != std::string::npos; }
 
 void register_sessions() {

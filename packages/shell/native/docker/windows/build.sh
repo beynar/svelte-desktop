@@ -20,7 +20,7 @@ CXX="$TRIPLE-clang++"
 CXXFLAGS="-std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-cast-function-type \
   -ffunction-sections -fdata-sections -DUNICODE -D_UNICODE -DNOMINMAX -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DNTDDI_VERSION=0x0A00000B \
   -I$WEBVIEW2_INCLUDE -I$SHIM -I/src/windows -I/src/portable"
-LIBS="-lole32 -loleaut32 -luuid -lshell32 -lshlwapi -luser32 -lgdi32 -ladvapi32 -ldwmapi -lwindowscodecs -lwtsapi32 -lversion -lwinspool"
+LIBS="-lole32 -loleaut32 -luuid -lshell32 -lshlwapi -luser32 -lgdi32 -ladvapi32 -ldwmapi -lwindowscodecs -lwtsapi32 -lversion -lwinspool -lcrypt32"
 
 echo "== $TRIPLE ($($CXX --version | head -1))"
 echo "   WebView2 SDK $(cat /opt/webview2/VERSION)"

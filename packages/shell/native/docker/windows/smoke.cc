@@ -196,7 +196,7 @@ int main() {
   expect(36, "\"code\":\"invalid_args\"");
   expect(37, "\"ok\":true");
   expect(38, "\"value\":[]");
-  expect(39, "\"code\":\"unsupported\"");
+  expect(39, "\"ok\":true");
   expect(40, "\"code\":\"invalid_args\"");
   expect(41, "\"ok\":true");
   expect(42, "\"code\":\"unavailable\"");

@@ -7,7 +7,8 @@ Packaging is in `src/build/package-windows.ts` (`build: { target: 'windows' }`).
 ## Verified on Windows
 CI runs `examples/notes/tests/windows.test.ts` on a real Windows runner (`.github/workflows/windows.yml`):
 WebView2, WinRT toasts, the COM toast activator, windows, the title bar, menus, tray, dialogs, clipboard,
-views, screen and DPI, jobs, MCP, relaunch and web content control. x64 only, on one display at 100%.
+views, screen and DPI, jobs, MCP, relaunch and web content control; `windows-web.test.ts` the rest of
+web control. x64 only, on one display at 100%.
 
 ## Verified without Windows
 - Clean build (`-Wall -Wextra`, llvm-mingw, WebView2 SDK headers); every `shell.h` export
@@ -73,6 +74,28 @@ Same ops, result shapes and events as macOS, so `src/platform` doesn't know the 
 - `svc_webview.cc`, printing: `ICoreWebView2PrintSettings(2)` from the options macOS takes, validated
   the same way (points → inches); `Print` for silent jobs, `EnumPrinters` for `getPrinters`. To check:
   whether `PrintToPdf` honors `PageRanges`, and a real silent job (no runner printer takes one quietly).
+- `svc_web_policy.cc`, authentication: `BasicAuthenticationRequested`, `ServerCertificateErrorDetected` and
+  `ClientCertificateRequested`, each with a deferral. No handler or `default`: no credential, no certificate,
+  and a refused server certificate, never WebView2's login box, its picker or its error page with a way past it.
+  `revokeCertificate` also calls `ClearServerCertificateErrorActions`, since an exception WebView2 was given
+  stays otherwise. Client identities are the certificates with a private key in the user's personal store.
+- `svc_web_control.cc`, what every web view gets: `find` through `ICoreWebView2Find`; JavaScript dialogs
+  through `ScriptDialogOpening`, shown by the shell as a modal dialog so `respondToDialog` can answer;
+  `IsMuted`, `IsDocumentPlayingAudio`, and a script in each document for `pauseMedia`, the playback state and
+  the tracks `getUserMedia` gave (no WebView2 call says what a page captures); `setRecovery` and
+  `_terminateForTesting` (`Page.crash`, a real crash).
+- File drop: the OS talks to the browser process's own drop target, so the host never sees the drag. The page
+  script reports it, with a nonce so a page can't forge one, and sends the drop's `File`s with
+  `postMessageWithAdditionalObjects`, which `ICoreWebView2File` turns into paths. It takes `dragover` for file
+  drags: without that a page with no drop zone gets no `drop`. A page doesn't see the paths before the drop,
+  so `fileDragEnter` has none. Frames report through `ICoreWebView2Frame2`. `AllowExternalDrop` stays on:
+  `setFileDrop(false)` stops the events, as elsewhere, not the page's own drop.
+- `setBackgroundThrottling`: `IsVisible` is off while a window or view is hidden or minimized, which is what
+  slows the page down, and it stays on with throttling off. A covered window isn't hidden: WebView2 isn't told.
+- `clearData`: `ClearBrowsingData` has no site filter, and without `app` the app's data has to stay. Sites are
+  cleared one by one with `Storage.clearDataForOrigin`, from the origins views and frames loaded
+  (`web-sites.json`), cookies through the cookie manager. `ClearBrowsingData` does `app: true` and the disk cache.
+  What a site stored before this record existed isn't reached without `app`.
 - `svc_cookies.cc`: `sessions.*` on the default profile through `ICoreWebView2CookieManager`.
   No cookie event in WebView2: `watchCookies` compares the profile once a second.
 
@@ -80,8 +103,7 @@ Same ops, result shapes and events as macOS, so `src/platform` doesn't know the 
 Window: simple fullscreen, controlsArea, shadow, movable, all workspaces,
 focusable, represented file, character palette. App: activation policy, hide others,
 default icon. Dock menu. Permission checks / settings panes. Thermal state. Keychain-style
-`authenticate`. Webview: find, file drop, JS dialog automation, custom context menu, lifecycle events,
-`clearData`, registered scripts, content rules, authentication challenges (`configurePolicy` with
-kind `auth`), certificate exceptions, client identities. Sessions: named profiles (`create`, `remove`,
+`authenticate`. Webview: custom context menu, lifecycle events other than `terminated`, registered
+scripts, content rules. Sessions: named profiles (`create`, `remove`,
 through `ICoreWebView2ControllerOptions` when they come), proxies.
 `shortcutReleased` (Windows has no hotkey key-up).

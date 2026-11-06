@@ -293,12 +293,14 @@ static void register_view_ops() {
   });
   op("show", [](CallPtr c, Embedded *e) {
     ShowWindow(e->child, SW_SHOWNA);
-    if (e->view.controller) e->view.controller->put_IsVisible(TRUE);
+    e->view.pageHidden = false;
+    view_apply_visibility(&e->view);
     c->ok();
   });
   op("hide", [](CallPtr c, Embedded *e) {
     ShowWindow(e->child, SW_HIDE);
-    if (e->view.controller) e->view.controller->put_IsVisible(FALSE);
+    e->view.pageHidden = true;
+    view_apply_visibility(&e->view);
     c->ok();
   });
   op("reload", [](CallPtr c, Embedded *e) {

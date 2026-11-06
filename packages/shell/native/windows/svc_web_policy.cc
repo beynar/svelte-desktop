@@ -1,17 +1,19 @@
 // webview.* policy, server-owned as in native/platform_web_policy.mm and platform_web_content.mm:
-//   configurePolicy (kind permission) · respondPolicy · list/set/revokePermissionDecision
-//   setNavigationPolicy · navigationDecision · _permissionPolicyForTesting
-// Requests go to the Worker only (emit_raw), never to page listeners. Permission events are held
-// with a deferral until the answer or the deadline; navigations, which have none, by a bounded wait.
-// Not here (unsupported): kind `auth`, certificates and client identities.
+//   configurePolicy · respondPolicy · list/set/revokePermissionDecision · allow/revokeCertificate
+//   listClientIdentities · setNavigationPolicy · navigationDecision · _permissionPolicyForTesting
+// Requests go to the Worker only (emit_raw), never to page listeners. Permission and authentication
+// events are held with a deferral until the answer or the deadline; navigations, which have none, by
+// a bounded wait.
 #include "win.hpp"
+
+#include <wincrypt.h>
 
 #include <set>
 
 namespace sd::win {
 
-static bool g_permission_handler = false;
-static UINT g_permission_timeout = 15000;
+static bool g_permission_handler = false, g_auth_handler = false;
+static UINT g_permission_timeout = 15000, g_auth_timeout = 15000;
 static std::map<std::string, std::function<void(const json &)>> g_pending;
 static int g_next_request = 1;
 
@@ -52,14 +54,14 @@ static json &decisions() {
 }
 static std::string decision_key(const std::string &origin, const std::string &permission) { return origin + "\n" + permission; }
 
-static void request_policy(const json &data, std::function<void(const json &)> done) {
+static void request_policy(const char *event, const json &data, std::function<void(const json &)> done) {
   if (g_pending.size() >= 256) return done(nullptr);
   std::string ident = next_request_id();
   g_pending[ident] = std::move(done);
   json d = data;
   d["requestId"] = ident;
-  emit_raw(json{{"type", "platform"}, {"name", "webPermissionRequest"}, {"data", d}});
-  run_after(g_permission_timeout, [ident] {
+  emit_raw(json{{"type", "platform"}, {"name", event}, {"data", d}});
+  run_after(strcmp(event, "webPermissionRequest") == 0 ? g_permission_timeout : g_auth_timeout, [ident] {
     auto it = g_pending.find(ident);
     if (it == g_pending.end()) return;
     auto cb = std::move(it->second);
@@ -84,7 +86,7 @@ static void permission_policy(View *v, const std::string &site, const json &fram
   d["frame"] = frame;
   int id = v->id;
   std::string navigation = view_url(v);
-  request_policy(d, [id, navigation, done](const json &answer) {
+  request_policy("webPermissionRequest", d, [id, navigation, done](const json &answer) {
     // A handler answers for the page that asked: not for what the view shows since.
     View *now = find_view(id);
     bool valid = now && view_url(now) == navigation && answer.is_string() && known_decision(answer.get<std::string>());
@@ -167,6 +169,284 @@ void web_screen_capture_starting(View *v, ICoreWebView2ScreenCaptureStartingEven
     deferral->Release();
     args->Release();
   });
+}
+
+// ---------------------------------------------------------------------------
+// Authentication and certificates
+
+static std::set<std::string> g_certificate_pins;
+static std::map<std::string, int> g_auth_answers; // origin + realm: credentials given, none of which held
+
+static std::string take(LPWSTR s) {
+  std::string out = utf8(s);
+  if (s) CoTaskMemFree(s);
+  return out;
+}
+
+static std::string hex(const BYTE *bytes, DWORD size) {
+  static const char *const digits = "0123456789abcdef";
+  std::string out;
+  for (DWORD i = 0; i < size; i++) {
+    out += digits[bytes[i] >> 4];
+    out += digits[bytes[i] & 15];
+  }
+  return out;
+}
+
+// SHA-256 of the DER certificate, lowercase hex.
+static std::string pem_fingerprint(const std::string &pem) {
+  DWORD size = 0;
+  if (!CryptStringToBinaryA(pem.c_str(), 0, CRYPT_STRING_BASE64HEADER, nullptr, &size, nullptr, nullptr)) return "";
+  std::vector<BYTE> der(size);
+  if (!CryptStringToBinaryA(pem.c_str(), 0, CRYPT_STRING_BASE64HEADER, der.data(), &size, nullptr, nullptr)) return "";
+  BYTE hash[32];
+  DWORD length = sizeof hash;
+  if (!CryptHashCertificate2(L"SHA256", 0, nullptr, der.data(), size, hash, &length)) return "";
+  return hex(hash, length);
+}
+
+static void split_origin(const std::string &origin, std::string &host, int &port) {
+  auto start = origin.find("://");
+  std::string scheme = origin.substr(0, start), authority = origin.substr(start + 3);
+  auto close = authority.rfind(']');
+  auto colon = authority.rfind(':');
+  bool hasPort = colon != std::string::npos && (close == std::string::npos || colon > close);
+  host = hasPort ? authority.substr(0, colon) : authority;
+  port = hasPort ? atoi(authority.c_str() + colon + 1) : scheme == "https" ? 443 : 80;
+}
+
+static std::string challenge_realm(const std::string &challenge) {
+  std::string low = lower(challenge);
+  auto at = low.find("realm=");
+  if (at == std::string::npos) return "";
+  at += 6;
+  if (at < challenge.size() && challenge[at] == '"') {
+    auto end = challenge.find('"', at + 1);
+    return challenge.substr(at + 1, end == std::string::npos ? std::string::npos : end - at - 1);
+  }
+  return challenge.substr(at, challenge.find_first_of(", ", at) - at);
+}
+
+static json challenge_event(View *v, const std::string &origin, const std::string &realm, const std::string &method, bool proxy, int failures) {
+  std::string host;
+  int port = 0;
+  split_origin(origin, host, port);
+  json d = view_source(v);
+  d.update(json{{"origin", origin}, {"host", host}, {"port", port}, {"realm", realm}, {"method", method}, {"proxy", proxy}, {"previousFailures", failures}, {"identities", json::array()}});
+  return d;
+}
+
+// Cancelling goes on without a credential, so the page gets the server's own answer. Not WebView2's
+// default: that's a login box the app never asked for, which macOS doesn't have either.
+static void on_basic_auth(int id, ICoreWebView2BasicAuthenticationRequestedEventArgs *args) {
+  LPWSTR uri = nullptr, text = nullptr;
+  args->get_Uri(&uri);
+  args->get_Challenge(&text);
+  std::string site = http_origin(take(uri)), challenge = take(text);
+  std::string method = lower(challenge.substr(0, challenge.find(' ')));
+  View *v = find_view(id);
+  ICoreWebView2Deferral *deferral = nullptr;
+  bool known = method == "basic" || method == "digest" || method == "ntlm";
+  if (!v || !g_auth_handler || !known || site.empty() || site == app_origin() || FAILED(args->GetDeferral(&deferral)) || !deferral) {
+    args->put_Cancel(TRUE);
+    return;
+  }
+  std::string realm = challenge_realm(challenge), key = site + "\n" + realm, navigation = view_url(v);
+  args->AddRef();
+  // A credential is kept for the origin and realm once it works: asked again, the last one didn't.
+  // The event doesn't say whether it's for a proxy.
+  request_policy("webAuthChallenge", challenge_event(v, site, realm, method, false, g_auth_answers[key]), [=](const json &answer) {
+    View *now = find_view(id);
+    ICoreWebView2BasicAuthenticationResponse *response = nullptr;
+    bool credential = now && view_url(now) == navigation && answer.is_object() && jhas(answer, "username") && answer["username"].is_string() && jhas(answer, "password") && answer["password"].is_string();
+    if (credential && SUCCEEDED(args->get_Response(&response)) && response) {
+      response->put_UserName(wide(jstr(answer, "username")).c_str());
+      response->put_Password(wide(jstr(answer, "password")).c_str());
+      response->Release();
+      g_auth_answers[key]++;
+    } else {
+      args->put_Cancel(TRUE);
+      g_auth_answers.erase(key);
+    }
+    deferral->Complete();
+    deferral->Release();
+    args->Release();
+  });
+}
+
+static std::string pin_key(const std::string &host, const std::string &fingerprint) { return host + "\n" + fingerprint; }
+
+// Cancelled rather than left to WebView2's default: that's an error page with a way past it, which
+// the app didn't offer.
+static void on_certificate_error(int id, ICoreWebView2ServerCertificateErrorDetectedEventArgs *args) {
+  LPWSTR uri = nullptr, pem = nullptr;
+  args->get_RequestUri(&uri);
+  std::string site = http_origin(take(uri)), fingerprint;
+  ICoreWebView2Certificate *certificate = nullptr;
+  if (SUCCEEDED(args->get_ServerCertificate(&certificate)) && certificate) {
+    if (SUCCEEDED(certificate->ToPemEncoding(&pem))) fingerprint = pem_fingerprint(take(pem));
+    certificate->Release();
+  }
+  args->put_Action(COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL);
+  View *v = find_view(id);
+  if (!v || site.empty() || site == app_origin()) return;
+  std::string host;
+  int port = 0;
+  split_origin(site, host, port);
+  // Pins apply to the challenged host and leaf certificate only, never an entire store or session.
+  std::string pin = pin_key(host, fingerprint);
+  if (!fingerprint.empty() && g_certificate_pins.count(pin)) {
+    args->put_Action(COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW);
+    return;
+  }
+  ICoreWebView2Deferral *deferral = nullptr;
+  if (!g_auth_handler || FAILED(args->GetDeferral(&deferral)) || !deferral) return;
+  json d = challenge_event(v, site, "", "serverTrust", false, 0);
+  if (!fingerprint.empty()) d["fingerprint"] = fingerprint;
+  args->AddRef();
+  std::string navigation = view_url(v);
+  request_policy("webAuthChallenge", d, [=](const json &answer) {
+    // A server may register this exact fingerprint while handling the challenge, then return default.
+    View *now = find_view(id);
+    if (now && view_url(now) == navigation && answer == json("default") && g_certificate_pins.count(pin)) args->put_Action(COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW);
+    deferral->Complete();
+    deferral->Release();
+    args->Release();
+  });
+}
+
+static std::string client_fingerprint(ICoreWebView2ClientCertificate *certificate) {
+  LPWSTR pem = nullptr;
+  return SUCCEEDED(certificate->ToPemEncoding(&pem)) ? pem_fingerprint(take(pem)) : "";
+}
+
+// Handled with no certificate goes on without one. WebView2's default would be its own picker.
+static void on_client_certificate(int id, ICoreWebView2ClientCertificateRequestedEventArgs *args) {
+  LPWSTR hostText = nullptr;
+  int port = 443;
+  BOOL proxy = FALSE;
+  args->get_Host(&hostText);
+  args->get_Port(&port);
+  args->get_IsProxy(&proxy);
+  std::string host = lower(take(hostText));
+  std::string site = "https://" + host + (port == 443 ? "" : ":" + std::to_string(port));
+  View *v = find_view(id);
+  ICoreWebView2Deferral *deferral = nullptr;
+  if (!v || !g_auth_handler || site == app_origin() || FAILED(args->GetDeferral(&deferral)) || !deferral) {
+    args->put_Handled(TRUE);
+    return;
+  }
+  json d = challenge_event(v, site, "", "clientCertificate", proxy != FALSE, 0);
+  ICoreWebView2ClientCertificateCollection *offered = nullptr;
+  UINT32 count = 0;
+  if (SUCCEEDED(args->get_MutuallyTrustedCertificates(&offered)) && offered) offered->get_Count(&count);
+  for (UINT32 i = 0; i < count; i++) {
+    ICoreWebView2ClientCertificate *certificate = nullptr;
+    if (FAILED(offered->GetValueAtIndex(i, &certificate)) || !certificate) continue;
+    LPWSTR name = nullptr;
+    certificate->get_DisplayName(&name);
+    std::string fingerprint = client_fingerprint(certificate);
+    d["identities"].push_back(json{{"identity", fingerprint}, {"fingerprint", fingerprint}, {"label", take(name)}});
+    certificate->Release();
+  }
+  args->AddRef();
+  std::string navigation = view_url(v);
+  request_policy("webAuthChallenge", d, [=](const json &answer) {
+    View *now = find_view(id);
+    bool current = now && view_url(now) == navigation;
+    ICoreWebView2ClientCertificate *chosen = nullptr;
+    if (current && answer.is_object() && jhas(answer, "identity"))
+      for (UINT32 i = 0; i < count && !chosen; i++) {
+        ICoreWebView2ClientCertificate *certificate = nullptr;
+        if (FAILED(offered->GetValueAtIndex(i, &certificate)) || !certificate) continue;
+        if (client_fingerprint(certificate) == jstr(answer, "identity")) chosen = certificate;
+        else certificate->Release();
+      }
+    if (chosen) {
+      args->put_SelectedCertificate(chosen);
+      args->put_Handled(TRUE);
+      chosen->Release();
+    } else if (current && answer == json("default")) args->put_Handled(TRUE);
+    else args->put_Cancel(TRUE);
+    if (offered) offered->Release();
+    deferral->Complete();
+    deferral->Release();
+    args->Release();
+  });
+}
+
+void web_auth_attach(View *v) {
+  int id = v->id;
+  EventRegistrationToken token{};
+  if (auto *wv10 = query<ICoreWebView2_10>(v->webview, IID_ICoreWebView2_10)) {
+    auto *onBasic = new Cb<ICoreWebView2BasicAuthenticationRequestedEventHandler, ICoreWebView2 *, ICoreWebView2BasicAuthenticationRequestedEventArgs *>(
+        IID_ICoreWebView2BasicAuthenticationRequestedEventHandler, [id](ICoreWebView2 *, ICoreWebView2BasicAuthenticationRequestedEventArgs *args) -> HRESULT {
+          on_basic_auth(id, args);
+          return S_OK;
+        });
+    wv10->add_BasicAuthenticationRequested(onBasic, &token);
+    onBasic->Release();
+    wv10->Release();
+  }
+  if (auto *wv14 = query<ICoreWebView2_14>(v->webview, IID_ICoreWebView2_14)) {
+    auto *onCertificate = new Cb<ICoreWebView2ServerCertificateErrorDetectedEventHandler, ICoreWebView2 *, ICoreWebView2ServerCertificateErrorDetectedEventArgs *>(
+        IID_ICoreWebView2ServerCertificateErrorDetectedEventHandler, [id](ICoreWebView2 *, ICoreWebView2ServerCertificateErrorDetectedEventArgs *args) -> HRESULT {
+          on_certificate_error(id, args);
+          return S_OK;
+        });
+    wv14->add_ServerCertificateErrorDetected(onCertificate, &token);
+    onCertificate->Release();
+    wv14->Release();
+  }
+  if (auto *wv5 = query<ICoreWebView2_5>(v->webview, IID_ICoreWebView2_5)) {
+    auto *onClient = new Cb<ICoreWebView2ClientCertificateRequestedEventHandler, ICoreWebView2 *, ICoreWebView2ClientCertificateRequestedEventArgs *>(
+        IID_ICoreWebView2ClientCertificateRequestedEventHandler, [id](ICoreWebView2 *, ICoreWebView2ClientCertificateRequestedEventArgs *args) -> HRESULT {
+          on_client_certificate(id, args);
+          return S_OK;
+        });
+    wv5->add_ClientCertificateRequested(onClient, &token);
+    onClient->Release();
+    wv5->Release();
+  }
+}
+
+// What WebView2 allowed stays allowed until this: every view shares it. Pins left bring theirs back.
+static void forget_allowed_certificates(std::function<void()> done) {
+  ICoreWebView2_14 *wv14 = nullptr;
+  for (auto &[id, v] : views())
+    if (!wv14 && v->webview) wv14 = query<ICoreWebView2_14>(v->webview, IID_ICoreWebView2_14);
+  if (!wv14) return done();
+  auto *cb = new Cb<ICoreWebView2ClearServerCertificateErrorActionsCompletedHandler, HRESULT>(
+      IID_ICoreWebView2ClearServerCertificateErrorActionsCompletedHandler, [done](HRESULT) -> HRESULT {
+        done();
+        return S_OK;
+      });
+  HRESULT hr = wv14->ClearServerCertificateErrorActions(cb);
+  cb->Release();
+  wv14->Release();
+  if (FAILED(hr)) done();
+}
+
+// The personal store, the one WebView2 offers from: what has a private key, in date.
+static json client_identities() {
+  json out = json::array();
+  HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, CERT_SYSTEM_STORE_CURRENT_USER | CERT_STORE_READONLY_FLAG, L"MY");
+  if (!store) return out;
+  PCCERT_CONTEXT certificate = nullptr;
+  while ((certificate = CertEnumCertificatesInStore(store, certificate))) {
+    DWORD size = 0;
+    if (!CertGetCertificateContextProperty(certificate, CERT_KEY_PROV_INFO_PROP_ID, nullptr, &size)) continue;
+    if (CertVerifyTimeValidity(nullptr, certificate->pCertInfo) != 0) continue;
+    BYTE hash[32];
+    DWORD length = sizeof hash;
+    if (!CertGetCertificateContextProperty(certificate, CERT_SHA256_HASH_PROP_ID, hash, &length)) continue;
+    wchar_t name[256] = L"";
+    CertGetNameStringW(certificate, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr, name, 256);
+    std::string fingerprint = hex(hash, length);
+    out.push_back(json{{"identity", fingerprint}, {"fingerprint", fingerprint}, {"label", utf8(name)}});
+  }
+  CertCloseStore(store, 0);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -264,12 +544,11 @@ void register_web_policy() {
   reg("webview", "configurePolicy", [](CallPtr c) {
     if (!server_only(c)) return;
     std::string kind = c->str("kind");
-    if (kind == "auth") return c->fail("unsupported", "webview.configurePolicy: authentication challenges are not implemented on Windows");
-    if (kind != "permission") return c->fail("invalid_args", "Unknown policy kind");
+    if (kind != "permission" && kind != "auth") return c->fail("invalid_args", "Unknown policy kind");
     double ms = c->num("timeoutMs", 15000);
     if (!(ms >= 50 && ms <= 30000)) return c->fail("invalid_args", "timeoutMs must be 50–30000");
-    g_permission_timeout = (UINT)ms;
-    g_permission_handler = c->flag("enabled", false);
+    (kind == "permission" ? g_permission_timeout : g_auth_timeout) = (UINT)ms;
+    (kind == "permission" ? g_permission_handler : g_auth_handler) = c->flag("enabled", false);
     c->ok();
   });
   reg("webview", "respondPolicy", [](CallPtr c) {
@@ -300,6 +579,21 @@ void register_web_policy() {
     }
     write_json_file(local_file("web-permissions.json"), decisions());
     c->ok();
+  });
+  reg_many("webview", {"allowCertificate", "revokeCertificate"}, [](CallPtr c) {
+    if (!server_only(c)) return;
+    std::string host = lower(c->str("host")), fingerprint = lower(c->str("fingerprint"));
+    bool isHex = fingerprint.size() == 64 && fingerprint.find_first_not_of("0123456789abcdef") == std::string::npos;
+    if (host.empty() || host.find_first_of("/*") != std::string::npos || !isHex) return c->fail("invalid_args", "An exact host and 64-character SHA-256 fingerprint are required");
+    if (c->op == "allowCertificate") {
+      g_certificate_pins.insert(pin_key(host, fingerprint));
+      return c->ok();
+    }
+    g_certificate_pins.erase(pin_key(host, fingerprint));
+    forget_allowed_certificates([c] { c->ok(); });
+  });
+  reg("webview", "listClientIdentities", [](CallPtr c) {
+    if (server_only(c)) c->ok(client_identities());
   });
   // What a request from the target's page would get, without one (the test channel only).
   reg("webview", "_permissionPolicyForTesting", [](CallPtr c) {

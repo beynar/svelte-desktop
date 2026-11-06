@@ -30,6 +30,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -140,6 +141,8 @@ struct View {
   bool ready = false;                  // controller set up and bridge script registered
   EventRegistrationToken tokens[12]{}; // [7]: DocumentTitleChanged (view.* only), [8]: FrameNavigationStarting, [9]: DownloadStarting, [10]: ScreenCaptureStarting, [11]: WebResourceRequested
   bool holdsRequests = false;          // navigation policy: see web_policy_attach
+  bool pageHidden = false;             // its window or view is hidden or minimized
+  bool throttling = true;              // setBackgroundThrottling: false keeps it visible to the page regardless
   std::string browserView;             // view.* id: any origin may load ("" = app page)
 };
 
@@ -154,6 +157,8 @@ void view_navigate(View *v, const std::string &url);
 void view_set_html(View *v, const std::string &html);
 void view_eval(View *v, const std::string &js);
 void view_resize(View *v);
+/// What the page is told: hidden (WebView2 throttles it) only with throttling on.
+void view_apply_visibility(View *v);
 void view_destroy(View *v);
 /// Awaits promises (DevTools Runtime.evaluate), resolves with a JSON value.
 void view_execute(View *v, const std::string &code, std::function<void(bool ok, const json &value, const std::string &error)> done);
@@ -332,6 +337,7 @@ void register_diagnostics();
 void register_popover();
 void register_webview();
 void register_web_policy();
+void register_web_control();
 void register_downloads();
 void register_sessions();
 void register_deep_link();
@@ -342,6 +348,18 @@ void web_screen_capture_starting(View *v, ICoreWebView2ScreenCaptureStartingEven
 void web_navigation_policy(View *v, const std::string &url, bool main_frame, ICoreWebView2NavigationStartingEventArgs *args);
 void web_policy_attach(View *v);
 void web_policy_forget(int view);
+void web_auth_attach(View *v);
+/// Web control (svc_web_control.cc).
+void web_control_attach(View *v);
+void web_control_detach(int id);
+json web_control_info(View *v); // what getInfo adds
+std::string web_control_recovery(int id);
+void web_control_navigating(int id);
+/// A file drag from the page script: true when the message was one, however it's frame-sent.
+bool web_control_message(int id, const std::string &body, ICoreWebView2WebMessageReceivedEventArgs *args, bool top);
+void web_site_seen(const std::string &url); // an origin some view loaded, for clearData
+/// Delete every cookie of the profile but the hosts `keep` names; `done` gets the hosts cleared (svc_cookies.cc).
+void clear_site_cookies(std::function<bool(const std::string &host)> keep, std::function<void(const std::set<std::string> &)> done);
 /// Downloads (svc_downloads.cc).
 void downloads_attach(View *v);
 void downloads_detach(View *v);

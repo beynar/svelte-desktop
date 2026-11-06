@@ -52,6 +52,8 @@ export interface ShellOptions {
   quitOnLastWindowClosed?: boolean;
   /** `bridge.allow` from desktop.config, an empty list when it isn't set. Undefined only outside a configured app (the native test suites). */
   pagePermissions?: string[];
+  /** Not in a build signed to be distributed: see build/test-channel-policy.ts. */
+  testChannel?: boolean;
   /** Dev mode: the config's usage descriptions (no Info.plist then; a bundle has its own). */
   usageDescriptions?: Record<string, string>;
   /** Custom resource schemes registered before any web view is created (macOS and Linux). */

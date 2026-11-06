@@ -499,6 +499,7 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
       version: config.version,
       window: config.window,
       pagePermissions: config.bridgeAllow,
+      testChannel: true,
       usageDescriptions: usageDescriptions(config.osPermissions),
       protocols: config.protocols,
       lib,

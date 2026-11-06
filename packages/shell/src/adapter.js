@@ -138,6 +138,7 @@ function write_entries(dir, c, server_dir) {
 		window: c.window,
 		update: c.update ? { manifestUrl: c.update.manifestUrl, publicKey: c.update.publicKey, channel: c.update.channel } : undefined,
 		pagePermissions: c.bridgeAllow,
+		testChannel: keepsTestChannel(c),
 		protocols: c.protocols,
 		singleInstance: c.singleInstance ?? true,
 		network: c.network,

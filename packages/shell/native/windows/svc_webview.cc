@@ -360,6 +360,7 @@ void register_webview() {
               {"inspectable", devtools != FALSE},
               {"contextMenu", v->contextMenu || v->debug ? "default" : "none"}};
     d.update(view_source(v));
+    d.update(web_control_info(v));
     if (src) CoTaskMemFree(src);
     if (title) CoTaskMemFree(title);
     c->ok(d);

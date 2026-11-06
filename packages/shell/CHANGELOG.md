@@ -71,6 +71,16 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 - Linux: `setContentRules`, `removeContentRules` and `listContentRules`, in every session.
 - Linux: `host.webview.scripts`, in the page or a named world.
 - Linux: `setInputPolicy`, `getInputPolicy` and `onBeforeInput`. `meta` is the Super key.
+- Windows: `onAuthChallenge`, `allowCertificate` and `revokeCertificate`, for Basic, Digest and NTLM, server certificates and client certificates.
+- Windows: `listClientIdentities`, from the user's personal certificate store.
+- Windows: `find` and `clearFind`.
+- Windows: `getDialog`, `respondToDialog` and `onJsDialog`. JavaScript dialogs are now the shell's own.
+- Windows: `setAudioMuted`, `pauseMedia` and `getMediaState`.
+- Windows: `setBackgroundThrottling`. A hidden or minimized window now tells its page it's hidden, as a hidden view already did.
+- Windows: `setRecovery`, and `onLifecycle` reports `terminated`.
+- Windows: `setFileDrop` with `onFileDragEnter`, `onFileDragLeave` and `onFileDrop`. `getInfo` reports real `fileDrop`, `backgroundThrottling` and `recovery` values.
+- Windows: `clearData`.
+- Windows: `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` is honored, as with Microsoft's loader.
 - An update for a signed app has to be signed by the same Apple team or Windows publisher.
 - `release merge` and `make-manifest` take `--expires-in-days`: after that date, clients refuse the manifest.
 - A project can be a website and a desktop app. With `desktop()` next to `sveltekit({ adapter: adapter() })`, `kitop dev` and `kitop build` are the website, on your adapter, and `--mac`, `--windows` or `--linux` make them the desktop app. `kitop init` now sets a project up this way, and `desktop({ website: false })` is a desktop app only.
