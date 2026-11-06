@@ -161,6 +161,43 @@ A page can only make the native calls you list, so this one needs a line in `des
 bridge: { allow: ['window.setTitle'] },
 ```
 
+## Differences between the website and the app
+
+Most code can stay the same. For what can't, there are three tools, all decided at build time, so what belongs to one side stays out of the other's bundle. `isDesktop()` from `@kitop/shell/server` is decided while the code runs: an `import` at the top of that file still reaches the website.
+
+**A file for the desktop.** Add `.desktop` before the extension of a route file, and it takes its place in the app. The website doesn't see it. Alone, it's a route only the app has.
+
+```text
+src/routes/settings/+page.svelte            the website
+src/routes/settings/+page.desktop.svelte    the app
+src/routes/settings/+page.server.ts         the website
+src/routes/settings/+page.server.desktop.ts the app
+src/routes/devices/+page.desktop.svelte     a route only the app has
+src/hooks.server.desktop.ts                 the app's server hooks
+```
+
+It works for `+page`, `+layout`, `+error` and `+server` files and for `hooks`. Imports in these files stay out of the website, so this is where to import a dependency only the app uses.
+
+**Routes the app leaves out.** `/admin` is that route: its page and endpoint go, and its layouts stay for what's under it. `/admin/**` is that route and everything under it. Ids keep their `(groups)`, `*` stands for part of a segment and `**/` for any depth.
+
+```ts vite.config.ts
+plugins: [sveltekit({ adapter: adapter() }), desktop({ routes: { exclude: ['/admin/**', '/(marketing)/**'] } })]
+```
+
+**A constant for everything else.** `import.meta.env.KITOP_DESKTOP` is `true` in the app and `false` on the website. Inside an `if`, with an `import()`, the dependency leaves the website's bundle:
+
+```ts
+if (import.meta.env.KITOP_DESKTOP) (await import('./desktop-only')).start();
+```
+
+To change a SvelteKit option for one side, `process.env.KITOP_TARGET` is set in `vite.config.ts` when kitop builds or runs the app.
+
+SvelteKit doesn't allow such files or filters in its routes folder, so when you use them `desktop()` gives it a folder of links instead, `.desktop/routes`, with the same files under their usual names. Three things follow:
+
+- It needs `desktop()` next to `sveltekit()` on both sides, or SvelteKit refuses the `.desktop` files.
+- `bun run check` looks at the website's side by default, so it doesn't know `./$types` for a route only the app has. Run it with `KITOP_TARGET` set to check the app's side.
+- On Windows, creating links takes [Developer Mode](https://learn.microsoft.com/windows/apps/get-started/enable-your-device-for-development). The build says so if it's off.
+
 ## Where next
 
 - [Windows and title bars](/ui/windows): hidden title bars, several windows.

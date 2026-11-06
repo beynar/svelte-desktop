@@ -33,6 +33,7 @@ interface Plugin {
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { ICON_CANDIDATES, findIcon, loadConfig, sidecarEntries, usageDescriptions, type DesktopConfig, type ResolvedConfig } from "./config.ts";
+import { routesOverlay, type RoutesOptions } from "./routes-overlay.js";
 import desktopAdapter from "./adapter.js";
 import { writeHostTypes } from "./host/types-file.js";
 
@@ -59,6 +60,8 @@ export interface DesktopPluginOptions {
   noWindow?: boolean;
   /** `false`: a desktop app only, so that no target means the host's. Default: with no target, the project is a website. */
   website?: boolean;
+  /** Which routes the desktop app has. A `.desktop` file (`+page.desktop.svelte`) takes the place of its route file there. */
+  routes?: RoutesOptions;
 }
 
 
@@ -95,7 +98,7 @@ export async function desktop(options: DesktopPluginOptions = {}): Promise<Plugi
   // In dev, the app's server runs in this process: the system's certificates and proxy for it too.
   if (process.env.NODE_ENV !== "production") (await import("./system-network.ts")).applySystemNetwork(config.network);
   writeHostTypes(config.root);
-  return [shellAdapter(config), hydrationMarker(config.osPermissions, { foreground: config.notifications?.foreground ?? true }, { server: config.push?.server ?? null }), pushServiceWorker(), oauthDev(config.appName), websocketDev(config), serverEntry(config, "websocket"), serverEntry(config, "mcp"), mcpDev(config), devPlugin(config, options)];
+  return [routesOverlay("desktop", options.routes), shellAdapter(config), hydrationMarker(config.osPermissions, { foreground: config.notifications?.foreground ?? true }, { server: config.push?.server ?? null }), pushServiceWorker(), oauthDev(config.appName), websocketDev(config), serverEntry(config, "websocket"), serverEntry(config, "mcp"), mcpDev(config), devPlugin(config, options)];
 }
 
 // SvelteKit has no public "hydrated" signal; tests (and apps) need one. Wrap the

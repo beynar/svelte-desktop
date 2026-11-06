@@ -6,6 +6,13 @@ import type { CrashInfo } from "../crash.ts";
 import type { DesktopApi } from "../api.ts";
 import type { JobFunction, JobInfo } from "../jobs/types.ts";
 
+declare global {
+  interface ImportMetaEnv {
+    /** Which side this was built for. Decided at build time, so `if (import.meta.env.KITOP_DESKTOP) await import('dep')` leaves `dep` out of the website. */
+    readonly KITOP_DESKTOP: boolean;
+  }
+}
+
 type Jobs = Host["jobs"] & Pick<typeof jobManager, "start" | "wait">;
 
 interface ServerHost {

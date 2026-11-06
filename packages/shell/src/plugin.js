@@ -7,6 +7,7 @@
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeHostTypes } from "./host/types-file.js";
+import { routesOverlay } from "./routes-overlay.js";
 
 export function defineConfig(config) {
   return config;
@@ -32,7 +33,7 @@ function websiteHost() {
 export async function desktop(options = {}) {
   if (!process.env.KITOP_TARGET && options.website !== false) {
     writeHostTypes(process.cwd());
-    return [websiteHost()];
+    return [routesOverlay("web", options.routes), websiteHost()];
   }
   if (typeof Bun === "undefined") throw new Error("kitop runs on Bun: use `bunx --bun vite …`");
   return (await import("./vite.ts")).desktop(options);

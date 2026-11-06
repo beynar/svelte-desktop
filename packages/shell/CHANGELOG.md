@@ -53,6 +53,7 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 
 ### Added
 
+- One project, two sides: `+page.desktop.svelte`, `+page.server.desktop.ts`, `+layout.desktop.svelte`, `+server.desktop.ts` and `hooks.server.desktop.ts` take the place of their file in the desktop app, and the website ignores them. `desktop({ routes: { exclude } })` keeps routes out of the app. `import.meta.env.KITOP_DESKTOP` says which side the code is built for, at build time.
 - Linux: `setNavigationPolicy` holds a navigation until the answer, so a refused one sends no request. `isMainFrame` is `null` there.
 - Linux: `setPermissionHandler` and saved decisions, for camera, microphone, screen and location. `getUserMedia` now exists on Linux.
 - Linux: `onAuthChallenge`, `allowCertificate` and `revokeCertificate`. `listClientIdentities` stays unsupported. Without a handler, a page asked for a login gets the server's answer instead of WebKit's login box.
