@@ -1,4 +1,4 @@
-// window.* — the common subset of the window contract on GTK 3.
+// window.* — the window contract on GTK 3.
 // Coordinates: root window (top-left origin, y down), the same convention as
 // the macOS backend. Bounds/position are the window-manager frame; size is the
 // client area. `windowId` is the public id (0 = primary); absent → the calling
@@ -9,7 +9,16 @@
 // X11 is asynchronous: geometry and state requests are acknowledged by the window
 // manager later, so those ops reply once the new state is observed (or after
 // 800 ms if the WM refuses), and a getter right after a setter sees the result.
+//
+// A parent is what a window is transient for: the window manager keeps it above and GTK closes it
+// with it, but it doesn't move along. Not registered, see limitations.mdx: the represented file and
+// the traffic lights (macOS's own), materials (the compositor's), content protection and the shadow
+// (X11 has neither), setMovableByWindowBackground (the page covers the window), showCharacterPalette
+// (no call opens the desktop's emoji picker), testScroll.
+#include <gdk/gdkx.h>
+
 #include <cmath>
+#include <cstring>
 
 #include "linux.hpp"
 
@@ -69,9 +78,78 @@ static json bounds_json(Window *w) {
   return rect_json(f.x, f.y, f.width, f.height);
 }
 
+static Window *parent_of(Window *w) {
+  GtkWindow *t = gtk_window_get_transient_for(GTK_WINDOW(w->window));
+  for (int id : window_ids())
+    if (GTK_WINDOW(find_window(id)->window) == t) return find_window(id);
+  return nullptr;
+}
+
+bool set_window_parent(Window *w, Window *parent) {
+  for (Window *a = parent; a; a = parent_of(a))
+    if (a == w) return false;
+  gtk_window_set_transient_for(GTK_WINDOW(w->window), parent ? GTK_WINDOW(parent->window) : nullptr);
+  gtk_window_set_destroy_with_parent(GTK_WINDOW(w->window), parent != nullptr);
+  return true;
+}
+
+// The prefix is only what the title bar shows: X11 has no hint for this.
+static const char *const kEditedMark = "\xE2\x80\xA2 ";
+
+void set_window_title(Window *w, const std::string &title) {
+  gtk_window_set_title(GTK_WINDOW(w->window), ((w->documentEdited ? kEditedMark : "") + title).c_str());
+}
+
+static std::string window_title(Window *w) {
+  const char *t = gtk_window_get_title(GTK_WINDOW(w->window));
+  std::string title = t ? t : "";
+  return w->documentEdited && title.rfind(kEditedMark, 0) == 0 ? title.substr(strlen(kEditedMark)) : title;
+}
+
+// GTK's settings belong to the screen, and WebKit's prefers-color-scheme comes from them: a window's
+// theme moves every window's widgets and page, the last one set wins (Windows: WebView2's profile has
+// the same limit). What each window has of its own is the hint its title bar is drawn from. X11 only.
+static void apply_window_theme(Window *w) {
+  GdkWindow *g = gtk_widget_get_window(w->window);
+  if (!g || !GDK_IS_X11_WINDOW(g)) return;
+  gdk_x11_window_set_theme_variant(g, const_cast<char *>(w->theme != "system" ? w->theme.c_str() : theme_app_dark() ? "dark" : nullptr));
+}
+
+void window_themes_reapply() {
+  for (int id : window_ids()) apply_window_theme(find_window(id));
+}
+
+// A cursor belongs to a GdkWindow, and the web view has its own: WebKit sets the page's there each
+// time the pointer meets a new one, so it's taken back as it comes. Every window has it, as ShowCursor
+// does on Windows and NSCursor on macOS.
+static bool g_cursor_hidden = false;
+
+static GdkCursor *blank_cursor() {
+  static GdkCursor *blank = gdk_cursor_new_for_display(gdk_display_get_default(), GDK_BLANK_CURSOR);
+  return blank;
+}
+
+static void on_cursor_changed(GdkWindow *g, GParamSpec *, gpointer) {
+  if (g_cursor_hidden && gdk_window_get_cursor(g) != blank_cursor()) gdk_window_set_cursor(g, blank_cursor());
+}
+
+static void apply_cursor(GdkWindow *g) {
+  if (g_cursor_hidden && !g_object_get_data(G_OBJECT(g), "sd-cursor-watch")) {
+    g_object_set_data(G_OBJECT(g), "sd-cursor-watch", g);
+    g_signal_connect(g, "notify::cursor", G_CALLBACK(on_cursor_changed), nullptr);
+  }
+  gdk_window_set_cursor(g, g_cursor_hidden ? blank_cursor() : nullptr);
+  for (GList *c = gdk_window_peek_children(g); c; c = c->next) apply_cursor(GDK_WINDOW(c->data));
+}
+
+void cursor_window_mapped(GtkWidget *window) {
+  if (GdkWindow *g = gtk_widget_get_window(window); g && g_cursor_hidden) apply_cursor(g);
+}
+
 static json info_row(int id) {
   Window *w = find_window(id);
-  return json{{"windowId", public_id(id)}, {"label", w->label}, {"focused", (bool)gtk_window_is_active(GTK_WINDOW(w->window))}, {"visible", (bool)gtk_widget_get_visible(w->window)}, {"bounds", bounds_json(w)}, {"session", session_of(w->webview)}};
+  Window *parent = parent_of(w);
+  return json{{"windowId", public_id(id)}, {"parentId", parent ? json(public_id(parent->id)) : json(nullptr)}, {"focusable", (bool)gtk_window_get_accept_focus(GTK_WINDOW(w->window))}, {"label", w->label}, {"focused", (bool)gtk_window_is_active(GTK_WINDOW(w->window))}, {"visible", (bool)gtk_widget_get_visible(w->window)}, {"bounds", bounds_json(w)}, {"session", session_of(w->webview)}};
 }
 
 /// Decoration size (frame − client area); 0 before the window is mapped.
@@ -106,6 +184,7 @@ void register_window() {
     int id = create_window_from_platform(c->args);
     if (id == -4) return c->fail("invalid_args", "window.create: label `" + c->str("label") + "` is already used");
     if (id == -5) return c->fail("invalid_args", "window.create: unknown session or invalid recovery policy");
+    if (id == -6) return c->fail("invalid_args", "window.create: invalid parent, modal, type or focusable option");
     if (id <= 0) return c->fail("internal", "window.create failed");
     Window *w = find_window(id);
     if (c->has("opacity")) gtk_widget_set_opacity(w->window, c->num("opacity", 1));
@@ -126,6 +205,24 @@ void register_window() {
   // ── geometry ──────────────────────────────────────────────────────────
   // The calling page's own window (or windowId's): {windowId, label, focused, visible, bounds}.
   op("getInfo", [](CallPtr c, Window *w) { c->ok(info_row(w->id)); });
+  op("setParent", [](CallPtr c, Window *w) {
+    bool detach = c->args.contains("parentId") && c->args["parentId"].is_null();
+    int pid = (int)c->num("parentId", -1);
+    Window *parent = detach ? nullptr : pid == 0 ? find_window(primary_window()) : pid > 0 ? find_window(pid) : nullptr;
+    if (!detach && !parent) return c->fail("invalid_args", "window.setParent: no such parent");
+    if (!set_window_parent(w, parent)) return c->fail("invalid_args", "parent relationship cannot contain a cycle");
+    c->ok();
+  });
+  op("getParent", [](CallPtr c, Window *w) {
+    Window *parent = parent_of(w);
+    c->ok(parent ? info_row(parent->id) : json(nullptr));
+  });
+  op("getChildren", [](CallPtr c, Window *w) {
+    json rows = json::array();
+    for (int id : window_ids())
+      if (parent_of(find_window(id)) == w) rows.push_back(info_row(id));
+    c->ok(rows);
+  });
   op("getBounds", [](CallPtr c, Window *w) { c->ok(json{{"bounds", bounds_json(w)}, {"state", state_name(w)}}); });
   op("setBounds", [](CallPtr c, Window *w) {
     GdkRectangle f = frame_rect(w);
@@ -210,23 +307,26 @@ void register_window() {
   op("setMinSize", [](CallPtr c, Window *w) {
     w->minW = (int)c->num("width", 0);
     w->minH = (int)c->num("height", 0);
-    GdkGeometry g{};
-    int mask = 0;
-    if (w->minW || w->minH) g.min_width = std::max(1, w->minW), g.min_height = std::max(1, w->minH), mask |= GDK_HINT_MIN_SIZE;
-    if (w->maxW || w->maxH) g.max_width = w->maxW ? w->maxW : G_MAXINT16, g.max_height = w->maxH ? w->maxH : G_MAXINT16, mask |= GDK_HINT_MAX_SIZE;
-    gtk_window_set_geometry_hints(GTK_WINDOW(w->window), nullptr, mask ? &g : nullptr, (GdkWindowHints)mask);
+    apply_geometry(w);
     c->ok();
   });
   op("setMaxSize", [](CallPtr c, Window *w) {
     w->maxW = (int)c->num("width", 0);
     w->maxH = (int)c->num("height", 0);
-    GdkGeometry g{};
-    int mask = 0;
-    if (w->minW || w->minH) g.min_width = std::max(1, w->minW), g.min_height = std::max(1, w->minH), mask |= GDK_HINT_MIN_SIZE;
-    if (w->maxW || w->maxH) g.max_width = w->maxW ? w->maxW : G_MAXINT16, g.max_height = w->maxH ? w->maxH : G_MAXINT16, mask |= GDK_HINT_MAX_SIZE;
-    gtk_window_set_geometry_hints(GTK_WINDOW(w->window), nullptr, mask ? &g : nullptr, (GdkWindowHints)mask);
+    apply_geometry(w);
     c->ok();
   });
+  // The window manager and GTK both hold it, for every size: setSize too, and at once.
+  op("setAspectRatio", [](CallPtr c, Window *w) {
+    w->aspect = std::max(0.0, c->num("ratio", 0));
+    apply_geometry(w);
+    settle(c, w->id, [](Window *x) {
+      int a = 0, b = 1;
+      gtk_window_get_size(GTK_WINDOW(x->window), &a, &b);
+      return x->aspect <= 0 || !gtk_widget_get_mapped(x->window) || std::abs(a / (double)b - x->aspect) < 0.02;
+    }, [](Window *) { return json(nullptr); });
+  });
+  op("getAspectRatio", [](CallPtr c, Window *w) { c->ok(w->aspect > 0 ? json(w->aspect) : json(nullptr)); });
   op("getMinSize", [](CallPtr c, Window *w) { c->ok(json{{"width", w->minW}, {"height", w->minH}}); });
   op("getMaxSize", [](CallPtr c, Window *w) { c->ok(json{{"width", w->maxW}, {"height", w->maxH}}); });
   op("getScaleFactor", [](CallPtr c, Window *w) { c->ok(gtk_widget_get_scale_factor(w->window)); });
@@ -245,12 +345,9 @@ void register_window() {
   op("controlsArea", [](CallPtr c, Window *) { c->ok(nullptr); }); // server-side decorations: not ours to measure
 
   // ── state ─────────────────────────────────────────────────────────────
-  op("getTitle", [](CallPtr c, Window *w) {
-    const char *t = gtk_window_get_title(GTK_WINDOW(w->window));
-    c->ok(t ? t : "");
-  });
+  op("getTitle", [](CallPtr c, Window *w) { c->ok(window_title(w)); });
   op("setTitle", [](CallPtr c, Window *w) {
-    gtk_window_set_title(GTK_WINDOW(w->window), c->str("title").c_str());
+    set_window_title(w, c->str("title"));
     c->ok();
   });
   op("eval", [](CallPtr c, Window *w) {
@@ -293,6 +390,41 @@ void register_window() {
     }, "fullscreen");
   });
   op("isFullscreen", [](CallPtr c, Window *w) { c->ok(has_state(w, GDK_WINDOW_STATE_FULLSCREEN)); });
+  // Not the window manager's full screen, which isFullscreen reports: borderless over the monitor, as on macOS.
+  op("setSimpleFullscreen", [](CallPtr c, Window *w) {
+    bool on = c->flag("enabled", true);
+    if (on == w->simpleFullscreen) return c->ok();
+    GtkWindow *win = GTK_WINDOW(w->window);
+    GdkRectangle to;
+    if (on) {
+      GdkRectangle f = frame_rect(w);
+      w->simpleSaved = f;
+      gtk_window_get_size(win, &w->simpleSaved.width, &w->simpleSaved.height);
+      w->simpleDecorated = gtk_window_get_decorated(win);
+      w->simpleResizable = gtk_window_get_resizable(win);
+      GdkMonitor *m = monitor_at(f.x + f.width / 2, f.y + f.height / 2);
+      gdk_monitor_get_geometry(m ? m : primary_monitor(), &to);
+      gtk_window_unfullscreen(win);
+      gtk_window_unmaximize(win);
+    } else {
+      to = w->simpleSaved;
+    }
+    w->simpleFullscreen = on;
+    if (w->menubar) gtk_widget_set_visible(w->menubar, !on);
+    gtk_window_set_resizable(win, on || w->simpleResizable);
+    gtk_window_set_decorated(win, !on && w->simpleDecorated);
+    apply_geometry(w);
+    gtk_window_resize(win, to.width, to.height);
+    move_frame(w, to.x, to.y);
+    settle(c, w->id, [on, to](Window *x) {
+      if (!x->simpleFullscreen != !on) return true;
+      int cw = 0, ch = 0;
+      gtk_window_get_size(GTK_WINDOW(x->window), &cw, &ch);
+      GdkRectangle f = frame_rect(x);
+      return near(f.x, to.x) && near(f.y, to.y) && near(cw, to.width) && near(ch, to.height);
+    }, [](Window *) { return json(nullptr); });
+  });
+  op("isSimpleFullscreen", [](CallPtr c, Window *w) { c->ok(json{{"simpleFullscreen", w->simpleFullscreen}}); });
   op("restore", [](CallPtr c, Window *w) {
     GtkWindow *win = GTK_WINDOW(w->window);
     gtk_window_deiconify(win);
@@ -304,6 +436,7 @@ void register_window() {
   op("isFocused", [](CallPtr c, Window *w) { c->ok((bool)gtk_window_is_active(GTK_WINDOW(w->window))); });
   op("isActive", [](CallPtr c, Window *w) { c->ok((bool)gtk_window_is_active(GTK_WINDOW(w->window))); });
   op("focus", [](CallPtr c, Window *w) {
+    if (!gtk_window_get_accept_focus(GTK_WINDOW(w->window))) return c->fail("unavailable", "window.focus: this window is not focusable");
     reveal(w);
     gtk_window_present(GTK_WINDOW(w->window));
     c->ok();
@@ -366,6 +499,8 @@ void register_window() {
     c->ok();
   });
   op("isAlwaysOnBottom", [](CallPtr c, Window *w) { c->ok(w->alwaysOnBottom); });
+  // AppKit's numbers where they mean something here: 3 is its floating level, what always on top sets.
+  op("getLevel", [](CallPtr c, Window *w) { c->ok(w->alwaysOnTop ? 3 : w->alwaysOnBottom ? -1 : 0); });
   op("setResizable", [](CallPtr c, Window *w) {
     gtk_window_set_resizable(GTK_WINDOW(w->window), c->flag("enabled", true));
     c->ok();
@@ -373,9 +508,28 @@ void register_window() {
   op("isResizable", [](CallPtr c, Window *w) { c->ok(json{{"resizable", (bool)gtk_window_get_resizable(GTK_WINDOW(w->window))}}); });
   op("setClosable", [](CallPtr c, Window *w) {
     gtk_window_set_deletable(GTK_WINDOW(w->window), c->flag("enabled", true));
+    apply_functions(w); // GTK's own call writes every function back
     c->ok();
   });
   op("isClosable", [](CallPtr c, Window *w) { c->ok(json{{"closable", (bool)gtk_window_get_deletable(GTK_WINDOW(w->window))}}); });
+  op("setMovable", [](CallPtr c, Window *w) {
+    w->movable = c->flag("enabled", true);
+    apply_functions(w);
+    c->ok();
+  });
+  op("isMovable", [](CallPtr c, Window *w) { c->ok(w->movable); });
+  op("setMinimizable", [](CallPtr c, Window *w) {
+    w->minimizable = c->flag("enabled", true);
+    apply_functions(w);
+    c->ok();
+  });
+  op("isMinimizable", [](CallPtr c, Window *w) { c->ok(json{{"minimizable", w->minimizable}}); });
+  op("setMaximizable", [](CallPtr c, Window *w) {
+    w->maximizable = c->flag("enabled", true);
+    apply_functions(w);
+    c->ok();
+  });
+  op("isMaximizable", [](CallPtr c, Window *w) { c->ok(json{{"maximizable", w->maximizable}}); });
   op("setTitleBarStyle", [](CallPtr c, Window *w) {
     std::string style = c->str("style", "default");
     if (style != "default" && style != "transparent" && style != "hidden" && style != "hiddenInset")
@@ -429,6 +583,31 @@ void register_window() {
     c->ok();
   });
   op("ignoresMouseEvents", [](CallPtr c, Window *w) { c->ok(json{{"ignored", w->ignoreMouse}}); });
+  op("setDocumentEdited", [](CallPtr c, Window *w) {
+    std::string title = window_title(w);
+    w->documentEdited = c->flag("edited", true);
+    set_window_title(w, title);
+    c->ok();
+  });
+  op("isDocumentEdited", [](CallPtr c, Window *w) { c->ok(json{{"edited", w->documentEdited}}); });
+  op("setCursorHidden", [](CallPtr c, Window *) {
+    g_cursor_hidden = c->flag("hidden", true);
+    GList *all = gtk_window_list_toplevels();
+    for (GList *l = all; l; l = l->next)
+      if (GdkWindow *g = gtk_widget_get_window(GTK_WIDGET(l->data))) apply_cursor(g);
+    g_list_free(all);
+    c->ok();
+  });
+  op("isCursorHidden", [](CallPtr c, Window *) { c->ok(g_cursor_hidden); });
+  op("setTheme", [](CallPtr c, Window *w) {
+    std::string t = c->str("theme", "system");
+    if (t != "system" && t != "light" && t != "dark") return c->fail("invalid_args", "window.setTheme: theme must be system|light|dark");
+    w->theme = t;
+    theme_window_changed(t);
+    apply_window_theme(w);
+    c->ok();
+  });
+  op("getTheme", [](CallPtr c, Window *w) { c->ok(w->theme); });
   op("setCursorPosition", [](CallPtr c, Window *w) {
     GdkSeat *seat = gdk_display_get_default_seat(gdk_display_get_default());
     if (GdkDevice *dev = seat ? gdk_seat_get_pointer(seat) : nullptr)

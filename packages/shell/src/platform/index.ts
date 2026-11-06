@@ -341,7 +341,7 @@ export type WindowCreateOptions = {
 
 /** One row of windows.list()/get(). `windowId` 0 is the primary window. */
 export interface WindowInfo {
-	/** macOS relationship and class policy (absent on other backends). */
+	/** The parent, and the focus policy (all backends). `modal` and `type`: macOS. */
 	parentId?: number | null;
 	modal?: boolean;
 	type?: 'normal' | 'panel';
@@ -480,7 +480,7 @@ export const windows = {
 	 *  window's top-left corner, y down. `contentTop` carries the drawable's
 	 *  inset from the frame top; `y - contentTop` converts to content space
 	 *  for reserving layout regions. `null` when the window has no standard
-	 *  buttons (borderless popovers). macOS-only — `unsupported` elsewhere. */
+	 *  buttons (borderless popovers). Always `null` on Linux. */
 	getControlsArea: (windowId?: number) =>
 		callPlatform<WindowControlsArea | null>('window', 'controlsArea', wid(windowId)),
 	unminimize: (windowId?: number) =>
@@ -491,7 +491,7 @@ export const windows = {
 	restore: (windowId?: number) => callPlatform<null>('window', 'restore', wid(windowId)),
 
 	// ── fullscreen + z-order ────────────────────────────────────────
-	/** macOS simple fullscreen (non-native, keeps other spaces usable). */
+	/** Simple fullscreen: borderless over the monitor, not the native kind. */
 	setSimpleFullscreen: (enabled: boolean, windowId?: number) =>
 		callPlatform<null>('window', 'setSimpleFullscreen', { enabled, ...wid(windowId) }),
 	isSimpleFullscreen: (windowId?: number) =>
@@ -544,18 +544,18 @@ export const windows = {
 		callPlatform<null>('window', 'invalidateShadow', wid(windowId)),
 
 	// ── appearance + behavior ───────────────────────────────────────
-	/** Vibrancy behind the page (macOS), or `null` to remove it. It shows where the page paints no
+	/** Vibrancy behind the page (macOS; Windows 11 22H2 maps it to Mica or Acrylic), or `null` to remove it. It shows where the page paints no
 	 *  background — `body { background: transparent }`, a transparent sidebar — and costs the page
 	 *  nothing (the system draws it), unlike a CSS backdrop-filter. */
 	setVibrancy: (material: VibrancyMaterial | null, options: { state?: VibrancyState } = {}, windowId?: number) =>
 		callPlatform<null>('window', 'setVibrancy', { material, ...options, ...wid(windowId) }),
-	/** The window's vibrancy, null without (macOS). */
+	/** The window's vibrancy, null without. */
 	getVibrancy: (windowId?: number) =>
 		callPlatform<{ material: VibrancyMaterial; state: VibrancyState } | null>('window', 'getVibrancy', wid(windowId)),
 	/** Liquid Glass behind the page (macOS 26), or `null` to remove it. Like vibrancy, it shows
 	 *  where the page paints no background; the window becomes non-opaque so the glass shows
 	 *  what's behind it. Replaces vibrancy (one effect at a time). Resolves `{ glass: false }`
-	 *  before macOS 26, where the `underWindow` vibrancy material is used instead. */
+	 *  before macOS 26 and on Windows, where the `underWindow` vibrancy material is used instead. */
 	setGlass: (glass: GlassOptions | null, windowId?: number) =>
 		callPlatform<{ glass: boolean } | null>('window', 'setGlass', { glass, ...wid(windowId) }),
 	/** The window's Liquid Glass, null without (macOS 26; before it, setGlass sets vibrancy). */
@@ -570,7 +570,7 @@ export const windows = {
 	/** Keep width / height while resizing (16/9, 1 for a square), or `null` to free it. */
 	setAspectRatio: (ratio: number | null, windowId?: number) =>
 		callPlatform<null>('window', 'setAspectRatio', { ratio: ratio ?? 0, ...wid(windowId) }),
-	/** Width over height, null when free (macOS). */
+	/** Width over height, null when free. */
 	getAspectRatio: (windowId?: number) => callPlatform<number | null>('window', 'getAspectRatio', wid(windowId)),
 	setOpacity: (opacity: number, windowId?: number) =>
 		callPlatform<null>('window', 'setOpacity', { opacity, ...wid(windowId) }),
@@ -597,7 +597,7 @@ export const windows = {
 	setVisibleOnAllWorkspaces: (enabled: boolean, windowId?: number) =>
 		callPlatform<null>('window', 'setVisibleOnAllWorkspaces', { enabled, ...wid(windowId) }),
 	isVisibleOnAllWorkspaces: (windowId?: number) => callPlatform<boolean>('window', 'isVisibleOnAllWorkspaces', wid(windowId)),
-	/** macOS document-edited dot in the close button. */
+	/** macOS's dot in the close button; `•` before the title in the title bar elsewhere. */
 	setDocumentEdited: (edited: boolean, windowId?: number) =>
 		callPlatform<null>('window', 'setDocumentEdited', { edited, ...wid(windowId) }),
 	isDocumentEdited: (windowId?: number) =>
@@ -605,7 +605,7 @@ export const windows = {
 	/** Alias for setDocumentEdited. */
 	setEdited: (edited: boolean, windowId?: number) =>
 		windows.setDocumentEdited(edited, windowId),
-	/** Whether the window can take keyboard focus — unsupported on some backends. */
+	/** Whether the window can take keyboard focus. */
 	setFocusable: (enabled: boolean, windowId?: number) =>
 		callPlatform<null>('window', 'setFocusable', { enabled, ...wid(windowId) }),
 	setCursorHidden: (hidden: boolean, windowId?: number) =>
@@ -614,10 +614,10 @@ export const windows = {
 	/** Screen coordinates — warps the OS cursor. */
 	setCursorPosition: (x: number, y: number, windowId?: number) =>
 		callPlatform<null>('window', 'setCursorPosition', { x, y, ...wid(windowId) }),
-	/** Per-window NSAppearance override. */
+	/** Per-window NSAppearance override; elsewhere the title bar, and every page's prefers-color-scheme. */
 	setTheme: (theme: WindowTheme, windowId?: number) =>
 		callPlatform<null>('window', 'setTheme', { theme, ...wid(windowId) }),
-	/** The window's own theme ('system' follows the app's). macOS and Windows. */
+	/** The window's own theme ('system' follows the app's). */
 	getTheme: (windowId?: number) => callPlatform<WindowTheme>('window', 'getTheme', wid(windowId)),
 
 	// ── size + position queries ─────────────────────────────────────

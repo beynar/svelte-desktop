@@ -1001,7 +1001,7 @@ for ($x = 0; $x -lt $a.Width; $x += 3) { for ($y = 0; $y -lt $a.Height; $y += 3)
 		expect(got.split('|').sort()).toEqual([one, other].sort());
 		expect(seen).toContain('DragImageBits'); // what the shell's helper leaves for a target that shows it
 		await until('the call answered', async () => !!(await app.eval(`window.__dragged`)), 10_000);
-		expect(await app.eval(`window.__dragged`)).toEqual({ dropped: true });
+		expect(await app.eval(`window.__dragged`)).toMatchObject({ dropped: true });
 		expect(existsSync(one)).toBe(true); // a copy offered: the file stays
 	}, 90_000);
 
@@ -1011,7 +1011,7 @@ for ($x = 0; $x -lt $a.Width; $x += 3) { for ($y = 0; $y -lt $a.Height; $y += 3)
 			await arm([join(dir, 'drag one.txt')]);
 			expect((await drag(mode)).got).toBe('none');
 			await until('the call answered', async () => !!(await app.eval(`window.__dragged`)), 10_000);
-			expect(await app.eval(`window.__dragged`)).toEqual({ dropped: false });
+			expect(await app.eval(`window.__dragged`)).toMatchObject({ dropped: false });
 		}, 90_000);
 
 	check('shell.share: what it refuses, and the real sheet opening', async () => {

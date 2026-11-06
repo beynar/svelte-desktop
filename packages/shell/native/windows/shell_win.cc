@@ -18,6 +18,7 @@
 #include <shlobj.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
@@ -1227,9 +1228,10 @@ void reveal_window(Window *w) {
   if (w->shown) return;
   w->shown = true;
   KillTimer(w->hwnd, kRevealTimer);
-  ShowWindow(w->hwnd, w->startMaximized ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
+  bool focusable = !(GetWindowLongPtrW(w->hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE);
+  ShowWindow(w->hwnd, w->startMaximized ? SW_SHOWMAXIMIZED : focusable ? SW_SHOWNORMAL : SW_SHOWNOACTIVATE);
   w->startMaximized = false;
-  SetForegroundWindow(w->hwnd);
+  if (focusable) SetForegroundWindow(w->hwnd);
 }
 
 static std::wstring autosave_key(const std::string &name) {
@@ -1288,6 +1290,55 @@ static void destroy_window_state(Window *w) {
   if (g_order.empty() && g_quit_on_last_window) quit_request("lastWindowClosed");
 }
 
+// Every other window is owned by it, at any depth: closing it closes them all (macOS: platform_window_last_family).
+static bool last_family(Window *w) {
+  for (int id : g_order) {
+    HWND h = find_window(id)->hwnd;
+    while (h && h != w->hwnd) h = GetWindow(h, GW_OWNER);
+    if (!h) return false;
+  }
+  return true;
+}
+
+// What's under the web view shows through a transparent page, and WS_CLIPCHILDREN keeps WM_ERASEBKGND from
+// ever reaching there: a DC without the style's clipping (no DCX_USESTYLE).
+void paint_under_view(Window *w) {
+  RECT r;
+  GetClientRect(w->hwnd, &r);
+  HDC dc = GetDCEx(w->hwnd, nullptr, DCX_CACHE);
+  // Black over the extended frame is where a system backdrop shows.
+  HBRUSH b = CreateSolidBrush(!w->vibrancy.empty() ? RGB(0, 0, 0) : app_dark() ? RGB(32, 32, 32) : RGB(255, 255, 255));
+  FillRect(dc, &r, b);
+  DeleteObject(b);
+  ReleaseDC(w->hwnd, dc);
+}
+
+// An unfocusable window that got the foreground anyway gives it back, once the press that did it is over:
+// taken from under the press, the page doesn't get it.
+static void give_back_foreground(int id) {
+  run_after(30, [id] {
+    Window *w = find_window(id);
+    if (!w || !(GetWindowLongPtrW(w->hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE) || GetForegroundWindow() != w->hwnd) return;
+    if ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) | GetAsyncKeyState(VK_MBUTTON)) & 0x8000) return give_back_foreground(id);
+    give_up_foreground(w);
+  });
+}
+
+// The client area keeps w->aspect under a border being dragged: the edge across from the dragged one follows.
+static void keep_aspect(Window *w, WPARAM edge, RECT *r) {
+  UINT dpi = (UINT)(hwnd_scale(w->hwnd) * 96);
+  RECT nc{0, 0, 0, 0};
+  adjust_for_dpi(&nc, (DWORD)GetWindowLongPtrW(w->hwnd, GWL_STYLE), GetMenu(w->hwnd) != nullptr, (DWORD)GetWindowLongPtrW(w->hwnd, GWL_EXSTYLE), dpi);
+  LONG ncw = nc.right - nc.left, nch = nc.bottom - nc.top;
+  if (edge == WMSZ_TOP || edge == WMSZ_BOTTOM) {
+    r->right = r->left + ncw + std::lround((r->bottom - r->top - nch) * w->aspect);
+    return;
+  }
+  LONG height = nch + std::lround((r->right - r->left - ncw) / w->aspect);
+  if (edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT) r->top = r->bottom - height;
+  else r->bottom = r->top + height;
+}
+
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   Window *w = reinterpret_cast<Window *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
   if (msg == WM_NCCREATE) {
@@ -1301,6 +1352,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   if (msg == taskbarButtonCreated) taskbar_button_created(hwnd); // badge overlay (svc_notifications.cc)
   switch (msg) {
     case WM_SIZE:
+      if (!w->vibrancy.empty()) paint_under_view(w);
       view_resize(&w->view);
       embedded_views_resized(w);
       if (wp != SIZE_MINIMIZED) emit_bounds(w);
@@ -1319,6 +1371,12 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       return 0;
     case WM_ACTIVATE: {
       bool active = LOWORD(wp) != WA_INACTIVE;
+      // WS_EX_NOACTIVATE holds for the press itself, but a press on the page gives the focus to the web
+      // view's window, and its top-level window comes with it, whatever the style.
+      if (active && (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE)) {
+        give_back_foreground(w->id);
+        return 0;
+      }
       // Back to the page that had the keyboard: a pane's, or the window's own.
       if (active) {
         View *page = view_with_focus(w->id) ? view_with_focus(w->id) : &w->view;
@@ -1347,6 +1405,20 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       }
       return 0;
     }
+    case WM_SIZING:
+      if (w->aspect > 0) {
+        keep_aspect(w, wp, reinterpret_cast<RECT *>(lp));
+        return TRUE;
+      }
+      break;
+    // Dragging the title bar comes here too, and a page's drag region (backend_window_drag).
+    case WM_SYSCOMMAND:
+      if (!w->movable && (wp & 0xFFF0) == SC_MOVE) return 0;
+      break;
+    // The press on the page comes up from its web view's window.
+    case WM_MOUSEACTIVATE:
+      if (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE) return MA_NOACTIVATE;
+      break;
     case 0x02E0: { // WM_DPICHANGED
       auto *r = reinterpret_cast<RECT *>(lp);
       SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -1369,7 +1441,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
       }
       // The last window: its document stays until every quit guard has answered.
-      if (!w->closing && g_quit_on_last_window && g_order.size() == 1) {
+      if (!w->closing && g_quit_on_last_window && last_family(w)) {
         quit_request("lastWindowClosed");
         return 0;
       }
@@ -1396,7 +1468,7 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       // Paint the theme background under the web view (no white flash in dark mode).
       RECT r;
       GetClientRect(hwnd, &r);
-      HBRUSH b = CreateSolidBrush(app_dark() ? RGB(32, 32, 32) : RGB(255, 255, 255));
+      HBRUSH b = CreateSolidBrush(!w->vibrancy.empty() ? RGB(0, 0, 0) : app_dark() ? RGB(32, 32, 32) : RGB(255, 255, 255));
       FillRect(reinterpret_cast<HDC>(wp), &r, b);
       DeleteObject(b);
       return 1;
@@ -1478,6 +1550,12 @@ static int create_window(const json &o) {
   if (g_order.empty()) set_protocol_schemes(o.contains("protocols") ? o["protocols"] : json());
   std::string session;
   if (!session_option(o, session)) return -5;
+  Window *parent = nullptr;
+  if (jhas(o, "parentId")) {
+    int pid = (int)jnum(o, "parentId", -1);
+    parent = pid == 0 ? find_window(primary_window()) : pid > 0 ? find_window(pid) : nullptr;
+    if (!parent) return -6;
+  }
   auto *w = new Window;
   w->id = g_next_id++;
   w->label = jstr(o, "label", g_order.empty() ? "main" : "window-" + std::to_string(w->id));
@@ -1494,6 +1572,9 @@ static int create_window(const json &o) {
   if (!jbool(o, "decorations", true)) style = WS_POPUP | WS_CLIPCHILDREN | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | (jbool(o, "resizable", true) ? WS_THICKFRAME : 0);
   DWORD ex = WS_EX_APPWINDOW;
   if (jbool(o, "alwaysOnTop", false)) ex |= WS_EX_TOPMOST;
+  if (!jbool(o, "focusable", true)) ex |= WS_EX_NOACTIVATE;
+  w->aspect = std::max(0.0, jnum(o, "aspectRatio", 0));
+  w->movable = jbool(o, "movable", true);
 
   // Size in DIPs at the target monitor's scale.
   POINT origin{0, 0};
@@ -1539,6 +1620,8 @@ static int create_window(const json &o) {
   attach_app_menu(w);
   apply_app_look(w);
   theme_apply_window(w);
+  if (parent) set_window_parent(w, parent);
+  if (!jstr(o, "vibrancy").empty()) set_window_vibrancy(w, jstr(o, "vibrancy")); // like macOS, a window without it if it can't
   view_create(&w->view);
   if (!jstr(o, "titleBarStyle", "").empty()) set_title_bar_style(w->id, jstr(o, "titleBarStyle", ""));
 
@@ -1809,7 +1892,7 @@ SHELL_API int shell_window_eval(int id, const char *js) {
 SHELL_API int shell_window_set_title(int id, const char *title) {
   if (!title) return -3;
   std::string s = copy_str(title);
-  return with_window(id, [s](Window *w) { SetWindowTextW(w->hwnd, wide(s).c_str()); });
+  return with_window(id, [s](Window *w) { set_window_title(w, s); });
 }
 
 SHELL_API int shell_window_set_size(int id, int width, int height) {

@@ -648,29 +648,69 @@ static void register_shell() {
 static bool g_initial_prefer_dark = false;
 static std::string g_initial_theme;
 static std::string g_last_theme_key;
+static std::string g_app_theme = "system";    // theme.set
+static std::string g_window_theme = "system"; // the last window.setTheme: over the app's, while it isn't system
 
 static bool ends_with(const std::string &s, const std::string &suffix) {
   return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-static json theme_info() {
+static std::string lowercase(std::string s) {
+  for (auto &ch : s) ch = (char)g_ascii_tolower(ch);
+  return s;
+}
+
+static bool settings_dark() {
   gboolean prefer = FALSE;
   gchar *name = nullptr;
   g_object_get(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", &prefer, "gtk-theme-name", &name, nullptr);
-  std::string n = name ? name : "";
+  std::string lower = lowercase(name ? name : "");
   g_free(name);
-  std::string lower = n;
-  for (auto &ch : lower) ch = (char)g_ascii_tolower(ch);
-  bool dark = prefer || ends_with(lower, "-dark") || ends_with(lower, ":dark");
+  return prefer || ends_with(lower, "-dark") || ends_with(lower, ":dark");
+}
+
+// The app's own appearance, what a window's theme doesn't change (as on macOS and Windows).
+bool theme_app_dark() {
+  if (g_window_theme == "system") return settings_dark();
+  if (g_app_theme != "system") return g_app_theme == "dark";
+  std::string lower = lowercase(g_initial_theme);
+  return g_initial_prefer_dark || ends_with(lower, "-dark") || ends_with(lower, ":dark");
+}
+
+static json theme_info() {
+  bool dark = theme_app_dark();
   return json{{"appearance", dark ? "dark" : "light"}, {"dark", dark}};
 }
 
 static void on_theme_notify(GObject *, GParamSpec *, gpointer) {
+  // GTK writes the settings' variant on every window, after this handler.
+  g_idle_add([](gpointer) -> gboolean {
+    window_themes_reapply();
+    return G_SOURCE_REMOVE;
+  }, nullptr);
   json info = theme_info();
   std::string key = info.dump();
   if (key == g_last_theme_key) return;
   g_last_theme_key = key;
   emit("appearanceChanged", info);
+}
+
+static void apply_theme_settings() {
+  const std::string &a = g_window_theme != "system" ? g_window_theme : g_app_theme;
+  GtkSettings *s = gtk_settings_get_default();
+  if (a == "system") {
+    g_object_set(s, "gtk-theme-name", g_initial_theme.c_str(), "gtk-application-prefer-dark-theme", g_initial_prefer_dark, nullptr);
+  } else {
+    bool dark = a == "dark";
+    std::string theme = g_initial_theme;
+    if (!dark && ends_with(lowercase(theme), "-dark")) theme = theme.substr(0, theme.size() - 5); // e.g. Yaru-dark → Yaru
+    g_object_set(s, "gtk-theme-name", theme.c_str(), "gtk-application-prefer-dark-theme", dark, nullptr);
+  }
+}
+
+void theme_window_changed(const std::string &theme) {
+  g_window_theme = theme;
+  apply_theme_settings();
 }
 
 static void register_theme() {
@@ -693,17 +733,10 @@ static void register_theme() {
     if (a == "vibrantDark") a = "dark";
     if (a != "system" && a != "light" && a != "dark")
       return c->fail("invalid_args", "theme.set: appearance must be system|light|dark|vibrantLight|vibrantDark");
-    GtkSettings *s = gtk_settings_get_default();
-    if (a == "system") {
-      g_object_set(s, "gtk-theme-name", g_initial_theme.c_str(), "gtk-application-prefer-dark-theme", g_initial_prefer_dark, nullptr);
-    } else {
-      bool dark = a == "dark";
-      std::string theme = g_initial_theme;
-      std::string lower = theme;
-      for (auto &ch : lower) ch = (char)g_ascii_tolower(ch);
-      if (!dark && ends_with(lower, "-dark")) theme = theme.substr(0, theme.size() - 5); // e.g. Yaru-dark → Yaru
-      g_object_set(s, "gtk-theme-name", theme.c_str(), "gtk-application-prefer-dark-theme", dark, nullptr);
-    }
+    g_app_theme = a;
+    apply_theme_settings();
+    // With a window's theme over it, the settings don't move: the app's own appearance still does.
+    on_theme_notify(nullptr, nullptr, nullptr);
     c->ok(theme_info());
   });
   reg("theme", "shouldUseDarkColors", [](CallPtr c) { c->ok(theme_info()["dark"]); });

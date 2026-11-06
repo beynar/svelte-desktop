@@ -152,7 +152,7 @@ Same ops, result shapes and events as macOS, so `src/platform` doesn't know the 
 
 ## Not implemented
 `hideOthers`, `previewFile`, `permissions.*`, `thermalState` (registered, answers `unavailable`) and the test-only
-`simulateResponse`, `testScroll`: `website/docs/shipping/limitations.mdx` says why. Window: parent after creation, level, aspect ratio,
-simple fullscreen, controlsArea, shadow, movable, all workspaces, focusable, represented file, character palette, and macOS's materials.
+`simulateResponse`, `testScroll`: `website/docs/shipping/limitations.mdx` says why. Window: all workspaces, movable by background,
+invalidateShadow, represented file, traffic lights, `setMaterialRegions`.
 Webview: custom context menu, lifecycle events other than `terminated` and a session's failed load.
 `shortcutReleased` (Windows has no hotkey key-up).

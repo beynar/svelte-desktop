@@ -989,7 +989,7 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows: beyond notifications', () =>
 		await op('window', 'setTheme', { ...id, theme: 'dark' });
 		expect(await op('window', 'getTheme', id)).toBe('dark');
 		await op('window', 'setTheme', { ...id, theme: 'system' });
-		expect(await code('window', 'setVibrancy', { ...id, material: 'sidebar' })).toBe('unsupported');
+		expect(await code('window', 'setRepresentedFilename', { ...id, path: 'C:\\x' })).toBe('unsupported');
 	});
 
 	check('title bar: hiddenInset is frameless with no native controls; the style switches at runtime', async () => {

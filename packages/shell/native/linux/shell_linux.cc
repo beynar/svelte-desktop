@@ -230,6 +230,16 @@ static json bounds_event(Window *w) {
   return json{{"windowId", public_id(w->id)}, {"x", f.x}, {"y", f.y}, {"width", f.width}, {"height", f.height}};
 }
 
+// Every other window is transient for it, at any depth: closing it closes them all (macOS: platform_window_last_family).
+static bool last_family(Window *w) {
+  for (int id : g_order) {
+    GtkWindow *c = GTK_WINDOW(find_window(id)->window);
+    while (c && c != GTK_WINDOW(w->window)) c = gtk_window_get_transient_for(c);
+    if (!c) return false;
+  }
+  return true;
+}
+
 static gboolean on_delete(GtkWidget *, GdkEvent *, gpointer data) {
   Window *w = find_window(GPOINTER_TO_INT(data));
   if (w && w->veto && !w->closing) {
@@ -238,7 +248,7 @@ static gboolean on_delete(GtkWidget *, GdkEvent *, gpointer data) {
   }
   // The last window: its document stays until every quit guard has answered. (window.close
   // destroys it: on_destroy asks.)
-  if (w && !w->closing && g_quit_on_last_window && g_order.size() == 1) {
+  if (w && !w->closing && g_quit_on_last_window && last_family(w)) {
     quit_request("lastWindowClosed");
     return TRUE;
   }
@@ -311,9 +321,11 @@ static gboolean reveal_timeout(gpointer data) {
   return G_SOURCE_REMOVE;
 }
 
-static void apply_geometry(Window *w) {
+void apply_geometry(Window *w) {
   GdkGeometry g{};
   int mask = 0;
+  // Simple full screen is whatever size the monitor has.
+  if (w->simpleFullscreen) return gtk_window_set_geometry_hints(GTK_WINDOW(w->window), nullptr, nullptr, (GdkWindowHints)0);
   if (w->minW || w->minH) {
     g.min_width = std::max(1, w->minW);
     g.min_height = std::max(1, w->minH);
@@ -324,7 +336,24 @@ static void apply_geometry(Window *w) {
     g.max_height = w->maxH ? w->maxH : G_MAXINT16;
     mask |= GDK_HINT_MAX_SIZE;
   }
+  if (w->aspect > 0) {
+    g.min_aspect = g.max_aspect = w->aspect;
+    mask |= GDK_HINT_ASPECT;
+    // The ratio is the page's: the base size (ICCCM) leaves the menu bar out of it.
+    if (w->menubar) {
+      gtk_widget_get_preferred_height(w->menubar, nullptr, &g.base_height);
+      mask |= GDK_HINT_BASE_SIZE;
+    }
+  }
   gtk_window_set_geometry_hints(GTK_WINDOW(w->window), nullptr, mask ? &g : nullptr, (GdkWindowHints)mask);
+}
+
+void apply_functions(Window *w) {
+  GdkWindow *g = gtk_widget_get_window(w->window);
+  if (!g) return;
+  int on = GDK_FUNC_RESIZE | (w->movable ? GDK_FUNC_MOVE : 0) | (w->minimizable ? GDK_FUNC_MINIMIZE : 0) | (w->maximizable ? GDK_FUNC_MAXIMIZE : 0) | (gtk_window_get_deletable(GTK_WINDOW(w->window)) ? GDK_FUNC_CLOSE : 0);
+  // Not GDK_FUNC_ALL with what's off, which Motif allows: openbox reads ALL as all of them.
+  gdk_window_set_functions(g, on == (GDK_FUNC_RESIZE | GDK_FUNC_MOVE | GDK_FUNC_MINIMIZE | GDK_FUNC_MAXIMIZE | GDK_FUNC_CLOSE) ? GDK_FUNC_ALL : (GdkWMFunction)on);
 }
 
 // ---- autosaveName: position, size and maximized state across launches ------
@@ -379,6 +408,12 @@ static int create_window(const json &o) {
   bool validSession = false;
   WebKitWebContext *context = session_context(o, &validSession);
   if (!validSession) return -5;
+  Window *parent = nullptr;
+  if (o.contains("parentId")) {
+    int pid = (int)num("parentId", -1);
+    parent = pid == 0 ? find_window(primary_window()) : pid > 0 ? find_window(pid) : nullptr;
+    if (!parent) return -6;
+  }
   Window *w = new Window;
   w->id = g_next_id++;
   w->label = str("label");
@@ -392,6 +427,12 @@ static int create_window(const json &o) {
   gtk_window_set_default_size(win, (int)num("width", 1024), (int)num("height", 720));
   w->minW = (int)num("minWidth", 0);
   w->minH = (int)num("minHeight", 0);
+  w->aspect = std::max(0.0, num("aspectRatio", 0));
+  w->movable = flag("movable", true);
+  w->minimizable = flag("minimizable", true);
+  w->maximizable = flag("maximizable", true);
+  if (!flag("focusable", true)) gtk_window_set_accept_focus(win, FALSE);
+  if (parent) set_window_parent(w, parent);
   apply_geometry(w);
   if (!flag("resizable", true)) gtk_window_set_resizable(win, FALSE);
   if (!flag("decorations", true)) gtk_window_set_decorated(win, FALSE);
@@ -441,8 +482,10 @@ static int create_window(const json &o) {
   g_signal_connect(w->window, "configure-event", G_CALLBACK(on_configure), id);
   g_signal_connect(w->window, "window-state-event", G_CALLBACK(on_window_state), id);
   g_signal_connect(w->window, "notify::scale-factor", G_CALLBACK(on_scale), id);
+  g_signal_connect_after(w->window, "map", G_CALLBACK(cursor_window_mapped), nullptr);
   apply_activation_policy(w);
   gtk_widget_realize(w->window); // geometry ops work before the first show
+  apply_functions(w);
 
   // Hidden until DOMContentLoaded (or the timeout) to avoid a white flash. The
   // window is simply not mapped yet: WebKitGTK loads and runs the page anyway.
@@ -839,7 +882,7 @@ SHELL_API int shell_window_eval(int id, const char *js) {
 SHELL_API int shell_window_set_title(int id, const char *title) {
   if (!title) return -3;
   std::string s(title);
-  ON_WINDOW(id, gtk_window_set_title(GTK_WINDOW(w->window), s.c_str()));
+  ON_WINDOW(id, lx::set_window_title(w, s));
 }
 SHELL_API int shell_window_set_size(int id, int width, int height) {
   ON_WINDOW(id, gtk_window_resize(GTK_WINDOW(w->window), std::max(1, width), std::max(1, height)));

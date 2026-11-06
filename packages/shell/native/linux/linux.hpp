@@ -57,6 +57,13 @@ struct Window {
   std::string autosave;          // autosaveName → state file
   int normX = 0, normY = 0, normW = 0, normH = 0; // last un-maximized geometry
   guint saveTimer = 0;
+  double aspect = 0;             // content width / height (0 = free)
+  bool movable = true, minimizable = true, maximizable = true; // GTK has no such flags: apply_functions
+  bool documentEdited = false;   // the title bar shows it: set_window_title
+  std::string theme = "system";  // setTheme
+  bool simpleFullscreen = false;
+  GdkRectangle simpleSaved{};    // frame origin and content size to go back to
+  bool simpleDecorated = true, simpleResizable = true;
 };
 
 // ---- windows (shell_linux.cc) ---------------------------------------------
@@ -98,6 +105,22 @@ void register_extra(); // menu, shortcuts, capture, system
 /// the lock — this process's arguments were handed to it and it should exit.
 bool claim_single_instance();
 void reveal(Window *w);
+/// The size hints: min and max size, aspect ratio.
+void apply_geometry(Window *w);
+/// What the window manager lets the user do: move, minimize, maximize, close.
+void apply_functions(Window *w);
+/// `parent` is what `w` is transient for (nullptr: nothing). false, and no change, for a cycle. (svc_window.cc)
+bool set_window_parent(Window *w, Window *parent);
+/// The title apps set; the title bar also shows the document-edited mark. (svc_window.cc)
+void set_window_title(Window *w, const std::string &title);
+/// A hidden cursor reaches a window once it's on the screen. (svc_window.cc)
+void cursor_window_mapped(GtkWidget *window);
+/// Each window's title-bar hint again, after GTK wrote the settings' over it. (svc_window.cc)
+void window_themes_reapply();
+/// The app's appearance, whatever a window's theme did to the settings. (svc_misc.cc)
+bool theme_app_dark();
+/// window.setTheme: GTK's settings and WebKit's prefers-color-scheme belong to the screen. (svc_misc.cc)
+void theme_window_changed(const std::string &theme);
 std::string app_name();
 std::string app_identifier();
 std::string app_version();

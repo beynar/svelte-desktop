@@ -120,9 +120,12 @@ export async function win(mode: string, spec: object) {
 	return r.out;
 }
 
-/** The suite before closes its app; a copy still going would take the next launch for a second instance, and its browser process would hold the profile. */
+/** The suite before closes its app; a copy still going would take the next launch for a second instance, and its browser process would hold the profile.
+ *  Stop-Process only asks: a launch while they're still on their way out has been seen to get a page that never loads. */
 export async function stopLeftovers() {
-	const left = await ps(`Get-CimInstance Win32_Process -Filter "name='SvelteNotes.exe' or name='msedgewebview2.exe'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $_.Name }`);
+	const running = `Get-CimInstance Win32_Process -Filter "name='SvelteNotes.exe' or name='msedgewebview2.exe'"`;
+	const left = await ps(`${running} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $_.Name }
+for ($i = 0; $i -lt 100 -and (${running}); $i++) { Start-Sleep -Milliseconds 100 }`);
 	if (left.out) log('stopped what was still running', left.out.replace(/\s+/g, ' '));
 }
 

@@ -41,6 +41,13 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 | Dragging files out of a page | Supported | X11 | Supported |
 | Native input policy | Supported | Supported | Supported, keys WebView2 reports |
 | Web-view printing and PDF export | Supported | Supported | Supported with a recent WebView2 runtime |
+| Parent windows | Supported | Transient windows, don't follow the parent's moves | Owned windows, don't follow the parent's moves |
+| Aspect ratio | While the user resizes | Every size, at once | While the user resizes |
+| Level, simple full screen, focusable, movable | Supported | Supported, movable is a hint to the window manager | Supported |
+| Window shadow | Supported | Unsupported | Supported, with the whole frame |
+| Vibrancy, `setGlass` | Supported | Unsupported | Windows 11 22H2, Mica and Acrylic for the whole window |
+| CSS materials (`setMaterialRegions`) | Supported | Unsupported | Unsupported |
+| Per-window theme | Supported | The title bar; `prefers-color-scheme` is shared | The title bar; `prefers-color-scheme` is shared |
 
 These are shell API limits. The page still has the web APIs its installed web engine provides.
 
@@ -55,7 +62,7 @@ These are shell API limits. The page still has the web APIs its installed web en
 
 ## Windows
 
-- **Tested on a Windows runner, not on a PC:** CI runs end-to-end tests on a Windows runner for notifications, windows, title-bar dragging, menus, tray, dialogs, clipboard, views, background jobs, MCP, relaunch, permissions, downloads, printing, navigation policy, cookies, authentication, certificates, find, JavaScript dialogs, media, crash recovery, file drop, `clearData`, sessions, proxies, custom protocols, content rules, registered scripts, the input policy, the cancellable quit, process metrics, the app's icon and activation policy, the rich clipboard, route dialogs, the jump list, bookmarks and dragging files out. High-DPI and multi-monitor setups aren't covered, since the runner has one display at 100%, and only x64 runs: arm64 is compiled. Test your app on a real PC.
+- **Tested on a Windows runner, not on a PC:** CI runs end-to-end tests on a Windows runner for notifications, windows, title-bar dragging, menus, tray, dialogs, clipboard, views, background jobs, MCP, relaunch, permissions, downloads, printing, navigation policy, cookies, authentication, certificates, find, JavaScript dialogs, media, crash recovery, file drop, `clearData`, sessions, proxies, custom protocols, content rules, registered scripts, the input policy, the cancellable quit, process metrics, the app's icon and activation policy, the rich clipboard, route dialogs, the jump list, bookmarks, dragging files out, and the window operations: aspect ratio, parents, level, shadow, simple full screen, movable, focusable, `controlsArea` and materials. High-DPI and multi-monitor setups aren't covered, since the runner has one display at 100%, and only x64 runs: arm64 is compiled. Test your app on a real PC.
 - **Windows differs where WebView2 does:** a paused download resumes only in the run that started it, `host.webview.download` needs an attachment from another origin, a navigation policy holds the navigation with a bounded wait, `fileDragEnter` has no paths, `clearData` reaches the sites views loaded, a custom protocol's response reaches the page whole when it ends and a request going away isn't noticed before its document does, a proxy can't change while a view is open in its session and the default session can't have one, content rules have no `block-cookies` and don't reach WebSockets, and the input policy only has keys held with Control or Alt and keys that make no character. See [downloads](/host/web/downloads#platform-support), [navigation policy](/host/web/web-content#platform-support), [web view](/host/web/webview#platform-support), [web policy](/host/web/web-policy#platform-support), [protocols](/host/web/protocol#platform-support), [sessions](/host/web/sessions#windows), [content rules](/host/web/web-content#rules-on-windows) and [input policy](/host/input/input-policy#platform-support).
 - **What the runner couldn't show:**
   - A real logoff or shutdown, which would end the machine running the tests. The messages a session sends were sent by another process, and the Restart Manager really closed the app and was really refused. See [Windows sessions](/host/app/app#windows-sessions).
@@ -70,9 +77,16 @@ These are shell API limits. The page still has the web APIs its installed web en
   - `power.getThermalState`: no public Windows call says this. It rejects with `unavailable`, and `thermalStateChanged` never fires.
   - `permissions.guide`, `guideState`, `cancelGuide`: no system panel to float a guide over, nor anything to drag into it. They reject with `unknown`, and `host.permissions.guide()` opens the settings page and reads the status.
   - `notifications.simulateResponse`, `window.testScroll`: test-only hooks of the macOS build. They reject with `unsupported`.
-  - These `window` calls reject with `unsupported`: a parent after creation (`setParent`, `getParent`, `getChildren`), `getLevel`, `setAspectRatio`, `setFocusable`, `setMovable`, `setHasShadow`, `setSimpleFullscreen`, `setVisibleOnAllWorkspaces`, `setRepresentedFilename`, `showCharacterPalette` and `controlsArea`, with their getters, and macOS's own materials and traffic lights. They haven't been looked at for Windows.
+  - `window.setRepresentedFilename`, `getRepresentedFilename`: macOS's title bar document icon. Windows' title bar has no such thing.
+  - `window.setTrafficLightPosition`, `getTrafficLightPosition`: macOS's own buttons. Windows has no call that moves its caption buttons.
+  - `window.setVisibleOnAllWorkspaces`, `isVisibleOnAllWorkspaces`: no public Windows call pins a window to every virtual desktop.
+  - `window.setMovableByWindowBackground`, `isMovableByWindowBackground`: the page covers the whole window, so there's no background to drag. Use a drag region.
+  - `window.invalidateShadow`: DWM keeps a shadow in step with the window by itself.
+  - `window.setMaterialRegions`: a DWM backdrop fills the whole window. `--desktop-material` is ignored, and the page isn't affected. See [Windows materials](/ui/windows#windows-materials).
 - The WebView2 runtime must be installed. The shell offers an Evergreen download link when it is missing; it does not bundle the runtime.
+- **Not seen on the runner:** it has no GPU, so DWM draws each backdrop as a flat color: Mica's and Acrylic's color were read through a transparent page, not their blur. Its Windows Server keeps the emoji panel's window cloaked: Win+period opens the system's input host, but no panel was on the screen. Older Windows' `unavailable` for backdrops hasn't run.
 - Rust and Go plugins need a Windows host. See [Distribution](/shipping/distribution#windows).
+- **Window differences:** a child window doesn't follow its parent's moves. `setHasShadow(false)` stops DWM drawing the frame, not only the shadow: a window with a title bar then has the title bar of older Windows, so it's for windows without one. `setMovable(false)` stops the mouse and the system menu, not Windows' snap keys. On an unfocusable window, a press on the page takes the foreground while it lasts and then gives it back, because the web view's own window takes the focus; a press on the title bar doesn't. Under a backdrop, the menu bar's text fades, as GDI draws it. `setDocumentEdited` puts `•` before the title in the title bar. A window's theme sets its title bar, and all pages share one `prefers-color-scheme`, the last one set.
 - Windows repeating notifications queue at most 128 occurrences over the next 30 days, topped up while the app runs. They do not repeat indefinitely while closed.
 
 ## Linux
@@ -92,6 +106,13 @@ These are shell API limits. The page still has the web APIs its installed web en
   - `secureStorage.authenticate`, `system.biometrics`: there's no desktop-wide way for an app to ask who the user is. polkit needs an action installed as root, and `fprintd` only knows fingerprints.
   - `permissions.guide`, `guideState`, `cancelGuide`: there's no privacy panel to walk the user through. `host.permissions.guide()` falls back as on Windows.
   - `notifications.simulateResponse`, `window.testScroll`: test-only hooks of the macOS build.
+  - `window.setRepresentedFilename`, `getRepresentedFilename`, `setTrafficLightPosition`, `getTrafficLightPosition`: macOS's title bar. The window manager draws Linux's.
+  - `window.setContentProtected`, `isContentProtected`: X11 lets any client read any window, and Wayland has no such request.
+  - `window.setHasShadow`, `hasShadow`, `invalidateShadow`: the compositor draws shadows, and no standard hint asks it not to.
+  - `window.setVibrancy`, `getVibrancy`, `setGlass`, `getGlass`, `setMaterialRegions`: no standard way to ask a compositor for a material. `--desktop-material` is ignored, and the page isn't affected.
+  - `window.setMovableByWindowBackground`, `isMovableByWindowBackground`: the page covers the whole window, so there's no background to drag. Use a drag region.
+  - `window.showCharacterPalette`: no desktop-wide call opens an emoji picker.
+- **Window differences:** a child window is transient for its parent and doesn't follow its moves. An aspect ratio applies at once and to every size, `setSize` included, since GTK and the window manager both hold it. `setMovable`, `setMinimizable` and `setMaximizable` are Motif hints, and each window manager decides what it follows: openbox, the only one tested, only follows movable. `setDocumentEdited` puts `•` before the title in the title bar. A window's theme sets its title bar hint on X11, and all pages share one `prefers-color-scheme`, the last one set, because GTK's settings belong to the screen. Simple full screen is a borderless window covering the monitor, and panels may stay above it if the window manager doesn't treat that as full screen. A hidden cursor is hidden over every window that exists when it's set or shows later, not over a `view.*` added meanwhile.
 - C/C++ plugins, source addons, Rust and Go plugins need a Linux host. See [Distribution](/shipping/distribution#linux).
 - Native inline notification replies are unavailable; reply buttons become plain actions. Scheduling catches up when the app restarts rather than delivering while it is closed.
 - The build makes an app folder and an AppImage, not deb, rpm or Flatpak packages. Self-update covers those two; an install this user can't write to, in `/opt` for instance, answers `not_writable`. See [Self-update](/shipping/self-update#linux).

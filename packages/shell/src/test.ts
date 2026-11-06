@@ -179,6 +179,13 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
     server.stop(true);
     throw new Error(`launch: the app did not connect within ${timeout} ms. A build signed to be distributed has no test channel: build with KITOP_TEST_BUILD=1 to test it.\n${stdout.slice(-2000)}`);
   }
+  // Not ready: it goes too, or the next launch takes it for the first instance and hands over to it.
+  const failed = (e: Error) => {
+    proc.kill("SIGKILL");
+    server.stop(true);
+    e.message += `\n${stdout.slice(-2000)}`;
+    throw e;
+  };
   return makeHandle({
     origin: h.origin,
     // The latest one: an app that restarts after a crash connects again (the same KITOP_TEST).
@@ -196,7 +203,7 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
       await proc.exited;
       server.stop(true);
     },
-  });
+  }).catch(failed);
 }
 
 type Pending = Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>;

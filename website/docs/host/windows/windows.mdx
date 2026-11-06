@@ -33,10 +33,10 @@ Create a window and resolve `{ windowId: number; label: string }`. This starts p
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `parentId` | `number` | No parent | macOS parent window ID. |
+| `parentId` | `number` | No parent | Parent window ID. |
 | `modal` | `boolean` | `false` | macOS native sheet child; requires a valid parent and focusable window. |
 | `type` | `'normal' \| 'panel'` | `'normal'` | macOS native window class. |
-| `focusable` | `boolean` | `true` | macOS: permit keyboard focus. |
+| `focusable` | `boolean` | `true` | Permit keyboard focus. |
 | `session` | `string` | Default session | [Web session](/host/web/sessions). |
 | `recovery` | `WebviewRecovery` | `'reload'` on macOS | `'reload'` or `'manual'` content-process recovery. See [`host.webview`](/host/web/webview). |
 | `label` | `string` | Generated (`'main'` for the first window, otherwise `window-…`) | App-wide unique label; duplicates reject `invalid_args`. |
@@ -52,23 +52,23 @@ Create a window and resolve `{ windowId: number; label: string }`. This starts p
 | `visible` | `boolean` | `true` | Show on creation; `false` waits for an explicit `show()`. |
 | `alwaysOnTop` | `boolean` | `false` | Float above normal windows. |
 | `resizable` | `boolean` | `true` | Allow resizing. |
-| `movable` | `boolean` | `true` on macOS | macOS movement policy. |
-| `minimizable` | `boolean` | `true` | Allow minimizing; ignored on Linux. |
+| `movable` | `boolean` | `true` | Whether the user can move it. |
+| `minimizable` | `boolean` | `true` | Allow minimizing. |
 | `focus` | `boolean` | `true` on macOS | macOS: request focus when showing. |
 | `animate` | `boolean \| WindowAnimation` | No animation | macOS presentation animation; `true` selects the defaults below. |
 | `transparent` | `boolean` | `false` | Transparent background; page content must paint any desired background. |
 | `opacity` | `number` | `1` | Initial window alpha, intended range `0`–`1`. |
 | `titlebarTransparent` | `boolean` | `false` | macOS: blend the title bar into content. |
-| `vibrancy` | `VibrancyMaterial` | None | macOS material behind the page. |
+| `vibrancy` | `VibrancyMaterial` | None | Material behind the page. macOS and Windows; a window without it where the system has none. |
 | `vibrancyState` | `VibrancyState` | `'followsWindow'` | macOS material activity. |
 | `trafficLightPosition` | `{ x: number; y: number }` | System position | macOS close button's top-left in points from the window frame's top-left. |
-| `aspectRatio` | `number` | Unconstrained | macOS content width/height ratio while resizing. |
+| `aspectRatio` | `number` | Unconstrained | Content width/height ratio while resizing. |
 | `backgroundThrottling` | `boolean` | `true` | macOS: `false` keeps the page running at full speed out of sight. |
 | `tabbingIdentifier` | `string` | System default | macOS native tab group identifier. |
 
-Linux and Windows ignore `parentId`, `modal`, `type`, `focusable`, `recovery`, `movable`, `focus`, `animate`, `titlebarTransparent`, `vibrancy`, `vibrancyState`, `trafficLightPosition`, `aspectRatio`, `backgroundThrottling`, and `tabbingIdentifier`. Do not rely on these options there. `titleBarStyle` belongs to main-window configuration and the runtime setter; it is not a field in the exported `WindowCreateOptions` type.
+Linux and Windows ignore `modal`, `type`, `recovery`, `focus`, `animate`, `titlebarTransparent`, `vibrancyState`, `trafficLightPosition`, `backgroundThrottling`, and `tabbingIdentifier`, and Linux ignores `vibrancy`. Do not rely on these options there. `titleBarStyle` belongs to main-window configuration and the runtime setter; it is not a field in the exported `WindowCreateOptions` type.
 
-On macOS, invalid relationship/class/focusability options or an unknown session/recovery policy reject `invalid_args`; on Linux and Windows, an unknown session does. Native creation failure rejects `internal`.
+On macOS, invalid relationship/class/focusability options or an unknown session/recovery policy reject `invalid_args`; on Linux and Windows, an unknown parent or session does. Native creation failure rejects `internal`.
 
 #### `WindowAnimation`
 
@@ -97,15 +97,19 @@ On macOS, invalid relationship/class/focusability options or an unknown session/
 | `focused` | `boolean` | Native focus state. |
 | `visible` | `boolean` | Native visibility observation; semantics differ by backend. |
 | `bounds` | `WindowBounds` | Outer frame: `{ x: number; y: number; width: number; height: number }`. |
-| `parentId` | `number \| null` (optional) | macOS parent, or `null`. |
+| `parentId` | `number \| null` (optional) | Parent, or `null`. |
 | `modal` | `boolean` (optional) | macOS modal-child policy. |
 | `type` | `'normal' \| 'panel'` (optional) | macOS native class. |
-| `focusable` | `boolean` (optional) | macOS focus policy. |
+| `focusable` | `boolean` (optional) | Focus policy. |
 | `sheetAttached` | `boolean` (optional) | Whether AppKit has actually presented the modal as a sheet. |
 
 ### Parents, sheets and modal children
 
-macOS only. Normal children follow parent movement; `modal: true` presents a native sheet and blocks the parent until hidden or closed. Panels can become key when focusable but do not become the app's main document window. Closing a parent closes its descendants. Attach a child with `parentId` at creation or `setParent` later; `setParent(null)` detaches a nonmodal child.
+Attach a child with `parentId` at creation or `setParent` later; `setParent(null)` detaches a nonmodal child. Closing a parent closes its descendants. A child stays above its parent.
+
+On macOS, normal children follow parent movement; `modal: true` presents a native sheet and blocks the parent until hidden or closed. Panels can become key when focusable but do not become the app's main document window.
+
+On Windows a child is an owned window, and on Linux a transient one. It doesn't move with its parent. On Windows it also hides and minimizes with it; on Linux the window manager decides. `modal` and `type` are macOS only.
 
 | Method, before optional `windowId` | Resolves | Description |
 | --- | --- | --- |
@@ -161,10 +165,11 @@ macOS also emits completed transitions defined by `WindowTransitionEvents`. `hos
 | --- | --- | --- | --- |
 | `create` | ✓ | partial | partial |
 | `getInfo`, `list`, `get` | ✓ | ✓ | ✓ |
-| `setParent`, `getParent`, `getChildren`, `parentId`, `modal`, `type` | ✓ | — | — |
+| `setParent`, `getParent`, `getChildren`, `parentId` | ✓ | ✓ | ✓ |
+| `modal`, `type` | ✓ | — | — |
 | `onCreated`, `onClosed`, `onWillClose`, `onCloseRequested` | ✓ | ✓ | ✓ |
 | `onBoundsChanged`, `onFocusChanged`, `onScaleFactorChanged` | ✓ | ✓ | ✓ |
 | `on` with transition names, `onShown`, `onHidden`, `onMinimized`, `onRestored` | ✓ | — | — |
 | `onFullscreenChanged`, `onMoved`, `onResized`, `onFocus`, `onBlur` | ✓ | — | — |
 
-`create` is partial on Linux and Windows because they ignore the macOS-only options listed under it. The geometry, state and appearance operations are listed in [`host.window`](/host/windows/window#platform-support).
+`create` is partial on Linux and Windows because they ignore the options listed under it. The geometry, state and appearance operations are listed in [`host.window`](/host/windows/window#platform-support).

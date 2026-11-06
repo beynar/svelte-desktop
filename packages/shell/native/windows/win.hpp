@@ -184,6 +184,7 @@ struct Window {
   bool alwaysOnBottom = false;
   double minW = 0, minH = 0, maxW = 0, maxH = 0; // DIP, content size
   bool fullscreen = false;
+  bool simpleFullscreen = false;
   RECT savedRect{};
   LONG_PTR savedStyle = 0;
   bool documentEdited = false;
@@ -195,6 +196,9 @@ struct Window {
   bool startMaximized = false; // restored autosave placement was maximized
   HMENU menu = nullptr;   // menu bar (owned)
   bool closing = false;   // window.close: it goes, whatever the last window's rule says
+  double aspect = 0;      // content width / height kept while resizing (0 = free)
+  bool movable = true;    // the user can move it (the shell's own moves always work)
+  std::string vibrancy;   // setVibrancy's material ("" = no system backdrop)
 };
 
 Window *find_window(int nativeId);
@@ -218,6 +222,16 @@ int create_app_window(const json &opts);
 /// windows exist (or none was ever created), else the new native id.
 int show_main_window();
 void reveal_window(Window *w);
+/// `parent` owns `w` (nullptr: nothing does). false, and no change, for a cycle. (svc_window.cc)
+bool set_window_parent(Window *w, Window *parent);
+/// To the next window in z-order that isn't it. (svc_window.cc)
+void give_up_foreground(Window *w);
+/// Repaint the window's own surface under its web view. (shell_win.cc)
+void paint_under_view(Window *w);
+/// `options.vibrancy` at creation, setVibrancy: "" or why not. (svc_window.cc)
+std::string set_window_vibrancy(Window *w, const std::string &material);
+/// The title apps set and read; the title bar also shows the document-edited mark. (svc_window.cc)
+void set_window_title(Window *w, const std::string &title);
 void adjust_for_dpi(RECT *rc, DWORD style, BOOL menu, DWORD ex, UINT dpi);
 /// Resize the client area to width x height DIPs (keeps the position).
 void set_content_size(Window *w, double width, double height);

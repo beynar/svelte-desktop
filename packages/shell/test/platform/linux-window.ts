@@ -1,7 +1,7 @@
 // window.* on Linux (variant of window.ts without the AppKit-only ops: traffic
-// lights, titlebar styles, per-window NSAppearance, content protection, document
-// edited, simple fullscreen). Runs under openbox (EWMH), so maximize / minimize /
-// fullscreen and frame extents are real window-manager state.
+// lights, content protection, shadow). Runs under openbox (EWMH), so maximize / minimize /
+// fullscreen and frame extents are real window-manager state. linux-window-ops.ts has
+// the rest, read back from the X server.
 import type { Harness } from "../harness-worker.ts";
 
 const near = (a: number, b: number) => Math.abs(a - b) <= 2;
@@ -86,7 +86,7 @@ export default async (t: Harness) => {
   t.check("setTitleBarStyle hidden → frameless", (await t.call("window", "setTitleBarStyle", { style: "hidden" })).ok && (await t.call("window", "getTitleBarStyle")).value?.frameless === true);
   t.check("setTitleBarStyle default → decorated", (await t.call("window", "setTitleBarStyle", { style: "default" })).ok && (await t.call("window", "getTitleBarStyle")).value?.frameless === false);
   t.check("setTitleBarStyle bogus → invalid_args", (await t.call("window", "setTitleBarStyle", { style: "bogus" })).error?.code === "invalid_args");
-  for (const op of ["setTheme", "setContentProtected", "setDocumentEdited", "setSimpleFullscreen", "setRepresentedFilename", "setMinimizable", "setMaximizable", "setHasShadow", "invalidateShadow", "showCharacterPalette"])
+  for (const op of ["setContentProtected", "setRepresentedFilename", "setHasShadow", "invalidateShadow", "showCharacterPalette"])
     t.check(`${op} → unsupported`, (await t.call("window", op, { enabled: true })).error?.code === "unsupported");
   t.check("isOccluded is boolean", typeof (await t.call("window", "isOccluded")).value === "boolean");
   t.check("isHovered shape", typeof (await t.call("window", "isHovered")).value.hovered === "boolean");

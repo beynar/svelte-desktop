@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 native/build-linux.sh >/dev/null || exit 1
 SESSION_SH=test/docker/session.sh . test/docker/session.sh
 # Portable suites run unchanged; linux-* are the variants of the Apple-specific ones.
-SUITES=${*:-"core screen clipboard shell theme popover secure_storage linux-app linux-window linux-navigation linux-webview linux-dialog linux-diagnostics linux-notifications linux-notifications-fake linux-tray linux-power linux-extra view linux-web-navigation linux-web-policy linux-web-control linux-web-gate linux-web-downloads linux-web-print linux-web-print-cups linux-web-data linux-web-cookies linux-web-sessions linux-web-proxy-tls linux-web-sessions-gate linux-web-protocol linux-web-content linux-input-policy linux-quit linux-clipboard-data linux-sheet linux-desktop linux-drag-out linux-thermal linux-portal"}
+SUITES=${*:-"core screen clipboard shell theme popover secure_storage linux-app linux-window linux-window-ops linux-navigation linux-webview linux-dialog linux-diagnostics linux-notifications linux-notifications-fake linux-tray linux-power linux-extra view linux-web-navigation linux-web-policy linux-web-control linux-web-gate linux-web-downloads linux-web-print linux-web-print-cups linux-web-data linux-web-cookies linux-web-sessions linux-web-proxy-tls linux-web-sessions-gate linux-web-protocol linux-web-content linux-input-policy linux-quit linux-clipboard-data linux-sheet linux-desktop linux-drag-out linux-thermal linux-portal"}
 P=0; F=0; S=0
 for name in $SUITES; do
   [ "$name" = linux-keepalive ] && continue # below, with its own window options

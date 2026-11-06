@@ -41,7 +41,7 @@ How-to: [Windows](/ui/windows).
 | `focused` | `boolean` | `false` | Whether this window has keyboard focus. |
 | `maximized` | `boolean` | `false` | Whether the window is maximized (zoomed on macOS). |
 | `fullscreen` | `boolean` | `false` | Native fullscreen state. |
-| `simpleFullscreen` | `boolean` | `false` | macOS non-Spaces fullscreen, separate from native fullscreen. |
+| `simpleFullscreen` | `boolean` | `false` | Borderless over the monitor, separate from native fullscreen. |
 | `scaleFactor` | `number` | `1` | Backing display scale. |
 | `cursor` | `{ x: number; y: number } \| null` | `null` | Window-relative cursor, pulled by `refresh()`, not continuously streamed. |
 | `controlsArea` | `WindowControlsArea \| null` | `null` | Native controls rectangle, in window-frame coordinates. See [controls area](#controls-area). |
@@ -218,35 +218,35 @@ The boolean setters below require the named boolean argument. They have no JavaS
 | `isMinimizable()` | `{ minimizable: boolean }` | Read minimize policy. |
 | `setMaximizable(enabled: boolean)` | `null` | Toggle maximize/zoom control. |
 | `isMaximizable()` | `{ maximizable: boolean }` | Read maximize policy. |
-| `setHasShadow(enabled: boolean)` | `null` | Toggle macOS window shadow. |
-| `hasShadow()` | `boolean` | Read macOS shadow policy. |
-| `invalidateShadow()` | `null` | Recalculate macOS window shadow. |
+| `setHasShadow(enabled: boolean)` | `null` | Toggle the window shadow. macOS and Windows. |
+| `hasShadow()` | `boolean` | Read the shadow policy. macOS and Windows. |
+| `invalidateShadow()` | `null` | Recalculate the window shadow. macOS. |
 | `setOpacity(opacity: number)` | `null` | Window alpha clamped to `0`–`1`. |
 | `getOpacity()` | `{ opacity: number }` | Read alpha. |
-| `setTheme(theme: WindowTheme)` | `null` | `'light'`, `'dark'`, or `'system'`; macOS appearance override or Windows title bar mode. On Windows the pages of all windows share one `prefers-color-scheme`, WebView2's: the last one set. |
-| `getTheme()` | `WindowTheme` | The window's own theme; `'system'` follows the app's. macOS and Windows. |
+| `setTheme(theme: WindowTheme)` | `null` | `'light'`, `'dark'`, or `'system'`; macOS appearance override, or the title bar's mode elsewhere. On Windows and Linux the pages of all windows share one `prefers-color-scheme`: the last one set. |
+| `getTheme()` | `WindowTheme` | The window's own theme; `'system'` follows the app's. |
 | `setAlwaysOnTop(enabled: boolean)` | `null` | Float above normal windows. |
 | `setAlwaysOnBottom(enabled: boolean)` | `null` | Place below normal windows. |
 | `isAlwaysOnBottom()` | `boolean` | Whether it's set. |
-| `getLevel()` | `number` | macOS AppKit level. |
-| `isAlwaysOnTop()` | `boolean` | macOS: level above normal. |
+| `getLevel()` | `number` | `0` normal, `3` always on top. Always on bottom is below `0`: AppKit's own level on macOS, `-1` elsewhere. |
+| `isAlwaysOnTop()` | `boolean` | Whether it's set. |
 | `setVisibleOnAllWorkspaces(enabled: boolean)` | `null` | Join all macOS Spaces or Linux workspaces. |
 | `isVisibleOnAllWorkspaces()` | `boolean` | Whether it's set. |
-| `setMovable(enabled: boolean)` | `null` | Toggle macOS native movement. |
-| `isMovable()` | `boolean` | Read macOS movement policy. |
+| `setMovable(enabled: boolean)` | `null` | Whether the user can move the window. The shell's own calls still move it. |
+| `isMovable()` | `boolean` | Read that policy. |
 | `setMovableByWindowBackground(enabled: boolean)` | `null` | Allow dragging by the macOS window background. |
 | `isMovableByWindowBackground()` | `boolean` | Whether it's set. macOS. |
 | `setIgnoresMouseEvents(enabled: boolean)` | `null` | Pointer click-through. |
 | `ignoresMouseEvents()` | `{ ignored: boolean }` | Read click-through policy. |
 | `setContentProtected(enabled: boolean)` | `null` | Exclude from screen capture, subject to platform restrictions. |
 | `isContentProtected()` | `{ contentProtected: boolean }` | Read capture-protection setting. |
-| `setFocusable(enabled: boolean)` | `null` | Toggle focusability on macOS and Linux. |
-| `isFocusable()` | `boolean` | Read the focusability policy, macOS and Linux. |
-| `setDocumentEdited(edited: boolean)`, `setEdited(edited: boolean)` | `null` | macOS document-edited indicator; Windows stores the flag. |
+| `setFocusable(enabled: boolean)` | `null` | Whether a click or `focus()` can give the window the keyboard. A click still reaches the page. |
+| `isFocusable()` | `boolean` | Read that policy. |
+| `setDocumentEdited(edited: boolean)`, `setEdited(edited: boolean)` | `null` | macOS's dot in the close button. On Windows and Linux, `•` before the title in the title bar; `getTitle()` doesn't include it. |
 | `isDocumentEdited()` | `{ edited: boolean }` | Read document-edited state. |
 | `setRepresentedFilename(path: string \| null)` | `null` | macOS title bar document URL; `null` clears it. |
 | `getRepresentedFilename()` | `string \| null` | The path set. macOS. |
-| `showCharacterPalette()` | `null` | Open the macOS character palette. |
+| `showCharacterPalette()` | `null` | Open the macOS character palette, or the Windows emoji panel. Windows rejects `unavailable` when the window can't come to the foreground. |
 
 On macOS, `'transparent'` extends content under the title bar but keeps the title. `'hidden'` hides the title; `'hiddenInset'` also insets traffic lights. Linux and Windows treat hidden title bars as frameless and require page-drawn controls. See [title bar styles and drag regions](/ui/windows#title-bar-styles).
 
@@ -256,13 +256,13 @@ The two z-order setters each choose a level; they are not independent flags. On 
 
 For a material behind one element rather than the whole window, declare it in CSS: `--desktop-material: sidebar` (see [Vibrancy and Liquid Glass](/ui/windows#in-css)).
 
-macOS only. Set native material behind transparent page areas, or pass `null` to remove it. Resolves `null`.
+Set native material behind transparent page areas, or pass `null` to remove it. Resolves `null`. macOS, and Windows 11 22H2 and later: older Windows rejects `unavailable`. See [Windows](/ui/windows#windows-materials) for what each name becomes there.
 
 `material` is `VibrancyMaterial | null`. Materials are `'sidebar'`, `'titlebar'`, `'header'`, `'content'`, `'window'`, `'underWindow'`, `'underPage'`, `'menu'`, `'popover'`, `'sheet'`, `'hud'`, `'tooltip'`, `'fullscreenUI'`, and `'selection'`.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `state` | `VibrancyState` | `'followsWindow'` | `'followsWindow'`, `'active'`, or `'inactive'`; control whether the material dims with the window. |
+| `state` | `VibrancyState` | `'followsWindow'` | `'followsWindow'`, `'active'`, or `'inactive'`; control whether the material dims with the window. Windows can't choose: `getVibrancy()` always answers `'followsWindow'` there. |
 
 Unknown materials reject `invalid_args`.
 
@@ -276,7 +276,7 @@ The material takes the window's appearance (light or dark), not the page's. When
 
 ### `setGlass(glass, windowId?)`
 
-macOS 26. Put Liquid Glass behind transparent page areas, or pass `null` to remove it. The window becomes non-opaque while it's on, and its opacity and background color come back when it's removed. It replaces vibrancy: one effect at a time. Resolves `{ glass: true }`, or `{ glass: false }` before macOS 26, where the `underWindow` vibrancy material is used instead; `null` when removing.
+macOS 26. Put Liquid Glass behind transparent page areas, or pass `null` to remove it. The window becomes non-opaque while it's on, and its opacity and background color come back when it's removed. It replaces vibrancy: one effect at a time. Resolves `{ glass: true }`, or `{ glass: false }` before macOS 26 and on Windows, where the `underWindow` vibrancy material is used instead; `null` when removing.
 
 `glass` is `GlassOptions | null`:
 
@@ -292,7 +292,7 @@ An unknown style or a malformed tint rejects `invalid_args`.
 await host.window.setGlass({ style: 'clear', tint: '#5f62ef40' });
 ```
 
-`getGlass()` resolves the window's `GlassOptions`, or `null` without glass. Before macOS 26, read `getVibrancy()` instead.
+`getGlass()` resolves the window's `GlassOptions`, or `null` without glass. Before macOS 26 and on Windows, read `getVibrancy()` instead.
 
 ### `setTrafficLightPosition(position, windowId?)`
 
@@ -302,14 +302,14 @@ macOS only. `position` is `{ x: number; y: number } | null`: the close button's 
 
 ### Controls area
 
-`getControlsArea(windowId?)` resolves `WindowControlsArea | null`. macOS measures native buttons; borderless windows return `null`. Linux registers the query but always returns `null` for server-side decorations. Windows does not register it and rejects `unsupported`.
+`getControlsArea(windowId?)` resolves `WindowControlsArea | null`. macOS measures native buttons and Windows asks DWM for its caption buttons; a window without them returns `null`. Linux registers the query but always returns `null` for server-side decorations.
 
 `WindowControlsArea` contains `x`, `y`, `width`, and `height` (all `number`) in **window-frame coordinates**, plus:
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `contentTop` | `number` | Drawable content's inset from frame top. Subtract from `y` to convert the cluster's vertical offset to content coordinates. |
-| `side` | `'left' \| 'right'` | Controls edge; currently `'left'` on macOS. |
+| `side` | `'left' \| 'right'` | Controls edge: `'left'` on macOS, `'right'` on Windows. |
 | `buttons` | `{ close?: ControlsRect & { visible: boolean }; minimize?: ControlsRect & { visible: boolean }; zoom?: ControlsRect & { visible: boolean } }` | Per-button frame rectangles and visibility. |
 
 `ControlsRect` is `{ x: number; y: number; width: number; height: number }`. The reactive `host.window.controlsArea` exposes the same coordinates without conversion.
@@ -323,29 +323,34 @@ Applies to the service and its store wrappers. `—` means the call rejects or t
 | Store: `init`, `refresh`, `dispose`, `on`, `once`, `onCloseRequested` | ✓ | ✓ | ✓ |
 | Size, position, bounds, `center`, min/max size, scale factor, cursor point and warp | ✓ | ✓ | ✓ |
 | `positionTo` | ✓ | partial | ✓ |
-| `setAspectRatio`, `getAspectRatio` | ✓ | — | — |
-| `setCursorHidden`, `isCursorHidden` | ✓ | — | ✓ |
-| `getControlsArea` | ✓ | partial | — |
+| `setAspectRatio`, `getAspectRatio` | ✓ | ✓ | ✓ |
+| `setCursorHidden`, `isCursorHidden` | ✓ | ✓ | ✓ |
+| `getControlsArea` | ✓ | partial | ✓ |
 | Title, `show`, `hide`, `close`, close veto | ✓ | ✓ | ✓ |
 | Minimize, maximize, `restore`, fullscreen | ✓ | ✓ | ✓ |
-| `setSimpleFullscreen`, `isSimpleFullscreen` | ✓ | — | — |
+| `setSimpleFullscreen`, `isSimpleFullscreen` | ✓ | ✓ | ✓ |
 | `focus` | ✓ | partial | partial |
 | `blur`, `isFocused`, `isActive`, `isHovered`, `requestAttention` | ✓ | ✓ | ✓ |
 | `isOccluded` | ✓ | partial | partial |
 | Always on top / bottom | ✓ | ✓ | ✓ |
-| `getLevel` | ✓ | — | — |
+| `getLevel` | ✓ | ✓ | ✓ |
 | Resizable and closable | ✓ | ✓ | ✓ |
-| Minimizable and maximizable | ✓ | — | ✓ |
+| Minimizable and maximizable | ✓ | partial | ✓ |
 | Title bar style, decorations, opacity | ✓ | ✓ | ✓ |
-| Shadow: `setHasShadow`, `hasShadow`, `invalidateShadow` | ✓ | — | — |
-| Vibrancy and traffic lights | ✓ | — | — |
-| `setGlass`, `getGlass` | ✓ (macOS 26; vibrancy before) | — | — |
-| `setTheme`, `getTheme` | ✓ | — | ✓ |
-| Movable, movable by background | ✓ | — | — |
+| `setHasShadow`, `hasShadow` | ✓ | — | ✓ |
+| `invalidateShadow` | ✓ | — | — |
+| Vibrancy | ✓ | — | ✓ (Windows 11 22H2) |
+| Traffic lights | ✓ | — | — |
+| `setGlass`, `getGlass` | ✓ (macOS 26; vibrancy before) | — | vibrancy |
+| `setTheme`, `getTheme` | ✓ | partial | partial |
+| `setMovable`, `isMovable` | ✓ | partial | ✓ |
+| Movable by background | ✓ | — | — |
 | Click-through (`setIgnoresMouseEvents`) | ✓ | ✓ | ✓ |
 | Content protection | ✓ | — | ✓ |
-| `setVisibleOnAllWorkspaces`, `setFocusable` and their getters | ✓ | ✓ | — |
-| Document edited | ✓ | — | partial |
-| Represented filename, `showCharacterPalette` | ✓ | — | — |
+| `setVisibleOnAllWorkspaces`, `isVisibleOnAllWorkspaces` | ✓ | ✓ | — |
+| `setFocusable`, `isFocusable` | ✓ | ✓ | ✓ |
+| Document edited | ✓ | partial | partial |
+| Represented filename | ✓ | — | — |
+| `showCharacterPalette` | ✓ | — | ✓ |
 
-Partial: Linux tray positioning is unavailable; Linux controls measurements return `null`; Linux/Windows focus replies omit `activated` and occlusion does not detect overlap; Windows document-edited state is stored without a native document indicator.
+Partial: Linux tray positioning is unavailable; Linux controls measurements return `null`; Linux/Windows focus replies omit `activated` and occlusion does not detect overlap; document-edited is a mark in the title on Linux and Windows, which have no native indicator; a window's theme sets its title bar, and the page's `prefers-color-scheme` is shared by all windows, on Linux and Windows. Linux's movable, minimizable and maximizable are hints to the window manager, each deciding what it follows: openbox, the only one tested, only follows movable.

@@ -86,6 +86,7 @@ void attach_app_menu(Window *w) {
   w->menubar = build_menubar(g_app_menus, w->accel, &error);
   if (!w->menubar) return;
   gtk_box_pack_start(GTK_BOX(w->box), w->menubar, FALSE, FALSE, 0);
+  if (w->aspect > 0) apply_geometry(w);
 }
 
 static void rebuild_menubars() {

@@ -546,7 +546,11 @@ static void start_drag(CallPtr c) {
     data->Release();
     g_drag_out = false;
     if (FAILED(hr)) return c->fail("internal", "shell.startDrag: " + hresult_message(hr));
-    c->ok(json{{"dropped", hr == DRAGDROP_S_DROP && effect != DROPEFFECT_NONE}});
+    json reply{{"dropped", hr == DRAGDROP_S_DROP && effect != DROPEFFECT_NONE}};
+    // What a test needs when a drag ends with nothing dropped: canceled, or dropped on nothing.
+    wchar_t channel[8];
+    if (GetEnvironmentVariableW(L"KITOP_TEST", channel, 8)) reply["_ended"] = hr == DRAGDROP_S_DROP ? "drop" : hr == DRAGDROP_S_CANCEL ? "cancel" : "other";
+    c->ok(reply);
   });
 }
 

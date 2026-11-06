@@ -52,6 +52,11 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 **The command.** `kitop doctor` exits with status 1 when a check fails. It used to exit 0 whatever it found, so a script that ran it for the report now has to accept that.
 
 ### Added
+- Windows and Linux: `window.setParent`, `getParent`, `getChildren` and the `parentId` option, as owned and transient windows.
+- Windows and Linux: `window.setAspectRatio`, `getAspectRatio`, `getLevel`, `setSimpleFullscreen`, `isSimpleFullscreen`, `setMovable`, `isMovable`, and the `aspectRatio`, `movable` and `focusable` options.
+- Windows: `window.setFocusable`, `isFocusable`, `setHasShadow`, `hasShadow`, `controlsArea` and `showCharacterPalette`.
+- Windows 11 22H2: `window.setVibrancy`, `getVibrancy`, `setGlass`, `getGlass` and the `vibrancy` option, as Mica and Acrylic backdrops.
+- Linux: `window.setTheme`, `getTheme`, `setCursorHidden`, `isCursorHidden`, `setDocumentEdited`, `isDocumentEdited`, `setMinimizable`, `isMinimizable`, `setMaximizable`, `isMaximizable`.
 
 - One project, two sides: `+page.desktop.svelte`, `+page.server.desktop.ts`, `+layout.desktop.svelte`, `+server.desktop.ts` and `hooks.server.desktop.ts` take the place of their file in the desktop app, and the website ignores them. `desktop({ routes: { exclude } })` keeps routes out of the app. `import.meta.env.KITOP_DESKTOP` says which side the code is built for, at build time.
 - Windows: the cancellable quit, `host.app.onQuitRequested`, `onBeforeQuit` and `onWillQuit`, from the last window's close, the menu, the API, Ctrl+Break and a session's end, reported as `logout`, `shutdown` or `system`.

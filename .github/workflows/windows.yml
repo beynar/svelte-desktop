@@ -80,7 +80,7 @@ jobs:
           WINDOWS_INSTALLER: ${{ github.workspace }}\notes-installer
         run: |
           New-Item -ItemType Directory -Force $env:WINDOWS_SHOTS | Out-Null
-          bun test --timeout 300000 tests/windows.test.ts tests/windows-web.test.ts tests/windows-sessions.test.ts tests/windows-desktop.test.ts
+          bun test --timeout 300000 tests/windows.test.ts tests/windows-web.test.ts tests/windows-sessions.test.ts tests/windows-desktop.test.ts tests/windows-window.test.ts
       - name: Screenshots
         if: always()
         uses: actions/upload-artifact@v4

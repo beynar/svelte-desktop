@@ -22,7 +22,7 @@ window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 
     title: { type: "string", description: "Window title. Default: appName." },
     autosaveName: { type: "string", description: "Persist and restore the window frame under this name (NSUserDefaults on macOS)." },
     titleBarStyle: { type: '"default" | "transparent" | "hidden" | "hiddenInset"', default: '"default"', description: "See Title bar styles below." },
-    vibrancy: { type: '"sidebar" | "titlebar" | "window" | "underWindow" | "hud" | "menu" | "popover" | …', description: "The system's translucent material behind the page (macOS). See Vibrancy and Liquid Glass below." },
+    vibrancy: { type: '"sidebar" | "titlebar" | "window" | "underWindow" | "hud" | "menu" | "popover" | …', description: "The system's translucent material behind the page (macOS; Windows 11 22H2). See Vibrancy and Liquid Glass below." },
     vibrancyState: { type: '"followsWindow" | "active" | "inactive"', description: "Whether the material stays active when the window loses focus (macOS)." },
     trafficLightPosition: { type: "{ x: number; y: number }", description: "The traffic lights at your own place (macOS, titleBarStyle hidden or hiddenInset). See Traffic lights below." },
     aspectRatio: { type: "number", description: "Width / height kept while the user resizes (16 / 9, 1 for a square)." },
@@ -190,7 +190,21 @@ const dark = getComputedStyle(document.documentElement).colorScheme.includes('da
 await host.window.setTheme(dark ? 'dark' : 'light'); // 'system' to go back
 ```
 
-macOS only: elsewhere, `--desktop-material` is ignored and `html` has no `data-desktop-materials`.
+Elsewhere, `--desktop-material` is ignored and `html` has no `data-desktop-materials`.
+
+### Windows materials
+
+On Windows 11 22H2 and later, `setVibrancy`, the `vibrancy` option and `setGlass` set the window's system backdrop. Older Windows rejects `unavailable`. The page becomes transparent while it's on, and the frame extends under it: the backdrop shows where the page paints no background.
+
+| Windows backdrop | Material names |
+| --- | --- |
+| Mica | `window`, `content`, `underPage`, `sidebar`, `fullscreenUI` |
+| Mica Alt | `titlebar`, `header` |
+| Acrylic | `underWindow`, `menu`, `popover`, `sheet`, `hud`, `tooltip`, `selection` |
+
+These are Windows' own materials, not lookalikes of macOS's: Mica shows the desktop wallpaper, not what's behind the window, and Acrylic only blurs what's behind the window while it's active. `state` can't be chosen, and Windows dims them by itself. The menu bar's text fades on a backdrop, as GDI draws it: a window with one looks better with a hidden title bar and the page's own menu. There's no Liquid Glass: `setGlass` uses the `underWindow` material and resolves `{ glass: false }`, as macOS does before version 26, and `style`, `tint` and `cornerRadius` are checked and then have no effect.
+
+A backdrop fills the whole window, so CSS materials can't work: `setMaterialRegions` rejects `unsupported`, `html` has no `data-desktop-materials`, and `--desktop-material` is ignored.
 
 ## Traffic lights
 
@@ -228,11 +242,11 @@ host.windows.onClosed(({ windowId }) => console.log('closed', windowId));
 
 Window-targeted operations on `host.windows` take an optional trailing `windowId`; without it they target the calling page's window (the main window from server code). `0` is the main window. `host.windows.list()` returns `{ windowId, label, focused, visible, bounds }` rows, `host.windows.getInfo()` the calling window's own row, and `host.windows.get(label)` finds one.
 
-Common options: `label` (unique per app, so you can find the window with `host.windows.get(label)`), `path` (the app route, default `"/"`) or `url` (another origin gets no native bridge), `title`, `x`, `y`, `width`, `height`, `decorations: false` for a borderless window, `transparent`, `alwaysOnTop`, `visible` and `focus`. On macOS also `animate` (see [Animation](#animation)) and `parentId`, `modal`, `type` and `focusable` (see [Parents, modal children and panels](#parents-modal-children-and-panels-macos)). The full list, with defaults, is in the [`create` reference](/host/windows/windows#createoptions).
+Common options: `label` (unique per app, so you can find the window with `host.windows.get(label)`), `path` (the app route, default `"/"`) or `url` (another origin gets no native bridge), `title`, `x`, `y`, `width`, `height`, `decorations: false` for a borderless window, `transparent`, `alwaysOnTop`, `visible` and `focus`. `parentId` and `focusable` too (see [Parents, modal children and panels](#parents-modal-children-and-panels)). On macOS also `animate` (see [Animation](#animation)), `modal` and `type`. The full list, with defaults, is in the [`create` reference](/host/windows/windows#createoptions).
 
 Windows emit events such as `onCreated`, `onClosed` and `onBoundsChanged`. Use [`host.broadcast`](/host/data/events#broadcast-between-contexts) to message between windows.
 
-### Parents, modal children and panels (macOS)
+### Parents, modal children and panels
 
 ```ts
 const parent = await host.windows.getInfo();
@@ -253,7 +267,9 @@ A normal child uses AppKit's child-window relationship: moving the parent moves 
 
 Normal windows own native full-screen Spaces; panels and modal children are auxiliary windows and reject requests to own a full-screen Space. `focus()` rejects `unavailable` for nonfocusable windows. macOS controls application activation: a refused request resolves `{ activated: false }`, and a successful one does not guarantee that another foreground app will yield focus.
 
-`getParent(windowId)` returns a parent info row or `null`; `getChildren(windowId)` returns direct child info rows. On macOS, info rows also expose `parentId`, `modal`, `sheetAttached`, `type`, and `focusable`; `sheetAttached` observes whether AppKit has actually presented the sheet. `setParent(parentId, windowId)` reparents a child and rejects missing parents and cycles. Closing a parent also closes its descendants. Relationship options, panel policy and these getters are macOS-only; other backends return `unsupported` for the new operations.
+`getParent(windowId)` returns a parent info row or `null`; `getChildren(windowId)` returns direct child info rows. Info rows also expose `parentId` and `focusable`, and on macOS `modal`, `sheetAttached` and `type`; `sheetAttached` observes whether AppKit has actually presented the sheet. `setParent(parentId, windowId)` reparents a child and rejects missing parents and cycles. Closing a parent also closes its descendants.
+
+On Windows a child is an owned window, and on Linux a transient window. It stays above its parent, and it doesn't move with it: only macOS does that. `modal: true` and `type: 'panel'` are macOS only, and ignored elsewhere. `setFocusable(false)` works on all three: a real click still reaches the page, and leaves the keyboard where it was. `focus()` rejects `unavailable` for that window everywhere.
 
 ### Window transitions (macOS)
 
@@ -268,7 +284,7 @@ const off = host.windows.on('fullscreenChanged', ({ windowId, fullscreen, transi
 
 Named helpers are also available: `onShown`, `onHidden`, `onMinimized`, `onRestored`, `onFullscreenChanged`, `onMoved`, `onResized`, `onFocus`, `onBlur`. They return unsubscribe functions. Existing `focusChanged` and `boundsChanged` events remain, and `host.window.fullscreen` refreshes after full-screen completion.
 
-Read window policy with `getLevel()` (numeric AppKit level), `isAlwaysOnTop()`, `hasShadow()`, `isMovable()`, `getMinSize()` and `getMaxSize()`. Size limits use **content points**, matching `setMinSize` / `setMaxSize`; a maximum axis of `0` means unconstrained. Every getter accepts a trailing `windowId`, as do the existing setters.
+Read window policy with `getLevel()` (`0` normal, `3` always on top, below `0` always on bottom), `isAlwaysOnTop()`, `hasShadow()`, `isMovable()`, `getMinSize()` and `getMaxSize()`. Size limits use **content points**, matching `setMinSize` / `setMaxSize`; a maximum axis of `0` means unconstrained. Every getter accepts a trailing `windowId`, as do the existing setters.
 
 For an app-wide unsaved-work guard, see [Cancellable quit](/host/app/app#cancellable-quit). The close veto below handles individual window closes.
 
