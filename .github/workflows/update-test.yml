@@ -1,6 +1,6 @@
-# A real update from one version to the next on macOS and Windows: examples/notes built as 0.1.0 and
-# 0.2.0, published with the commands of the release workflow in the docs, and an installed 0.1.0
-# updating itself. No certificates and no bucket: signing and uploading aren't tested here. Linux has
+# A real update from one version to the next on macOS and Windows: examples/notes built as 0.1.0,
+# 0.2.0 and a 0.3.0 that crashes, published with the commands of the release workflow in the docs, an
+# installed 0.1.0 updating itself, and coming back from the one that crashes. No certificates and no bucket: signing and uploading aren't tested here. Linux has
 # its own, in packages/shell/test/docker/update.sh. It takes a while, so it runs when it's asked for
 # or when what it tests changes.
 name: update-test
@@ -41,7 +41,7 @@ jobs:
         run: |
           (cd packages/shell && bun install)
           (cd examples/notes && bun install)
-      - name: 0.1.0 and 0.2.0
+      - name: 0.1.0, 0.2.0 and 0.3.0
         run: packages/shell/test/update-real/build.sh "$RUNNER_TEMP/update" darwin-arm64
       - name: 0.1.0 updates itself
         working-directory: examples/notes
@@ -61,7 +61,7 @@ jobs:
         run: |
           (cd packages/shell && bun install)
           (cd examples/notes && bun install)
-      - name: 0.1.0 and 0.2.0
+      - name: 0.1.0, 0.2.0 and 0.3.0
         run: packages/shell/test/update-real/build.sh "$RUNNER_TEMP/update" windows-x64
       - uses: actions/upload-artifact@v4
         with:

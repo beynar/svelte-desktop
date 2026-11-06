@@ -58,6 +58,8 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 
 ### Fixed
 
+- Windows: `app.relaunch()` started nothing, so neither did the restart after a server crash: the hidden PowerShell was created without a console and exited at once.
+- Windows: an update never installed, for the same reason in its helper, and a user name with an accent broke the helper's script.
 - `vite dev` works with the package installed in `node_modules`: the dependency optimizer could not read its `.svelte.ts` sources.
 - The package's sources type-check under an app's config, through every entry point.
 - A project from `kitop create` no longer has a test that fails off macOS: the Swift sample's test only runs there.

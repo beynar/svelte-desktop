@@ -59,7 +59,7 @@ The updater fetches a signed `update.json` from any static host (S3, R2, GitHub 
 | Platform | Current behavior |
 | --- | --- |
 | macOS | Full `.app` replacement and delta patches; the parent install directory must be writable |
-| Windows | Full-archive file replacement through a PowerShell helper; no delta application. Confirmation and rollback work as on macOS, but haven't been run through a real failed update on Windows. |
+| Windows | Full-archive file replacement through a PowerShell helper; no delta application. Confirmation and rollback work as on macOS. |
 | Linux | The app folder from the `.tar.gz` is replaced whole, with delta patches; an AppImage is replaced as one file. Both roll back. See [Linux](#linux). |
 
 ## Linux
@@ -103,6 +103,8 @@ With a previous release in `release/`, `vite build` also writes a `.sdpatch`: pe
 ## Install and rollback
 
 The install is swapped by a helper after the app exits, and the previous copy is kept as `.old`. Each launch of a new version counts before anything else runs, and the version is confirmed once its first page has stayed up for 5 seconds, or at a clean quit after that page. If it doesn't get there twice, the shell restores the previous copy, starts it, and skips that version in future checks. So a version that crashes in its native layer or never shows a page is replaced, and so is one whose server dies before it's confirmed, since the app [restarting after a crash](/concepts/architecture#when-something-crashes) is a launch too. A crash after that doesn't undo the confirmation. A page that loads but misbehaves counts as healthy: the shell can't tell, so test your releases. If the executable can't be launched by the OS at all, nothing of it runs, so nothing is restored.
+
+CI runs this on macOS, Windows and Linux with real builds: an update that applies, a version that crashes at once, and one whose server dies while it loads. Those builds aren't signed and the feed is a local folder, so signed updates and real hosting are still yours to try before you rely on them.
 
 Applications that call `createUpdater()` directly own the timing of `rollbackIfNeeded()`, `confirm()` and the restart: see `src/updater/README.md`.
 
