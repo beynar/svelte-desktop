@@ -1,30 +1,48 @@
-// Temporary: which way of starting the update helper survives the app's exit on Windows.
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+// Temporary: which way of starting the update helper works on Windows.
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const dir = mkdtempSync(join(tmpdir(), 'spawn-'));
 const ps = `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-const base = [ps, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'];
-const variants: Record<string, { argv: (s: string) => string[]; opts: string; end?: string }> = {
-  'current: detached + hide + -WindowStyle Hidden': { argv: (s) => [...base, '-WindowStyle', 'Hidden', '-File', s], opts: 'detached: true, windowsHide: true' },
-  'detached + hide, no -WindowStyle': { argv: (s) => [...base, '-File', s], opts: 'detached: true, windowsHide: true' },
-  'detached, no hide, no -WindowStyle': { argv: (s) => [...base, '-File', s], opts: 'detached: true' },
-  'detached, no hide, -WindowStyle Hidden': { argv: (s) => [...base, '-WindowStyle', 'Hidden', '-File', s], opts: 'detached: true' },
-  'hide, not detached, -WindowStyle Hidden': { argv: (s) => [...base, '-WindowStyle', 'Hidden', '-File', s], opts: 'windowsHide: true' },
-  'hide, not detached, no -WindowStyle': { argv: (s) => [...base, '-File', s], opts: 'windowsHide: true' },
-  'detached + hide, no -WindowStyle, SIGTERM': { argv: (s) => [...base, '-File', s], opts: 'detached: true, windowsHide: true', end: "process.kill(process.pid, 'SIGTERM')" },
-  'detached + hide, no -WindowStyle, stays 3 s': { argv: (s) => [...base, '-File', s], opts: 'detached: true, windowsHide: true', end: 'await Bun.sleep(3000); process.exit(0)' },
-};
-let i = 0;
-for (const [name, v] of Object.entries(variants)) {
-  const n = i++;
+const base = [ps, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File'];
+const script = (n: number) => {
   const log = join(dir, `${n}.log`);
-  const script = join(dir, `${n}.ps1`);
-  writeFileSync(script, `Add-Content -LiteralPath '${log}' -Value 'ran'\n`);
-  const code = `const p = Bun.spawn(${JSON.stringify(v.argv(script))}, { ${v.opts}, stdio: ['ignore', 'ignore', 'ignore'] }); p.unref(); ${v.end ?? 'process.exit(0)'}`;
-  const parent = join(dir, `${n}.ts`);
-  writeFileSync(parent, code);
-  const r = Bun.spawnSync([process.execPath, parent], { stdout: 'pipe', stderr: 'pipe' });
-  await Bun.sleep(5000);
-  console.log(`${existsSync(log) ? 'RAN   ' : 'DIDN\'T'} | ${name} | parent exit ${r.exitCode} ${r.stderr.toString().slice(0, 120)}`);
+  const f = join(dir, `${n}.ps1`);
+  writeFileSync(f, `Add-Content -LiteralPath '${log}' -Value 'ran'\n`);
+  return { f, log };
+};
+let n = 0;
+const direct: [string, Record<string, unknown>][] = [
+  ['pipes', {}],
+  ['stdio ignore', { stdio: ['ignore', 'ignore', 'ignore'] }],
+  ['stdin ignore only', { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' }],
+  ['stdout+stderr ignore', { stdin: 'pipe', stdout: 'ignore', stderr: 'ignore' }],
+  ['detached, pipes', { detached: true }],
+  ['detached, stdio ignore', { detached: true, stdio: ['ignore', 'ignore', 'ignore'] }],
+  ['hide, stdio ignore', { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'] }],
+];
+for (const [name, opts] of direct) {
+  const { f, log } = script(n++);
+  const t = Date.now();
+  const p = Bun.spawn([...base, f], opts as never);
+  const code = await p.exited;
+  const err = p.stderr && typeof p.stderr !== 'number' ? await new Response(p.stderr as ReadableStream).text() : '';
+  await Bun.sleep(500);
+  console.log(`DIRECT ${existsSync(log) ? 'RAN   ' : "DIDN'T"} | ${name} | exit ${code} in ${Date.now() - t} ms | ${err.slice(0, 160)}`);
+}
+// The parent leaves at once, as the app does. Long enough to see it, this time.
+const leaving: [string, string, string][] = [
+  ['detached, ignore, parent exits', "detached: true, stdio: ['ignore', 'ignore', 'ignore']", 'process.exit(0)'],
+  ['detached, ignore, parent stays 3 s', "detached: true, stdio: ['ignore', 'ignore', 'ignore']", 'await Bun.sleep(3000); process.exit(0)'],
+  ['detached, hide, ignore, parent exits', "detached: true, windowsHide: true, stdio: ['ignore', 'ignore', 'ignore']", 'process.exit(0)'],
+  ['detached, ignore, parent stays 500 ms', "detached: true, stdio: ['ignore', 'ignore', 'ignore']", 'await Bun.sleep(500); process.exit(0)'],
+  ['detached, parent SIGTERM', "detached: true, stdio: ['ignore', 'ignore', 'ignore']", "process.kill(process.pid, 'SIGTERM')"],
+];
+for (const [name, opts, end] of leaving) {
+  const { f, log } = script(n++);
+  const parent = join(dir, `p${n}.ts`);
+  writeFileSync(parent, `const p = Bun.spawn(${JSON.stringify([...base, f])}, { ${opts} }); p.unref(); ${end}`);
+  const r = Bun.spawnSync([process.execPath, parent]);
+  await Bun.sleep(15000);
+  console.log(`LEAVE  ${existsSync(log) ? 'RAN   ' : "DIDN'T"} | ${name} | parent exit ${r.exitCode}`);
 }
