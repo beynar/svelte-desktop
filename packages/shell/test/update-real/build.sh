@@ -1,7 +1,7 @@
 #!/bin/sh
 # What a real update needs on macOS or Windows, with no certificates and no bucket: examples/notes
-# built as 0.1.0 and 0.2.0, published with the commands of the release workflow in the docs
-# (`release fetch-previous`, then `merge`, into a folder standing in for the bucket). The test is
+# built as 0.1.0, 0.2.0 and a 0.3.0 that crashes, published with the commands of the release workflow
+# in the docs (`release fetch-previous`, then `merge`, into a folder standing in for the bucket). The test is
 # examples/notes/tests/update-real.test.ts. It edits this checkout: for CI (update-test.yml).
 #   build.sh <work dir> <darwin-arm64 | windows-x64>
 set -e
@@ -58,4 +58,20 @@ kill "$FEED"
 build 0.2.0 b
 publish 0.2.0 feed-b
 ls "$W"/feed-b/0.2.0/
+
+# Dies in the app's code before any page, only compiled: not while `vite build` loads the server. By
+# default the way a native crash does, the whole process at once. NOTES_UPDATE_CRASH=throw: an error
+# while the server loads, after which the app restarts itself.
+CRASH='if (/^(\/\$bunfs\/|[A-Z]:[\\/]~BUN[\\/])/i.test(Bun.main)) { if (Bun.env.NOTES_UPDATE_CRASH === "throw") throw new Error("0.3.0 is broken"); process.abort(); }'
+{ printf '%s\n' "$CRASH"; cat src/hooks.server.ts; } >src/hooks.server.ts.new
+mv src/hooks.server.ts.new src/hooks.server.ts
+build 0.3.0 c
+# This one through make-manifest, with the full archive: what an install too old for a delta gets.
+mkdir -p "$W/feed-c"
+cp .desktop/dist/release/0.3.0/*-"$PLATFORM".tar.zst "$W/feed-c/"
+$CLI make-manifest --name dev.kitop.notes --version 0.3.0 --channel stable \
+  --artifact "$PLATFORM=$(echo "$W"/feed-c/*-"$PLATFORM".tar.zst)" \
+  --key "$W/updater.key" --out "$W/feed-c/update.json"
+$CLI verify "$W/feed-c/update.json" --public-key "$PUB"
+ls "$W"/feed-c/
 rm -f "$W/updater.key"

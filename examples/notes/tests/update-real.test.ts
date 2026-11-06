@@ -1,12 +1,14 @@
 // A real update on macOS or Windows, from what packages/shell/test/update-real/build.sh built: an
 // installed 0.1.0 checks a signed feed, downloads, applies and relaunches through the helper, and
-// what runs after is asked for its version. Unsigned: signing takes real certificates.
+// what runs after is asked for its version. Then a 0.3.0 that crashes, and the 0.1.0 that comes back.
+// Unsigned: signing takes real certificates.
 //   UPDATE_E2E=<work dir> bun test --timeout 180000 tests/update-real.test.ts
 // Skipped unless UPDATE_E2E is set (CI: .github/workflows/update-test.yml).
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { appDirs } from '../../../packages/shell/src/os.ts';
 import { defaultDataDir } from '../../../packages/shell/src/updater/platform.ts';
 
 const W = process.env.UPDATE_E2E ?? '';
@@ -22,7 +24,14 @@ const statePath = join(dataDir, 'state.json');
 const helperPath = join(dataDir, 'helper.log');
 
 const probe = () => (existsSync(probeFile) ? readFileSync(probeFile, 'utf8') : '');
-const state = () => (existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : null);
+// Windows can refuse a read while the file is being replaced. That isn't the file being gone.
+function state() {
+	try {
+		return JSON.parse(readFileSync(statePath, 'utf8'));
+	} catch (e) {
+		return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : { unreadable: String(e) };
+	}
+}
 const helperLog = () => (existsSync(helperPath) ? readFileSync(helperPath, 'utf8') : '(no helper log)');
 
 function executable(app: string): string {
@@ -45,86 +54,147 @@ function contents(root: string): Record<string, string> {
 	return out;
 }
 
+/** What runs, without the backups an update keeps next to it on Windows. */
+const active = () => Object.fromEntries(Object.entries(contents(target)).filter(([file]) => !/^[^/]*\.old(\/|$)/.test(file)));
+
+/** The backups of an update, each under the name it had. */
+function kept(moves: { dest: string; backup: string }[]) {
+	const out: Record<string, string> = {};
+	for (const m of moves) for (const [file, hash] of Object.entries(contents(m.backup))) out[[relative(target, m.dest).replaceAll('\\', '/'), file].filter(Boolean).join('/')] = hash;
+	return out;
+}
+
 async function until(what: string, fn: () => unknown, ms = 90_000) {
 	const end = Date.now() + ms;
 	while (!fn()) {
-		if (Date.now() > end) throw new Error(`timed out waiting for ${what}\nprobe: ${probe()}\nstate: ${JSON.stringify(state())}\nhelper: ${helperLog()}`);
+		if (Date.now() > end) throw new Error(`timed out waiting for ${what}\nprobe: ${probe()}\nstate: ${JSON.stringify(state())}\nhelper: ${helperLog()}\nnext to the install: ${readdirSync(join(W, 'installed'))}`);
 		await Bun.sleep(200);
 	}
 }
 
-/** What Windows can say about a helper that left no log: is it there, does it parse, does it run. */
-function diagnose() {
-	if (!WINDOWS) return;
-	const script = join(dataDir, 'apply-helper.ps1');
-	const ps = (command: string) => {
-		const r = Bun.spawnSync(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command], { timeout: 30_000 });
-		return `${r.stdout}${r.stderr}`.trim();
-	};
-	console.log('[update] processes', ps("Get-Process | Where-Object { $_.ProcessName -match 'SvelteNotes|powershell|msedgewebview2' } | Select-Object Id, ProcessName, StartTime | Format-Table -AutoSize | Out-String -Width 120"));
-	console.log('[update] data folder', readdirSync(dataDir));
-	if (!existsSync(script)) return console.log('[update] no script');
-	console.log('[update] script head', readFileSync(script, 'utf8').slice(0, 400));
-	console.log('[update] parse', ps(`$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('${script.replaceAll("'", "''")}', [ref]$null, [ref]$e); $e | ForEach-Object { $_.ToString() }; 'parse errors: ' + @($e).Count`));
-	const run = Bun.spawnSync(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { timeout: 25_000 });
-	console.log('[update] run by hand', run.exitCode, `${run.stdout}${run.stderr}`.slice(0, 1500));
-	console.log('[update] helper log after', helperLog());
+function running() {
+	if (!WINDOWS) return Bun.spawnSync(['pgrep', '-x', 'SvelteNotes']).exitCode === 0;
+	return Bun.spawnSync(['tasklist', '/FI', 'IMAGENAME eq SvelteNotes.exe', '/NH']).stdout.toString().includes('SvelteNotes.exe');
 }
 
-// By its exact name, and only on a CI runner: UPDATE_E2E is never set elsewhere.
-function stopApp() {
-	if (WINDOWS) Bun.spawnSync(['taskkill', '/F', '/IM', 'SvelteNotes.exe']);
-	else Bun.spawnSync(['pkill', '-9', '-x', 'SvelteNotes']);
+// By their exact names, and only on a CI runner: UPDATE_E2E is never set elsewhere. WebView2 too: it
+// was started from the install folder, and keeps that folder from being deleted.
+async function stopApp() {
+	if (WINDOWS) {
+		Bun.spawnSync(['taskkill', '/F', '/IM', 'SvelteNotes.exe']);
+		Bun.spawnSync(['taskkill', '/F', '/IM', 'msedgewebview2.exe']);
+	} else {
+		Bun.spawnSync(['pkill', '-9', '-x', 'SvelteNotes']);
+	}
+	// Until it's gone, its single-instance lock sends the next launch away.
+	for (let i = 0; i < 200 && running(); i++) await Bun.sleep(50);
+}
+
+/** 0.1.0 under the user's name, nothing left of an earlier run. */
+function install() {
+	rmSync(join(W, 'installed'), { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+	rmSync(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+	rmSync(probeFile, { force: true });
+	for (const file of ['.crash-restarts', '.last-error', '.running']) rmSync(join(appDirs('dev.kitop.notes').data, file), { force: true });
+	mkdirSync(join(W, 'installed'), { recursive: true });
+	cpSync(built('a'), target, { recursive: true, verbatimSymlinks: true });
+}
+
+let feed: ReturnType<typeof Bun.serve> | undefined;
+function serve(dir: string) {
+	const hits: string[] = [];
+	feed = Bun.serve({
+		hostname: '127.0.0.1',
+		port: PORT,
+		fetch(req) {
+			const path = decodeURIComponent(new URL(req.url).pathname);
+			hits.push(path);
+			return new Response(Bun.file(join(W, dir, path)));
+		},
+	});
+	return hits;
+}
+
+function start(env: Record<string, string> = {}) {
+	Bun.spawn([executable(target)], {
+		cwd: W,
+		stdout: 'ignore',
+		stderr: 'ignore',
+		env: { ...process.env, NOTES_UPDATE_PROBE: '1', NOTES_UPDATE_PROBE_LOG: probeFile, ...env },
+	});
+}
+
+/** 0.1.0 runs again, whole, knows what happened, and doesn't take 0.3.0 again. */
+async function broughtBack(hits: string[], stagingDir: string) {
+	expect(probe()).toBe('started 0.1.0\ncheck none\n');
+	expect(state()).toMatchObject({ phase: 'rolled-back', from: '0.1.0', to: '0.3.0', attempts: 2 });
+	expect(running()).toBe(true);
+	console.log('[update] helper', helperLog());
+	// Byte for byte, and nothing else on Windows, where the backups and the bad version lived next to it.
+	expect(contents(target)).toEqual(contents(built('a')));
+	expect(readdirSync(join(W, 'installed'))).toEqual([relative(join(W, 'installed'), target)]);
+	expect(hits.filter((h) => h.endsWith('.tar.zst')).length).toBe(1);
+	// Its page stays up: what's left of the update goes, and the state stays, so 0.3.0 stays skipped.
+	await until('0.1.0 to clean up', () => !existsSync(stagingDir));
+	expect(state()).toMatchObject({ phase: 'rolled-back', to: '0.3.0' });
 }
 
 describe.skipIf(!W)('a real update', () => {
-	afterAll(stopApp);
+	afterEach(async () => {
+		feed?.stop(true);
+		feed = undefined;
+		await stopApp();
+	});
 
 	test('0.1.0 checks, downloads, applies 0.2.0, relaunches, and 0.2.0 is what runs', async () => {
-		rmSync(join(W, 'installed'), { recursive: true, force: true });
-		rmSync(dataDir, { recursive: true, force: true });
-		rmSync(probeFile, { force: true });
-		mkdirSync(join(W, 'installed'), { recursive: true });
-		cpSync(built('a'), target, { recursive: true, verbatimSymlinks: true });
 		expect(contents(built('b'))).not.toEqual(contents(built('a')));
+		install();
+		const hits = serve('feed-b');
+		start();
+		await until('0.2.0 to run', () => probe().includes('started 0.2.0'));
+		console.log('[update] feed asked for', hits);
+		console.log('[update] state then', state());
+		await until('0.2.0 to find itself current', () => probe().includes('check none'));
+		expect(hits).toContain('/update.json');
+		expect(hits.some((h) => h.endsWith('.sdpatch') || h.endsWith('.tar.zst'))).toBe(true);
 
-		const hits: string[] = [];
-		const feed = Bun.serve({
-			hostname: '127.0.0.1',
-			port: PORT,
-			fetch(req) {
-				const path = decodeURIComponent(new URL(req.url).pathname);
-				hits.push(path);
-				return new Response(Bun.file(join(W, 'feed-b', path)));
-			},
-		});
-		try {
-			Bun.spawn([executable(target)], {
-				cwd: W,
-				stdout: 'ignore',
-				stderr: 'ignore',
-				env: { ...process.env, NOTES_UPDATE_PROBE: '1', NOTES_UPDATE_PROBE_LOG: probeFile },
-			});
-			await until('0.2.0 to run', () => probe().includes('started 0.2.0')).catch((e) => {
-				diagnose();
-				throw e;
-			});
-			console.log('[update] feed asked for', hits);
-			console.log('[update] state then', state());
-			await until('0.2.0 to find itself current', () => probe().includes('check none'));
-			expect(hits).toContain('/update.json');
-			expect(hits.some((h) => h.endsWith('.sdpatch') || h.endsWith('.tar.zst'))).toBe(true);
+		// A page stays up: healthy, and the backup goes.
+		await until('the update to be confirmed', () => !state());
+		expect(existsSync(`${target}.old`)).toBe(false);
+		expect(existsSync(`${target}.new`)).toBe(false);
+		console.log('[update] helper', helperLog());
+		// Whole, byte for byte: nothing left of 0.1.0.
+		expect(contents(target)).toEqual(contents(built('b')));
+		expect(statSync(executable(target)).size).toBeGreaterThan(0);
+	}, 180_000);
 
-			// A page stays up: healthy, and the backup goes.
-			await until('the update to be confirmed', () => !state());
-			expect(existsSync(`${target}.old`)).toBe(false);
-			expect(existsSync(`${target}.new`)).toBe(false);
-			console.log('[update] helper', helperLog());
-			// Whole, byte for byte: nothing left of 0.1.0.
-			expect(contents(target)).toEqual(contents(built('b')));
-			expect(statSync(executable(target)).size).toBeGreaterThan(0);
-		} finally {
-			feed.stop(true);
-		}
+	test('a 0.3.0 that crashes at once: 0.1.0 comes back at the next launch', async () => {
+		expect(contents(built('c'))).not.toEqual(contents(built('b')));
+		install();
+		const hits = serve('feed-c');
+		start();
+
+		// The helper relaunches it, it counts one start and dies before any page.
+		await until('0.3.0 to count its first start', () => state()?.phase === 'applied' && state()?.attempts === 1);
+		await until('0.3.0 to crash', () => !running());
+		const { moves, stagingDir } = state();
+		expect(active()).toEqual(contents(built('c')));
+		expect(kept(moves)).toEqual(contents(built('a')));
+		expect(probe()).toBe('started 0.1.0\ncheck 0.3.0\n');
+
+		// The user starts it again: that second start restores 0.1.0 and hands over to it.
+		start();
+		await until('0.1.0 to run again', () => probe().includes('check none'));
+		await broughtBack(hits, stagingDir);
+	}, 180_000);
+
+	test('a 0.3.0 whose server dies while it loads: the app restarts itself, and 0.1.0 comes back', async () => {
+		install();
+		const hits = serve('feed-c');
+		let stagingDir = '';
+		start({ NOTES_UPDATE_CRASH: 'throw' });
+		await until('0.3.0 to be applied', () => (stagingDir = state()?.stagingDir ?? ''));
+		await until('0.1.0 to come back, with nobody starting anything', () => probe().includes('check none'));
+		await broughtBack(hits, stagingDir);
 	}, 180_000);
 });
