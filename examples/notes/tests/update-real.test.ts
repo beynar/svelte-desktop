@@ -231,8 +231,10 @@ describe.skipIf(!W)('a real update', () => {
 			expect(pids()).toBe(shown);
 			expect(count()).toBe(0);
 			if (WINDOWS) {
-				const titles = Bun.spawnSync(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', "(Get-Process SvelteNotes | Where-Object MainWindowHandle -ne 0).MainWindowTitle"]).stdout.toString();
-				expect(titles).toContain('stopped working');
+				// The dialog belongs to the main window, whose title is what the process reports as its own.
+				const script = `Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes; $a = [System.Windows.Automation.AutomationElement]; $p = New-Object System.Windows.Automation.PropertyCondition($a::ProcessIdProperty, ${Number(shown.replaceAll('"', ''))}); $a::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants, $p) | ForEach-Object { $_.Current.Name }`;
+				const names = Bun.spawnSync(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script], { timeout: 60_000 }).stdout.toString();
+				expect(names).toContain('stopped working');
 			}
 		} finally {
 			if (!WINDOWS) Bun.spawnSync(['launchctl', 'unsetenv', 'NOTES_UPDATE_CRASH']);
