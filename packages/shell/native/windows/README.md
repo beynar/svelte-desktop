@@ -8,7 +8,8 @@ Packaging is in `src/build/package-windows.ts` (`build: { target: 'windows' }`).
 CI runs `examples/notes/tests/windows.test.ts` on a real Windows runner (`.github/workflows/windows.yml`):
 WebView2, WinRT toasts, the COM toast activator, windows, the title bar, menus, tray, dialogs, clipboard,
 views, screen and DPI, jobs, MCP, relaunch and web content control; `windows-web.test.ts` the rest of
-web control. x64 only, on one display at 100%.
+web control; `windows-sessions.test.ts` sessions, proxies, schemes, content rules, scripts and the input
+policy. x64 only, on one display at 100%.
 
 ## Verified without Windows
 - Clean build (`-Wall -Wextra`, llvm-mingw, WebView2 SDK headers); every `shell.h` export
@@ -96,14 +97,38 @@ Same ops, result shapes and events as macOS, so `src/platform` doesn't know the 
   cleared one by one with `Storage.clearDataForOrigin`, from the origins views and frames loaded
   (`web-sites.json`), cookies through the cookie manager. `ClearBrowsingData` does `app: true` and the disk cache.
   What a site stored before this record existed isn't reached without `app`.
-- `svc_cookies.cc`: `sessions.*` on the default profile through `ICoreWebView2CookieManager`.
-  No cookie event in WebView2: `watchCookies` compares the profile once a second.
+- `svc_cookies.cc`: cookies of every session through `ICoreWebView2CookieManager`. No cookie event in
+  WebView2: `watchCookies` compares the profiles with a view open once a second.
+- `svc_web_sessions.cc`, sessions: a named one is a WebView2 profile (`ICoreWebView2ControllerOptions`
+  `ProfileName`, `IsInPrivateModeEnabled`), with a hidden web view holding it open and reaching its cookies.
+  The shell's `__kitop` cookie is copied in before each load of the app's pages, as on the other platforms.
+  `sessions.json` says which profile a persistent id is, so a removed one comes back empty: WebView2 won't
+  reopen a profile it's deleting.
+- `svc_web_sessions.cc`, proxies: `--proxy-server` for a whole environment, so a session's first proxy gives it
+  an environment and a user data folder of its own, in `WebView2-sessions`. Its cookies are copied, the rest of its
+  storage is deleted. A later change waits for `BrowserProcessExited`, ends that process if it hasn't gone after five
+  seconds (it once hadn't after 15 on the runner, reason unknown), and starts it again on the same folder.
+  `setProxy` refuses while a view is open in the session, and on the default session. These arguments come from
+  the app's server code: `g_browser_arguments` still keeps `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` out of
+  distributed builds. The host is checked, since it ends up on a command line.
+- `svc_web_sessions.cc`, schemes: `ICoreWebView2EnvironmentOptions4` on every environment, with an authority,
+  not secure, any origin. `WebResourceRequested` with a deferral. A blocking `IStream` was tried and doesn't work:
+  WebView2 reads a stream to its end before the page sees anything, and reads a document's on the UI thread, where
+  `E_PENDING` ends the request and blocking would hold every web view's callbacks. So a response is held in
+  memory until `protocol.finish`. A request's end is only known from its view or its document going.
+- `svc_web_sessions.cc`, content rules: matched here from `WebResourceRequested`, only while rules exist, on a
+  small NFA for WebKit's restricted syntax. `css-display-none` is a script in each document. Refused because tried
+  and found not to hold: `block-cookies` (cookies are added after the event), `websocket` (no event).
+- `svc_web_sessions.cc`, scripts: `AddScriptToExecuteOnDocumentCreated`; named worlds through the DevTools protocol
+  (`Page.addScriptToEvaluateOnNewDocument`). On a change a web view's are removed and added again, for their order.
+- `svc_web_sessions.cc`, input policy: `AcceleratorKeyPressed`. It reports what's held with Control or Alt and keys
+  that make no character: real presses of Enter, Tab, Space, Backspace and characters with no event reached the
+  page, so rules for those are refused. A low-level keyboard hook could reach them, but it's a system-wide hook in
+  every app: not done.
 
 ## Not implemented (answer `unsupported`)
 Window: simple fullscreen, controlsArea, shadow, movable, all workspaces,
 focusable, represented file, character palette. App: activation policy, hide others,
 default icon. Dock menu. Permission checks / settings panes. Thermal state. Keychain-style
-`authenticate`. Webview: custom context menu, lifecycle events other than `terminated`, registered
-scripts, content rules. Sessions: named profiles (`create`, `remove`,
-through `ICoreWebView2ControllerOptions` when they come), proxies.
+`authenticate`. Webview: custom context menu, lifecycle events other than `terminated` and a session's failed load.
 `shortcutReleased` (Windows has no hotkey key-up).

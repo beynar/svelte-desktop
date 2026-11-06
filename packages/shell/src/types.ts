@@ -56,7 +56,7 @@ export interface ShellOptions {
   testChannel?: boolean;
   /** Dev mode: the config's usage descriptions (no Info.plist then; a bundle has its own). */
   usageDescriptions?: Record<string, string>;
-  /** Custom resource schemes registered before any web view is created (macOS and Linux). */
+  /** Custom resource schemes registered before any web view is created. */
   protocols?: string[];
   /** Main window URL override (dev mode points it at the Vite server). */
   url?: string;

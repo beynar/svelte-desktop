@@ -126,6 +126,15 @@ std::string url_origin(const std::string &url) {
   return scheme + "://" + lower(host) + (port.empty() ? "" : ":" + port);
 }
 
+std::string url_host(const std::string &url) {
+  std::string origin = url_origin(url);
+  auto start = origin.find("://");
+  if (start == std::string::npos) return "";
+  std::string authority = origin.substr(start + 3);
+  if (!authority.empty() && authority[0] == '[') return authority.substr(0, authority.find(']') + 1);
+  return authority.substr(0, authority.find(':'));
+}
+
 std::string last_error_message(DWORD err) {
   wchar_t *buf = nullptr;
   DWORD n = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, err, 0,
@@ -426,7 +435,7 @@ static bool g_browser_arguments = false; // a build that isn't signed to be dist
 static bool g_env_failed_shown = false;
 static std::vector<std::function<void(ICoreWebView2Environment *)>> g_env_waiters;
 
-static std::wstring user_data_dir() {
+std::wstring user_data_folder() {
   wchar_t *local = nullptr;
   std::wstring base;
   if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local)) && local) base = local;
@@ -506,8 +515,52 @@ static void env_failed(HRESULT hr) {
 using CreateEnvInternal_t = HRESULT(STDMETHODCALLTYPE *)(bool, int, PCWSTR, IUnknown *,
                                                          ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler *);
 
-// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is read by Microsoft's loader, which this file stands in for.
-class EnvironmentOptions final : public ICoreWebView2EnvironmentOptions {
+static HRESULT copy_string(const std::wstring &text, LPWSTR *out) {
+  size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+  *out = static_cast<LPWSTR>(CoTaskMemAlloc(bytes));
+  if (!*out) return E_OUTOFMEMORY;
+  memcpy(*out, text.c_str(), bytes);
+  return S_OK;
+}
+
+// `asset://archive/x`: a host and a path, any page may load it, no more trust than that. WebView2's
+// helper for this is in a header of its loader, which this file stands in for.
+class SchemeRegistration final : public ICoreWebView2CustomSchemeRegistration {
+public:
+  explicit SchemeRegistration(const std::string &name) : name_(wide(name)) {}
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++rc_; }
+  ULONG STDMETHODCALLTYPE Release() override {
+    ULONG r = --rc_;
+    if (r == 0) delete this;
+    return r;
+  }
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **pp) override {
+    if (!pp) return E_POINTER;
+    *pp = nullptr;
+    if (!IsEqualIID(riid, IID_IUnknown) && !IsEqualIID(riid, IID_ICoreWebView2CustomSchemeRegistration)) return E_NOINTERFACE;
+    *pp = static_cast<ICoreWebView2CustomSchemeRegistration *>(this);
+    AddRef();
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE get_SchemeName(LPWSTR *value) override { return copy_string(name_, value); }
+  HRESULT STDMETHODCALLTYPE get_TreatAsSecure(BOOL *value) override { return *value = FALSE, S_OK; }
+  HRESULT STDMETHODCALLTYPE put_TreatAsSecure(BOOL) override { return S_OK; }
+  HRESULT STDMETHODCALLTYPE GetAllowedOrigins(UINT32 *count, LPWSTR **origins) override {
+    *count = 1;
+    *origins = static_cast<LPWSTR *>(CoTaskMemAlloc(sizeof(LPWSTR)));
+    if (!*origins) return E_OUTOFMEMORY;
+    return copy_string(L"*", *origins);
+  }
+  HRESULT STDMETHODCALLTYPE SetAllowedOrigins(UINT32, LPCWSTR *) override { return S_OK; }
+  HRESULT STDMETHODCALLTYPE get_HasAuthorityComponent(BOOL *value) override { return *value = TRUE, S_OK; }
+  HRESULT STDMETHODCALLTYPE put_HasAuthorityComponent(BOOL) override { return S_OK; }
+
+private:
+  std::atomic<ULONG> rc_{1};
+  std::wstring name_;
+};
+
+class EnvironmentOptions final : public ICoreWebView2EnvironmentOptions, public ICoreWebView2EnvironmentOptions4 {
 public:
   explicit EnvironmentOptions(std::wstring arguments) : arguments_(std::move(arguments)) {}
   ULONG STDMETHODCALLTYPE AddRef() override { return ++rc_; }
@@ -519,73 +572,79 @@ public:
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **pp) override {
     if (!pp) return E_POINTER;
     *pp = nullptr;
-    if (!IsEqualIID(riid, IID_IUnknown) && !IsEqualIID(riid, IID_ICoreWebView2EnvironmentOptions)) return E_NOINTERFACE;
-    *pp = static_cast<ICoreWebView2EnvironmentOptions *>(this);
+    if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_ICoreWebView2EnvironmentOptions)) *pp = static_cast<ICoreWebView2EnvironmentOptions *>(this);
+    else if (IsEqualIID(riid, IID_ICoreWebView2EnvironmentOptions4)) *pp = static_cast<ICoreWebView2EnvironmentOptions4 *>(this);
+    else return E_NOINTERFACE;
     AddRef();
     return S_OK;
   }
-  HRESULT STDMETHODCALLTYPE get_AdditionalBrowserArguments(LPWSTR *value) override { return copy(arguments_, value); }
+  HRESULT STDMETHODCALLTYPE get_AdditionalBrowserArguments(LPWSTR *value) override { return copy_string(arguments_, value); }
   HRESULT STDMETHODCALLTYPE put_AdditionalBrowserArguments(LPCWSTR value) override { return arguments_ = value ? value : L"", S_OK; }
-  HRESULT STDMETHODCALLTYPE get_Language(LPWSTR *value) override { return copy(L"", value); }
+  HRESULT STDMETHODCALLTYPE get_Language(LPWSTR *value) override { return copy_string(L"", value); }
   HRESULT STDMETHODCALLTYPE put_Language(LPCWSTR) override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE get_TargetCompatibleBrowserVersion(LPWSTR *value) override { return copy(L"86.0.616.0", value); } // any runtime with this file's entry point
+  HRESULT STDMETHODCALLTYPE get_TargetCompatibleBrowserVersion(LPWSTR *value) override { return copy_string(L"86.0.616.0", value); } // any runtime with this file's entry point
   HRESULT STDMETHODCALLTYPE put_TargetCompatibleBrowserVersion(LPCWSTR) override { return S_OK; }
   HRESULT STDMETHODCALLTYPE get_AllowSingleSignOnUsingOSPrimaryAccount(BOOL *allow) override { return *allow = FALSE, S_OK; }
   HRESULT STDMETHODCALLTYPE put_AllowSingleSignOnUsingOSPrimaryAccount(BOOL) override { return S_OK; }
-
-private:
-  static HRESULT copy(const std::wstring &text, LPWSTR *out) {
-    size_t bytes = (text.size() + 1) * sizeof(wchar_t);
-    *out = static_cast<LPWSTR>(CoTaskMemAlloc(bytes));
+  // Asked by a runtime that has them, and per environment: a session's own needs them too.
+  HRESULT STDMETHODCALLTYPE GetCustomSchemeRegistrations(UINT32 *count, ICoreWebView2CustomSchemeRegistration ***out) override {
+    const auto &schemes = protocol_schemes();
+    *count = (UINT32)schemes.size();
+    *out = nullptr;
+    if (schemes.empty()) return S_OK;
+    *out = static_cast<ICoreWebView2CustomSchemeRegistration **>(CoTaskMemAlloc(schemes.size() * sizeof(void *)));
     if (!*out) return E_OUTOFMEMORY;
-    memcpy(*out, text.c_str(), bytes);
+    for (size_t i = 0; i < schemes.size(); i++) (*out)[i] = new SchemeRegistration(schemes[i]);
     return S_OK;
   }
+  HRESULT STDMETHODCALLTYPE SetCustomSchemeRegistrations(UINT32, ICoreWebView2CustomSchemeRegistration **) override { return S_OK; }
+
+private:
   std::atomic<ULONG> rc_{1};
   std::wstring arguments_;
 };
 
-static void with_env(std::function<void(ICoreWebView2Environment *)> fn) {
-  if (g_env) return fn(g_env);
-  g_env_waiters.push_back(std::move(fn));
-  if (g_env_pending) return;
-  g_env_pending = true;
+HRESULT environment_create(const std::wstring &folder, const std::wstring &arguments, std::function<void(HRESULT, ICoreWebView2Environment *)> done) {
   Runtime rt = find_runtime();
-  if (rt.dll.empty()) {
-    g_env_pending = false;
-    return env_failed(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND));
-  }
+  if (rt.dll.empty()) return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
   // Never unloaded: the runtime client must outlive every controller.
   HMODULE client = LoadLibraryW(rt.dll.c_str());
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-function-type"
   auto create = client ? reinterpret_cast<CreateEnvInternal_t>(GetProcAddress(client, "CreateWebViewEnvironmentWithOptionsInternal")) : nullptr;
 #pragma GCC diagnostic pop
-  if (!create) {
-    g_env_pending = false;
-    return env_failed(HRESULT_FROM_WIN32(client ? ERROR_PROC_NOT_FOUND : GetLastError()));
-  }
+  if (!create) return HRESULT_FROM_WIN32(client ? ERROR_PROC_NOT_FOUND : GetLastError());
   auto *handler = new Cb<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler, HRESULT, ICoreWebView2Environment *>(
-      IID_ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler, [](HRESULT hr, ICoreWebView2Environment *env) -> HRESULT {
-        g_env_pending = false;
-        if (FAILED(hr) || !env) {
-          env_failed(FAILED(hr) ? hr : E_FAIL);
-          return S_OK;
-        }
-        env->AddRef();
-        g_env = env;
-        auto waiters = std::move(g_env_waiters);
-        g_env_waiters.clear();
-        for (auto &w : waiters) w(env);
+      IID_ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler, [done](HRESULT hr, ICoreWebView2Environment *env) -> HRESULT {
+        done(hr, env);
         return S_OK;
       });
-  std::wstring dir = user_data_dir();
-  wchar_t arguments[4096] = L"";
-  // Not in a distributed build: a program starting the app with --remote-debugging-port would borrow its identity.
-  EnvironmentOptions *options = g_browser_arguments && GetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", arguments, 4096) ? new EnvironmentOptions(arguments) : nullptr;
-  HRESULT hr = create(true, rt.type, dir.c_str(), options, handler);
+  // Options only when there's something in them: an app with no schemes starts as it always did.
+  EnvironmentOptions *options = !arguments.empty() || !protocol_schemes().empty() ? new EnvironmentOptions(arguments) : nullptr;
+  HRESULT hr = create(true, rt.type, folder.c_str(), static_cast<ICoreWebView2EnvironmentOptions *>(options), handler);
   handler->Release();
   if (options) options->Release();
+  return hr;
+}
+
+void with_env(std::function<void(ICoreWebView2Environment *)> fn) {
+  if (g_env) return fn(g_env);
+  g_env_waiters.push_back(std::move(fn));
+  if (g_env_pending) return;
+  g_env_pending = true;
+  wchar_t arguments[4096] = L"";
+  // WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is read by Microsoft's loader, which this file stands in for.
+  // Not in a distributed build: a program starting the app with --remote-debugging-port would borrow its identity.
+  if (!g_browser_arguments || !GetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", arguments, 4096)) arguments[0] = 0;
+  HRESULT hr = environment_create(user_data_folder(), arguments, [](HRESULT hr, ICoreWebView2Environment *env) {
+    g_env_pending = false;
+    if (FAILED(hr) || !env) return env_failed(FAILED(hr) ? hr : E_FAIL);
+    env->AddRef();
+    g_env = env;
+    auto waiters = std::move(g_env_waiters);
+    g_env_waiters.clear();
+    for (auto &w : waiters) w(env);
+  });
   if (FAILED(hr)) {
     g_env_pending = false;
     env_failed(hr);
@@ -603,14 +662,14 @@ View *find_view(int id) {
 }
 
 static Window *find_window_unchecked(int id);
-static void recover_after_browser_exit();
+static void recover_after_browser_exit(const std::string &key);
 static void on_render_process_exit(int id);
 static void on_browser_process_exit(int id);
 static void ask_to_reload_unresponsive(int id);
 
 static bool is_internal_url(const std::string &url) {
   std::string scheme = url_scheme(url);
-  if (scheme == "about" || scheme == "data" || scheme == "blob") return true;
+  if (scheme == "about" || scheme == "data" || scheme == "blob" || protocol_scheme(scheme)) return true;
   std::string app = app_origin();
   if (app.empty()) return true; // before the app origin is known (initial blank page, set_html)
   return url_origin(url) == app;
@@ -711,10 +770,11 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
         sessions_page_unloaded(id);
         web_control_navigating(id);
         web_site_seen(url);
+        if (View *nv = find_view(id)) web_sessions_navigating(nv, url);
         if (View *bv = find_view(id); bv && !bv->browserView.empty()) {
           // view.*: a browser view — web URLs load, anything else is refused; then the app's veto.
           std::string sc = url_scheme(url);
-          if (!(sc == "http" || sc == "https" || sc == "about" || sc == "data" || sc == "blob")) args->put_Cancel(TRUE);
+          if (!(sc == "http" || sc == "https" || sc == "about" || sc == "data" || sc == "blob" || protocol_scheme(sc))) args->put_Cancel(TRUE);
           else web_navigation_policy(bv, url, true, args);
           return S_OK;
         }
@@ -744,6 +804,7 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
   auto *onContent = new Cb<ICoreWebView2ContentLoadingEventHandler, ICoreWebView2 *, ICoreWebView2ContentLoadingEventArgs *>(
       IID_ICoreWebView2ContentLoadingEventHandler, [id](ICoreWebView2 *wv, ICoreWebView2ContentLoadingEventArgs *) -> HRESULT {
         View *bv = find_view(id);
+        if (bv) web_sessions_content_loading(bv);
         if (!bv || bv->browserView.empty()) return S_OK;
         LPWSTR source = nullptr;
         wv->get_Source(&source);
@@ -839,10 +900,15 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
       [id](ICoreWebView2Controller *, ICoreWebView2AcceleratorKeyPressedEventArgs *args) -> HRESULT {
         COREWEBVIEW2_KEY_EVENT_KIND kind;
         args->get_KeyEventKind(&kind);
-        if (kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN) return S_OK;
         UINT vk = 0;
         args->get_VirtualKey(&vk);
-        if (popover_key(id, vk) || handle_accelerator(vk, find_window_unchecked(id) ? id : 0)) args->put_Handled(TRUE);
+        bool menus = true;
+        if (input_policy_key(id, vk, args, menus)) {
+          args->put_Handled(TRUE);
+          return S_OK;
+        }
+        if (kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN) return S_OK;
+        if (popover_key(id, vk) || (menus && handle_accelerator(vk, find_window_unchecked(id) ? id : 0))) args->put_Handled(TRUE);
         return S_OK;
       });
   ctl->add_AcceleratorKeyPressed(onKey, &v->tokens[6]);
@@ -859,7 +925,10 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
         view_resize(v);
         view_apply_visibility(v);
         theme_apply_view(v);
-        flush_pending(v);
+        // The app's scripts are there too before anything loads.
+        web_sessions_attach(v, [id] {
+          if (View *v = find_view(id)) flush_pending(v);
+        });
         return S_OK;
       });
   HRESULT hr = v->webview->AddScriptToExecuteOnDocumentCreated(wide(script).c_str(), onScript);
@@ -867,15 +936,22 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
   if (FAILED(hr)) {
     view_resize(v);
     view_apply_visibility(v);
-    flush_pending(v);
+    web_sessions_attach(v, [id] {
+      if (View *v = find_view(id)) flush_pending(v);
+    });
   }
 }
 
 void view_create(View *v) {
   int id = v->id;
-  with_env([id](ICoreWebView2Environment *env) {
+  session_controller_options(v->session, [id](ICoreWebView2Environment *env, ICoreWebView2ControllerOptions *options, const std::string &error) {
     View *v = find_view(id);
     if (!v || !v->host || v->controller) return;
+    if (!error.empty()) {
+      v->failed = true;
+      fprintf(stderr, "[shell] WebView2 session failed for view %d: %s\n", id, error.c_str());
+      return;
+    }
     auto *handler = new Cb<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler, HRESULT, ICoreWebView2Controller *>(
         IID_ICoreWebView2CreateCoreWebView2ControllerCompletedHandler, [id](HRESULT hr, ICoreWebView2Controller *ctl) -> HRESULT {
           View *v = find_view(id);
@@ -891,7 +967,12 @@ void view_create(View *v) {
           setup_controller(v, ctl);
           return S_OK;
         });
-    HRESULT hr = env->CreateCoreWebView2Controller(v->host, handler);
+    HRESULT hr = E_NOINTERFACE;
+    if (!options) hr = env->CreateCoreWebView2Controller(v->host, handler);
+    else if (auto *env10 = query<ICoreWebView2Environment10>(env, IID_ICoreWebView2Environment10)) {
+      hr = env10->CreateCoreWebView2ControllerWithOptions(v->host, options, handler);
+      env10->Release();
+    }
     handler->Release();
     if (FAILED(hr)) {
       v->failed = true;
@@ -907,7 +988,15 @@ void view_when_ready(View *v, std::function<void()> fn) {
 
 void view_navigate(View *v, const std::string &url) {
   v->lastUrl = url;
-  view_when_ready(v, [v, url] { v->webview->Navigate(wide(url).c_str()); });
+  int id = v->id;
+  view_when_ready(v, [id, url] {
+    View *v = find_view(id);
+    if (!v) return;
+    session_before_load(v, url, [id, url] {
+      View *v = find_view(id);
+      if (v && v->webview) v->webview->Navigate(wide(url).c_str());
+    });
+  });
 }
 
 void view_set_html(View *v, const std::string &html) {
@@ -932,6 +1021,7 @@ void view_apply_visibility(View *v) {
 void view_destroy(View *v) {
   web_policy_forget(v->id);
   web_control_detach(v->id);
+  web_sessions_detach(v);
   g_views.erase(v->id);
   v->pending.clear();
   v->ready = false;
@@ -1043,18 +1133,24 @@ static void on_render_process_exit(int id) {
   }
 }
 
-// The browser process runs every view: when it keeps dying, no page can say so.
+// The browser process runs every view of its environment: when it keeps dying, no page can say so.
 static void on_browser_process_exit(int id) {
-  static ReloadBudget budget;
-  static double handled = -1;
+  View *dead = find_view(id);
+  std::string key = dead ? session_environment_key(dead->session) : "";
+  struct Deaths {
+    ReloadBudget budget;
+    double handled = -1;
+  };
+  static std::map<std::string, Deaths> deaths;
+  Deaths &d = deaths[key];
   // Each view gets this event for the same death.
   double now = now_seconds();
-  bool same = handled >= 0 && now - handled < 1;
-  int delay = same ? 0 : budget.next(now);
-  if (!same) handled = now;
+  bool same = d.handled >= 0 && now - d.handled < 1;
+  int delay = same ? 0 : d.budget.next(now);
+  if (!same) d.handled = now;
   emit_raw(json{{"type", "webcontent-terminated"}, {"window", id}, {"gaveUp", delay < 0}});
   if (same) return;
-  if (delay >= 0) return after_delay(delay, recover_after_browser_exit);
+  if (delay >= 0) return after_delay(delay, [key] { recover_after_browser_exit(key); });
   json o{{"message", "The web view keeps crashing"}, {"detail", "Its process stopped several times in a row, so the app will quit. Restarting the app, or reinstalling the WebView2 runtime, may help."}, {"buttons", json::array({"Quit"})}};
   run_message_box(o, nullptr, [](int) { ExitProcess(1); });
 }
@@ -1074,16 +1170,19 @@ static void ask_to_reload_unresponsive(int id) {
   });
 }
 
-static void recover_after_browser_exit() {
-  release(g_env);
+static void recover_after_browser_exit(const std::string &key) {
+  if (key.empty()) release(g_env);
+  sessions_environment_lost(key);
   std::vector<std::pair<View *, std::string>> todo;
-  for (auto &[id, v] : g_views) todo.emplace_back(v, v->lastUrl);
+  for (auto &[id, v] : g_views)
+    if (session_environment_key(v->session) == key) todo.emplace_back(v, v->lastUrl);
   for (auto &[v, url] : todo) {
     if (v->controller) v->controller->Close();
     release(v->webview);
     release(v->controller);
     v->pending.clear();
     v->ready = false;
+    v->watchesRequests = v->ruleFilter = false;
     view_create(v);
     if (!url.empty()) view_navigate(v, url);
   }
@@ -1377,6 +1476,9 @@ static int create_window(const json &o) {
   if (g_order.empty() && jbool(o, "singleInstance", false) && !claim_single_instance()) ExitProcess(0);
   if (g_order.empty()) g_browser_arguments = jbool(o, "testChannel", false);
   if (g_order.empty() && o.contains("quitOnLastWindowClosed")) g_quit_on_last_window = jbool(o, "quitOnLastWindowClosed", true);
+  if (g_order.empty()) set_protocol_schemes(o.contains("protocols") ? o["protocols"] : json());
+  std::string session;
+  if (!session_option(o, session)) return -5;
   auto *w = new Window;
   w->id = g_next_id++;
   w->label = jstr(o, "label", g_order.empty() ? "main" : "window-" + std::to_string(w->id));
@@ -1433,6 +1535,7 @@ static int create_window(const json &o) {
   w->view.debug = jbool(o, "debug", false);
   w->view.contextMenu = w->view.debug;
   w->view.transparent = jbool(o, "transparent", false);
+  w->view.session = session;
   g_views[w->id] = &w->view;
   attach_app_menu(w);
   theme_apply_window(w);
@@ -1656,6 +1759,7 @@ void backend_init_services() {
   register_web_control();
   register_downloads();
   register_sessions();
+  register_web_sessions();
   register_deep_link();
 }
 } // namespace sd

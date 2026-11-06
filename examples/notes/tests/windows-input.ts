@@ -60,8 +60,8 @@ $s = Get-Content -Raw $Spec | ConvertFrom-Json
 $A = [System.Windows.Automation.AutomationElement]
 $TS = [System.Windows.Automation.TreeScope]
 $True_ = [System.Windows.Automation.Condition]::TrueCondition
-function Wait-Window($title) {
-  for ($i = 0; $i -lt 40; $i++) { $h = [SdWin]::Find($title); if ($h -ne [IntPtr]::Zero) { return $h }; Start-Sleep -Milliseconds 250 }
+function Wait-Window($title, $tries = 40) {
+  for ($i = 0; $i -lt $tries; $i++) { $h = [SdWin]::Find($title); if ($h -ne [IntPtr]::Zero) { return $h }; Start-Sleep -Milliseconds 250 }
   throw "no window titled '$title'"
 }
 function Rect($h) { $r = New-Object SdWin+RECT; [void][SdWin]::GetWindowRect($h, [ref]$r); return $r }
@@ -102,7 +102,7 @@ switch ($Mode) {
   'child-button' { $h = Wait-Window $s.title; $b = Descendant $h { param($e) $e.Current.Name -eq $s.button }; Invoke-El $b; 'pressed' }
   'dialog-button' { $h = Wait-Window $s.title; $b = Descendant $h { param($e) $e.Current.AutomationId -like 'CommandButton_*' -and $e.Current.Name -eq $s.button }; Invoke-El $b; 'pressed' }
   'file-dialog' { # The file name box of the common dialog (1001 saving, 1148 opening; WM_SETTEXT), then its default button.
-    $h = Wait-Window $s.title
+    $h = Wait-Window $s.title 120 # the shell can take a while to open one: over 11 s has been seen on the runner
     $edit = Descendant $h { param($e) $e.Current.ClassName -eq 'Edit' -and @('1001', '1148') -contains $e.Current.AutomationId }
     [void][SdWin]::SendMessage([IntPtr]$edit.Current.NativeWindowHandle, 0x000C, [IntPtr]::Zero, $s.path)
     Start-Sleep -Milliseconds 300

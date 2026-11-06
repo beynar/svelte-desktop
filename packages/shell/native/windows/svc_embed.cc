@@ -1,6 +1,6 @@
 // view.* — extra WebView2 controllers embedded in a window (Electron's BrowserView),
 // same ops and events as native/platform_view.mm and native/linux/svc_view.cc:
-//   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, hidden?, debug?} → {id, windowId}
+//   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, hidden?, debug?, session?} → {id, windowId}
 //   (`hidden`: it loads out of sight, until `show`)
 //   (the view's page has window.__desktopView = its id)
 //   setBounds · getBounds · navigate {url|route} · show · hide · reload · getInfo
@@ -195,6 +195,9 @@ static void register_view_ops() {
     if (!c->args.contains("bounds") || !c->args["bounds"].is_object()) return c->fail("invalid_args", "view.create: `bounds` {x,y,width,height} is required");
     std::string url = url_from(c);
     if (url.empty()) return c->fail("invalid_args", "view.create: `url` or `route` is required");
+    std::string session;
+    if (!session_option(c->args, session)) return c->fail("invalid_args", "view.create: unknown session or invalid recovery policy");
+    if (c->flag("tab", false) && !c->has("session")) session = w->view.session; // a tab's page is its window's
     std::string ident = c->str("id", "view-" + std::to_string(g_next_embed));
     if (auto old = g_embedded.find(ident); old != g_embedded.end()) destroy_embedded(old->second);
     const json &b = c->args["bounds"];
@@ -222,6 +225,7 @@ static void register_view_ops() {
     e->view.contextMenu = e->view.debug;
     e->view.transparent = c->flag("transparent", false);
     e->view.browserView = ident;
+    e->view.session = session;
     e->view.extraScript = "if(window.top===window){window.__desktopView=" + json(ident).dump() + ";" + (c->flag("pane", false) ? "window.__desktopPaneView=true;" : std::string()) + (c->flag("tab", false) ? "window.__desktopTabView=true;" : "") + "}"; // the page knows it's a view
     views()[e->view.id] = &e->view;
     place(e);

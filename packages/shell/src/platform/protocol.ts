@@ -23,7 +23,7 @@ function serverOnly() {
 	if (typeof window !== 'undefined') throw new NativeApiError('denied', 'protocol handlers belong to server code');
 }
 
-/** Custom resource schemes declared in desktop.config.protocols (macOS and Linux). */
+/** Custom resource schemes declared in desktop.config.protocols. */
 export const protocol = {
 	handle(scheme: string, handler: ProtocolHandler): void {
 		serverOnly();

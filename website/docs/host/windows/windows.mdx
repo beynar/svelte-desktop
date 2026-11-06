@@ -37,7 +37,7 @@ Create a window and resolve `{ windowId: number; label: string }`. This starts p
 | `modal` | `boolean` | `false` | macOS native sheet child; requires a valid parent and focusable window. |
 | `type` | `'normal' \| 'panel'` | `'normal'` | macOS native window class. |
 | `focusable` | `boolean` | `true` | macOS: permit keyboard focus. |
-| `session` | `string` | Default session | [Web session](/host/web/sessions) on macOS and Linux. |
+| `session` | `string` | Default session | [Web session](/host/web/sessions). |
 | `recovery` | `WebviewRecovery` | `'reload'` on macOS | `'reload'` or `'manual'` content-process recovery. See [`host.webview`](/host/web/webview). |
 | `label` | `string` | Generated (`'main'` for the first window, otherwise `window-…`) | App-wide unique label; duplicates reject `invalid_args`. |
 | `path` | `string` | `'/'` | App route, loaded with the app's authenticated session. |
@@ -66,9 +66,9 @@ Create a window and resolve `{ windowId: number; label: string }`. This starts p
 | `backgroundThrottling` | `boolean` | `true` | macOS: `false` keeps the page running at full speed out of sight. |
 | `tabbingIdentifier` | `string` | System default | macOS native tab group identifier. |
 
-Linux and Windows ignore `parentId`, `modal`, `type`, `focusable`, `recovery`, `movable`, `focus`, `animate`, `titlebarTransparent`, `vibrancy`, `vibrancyState`, `trafficLightPosition`, `aspectRatio`, `backgroundThrottling`, and `tabbingIdentifier`. Windows ignores `session` too. Do not rely on these options there. `titleBarStyle` belongs to main-window configuration and the runtime setter; it is not a field in the exported `WindowCreateOptions` type.
+Linux and Windows ignore `parentId`, `modal`, `type`, `focusable`, `recovery`, `movable`, `focus`, `animate`, `titlebarTransparent`, `vibrancy`, `vibrancyState`, `trafficLightPosition`, `aspectRatio`, `backgroundThrottling`, and `tabbingIdentifier`. Do not rely on these options there. `titleBarStyle` belongs to main-window configuration and the runtime setter; it is not a field in the exported `WindowCreateOptions` type.
 
-On macOS, invalid relationship/class/focusability options or an unknown session/recovery policy reject `invalid_args`; on Linux, an unknown session does. Native creation failure rejects `internal`.
+On macOS, invalid relationship/class/focusability options or an unknown session/recovery policy reject `invalid_args`; on Linux and Windows, an unknown session does. Native creation failure rejects `internal`.
 
 #### `WindowAnimation`
 

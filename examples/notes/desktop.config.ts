@@ -7,6 +7,8 @@ export default defineConfig({
 	identifier: 'dev.kitop.notes',
 	window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 'main', titleBarStyle: 'hiddenInset' },
 	schemes: ['svelte-notes'],
+	// Answered by src/lib/server/protocol-probe.ts, for the tests.
+	protocols: ['notes-asset'],
 	// Keeps running with no window (menu-bar icon, Dock click reopens): pushes keep arriving.
 	quitOnLastWindowClosed: false,
 	fileTypes: [{ name: 'Markdown', extensions: ['md'], role: 'Viewer' }],

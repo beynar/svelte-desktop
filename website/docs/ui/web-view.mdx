@@ -156,7 +156,7 @@ const off = host.webview.onLifecycle(async (event) => {
 
 See [`onLifecycle`](/host/web/webview#events) and [`setRecovery`](/host/web/webview#setrecoveryrecovery-target) for the event fields.
 
-## Sessions and private profiles (macOS, Linux)
+## Sessions and private profiles
 
 A named profile gives a window, popover or view its own cookies and storage. Choose it when you create the view; it can't change afterward.
 
@@ -171,9 +171,9 @@ await host.view.destroy('account-preview');
 await host.sessions.remove('account-two');
 ```
 
-Create profiles after the main app has authenticated: the app's session cookie is copied in so app routes stay authenticated. A profile isn't a sandbox for untrusted app code. Persistent named profiles and per-profile proxies (`host.sessions.setProxy`) need macOS 14 on macOS. See the [sessions reference](/host/web/sessions) for cookies, proxies and removal rules. Windows manages the cookies of the default profile, without named profiles or proxies.
+Create profiles after the main app has authenticated: the app's session cookie is copied in so app routes stay authenticated. A profile isn't a sandbox for untrusted app code. Persistent named profiles and per-profile proxies (`host.sessions.setProxy`) need macOS 14 on macOS. On Windows a proxy can't change while a view is open in the session, and the default session can't have one. See the [sessions reference](/host/web/sessions) for cookies, proxies and removal rules.
 
-## Native input policy (macOS, Linux)
+## Native input policy
 
 Declare window-local shortcuts before WebKit and the menu see the keys:
 
@@ -190,7 +190,7 @@ await host.webview.setInputPolicy({});
 off();
 ```
 
-Intercepted keys are consumed natively; `onBeforeInput` is told afterwards and can't prevent them. Use normal DOM listeners for ordinary editing. See [input policy](/host/input/input-policy) for key names and modifiers.
+Intercepted keys are consumed natively; `onBeforeInput` is told afterwards and can't prevent them. Use normal DOM listeners for ordinary editing. See [input policy](/host/input/input-policy) for key names and modifiers, and for the keys Windows can't intercept.
 
 ## Web permissions
 
@@ -223,7 +223,7 @@ host.ready(async () => {
 
 Check the exact origin and bound the retries before you supply credentials. To trust a known self-signed certificate, register its expected SHA-256 fingerprint with `host.webview.allowCertificate({ host, fingerprint })` before navigating; there is no wildcard or global bypass. Client certificates, `revokeCertificate` and the rest are in the [reference](/host/web/web-policy#onauthchallengehandler-options).
 
-## Declarative request rules (macOS, Linux)
+## Declarative request rules
 
 Block or modify requests with WebKit content-blocker rules, app-wide and not kept across launches:
 
@@ -246,4 +246,4 @@ await host.webview.setNavigationPolicy(async ({ url }) =>
 );
 ```
 
-Both are covered in [content rules and scripts](/host/web/web-content), along with user scripts and content worlds (`host.webview.scripts`). The navigation policy also works on Windows; the rest of this section is macOS and Linux.
+Both are covered in [content rules and scripts](/host/web/web-content), along with user scripts and content worlds (`host.webview.scripts`). On Windows the shell matches the rules itself, and refuses what WebView2 can't do, such as `block-cookies`: see [rules on Windows](/host/web/web-content#rules-on-windows).

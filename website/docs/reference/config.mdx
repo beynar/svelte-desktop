@@ -29,7 +29,7 @@ export default defineConfig({ appName: 'Notes', identifier: 'com.example.notes' 
     language: { type: "string", default: '"en"', description: "The language of the texts in this config (appName, permission reasons)." },
     locales: { type: "Record<string, { name?: string; permissions?: Record<string, string> }>", description: "The app's other languages: its name, permission prompts and the shell's standard menus in the user's language (macOS). See [Languages](/shipping/languages)." },
     schemes: { type: "string[]", description: "Deep-link URL schemes, delivered as openUrls events." },
-    protocols: { type: "string[]", description: "macOS and Linux resource schemes handled by `host.protocol` in the Bun Worker. Registered before web views are created; invalid and WebKit-reserved schemes are rejected. Distinct from deep-link `schemes`." },
+    protocols: { type: "string[]", description: "Resource schemes handled by `host.protocol` in the Bun Worker. Registered before web views are created; invalid and WebKit-reserved schemes are rejected. Distinct from deep-link `schemes`." },
     fileTypes: { type: "FileTypeConfig[]", description: "Document types the app opens, delivered as openFiles events." },
     permissions: { type: "PermissionsConfig", description: "OS permissions with the reason shown to the user; listed below." },
     usageDescriptions: { type: "Record<string, string>", description: "Deprecated alias for permission usage strings. Explicit `permissions` strings take precedence." },

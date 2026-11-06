@@ -51,6 +51,8 @@ bool base64_decode(const std::string &in, std::string &out);
 /// "scheme://host[:port]" of a URL, "" when it has no authority.
 std::string url_origin(const std::string &url);
 std::string url_scheme(const std::string &url);
+/// Its host, without port: "[::1]" keeps its brackets.
+std::string url_host(const std::string &url);
 std::string last_error_message(DWORD err = GetLastError());
 std::string hresult_message(HRESULT hr);
 
@@ -139,17 +141,22 @@ struct View {
   bool askingToReload = false;         // the "not responding" question is on screen
   bool failed = false;                 // controller creation failed for good
   bool ready = false;                  // controller set up and bridge script registered
-  EventRegistrationToken tokens[12]{}; // [7]: DocumentTitleChanged (view.* only), [8]: FrameNavigationStarting, [9]: DownloadStarting, [10]: ScreenCaptureStarting, [11]: WebResourceRequested
+  EventRegistrationToken tokens[13]{}; // [7]: DocumentTitleChanged (view.* only), [8]: FrameNavigationStarting, [9]: DownloadStarting, [10]: ScreenCaptureStarting, [11]: WebResourceRequested (navigation policy), [12]: WebResourceRequested (schemes and content rules)
   bool holdsRequests = false;          // navigation policy: see web_policy_attach
   bool pageHidden = false;             // its window or view is hidden or minimized
   bool throttling = true;              // setBackgroundThrottling: false keeps it visible to the page regardless
   std::string browserView;             // view.* id: any origin may load ("" = app page)
+  std::string session;                 // named session ("" = the default one), for good once created
+  bool watchesRequests = false;        // tokens[12] is registered
+  bool ruleFilter = false;             // the every-resource filter is on (content rules in use)
+  std::string pendingTop;              // the top-level navigation under way: what's first party for its own request
+  unsigned navigation = 0;             // top-level navigations started
 };
 
 /// Every live web view by native id (windows + popovers).
 std::map<int, View *> &views();
 View *find_view(int nativeId);
-/// Create the controller for `v` (async). `v->host` must be set.
+/// Create the controller for `v` (async), in its session. `v->host` must be set.
 void view_create(View *v);
 /// Run now if the controller exists, else when it does.
 void view_when_ready(View *v, std::function<void()> fn);
@@ -339,7 +346,8 @@ void register_webview();
 void register_web_policy();
 void register_web_control();
 void register_downloads();
-void register_sessions();
+void register_sessions();    // svc_cookies.cc: cookie ops
+void register_web_sessions(); // svc_web_sessions.cc
 void register_deep_link();
 
 /// Web policy (svc_web_policy.cc): held until the server answers or its deadline.
@@ -365,6 +373,75 @@ void downloads_attach(View *v);
 void downloads_detach(View *v);
 /// Cookie watchers of a page leaving (svc_cookies.cc).
 void sessions_page_unloaded(int native_id);
+
+// Sessions (svc_web_sessions.cc). A named one is a WebView2 profile with a hidden web view holding it
+// open, which is also what reaches its cookies with no view of the app's in it. It has an environment
+// of its own (`folder`) once it has had a proxy: browser arguments are per environment.
+struct Session {
+  std::string id;
+  bool persistent = true;
+  bool removing = false;        // being set up, changed or deleted: nothing can use it now
+  int pending = 0;              // cookie operations under way
+  std::string profile, folder;  // WebView2 profile name; its own user data folder ("": the app's)
+  ICoreWebView2Environment *env = nullptr; // with `folder`
+  ICoreWebView2Controller *anchor = nullptr;
+  ICoreWebView2 *web = nullptr;
+  ICoreWebView2CookieManager *cookies = nullptr;
+  bool opening = false;
+  std::vector<std::function<void(const std::string &)>> waiters;
+  json proxy;                   // what getProxy answers, null: system defaults
+  std::string proxyUser, proxyPassword;
+  int proxyAnswers = 0;         // credentials given lately: too many means they're wrong
+  ULONGLONG proxyAnswered = 0;
+  std::map<std::string, json> snapshot; // svc_cookies.cc
+  bool hasSnapshot = false, reading = false, dirty = false;
+};
+using SessionPtr = std::shared_ptr<Session>;
+/// By id ("" or "default": the default one). nullptr: unknown or not usable now.
+SessionPtr session_named(const std::string &id);
+std::map<std::string, SessionPtr> &sessions();
+/// The hidden web view of a named session, opened if it had to be. `error` is "" when it's there.
+void session_open(const SessionPtr &s, std::function<void(const std::string &error)> done);
+/// json `session` option of a window, view or popover. false: it names no session.
+bool session_option(const json &options, std::string &session);
+/// Runs `fn` when the session can take a controller: a null `options` means the default one's.
+void session_controller_options(const std::string &session, std::function<void(ICoreWebView2Environment *, ICoreWebView2ControllerOptions *, const std::string &error)> fn);
+/// Runs `load` once the app's own cookie is in the view's session, or says the load failed.
+void session_before_load(View *v, const std::string &url, std::function<void()> load);
+/// The environment a session's views are in: "" for the app's, shared by the other sessions.
+std::string session_environment_key(const std::string &session);
+/// That environment's browser process is gone: forget what was in it.
+void sessions_environment_lost(const std::string &key);
+/// The default environment (shell_win.cc): every view and session without its own.
+void with_env(std::function<void(ICoreWebView2Environment *)> fn);
+std::wstring user_data_folder();
+/// A new environment on `folder`, with the app's custom schemes and these browser arguments. They come from the shell, never from the process's environment.
+HRESULT environment_create(const std::wstring &folder, const std::wstring &arguments, std::function<void(HRESULT, ICoreWebView2Environment *)> done);
+/// Proxy credentials for a challenge from `uri`, if it's the proxy of the view's session.
+bool session_proxy_challenge(View *v, const std::string &uri, bool &has_credentials, std::string &user, std::string &password);
+/// The profile's cookie manager (svc_cookies.cc), owned, nullptr when no web view is open.
+ICoreWebView2CookieManager *session_cookie_manager(const SessionPtr &s);
+using CookiesFn = std::function<void(HRESULT, ICoreWebView2CookieList *)>;
+/// Empty uri: every cookie of the profile.
+bool session_get_cookies(ICoreWebView2CookieManager *m, const std::string &uri, CookiesFn done);
+/// Every cookie as JSON, the shell's own included, and back: for a session changing environment.
+void session_read_cookies(const SessionPtr &s, std::function<void(const json &)> done);
+void session_write_cookies(const SessionPtr &s, const json &cookies);
+/// The first thing changes compare to, for a session that starts while someone listens.
+void session_cookies_started(const SessionPtr &s, std::function<void()> done);
+
+// Custom schemes (svc_web_sessions.cc).
+void set_protocol_schemes(const json &input); // desktop.config protocols, before the first web view
+const std::vector<std::string> &protocol_schemes();
+bool protocol_scheme(const std::string &scheme);
+// What every web view gets from svc_web_sessions.cc: registered scripts, the request handler, the input policy.
+void web_sessions_attach(View *v, std::function<void()> done);
+void web_sessions_detach(View *v);
+void web_sessions_navigating(View *v, const std::string &url);
+void web_sessions_content_loading(View *v);
+/// A key the web view reports. true: consumed. `menus`: whether menu accelerators may have it.
+bool input_policy_key(int native_id, UINT vk, ICoreWebView2AcceleratorKeyPressedEventArgs *args, bool &menus);
+UINT current_key_mods(); // MOD_* held now (svc_menu.cc)
 /// The web view a webview.* call targets (svc_webview.cc); nullptr after failing the call.
 View *view_for_call(const CallPtr &c);
 /// WebviewSource of a web view: windowId, popoverId, viewId (svc_webview.cc).

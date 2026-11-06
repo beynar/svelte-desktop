@@ -54,6 +54,12 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 ### Added
 
 - One project, two sides: `+page.desktop.svelte`, `+page.server.desktop.ts`, `+layout.desktop.svelte`, `+server.desktop.ts` and `hooks.server.desktop.ts` take the place of their file in the desktop app, and the website ignores them. `desktop({ routes: { exclude } })` keeps routes out of the app. `import.meta.env.KITOP_DESKTOP` says which side the code is built for, at build time.
+- Windows: `host.sessions.create` and `remove`, and the `session` option of windows, views and popovers: WebView2 profiles, with cookies per session.
+- Windows: `host.sessions.setProxy`, in a browser process of the session's own. It can't change while a view is open in the session, and the default session can't have one.
+- Windows: custom protocols, declared with `protocols` and answered by `host.protocol`. A response reaches the page whole, when it ends: WebView2 can't take less.
+- Windows: `setContentRules`, `removeContentRules` and `listContentRules`, matched by the shell. `block-cookies` is refused, and WebSockets aren't reached.
+- Windows: `scripts.register`, `scripts.unregister` and `scripts.list`, named worlds included.
+- Windows: `setInputPolicy`, `getInputPolicy` and `onBeforeInput`, for what's held with Control or Alt and keys that make no character. Other rules are refused.
 - Linux: `setNavigationPolicy` holds a navigation until the answer, so a refused one sends no request. `isMainFrame` is `null` there.
 - Linux: `setPermissionHandler` and saved decisions, for camera, microphone, screen and location. `getUserMedia` now exists on Linux.
 - Linux: `onAuthChallenge`, `allowCertificate` and `revokeCertificate`. `listClientIdentities` stays unsupported. Without a handler, a page asked for a login gets the server's answer instead of WebKit's login box.

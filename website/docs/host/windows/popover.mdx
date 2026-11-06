@@ -34,10 +34,10 @@ All fields in `PopoverCreateOptions` are optional:
 | `debug` | `boolean` | `false` | Enable inspection. macOS `inspectable` requires 13.3+. |
 | `tray` | `boolean` | `false` | Bind immediately to the [tray](/host/input/tray) button for native click-to-toggle. |
 | `preload` | `boolean` | `true` | Load at creation, so the first show is instant; costs one WebKit content process per popover (about 30-40 MB) on macOS. `false` defers loading until first show. |
-| `session` | `string` | Default session | [Session](/host/web/sessions) identifier on macOS and Linux. Ignored on Windows. |
+| `session` | `string` | Default session | [Session](/host/web/sessions) identifier. |
 | `recovery` | `WebviewRecovery` | `'reload'` on macOS | `'reload'` or `'manual'` after content-process termination. Ignored on Linux and Windows. See [webview lifecycle](/host/web/webview). |
 
-Creation rejects `unavailable` if an app route needs an app origin that is not known yet. macOS rejects `invalid_args` for an unknown session or invalid recovery policy, Linux for an unknown session.
+Creation rejects `unavailable` if an app route needs an app origin that is not known yet. macOS rejects `invalid_args` for an unknown session or invalid recovery policy, Linux and Windows for an unknown session.
 
 ### `PopoverInfo`
 
@@ -162,7 +162,7 @@ Use `host.popover.onShown(fn)` or `host.on('popoverShown', fn)`. Each helper acc
 | `onReady`, `onShown`, `onHidden`, `onResized` | ✓ | ✓ | ✓ |
 | `currentPopover`, `closePopover` | ✓ | ✓ | ✓ |
 
-Partial: Linux and Windows use borderless windows without a native arrow or vibrancy. Both ignore `recovery`, `animate`, and `cornerRadius`; Windows also ignores `session`, `edge` and `transparent`. On macOS, the transparent under-page background refinement requires 12+, and `inspectable` requires 13.3+.
+Partial: Linux and Windows use borderless windows without a native arrow or vibrancy. Both ignore `recovery`, `animate`, and `cornerRadius`; Windows also ignores `edge` and `transparent`. On macOS, the transparent under-page background refinement requires 12+, and `inspectable` requires 13.3+.
 
 ## Example
 

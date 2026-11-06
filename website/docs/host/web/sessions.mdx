@@ -3,9 +3,9 @@ title: host.sessions
 description: Manage website profiles, cookies and per-session proxies.
 ---
 
-`host.sessions` manages the website data stores used by [web views](/host/web/webview). Use named profiles for separate accounts or private browsing. This service has no reactive state. Named profiles and proxies are for macOS and Linux; Windows manages the cookies of the default profile. See [Platform support](#platform-support).
+`host.sessions` manages the website data stores used by [web views](/host/web/webview). Use named profiles for separate accounts or private browsing. This service has no reactive state. See [Platform support](#platform-support) for where Windows differs.
 
-How-to: [Sessions and private profiles](/ui/web-view#sessions-and-private-profiles-macos-linux).
+How-to: [Sessions and private profiles](/ui/web-view#sessions-and-private-profiles).
 
 ## Methods
 
@@ -88,14 +88,14 @@ Resolves `SessionProxyInfo | null`. Returns the host-owned configuration, not re
 
 ### `capabilities()`
 
-Resolves `SessionCapabilities` for the running OS version. On Windows every field is `false`.
+Resolves `SessionCapabilities` for the running OS version.
 
 | Property | Type | Description |
 | --- | --- | --- |
 | `private` | `boolean` | Private profiles are supported (`true`). |
-| `persistentNamed` | `boolean` | Named persistent profiles are supported on macOS 14+ and on Linux. |
-| `proxy` | `boolean` | Per-profile proxies are supported on macOS 14+ and on Linux. |
-| `proxyAuthentication` | `boolean` | Proxy credentials are supported on macOS 14+ and on Linux. |
+| `persistentNamed` | `boolean` | Named persistent profiles are supported on macOS 14+, on Linux and on Windows. |
+| `proxy` | `boolean` | Per-profile proxies are supported on macOS 14+ and on Linux. On Windows, on named profiles only. |
+| `proxyAuthentication` | `boolean` | Proxy credentials are supported on macOS 14+, on Linux and on Windows. |
 | `pac` | `boolean` | PAC configuration is unsupported (`false`). |
 | `customBypass` | `boolean` | Custom bypass rules are unsupported (`false`). |
 
@@ -170,20 +170,36 @@ Subscribes to cookie changes across profiles and returns `() => void` to unsubsc
 
 `CookieChangedEvent` contains `session: string`, `cookie: SessionCookie` and `removed: boolean`. Additions and updates have `removed: false`; removals carry the previous cookie and `removed: true`. The shell authentication cookie is excluded.
 
-`onChanged` can miss very short-lived changes, so it is not an audit log. To catch `document.cookie` changes that WebKit does not report, on macOS the shell polls profiles with open views once per second, only while someone listens through `cookies.onChanged`. `host.on('sessionCookieChanged', callback)` does not enable that polling; use `cookies.onChanged`. Linux polls nothing: WebKitGTK reports every change.
+`onChanged` can miss very short-lived changes, so it is not an audit log. To catch `document.cookie` changes that WebKit does not report, on macOS the shell polls profiles with open views once per second, only while someone listens through `cookies.onChanged`. `host.on('sessionCookieChanged', callback)` does not enable that polling; use `cookies.onChanged`. Linux polls nothing: WebKitGTK reports every change. WebView2 has no cookie event, so Windows compares profiles the same way as macOS, and only notices a page's own change at the next comparison.
 
 ## Platform support
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `create`, `remove`, `setProxy` | ✓¹ | ✓³ | — |
-| `list`, `getProxy`, `capabilities` | ✓ | ✓ | ✓² |
-| `cookies.get`, `cookies.set`, `cookies.remove`, `cookies.onChanged` | ✓ | ✓⁴ | ✓² |
+| `create`, `remove`, `setProxy` | ✓¹ | ✓³ | ✓² |
+| `list`, `getProxy`, `capabilities` | ✓ | ✓ | ✓ |
+| `cookies.get`, `cookies.set`, `cookies.remove`, `cookies.onChanged` | ✓ | ✓⁴ | ✓ |
 
 1. Private profiles work on any supported macOS; `persistent: true` and `setProxy` need macOS 14+.
-2. The default profile only: `list` gives that one, `getProxy` gives `null`, and another `session` rejects with `invalid_args`. WebView2 has no cookie event, so `cookies.onChanged` compares the whole profile once a second while someone listens.
+2. See [Windows](#windows). A runtime too old for WebView2 profiles rejects `create` with `unavailable`, and `capabilities` says `false`.
 3. A persistent profile's data is in `sessions/` under the app's data folder, and removing it deletes that folder. A plain HTTP proxy receives `http://` requests directly (`GET http://host/`) rather than through CONNECT; over TLS, and for `https://` URLs, it's a CONNECT. Run against local HTTP, TLS and SOCKS5 proxies written for the tests, not against commercial ones.
 4. A cookie set without `SameSite` reads back as `Lax`, where macOS omits the field. The default profile keeps its lasting cookies in `cookies.sqlite` in the app's data folder.
+
+### Windows
+
+A session is a WebView2 profile: a folder under `WebView2` in the app's data folder for a persistent one, a private profile for the others. The shell keeps a hidden web view open in each session: that's what reaches its cookies with no view of yours in it, and what keeps a private session's data alive. It costs a renderer process per session. Removing a persistent session clears its data at once; WebView2 deletes its folder when the browser process has gone, or at a later launch. A private session leaves an empty folder there, deleted at a later launch.
+
+WebView2 has no per-profile proxy. A proxy is a `--proxy-server` argument for a whole browser process, fixed when that process starts. So on Windows:
+
+- **Views already open:** `setProxy` rejects with `unavailable` while a window, view or popover is open in the session, and nothing changes. Close them, set the proxy, open them again. They'd otherwise have to die, or stay behind on the old proxy with another cookie store.
+- **The first proxy moves the session.** It gets a browser process and a user data folder of its own (`WebView2-sessions` in the app's data folder), for good, even after `setProxy(id, null)`. Its cookies come along, and its other storage (localStorage, IndexedDB, cache) doesn't: it's deleted with the profile it was in. Later changes keep all of it, and restart that browser process, which takes a moment. A private session's own folder is deleted with it, and swept at a later launch if the app ends first.
+- **The default session can't have one.** `setProxy('default', proxy)` rejects with `unsupported`, because the app's own pages run in that browser process. `setProxy('default', null)` resolves.
+- A proxy isn't kept across launches, on any platform: set it again after `create`. On Windows a persistent session with its own folder comes back to it, without a proxy until then.
+- Everything the browser process sends goes through the proxy, including WebView2's own requests to Microsoft (`config.edge.skype.com` and SmartScreen were seen on the test runner). A plain HTTP proxy receives `http://` requests directly rather than through CONNECT. Loopback hosts bypass it, the whole of `127.0.0.0/8`.
+- A SOCKS proxy can't have credentials: Chromium doesn't send them, so they reject with `unsupported`. HTTP proxy credentials are answered by the shell when the proxy asks, and only then: a site asking for a password through that proxy goes to your [authentication handler](/host/web/web-policy) like any other. Wrong ones are tried three times in ten seconds, then the proxy's own answer reaches the page.
+- Run against local HTTP, TLS and SOCKS5 proxies written for the tests, not against commercial ones.
+
+Windows, views and popovers take `session` as elsewhere, and `host.webview.clearData` leaves named sessions alone. Tested on one runtime on a runner: see [limitations](/shipping/limitations#windows).
 
 ## Example
 

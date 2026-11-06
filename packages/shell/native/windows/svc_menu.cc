@@ -130,7 +130,7 @@ bool parse_accelerator(const std::string &accel, UINT &vk, UINT &mods, std::stri
   return true;
 }
 
-static UINT current_mods() {
+UINT current_key_mods() {
   UINT m = 0;
   if (GetKeyState(VK_CONTROL) < 0) m |= MOD_CONTROL;
   if (GetKeyState(VK_SHIFT) < 0) m |= MOD_SHIFT;
@@ -141,7 +141,7 @@ static UINT current_mods() {
 
 bool handle_accelerator(UINT vk, int nativeWindow) {
   if (g_accels.empty()) return false;
-  UINT mods = current_mods();
+  UINT mods = current_key_mods();
   for (auto &a : g_accels)
     if (a.vk == vk && a.mods == mods) {
       UINT cmd = a.cmd;

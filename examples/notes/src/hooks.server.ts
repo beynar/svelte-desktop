@@ -1,5 +1,6 @@
 import { onDesktopReady } from '@kitop/shell/server';
 import '#lib/server/update-probe.ts';
+import '#lib/server/protocol-probe.ts';
 
 onDesktopReady((desktop) => {
 	desktop.menu.set([

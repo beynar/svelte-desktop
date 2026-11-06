@@ -33,10 +33,10 @@ const { id } = await host.view.create({
 | `hidden` | `boolean` | `false` | Load without showing. On macOS, keep drawing at zero alpha with pointer events passing through until `show()`. |
 | `backgroundThrottling` | `boolean` | `true` | macOS: `false` keeps the view running while out of sight. Ignored on Linux and Windows. |
 | `debug` | `boolean` | `false` | Enable inspection; the macOS `inspectable` property requires macOS 13.3+. |
-| `session` | `string` | Default session | [Session](/host/web/sessions) identifier on macOS and Linux. Ignored on Windows. |
+| `session` | `string` | Default session | [Session](/host/web/sessions) identifier. |
 | `recovery` | `WebviewRecovery` | `'reload'` on macOS | `'reload'` or `'manual'` after content-process termination. Ignored on Linux and Windows. See [webview lifecycle](/host/web/webview). |
 
-Rejects `invalid_args` for a missing parent window, missing `bounds`, or a missing/invalid target. On macOS, an unknown session or invalid recovery policy also rejects `invalid_args`; on Linux, an unknown session does.
+Rejects `invalid_args` for a missing parent window, missing `bounds`, or a missing/invalid target. On macOS, an unknown session or invalid recovery policy also rejects `invalid_args`; on Linux and Windows, an unknown session does.
 
 ### `setBounds(id, bounds)`
 
@@ -127,7 +127,7 @@ Listen with `host.view.onLoaded(fn)` or `host.on('viewLoaded', fn)`. Every helpe
 
 On macOS, an app page loaded in a view comes with an `X-Desktop-View: <id>` request header. External content in a view can't call native APIs: the bridge only answers the app origin.
 
-Partial: Linux and Windows ignore `recovery`, `backgroundThrottling`, and `seeThrough`. Windows ignores `session` too. On macOS, the transparent under-page background refinement requires macOS 12+, and inspection uses `inspectable` on macOS 13.3+.
+Partial: Linux and Windows ignore `recovery`, `backgroundThrottling`, and `seeThrough`. On macOS, the transparent under-page background refinement requires macOS 12+, and inspection uses `inspectable` on macOS 13.3+.
 
 ## Example
 

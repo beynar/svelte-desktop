@@ -7,7 +7,7 @@ description: Serve app-owned resources to a page from a custom URL scheme, answe
 API reference: [`host.protocol`](/host/web/protocol).
 :::
 
-A custom protocol lets a page load app-owned resources from a URL such as `<img src="asset://archive/cover.svg">`, answered by a handler in your server code. It works on macOS and Linux.
+A custom protocol lets a page load app-owned resources from a URL such as `<img src="asset://archive/cover.svg">`, answered by a handler in your server code. It works on macOS, Linux and Windows.
 
 Declare the scheme (lowercase) in the config. Adding one needs a restart.
 
@@ -20,7 +20,7 @@ export default defineConfig({
 });
 ```
 
-Register the handler in **server code**, for example in `src/hooks.server.ts`. It receives a standard `Request` and returns a standard `Response`; a `Bun.file` or `ReadableStream` body is streamed to the page.
+Register the handler in **server code**, for example in `src/hooks.server.ts`. It receives a standard `Request` and returns a standard `Response`; a `Bun.file` or `ReadableStream` body is streamed to the page, except on Windows, where WebView2 takes a response whole once it ends. See [platform support](/host/web/protocol#platform-support).
 
 ```ts src/hooks.server.ts
 // Under `vite dev` this module can load again: drop the previous handler first.

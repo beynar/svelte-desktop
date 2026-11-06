@@ -153,6 +153,7 @@ static Popover *build(CallPtr c, const std::string &id, std::string &error) {
   p->view.host = hwnd;
   p->view.debug = c->flag("debug", false);
   p->view.contextMenu = p->view.debug;
+  session_option(c->args, p->view.session); // checked by the caller
   p->view.extraScript = "window.__shellPopover=Object.freeze({id:" + js_string(id) +
                         "});document.addEventListener('DOMContentLoaded',()=>document.documentElement.setAttribute('data-shell-popover',''));";
   views()[p->view.id] = &p->view;
@@ -395,6 +396,8 @@ static void preg(const std::string &op, PopoverOp body) {
 
 void register_popover() {
   reg("popover", "create", [](CallPtr c) {
+    std::string session;
+    if (!session_option(c->args, session)) return c->fail("invalid_args", "popover.create: unknown session or invalid recovery policy");
     std::string id = c->str("id");
     if (id.empty()) id = "popover-" + std::to_string(g_next_native);
     auto it = g_popovers.find(id);

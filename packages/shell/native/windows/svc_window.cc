@@ -52,6 +52,7 @@ static json info_row(Window *w) {
               {"label", w->label},
               {"focused", GetForegroundWindow() == w->hwnd},
               {"visible", IsWindowVisible(w->hwnd) != FALSE},
+              {"session", w->view.session.empty() ? json(nullptr) : json(w->view.session)},
               {"bounds", window_bounds_json(w->hwnd)}};
 }
 
@@ -109,6 +110,7 @@ void register_window() {
   reg("window", "create", [](CallPtr c) {
     int id = create_app_window(c->args);
     if (id == -4) return c->fail("invalid_args", "window.create: label `" + c->str("label") + "` is already used");
+    if (id == -5) return c->fail("invalid_args", "window.create: unknown session or invalid recovery policy");
     if (id <= 0) return c->fail("internal", "window.create failed");
     Window *w = find_window(id);
     if (c->has("opacity")) {

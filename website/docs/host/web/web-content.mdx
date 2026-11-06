@@ -5,13 +5,13 @@ description: Declarative request blocking, user scripts, content worlds and serv
 
 These members of `host.webview` control what web views load and which scripts run in their documents. Rules, the script registry and [custom protocols](/host/web/protocol) are global across [sessions](/host/web/sessions); a session does not isolate their configuration. Script targets can narrow injection to particular views.
 
-How-to: [Web view](/ui/web-view#declarative-request-rules-macos-linux).
+How-to: [Web view](/ui/web-view#declarative-request-rules).
 
 ## Methods
 
 ### `setContentRules(options)`
 
-Compile and install a WebKit content-blocker list for every existing and future window, popover and embedded view.
+Compile and install a WebKit content-blocker list for every existing and future window, popover and embedded view. On Windows the same format is matched by the shell: see [Rules on Windows](#rules-on-windows).
 
 ```ts
 await host.webview.setContentRules({
@@ -32,7 +32,7 @@ Resolves `null` after compilation. Reusing an `id` replaces the previous list on
 
 Rules affect subsequent requests, including requests from existing documents. They last for this app run. The shell adds exceptions for its own origin and event WebSocket, so rules cannot block the app's documents, resources or bridge.
 
-macOS and Linux.
+macOS, Linux and Windows.
 
 #### `ContentRule`
 
@@ -62,7 +62,7 @@ Other actions retain WebKit's normal condition validation. This is not Electron'
 
 ### `listContentRules()`
 
-Resolves `{ id, rules }[]`: the lists in place, with the rules as given. The reactive field `host.webview.contentRules` holds the same list and updates when you set or remove one. macOS and Linux.
+Resolves `{ id, rules }[]`: the lists in place, with the rules as given. The reactive field `host.webview.contentRules` holds the same list and updates when you set or remove one. macOS, Linux and Windows.
 
 ### `removeContentRules(id)`
 
@@ -72,7 +72,7 @@ Remove a list from all web views and cancel any in-flight replacement for that `
 await host.webview.removeContentRules('privacy');
 ```
 
-`id: string` must contain 1–256 characters, otherwise the call rejects with `invalid_args`. Resolves `null`, including when no list has that identifier. macOS and Linux.
+`id: string` must contain 1–256 characters, otherwise the call rejects with `invalid_args`. Resolves `null`, including when no list has that identifier. macOS, Linux and Windows.
 
 ### `scripts.register(script)`
 
@@ -105,7 +105,7 @@ Every supplied target field must match. These are registry filters, not the sing
 
 Resolves `null`. Invalid required fields or target shapes reject with `invalid_args`. Reusing an `id` replaces that script while retaining its registration order. Registration does not evaluate the script in the current document. The shell preserves its own bridge scripts when updating the registry.
 
-macOS only.
+macOS, Linux and Windows.
 
 ### `scripts.unregister(id)`
 
@@ -115,7 +115,7 @@ Stop future injection of a registered script.
 await host.webview.scripts.unregister('reader');
 ```
 
-`id: string` must contain 1–256 characters, otherwise the call rejects with `invalid_args`. Resolves `null`, including for an unknown identifier. Existing document effects are not undone. macOS and Linux.
+`id: string` must contain 1–256 characters, otherwise the call rejects with `invalid_args`. Resolves `null`, including for an unknown identifier. Existing document effects are not undone. macOS, Linux and Windows.
 
 ### `scripts.list()`
 
@@ -125,7 +125,7 @@ Return the global registry in registration order.
 const scripts = await host.webview.scripts.list();
 ```
 
-Resolves `UserScript[]`, with the fields described above. Native records include the resolved `mainFrameOnly` default. macOS and Linux.
+Resolves `UserScript[]`, with the fields described above. Native records include the resolved `mainFrameOnly` default. macOS, Linux and Windows.
 
 ### `setNavigationPolicy(policy)`
 
@@ -156,18 +156,42 @@ macOS, Linux and Windows. See [Platform support](#platform-support).
 
 Named `WKContentWorld` instances share the DOM but have separate JavaScript globals. A named world cannot see page globals, `host` or the shell bridge; the page cannot read its globals. DOM changes remain visible across worlds, so this is not a general sandbox for hostile code.
 
-To run code in a named world, pass `world` to [`executeJavaScript(code, target)`](/host/web/webview#executejavascriptcode-target). It defaults to `page` and executes in the main frame. Named-world execution is macOS only.
+To run code in a named world, pass `world` to [`executeJavaScript(code, target)`](/host/web/webview#executejavascriptcode-target). It defaults to `page` and executes in the main frame. Named-world execution through `executeJavaScript` is macOS only: registered scripts can use a named world on Linux and Windows too.
 
 ## Platform support
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `setContentRules`, `removeContentRules`, `listContentRules` | ✓ | ✓ | — |
-| `scripts.register`, `scripts.unregister`, `scripts.list` | ✓ | ✓ | — |
+| `setContentRules`, `removeContentRules`, `listContentRules` | ✓ | ✓ | ✓³ |
+| `scripts.register`, `scripts.unregister`, `scripts.list` | ✓ | ✓ | ✓⁴ |
 | `setNavigationPolicy` | ✓ | ✓² | ✓¹ |
 
 1. On Windows only embedded views are asked, main frame and frames; `<a download>` links aren't. WebView2 can't defer a navigation, so the UI thread waits for the answer with a nested message loop, for ten seconds at most. Platform calls keep working meanwhile, but WebView2's own callbacks wait: a policy that needs one, such as `executeJavaScript`, runs into the deadline and the navigation is canceled. A refused request gets a local answer, so it doesn't reach the server.
 2. On Linux views, windows and popovers are asked, frames too, and `isMainFrame` is `null`. A refused navigation sends no request. Because the frame isn't known, a window's scripted navigation to another origin is asked as well, where macOS sends it to the browser at once: `allow` still ends in the browser.
+3. See [Rules on Windows](#rules-on-windows).
+4. A `page` script runs through `AddScriptToExecuteOnDocumentCreated`, and a named world's through the DevTools protocol, so it really has its own globals. A script with `timing: 'end'` runs in a function on `DOMContentLoaded`, so its `var`s aren't page globals; with `timing: 'start'` they are.
+
+### Rules on Windows
+
+WebView2 has no content blocker. The shell matches the same JSON from `WebResourceRequested`, on every resource of every web view, on the UI thread. That handler is only installed while a list with something other than `css-display-none` exists: an app with no rules pays nothing. On the test runner, a page of 400 images took 30 to 50% longer under 200 rules, 0.3 to 0.5 ms per request, and all of them arrived. Filters are compiled once, to a matcher whose time depends on the URL's length and not on the pattern.
+
+The filter syntax is WebKit's: `.`, `[...]`, groups, `*`, `+`, `?`, `\\x` for a literal, `^` at the start and `$` at the end. Anything else rejects with `invalid_args`, as it does on macOS: no `|`, no `{n}`, no `\\d`.
+
+What's refused with `invalid_args`, since WebView2 can't do it and a rule that does nothing would look like one that works:
+
+- `block-cookies`. WebView2 adds a request's cookies after the handler has run: a real server still received them with the header taken away.
+- `resource-type: ['websocket']`. WebView2 doesn't raise the event for a WebSocket. A rule without a `resource-type` is accepted and doesn't stop one either: a real socket connected under `block` on its URL. This is the one thing a rule silently leaves out.
+- `resource-type: ['popup']` and `['svg-document']`. A popup never opens in a web view here, and an SVG document's request looks like any other's.
+- `if-frame-url`, `unless-frame-url`, `load-context` and any other trigger: the handler doesn't say which frame asks.
+- On a `css-display-none` rule, `resource-type` and `load-type`. See below.
+
+What behaves differently:
+
+- `block` answers a local 403 with no body: the server gets nothing. An image or a script fails. A same-origin `fetch()` resolves with status 403 instead of rejecting. A blocked page fails to load: a view reports `viewFailed` and shows WebView2's error page.
+- `make-https` answers a 307 to the same URL over HTTPS, keeping the port.
+- `css-display-none` is a script in each document. It looks at the document's own URL, not at the resources it loads. In a frame on another origin, `unless-domain` and `unless-top-url` see the top page's origin only. It takes effect from the next document, and a page's Content-Security-Policy doesn't stop it. An invalid selector is dropped without an error.
+- `load-type`: first party means the same registrable domain as the top document. There's no public suffix list here: the last two labels, or three under a two-letter country code when the label before it is short (`a.co.uk`). IP addresses must be equal.
+- A dedicated worker's requests are matched like the page's; on a runtime before `ICoreWebView2_22`, they aren't.
 
 ## Example
 

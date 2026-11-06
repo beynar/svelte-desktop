@@ -3,11 +3,11 @@ title: host.webview input policy
 description: Intercept window-local shortcuts before WebKit and control native menu accelerators.
 ---
 
-These `host.webview` methods declare native input rules for one window on macOS and Linux. Use them to reserve shortcuts before WebKit or the menu handles them, or to disable menu accelerators while an editor has focus. They are part of the service-only [`host.webview`](/host/web/webview), with no reactive store.
+These `host.webview` methods declare native input rules for one window on macOS, Linux and Windows. Use them to reserve shortcuts before WebKit or the menu handles them, or to disable menu accelerators while an editor has focus. They are part of the service-only [`host.webview`](/host/web/webview), with no reactive store.
 
 A consumed key never reaches the page's DOM listeners, so an editor can keep, say, Command+K for itself.
 
-How-to: [Native input policy](/ui/web-view#native-input-policy-macos-linux).
+How-to: [Native input policy](/ui/web-view#native-input-policy).
 
 ## Types
 
@@ -29,7 +29,7 @@ Each call replaces the window's whole policy; it does not merge with earlier set
 
 `InputModifier` is `'meta' | 'control' | 'alt' | 'shift'`. `meta` means Command, and `alt` means Option. Extra or missing modifiers prevent a match; Caps Lock and other flags are not part of the comparison.
 
-Named keys are `Enter` (also `Return`), `Escape`, `Tab`, `Space`, `Backspace`, `Delete` (forward delete), `ArrowUp`, `ArrowDown`, `ArrowLeft` and `ArrowRight`. Keypad Enter matches Enter. The `key` reported in events retains the spelling supplied in the rule.
+Named keys are `Enter` (also `Return`), `Escape`, `Tab`, `Space`, `Backspace`, `Delete` (forward delete), `ArrowUp`, `ArrowDown`, `ArrowLeft` and `ArrowRight`. Keypad Enter matches Enter. Windows also takes `Home`, `End`, `PageUp`, `PageDown`, `Insert` and `F1` to `F24`, and refuses other names with `invalid_args`. The `key` reported in events retains the spelling supplied in the rule.
 
 ### `BeforeInputEvent`
 
@@ -65,9 +65,9 @@ await host.webview.setInputPolicy({
 
 Resolves `{ monitorInstalled: boolean; interceptCount: number; menuShortcuts: boolean }`. A successful set reports `monitorInstalled: true`; `interceptCount` is the number of rules accepted.
 
-Rejects with `invalid_args` for a non-array intercept list, a non-boolean menu-shortcut setting, a rule without a nonempty string key, a non-array modifier list or an unknown modifier. Rejects with `unavailable` if the target window is not open or the native monitor could not be installed.
+Rejects with `invalid_args` for a non-array intercept list, a non-boolean menu-shortcut setting, a rule without a nonempty string key, a non-array modifier list or an unknown modifier, and on Windows for a key it can't intercept (see [Platform support](#platform-support)). Rejects with `unavailable` if the target window is not open or the native monitor could not be installed.
 
-macOS and Linux. Rules belong to the native window and expire when it closes. Other windows retain their own menu shortcuts. This policy does not unregister or disable OS-wide [`host.shortcuts`](/host/input/shortcuts).
+macOS, Linux and Windows. Rules belong to the native window and expire when it closes. Other windows retain their own menu shortcuts. This policy does not unregister or disable OS-wide [`host.shortcuts`](/host/input/shortcuts).
 
 ### `getInputPolicy(windowId?)`
 
@@ -84,13 +84,13 @@ console.log(policy.intercept, policy.menuShortcuts, policy.monitorInstalled);
 
 Resolves `{ monitorInstalled: boolean; intercept: InputShortcut[]; menuShortcuts: boolean }`. Before a policy is set, `intercept` is empty and `menuShortcuts` is `true`. `monitorInstalled` reports whether the native event monitor exists. Rejects with `unavailable` if the target window is not open.
 
-macOS only.
+macOS, Linux and Windows.
 
 ## Events
 
 | Event | Payload | When |
 | --- | --- | --- |
-| `beforeInput` | `BeforeInputEvent` | A window's intercepted key-down or key-up matches a rule and is consumed. macOS and Linux. |
+| `beforeInput` | `BeforeInputEvent` | A window's intercepted key-down or key-up matches a rule and is consumed. macOS, Linux and Windows. |
 
 `onBeforeInput(cb)` accepts `(event: BeforeInputEvent) => void` and returns an unsubscribe function synchronously. `host.on('beforeInput', cb)` is the raw event equivalent. Delivery is asynchronous to the server and pages; the helper does not filter by window. Check `windowId` before handling a window-specific command.
 
@@ -107,12 +107,19 @@ Unsubscribing does not clear the input policy. Restore it explicitly with `setIn
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `setInputPolicy`, `getInputPolicy` | ✓ | ✓ | — |
-| `onBeforeInput` | ✓ | ✓ | — |
+| `setInputPolicy`, `getInputPolicy` | ✓ | ✓ | ✓ |
+| `onBeforeInput` | ✓ | ✓ | ✓ |
 
 On Linux `meta` is the Super key, and `keyCode` is a hardware key code rather than a macOS one. `menuShortcuts: false` also turns off the menu bar's mnemonics. It has been run with real X11 key events, not on Wayland.
 
-Windows does not implement the policy operations or emit `beforeInput`, so `setInputPolicy` and `getInputPolicy` reject there (the shell's convention for an operation a platform does not implement is the `unsupported` code). Check the platform before calling, or catch the rejection. A listener alone does not install interception rules.
+On Windows the policy goes through WebView2's `AcceleratorKeyPressed`, which comes before the page and the menus, and only reports some keys:
+
+- **Honored:** anything held with Control or Alt, and on their own, or with Shift, the keys that make no character: `Escape`, the arrows, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, `Insert` and `F1` to `F24`.
+- **Refused with `invalid_args`:** a character key on its own or with Shift only, and `Enter`, `Tab`, `Space` and `Backspace` without Control or Alt. WebView2 doesn't report these: real key presses reached the page with no event. A rule for them would never hold, so it isn't accepted.
+
+`meta` is the Windows key, and Windows takes most combinations with it before the app sees them. `keyCode` is the virtual key code. A rule covers the window's own page and the views in it; the page's keyboard has to be in them, not in a native dialog. `menuShortcuts: false` keeps menu accelerators from running and lets the page have the key. Real key presses were run on a runner, not on a keyboard, and not with the Windows key.
+
+A listener alone does not install interception rules.
 
 ## Example
 

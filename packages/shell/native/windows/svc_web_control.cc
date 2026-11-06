@@ -492,9 +492,10 @@ struct ClearRun {
   size_t next = 0;
 };
 
+// Of the default session: named ones are left alone.
 static View *any_view() {
   for (auto &[id, v] : views())
-    if (v->webview) return v;
+    if (v->webview && v->session.empty()) return v;
   return nullptr;
 }
 
@@ -551,7 +552,7 @@ static void clear_sites(std::shared_ptr<ClearRun> run) {
       for (auto &[id, view] : views())
         queue->push_back([id = id, origin](std::function<void()> next) {
           View *v = find_view(id);
-          if (!v || !v->webview) return next();
+          if (!v || !v->webview || !v->session.empty()) return next();
           devtools(v, L"DOMStorage.clear", json{{"storageId", {{"securityOrigin", origin}, {"isLocalStorage", false}}}}, [next](bool) { next(); });
         });
   }

@@ -14,15 +14,15 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 
 | Feature | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| [Custom resource protocols](/features/protocols) | Supported | Supported | Unsupported |
-| Website sessions and per-session proxies | Supported | Supported | Unsupported |
-| Cookie management | Supported | Supported | Default profile |
+| [Custom resource protocols](/features/protocols) | Supported | Supported | Supported, a response arrives whole |
+| Website sessions and per-session proxies | Supported | Supported | Supported, a proxy on named sessions with no view open |
+| Cookie management | Supported | Supported | Supported |
 | Server-owned web permission handlers | Supported | Supported | Supported |
 | Server-owned authentication handlers and certificate exceptions | Supported | Supported, top-level loads for certificates | Supported |
 | Find in page, JavaScript dialog automation, media state and control, crash recovery policy | Supported | Supported | Supported |
 | File-drop events with real paths | Supported | Supported | Supported, paths at the drop only |
 | `clearData` | Supported | Supported | Supported, sites its views loaded |
-| Registered web scripts and content rules | Supported | Supported | Unsupported |
+| Registered web scripts and content rules | Supported | Supported | Supported, no `block-cookies`, nor WebSockets |
 | Navigation policy | Supported | Supported | Supported |
 | Native download management | Supported | Supported, resume starts over | Supported |
 | File bookmarks | Supported | Supported, within a folder | Unsupported |
@@ -36,7 +36,7 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 | System idle time | Supported | X11 | Supported |
 | Quick Look | Supported | GNOME's previewer, run against a stand-in only | Unsupported |
 | Dragging files out of a page | Supported | X11 | Unsupported |
-| Native input policy | Supported | Supported | Unsupported |
+| Native input policy | Supported | Supported | Supported, keys WebView2 reports |
 | Web-view printing and PDF export | Supported | Supported | Supported with a recent WebView2 runtime |
 
 These are shell API limits. The page still has the web APIs its installed web engine provides.
@@ -52,8 +52,8 @@ These are shell API limits. The page still has the web APIs its installed web en
 
 ## Windows
 
-- **Tested on a Windows runner, not on a PC:** CI runs end-to-end tests on a Windows runner for notifications, windows, title-bar dragging, menus, tray, dialogs, clipboard, views, background jobs, MCP, relaunch, permissions, downloads, printing, navigation policy, cookies, authentication, certificates, find, JavaScript dialogs, media, crash recovery, file drop and `clearData`. High-DPI and multi-monitor setups aren't covered, since the runner has one display at 100%, and only x64 runs: arm64 is compiled. Test your app on a real PC.
-- **Windows differs where WebView2 does:** a paused download resumes only in the run that started it, `host.webview.download` needs an attachment from another origin, a navigation policy holds the navigation with a bounded wait, `fileDragEnter` has no paths, and `clearData` reaches the sites views loaded. See [downloads](/host/web/downloads#platform-support), [navigation policy](/host/web/web-content#platform-support), [web view](/host/web/webview#platform-support) and [web policy](/host/web/web-policy#platform-support).
+- **Tested on a Windows runner, not on a PC:** CI runs end-to-end tests on a Windows runner for notifications, windows, title-bar dragging, menus, tray, dialogs, clipboard, views, background jobs, MCP, relaunch, permissions, downloads, printing, navigation policy, cookies, authentication, certificates, find, JavaScript dialogs, media, crash recovery, file drop, `clearData`, sessions, proxies, custom protocols, content rules, registered scripts and the input policy. High-DPI and multi-monitor setups aren't covered, since the runner has one display at 100%, and only x64 runs: arm64 is compiled. Test your app on a real PC.
+- **Windows differs where WebView2 does:** a paused download resumes only in the run that started it, `host.webview.download` needs an attachment from another origin, a navigation policy holds the navigation with a bounded wait, `fileDragEnter` has no paths, `clearData` reaches the sites views loaded, a custom protocol's response reaches the page whole when it ends and a request going away isn't noticed before its document does, a proxy can't change while a view is open in its session and the default session can't have one, content rules have no `block-cookies` and don't reach WebSockets, and the input policy only has keys held with Control or Alt and keys that make no character. See [downloads](/host/web/downloads#platform-support), [navigation policy](/host/web/web-content#platform-support), [web view](/host/web/webview#platform-support), [web policy](/host/web/web-policy#platform-support), [protocols](/host/web/protocol#platform-support), [sessions](/host/web/sessions#windows), [content rules](/host/web/web-content#rules-on-windows) and [input policy](/host/input/input-policy#platform-support).
 - The WebView2 runtime must be installed. The shell offers an Evergreen download link when it is missing; it does not bundle the runtime.
 - Rust and Go plugins need a Windows host. See [Distribution](/shipping/distribution#windows).
 - Windows repeating notifications queue at most 128 occurrences over the next 30 days, topped up while the app runs. They do not repeat indefinitely while closed.

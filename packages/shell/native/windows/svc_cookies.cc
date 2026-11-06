@@ -1,8 +1,7 @@
-// sessions.* on the default profile, same shapes as native/platform_sessions.mm:
-//   list · capabilities · getProxy · cookiesGet · cookiesSet · cookiesRemove · watchCookies
-// Named profiles and proxies aren't implemented: sessions.create, remove and setProxy stay
-// unregistered (`unsupported`), and any other session id is unknown. Every web view here shares one
-// profile, so any of them reaches its cookie manager.
+// Cookies of every session, same shapes as native/platform_sessions.mm:
+//   sessions.cookiesGet · cookiesSet · cookiesRemove · watchCookies
+// The rest of sessions.* is in svc_web_sessions.cc. Any web view of the default session reaches its
+// cookie manager, and a named one's hidden web view reaches its own.
 #include "win.hpp"
 
 #include <ctime>
@@ -12,9 +11,13 @@ namespace sd::win {
 
 static const char *const kGateCookie = "__kitop"; // src/gate.ts SESSION_COOKIE: the shell's, never exported
 
-static ICoreWebView2CookieManager *cookie_manager() {
+ICoreWebView2CookieManager *session_cookie_manager(const SessionPtr &s) {
+  if (s->id != "default") {
+    if (s->cookies) s->cookies->AddRef();
+    return s->cookies;
+  }
   for (auto &[id, v] : views()) {
-    if (!v->webview) continue;
+    if (!v->webview || !v->session.empty()) continue;
     auto *wv2 = query<ICoreWebView2_2>(v->webview, IID_ICoreWebView2_2);
     if (!wv2) continue;
     ICoreWebView2CookieManager *m = nullptr;
@@ -57,10 +60,7 @@ static json cookie_json(ICoreWebView2Cookie *c) {
   return d;
 }
 
-using CookiesFn = std::function<void(HRESULT, ICoreWebView2CookieList *)>;
-
-/// Empty uri: every cookie of the profile.
-static bool get_cookies(ICoreWebView2CookieManager *m, const std::string &uri, CookiesFn done) {
+bool session_get_cookies(ICoreWebView2CookieManager *m, const std::string &uri, CookiesFn done) {
   auto *cb = new Cb<ICoreWebView2GetCookiesCompletedHandler, HRESULT, ICoreWebView2CookieList *>(
       IID_ICoreWebView2GetCookiesCompletedHandler, [done](HRESULT hr, ICoreWebView2CookieList *list) -> HRESULT {
         done(hr, list);
@@ -71,26 +71,63 @@ static bool get_cookies(ICoreWebView2CookieManager *m, const std::string &uri, C
   return SUCCEEDED(hr);
 }
 
+void session_read_cookies(const SessionPtr &s, std::function<void(const json &)> done) {
+  ICoreWebView2CookieManager *m = session_cookie_manager(s);
+  if (!m) return done(json::array());
+  bool started = session_get_cookies(m, "", [done](HRESULT, ICoreWebView2CookieList *list) {
+    json out = json::array();
+    UINT n = 0;
+    if (list) list->get_Count(&n);
+    for (UINT i = 0; i < n; i++) {
+      ICoreWebView2Cookie *c = nullptr;
+      if (FAILED(list->GetValueAtIndex(i, &c)) || !c) continue;
+      out.push_back(cookie_json(c));
+      c->Release();
+    }
+    done(out);
+  });
+  m->Release();
+  if (!started) done(json::array());
+}
+
+void session_write_cookies(const SessionPtr &s, const json &cookies) {
+  ICoreWebView2CookieManager *m = session_cookie_manager(s);
+  if (!m) return;
+  for (const json &d : cookies) {
+    ICoreWebView2Cookie *c = nullptr;
+    if (FAILED(m->CreateCookie(wide(jstr(d, "name")).c_str(), wide(jstr(d, "value")).c_str(), wide(jstr(d, "domain")).c_str(), wide(jstr(d, "path")).c_str(), &c)) || !c) continue;
+    c->put_IsSecure(jbool(d, "secure", false) ? TRUE : FALSE);
+    c->put_IsHttpOnly(jbool(d, "httpOnly", false) ? TRUE : FALSE);
+    std::string same = jstr(d, "sameSite");
+    if (!same.empty()) c->put_SameSite(same == "None" ? COREWEBVIEW2_COOKIE_SAME_SITE_KIND_NONE : same == "Strict" ? COREWEBVIEW2_COOKIE_SAME_SITE_KIND_STRICT : COREWEBVIEW2_COOKIE_SAME_SITE_KIND_LAX);
+    if (d.contains("expires")) c->put_Expires(jnum(d, "expires", -1));
+    m->AddOrUpdateCookie(c);
+    c->Release();
+  }
+  m->Release();
+}
+
 // ---------------------------------------------------------------------------
-// Changes: WebView2 has no cookie event. While someone listens the profile is compared once a
-// second, as macOS does for what WebKit doesn't report; native changes compare at once.
+// Changes: WebView2 has no cookie event. While someone listens the profiles with a view open are
+// compared once a second, as macOS does for what WebKit doesn't report; native changes compare at once.
 
 static std::set<int> g_watchers; // pages listening (native ids), 0 = server code
-static bool g_timer = false, g_reading = false, g_dirty = false;
-static bool g_has_snapshot = false;
-static std::map<std::string, json> g_snapshot;
+static bool g_timer = false;
 
-static void refresh_cookies() {
-  if (!g_has_snapshot && g_watchers.empty()) return; // nobody asked yet
-  if (g_reading) {
-    g_dirty = true;
+static void take_snapshot(const SessionPtr &s, std::function<void()> then = {}) {
+  if (s->reading) {
+    s->dirty = true;
+    if (then) then();
     return;
   }
-  ICoreWebView2CookieManager *m = cookie_manager();
-  if (!m) return;
-  g_reading = true;
-  bool started = get_cookies(m, "", [](HRESULT hr, ICoreWebView2CookieList *list) {
-    g_reading = false;
+  ICoreWebView2CookieManager *m = session_cookie_manager(s);
+  if (!m) {
+    if (then) then();
+    return;
+  }
+  s->reading = true;
+  bool started = session_get_cookies(m, "", [s, then](HRESULT hr, ICoreWebView2CookieList *list) {
+    s->reading = false;
     if (SUCCEEDED(hr) && list) {
       std::map<std::string, json> next;
       UINT n = 0;
@@ -104,24 +141,37 @@ static void refresh_cookies() {
         }
         c->Release();
       }
-      if (g_has_snapshot) {
-        for (auto &[key, d] : g_snapshot)
-          if (!next.count(key)) emit("sessionCookieChanged", json{{"session", "default"}, {"cookie", d}, {"removed", true}});
+      if (s->hasSnapshot && !s->removing) {
+        for (auto &[key, d] : s->snapshot)
+          if (!next.count(key)) emit("sessionCookieChanged", json{{"session", s->id}, {"cookie", d}, {"removed", true}});
         for (auto &[key, d] : next) {
-          auto it = g_snapshot.find(key);
-          if (it == g_snapshot.end() || it->second != d) emit("sessionCookieChanged", json{{"session", "default"}, {"cookie", d}, {"removed", false}});
+          auto it = s->snapshot.find(key);
+          if (it == s->snapshot.end() || it->second != d) emit("sessionCookieChanged", json{{"session", s->id}, {"cookie", d}, {"removed", false}});
         }
       }
-      g_snapshot = std::move(next);
-      g_has_snapshot = true;
+      s->snapshot = std::move(next);
+      s->hasSnapshot = true;
     }
-    if (g_dirty) {
-      g_dirty = false;
-      refresh_cookies();
+    if (then) then();
+    if (s->dirty) {
+      s->dirty = false;
+      take_snapshot(s);
     }
   });
-  if (!started) g_reading = false;
+  if (!started) {
+    s->reading = false;
+    if (then) then();
+  }
   m->Release();
+}
+
+static void refresh_cookies(const SessionPtr &s) {
+  if (s->hasSnapshot || !g_watchers.empty()) take_snapshot(s); // otherwise nobody asked yet
+}
+
+void session_cookies_started(const SessionPtr &s, std::function<void()> done) {
+  if (g_watchers.empty()) return done();
+  take_snapshot(s, done);
 }
 
 static void poll_cookies() {
@@ -130,7 +180,10 @@ static void poll_cookies() {
     g_timer = false;
     return;
   }
-  refresh_cookies();
+  std::set<std::string> active{""};
+  for (auto &[id, v] : views()) active.insert(v->session);
+  for (auto &[ident, s] : sessions())
+    if (!s->removing && active.count(ident == "default" ? "" : ident)) take_snapshot(s);
   run_after(1000, poll_cookies);
 }
 
@@ -138,20 +191,20 @@ void sessions_page_unloaded(int native_id) { g_watchers.erase(native_id); }
 
 // ---------------------------------------------------------------------------
 
-/// The default profile or an error reply: the only one there is here.
-static bool default_session(const CallPtr &c) {
-  if (!c->has("session") || c->str("session") == "default") return true;
-  c->fail("invalid_args", "sessions: unknown or removing session");
-  return false;
+static SessionPtr session_arg(const CallPtr &c) {
+  SessionPtr s = !c->has("session") ? session_named("") : c->args["session"].is_string() ? session_named(c->str("session")) : nullptr;
+  if (!s) c->fail("invalid_args", "sessions: unknown or removing session");
+  return s;
 }
 
-static std::string url_host(const std::string &url) {
-  std::string origin = url_origin(url);
-  auto start = origin.find("://");
-  if (start == std::string::npos) return "";
-  std::string authority = origin.substr(start + 3);
-  if (!authority.empty() && authority[0] == '[') return authority.substr(0, authority.find(']') + 1);
-  return authority.substr(0, authority.find(':'));
+/// Its store open, counted in `pending` from here to the operation's end (sessions.remove waits).
+static void with_store(const CallPtr &c, const SessionPtr &s, std::function<void()> fn) {
+  s->pending++;
+  session_open(s, [c, s, fn](const std::string &error) {
+    if (error.empty()) return fn();
+    s->pending--;
+    c->fail("unavailable", error);
+  });
 }
 
 static bool filter(const CallPtr &c, std::string &url, std::string &name) {
@@ -168,10 +221,11 @@ static bool filter(const CallPtr &c, std::string &url, std::string &name) {
 }
 
 void clear_site_cookies(std::function<bool(const std::string &host)> keep, std::function<void(const std::set<std::string> &)> done) {
-  ICoreWebView2CookieManager *m = cookie_manager();
+  SessionPtr main = session_named("");
+  ICoreWebView2CookieManager *m = session_cookie_manager(main);
   if (!m) return done({});
   m->AddRef(); // kept by the completion
-  bool started = get_cookies(m, "", [m, keep, done](HRESULT, ICoreWebView2CookieList *list) {
+  bool started = session_get_cookies(m, "", [m, main, keep, done](HRESULT, ICoreWebView2CookieList *list) {
     std::set<std::string> hosts;
     UINT n = 0;
     if (list) list->get_Count(&n);
@@ -184,7 +238,7 @@ void clear_site_cookies(std::function<bool(const std::string &host)> keep, std::
       x->Release();
     }
     m->Release();
-    refresh_cookies();
+    refresh_cookies(main);
     done(hosts);
   });
   m->Release();
@@ -197,48 +251,52 @@ void clear_site_cookies(std::function<bool(const std::string &host)> keep, std::
 static bool has_any(const std::string &s, const char *chars) { return s.find_first_of(chars) != std::string::npos; }
 
 void register_sessions() {
-  reg("sessions", "list", [](CallPtr c) { c->ok(json::array({json{{"id", "default"}, {"persistent", true}}})); });
-  reg("sessions", "capabilities", [](CallPtr c) {
-    c->ok(json{{"private", false}, {"persistentNamed", false}, {"proxy", false}, {"proxyAuthentication", false}, {"pac", false}, {"customBypass", false}});
-  });
-  reg("sessions", "getProxy", [](CallPtr c) {
-    if (default_session(c)) c->ok(nullptr);
-  });
   reg("sessions", "watchCookies", [](CallPtr c) {
     if (c->flag("enabled", true)) g_watchers.insert(c->caller);
     else g_watchers.erase(c->caller);
     if (g_watchers.empty() || g_timer) return c->ok();
     g_timer = true;
     // The first comparison is against what's there now, not against nothing.
-    g_has_snapshot = false;
+    for (auto &[ident, s] : sessions()) s->hasSnapshot = false;
     poll_cookies();
     c->ok();
   });
   reg("sessions", "cookiesGet", [](CallPtr c) {
-    if (!default_session(c)) return;
+    SessionPtr s = session_arg(c);
+    if (!s) return;
     std::string url, name;
     if (!filter(c, url, name)) return;
-    ICoreWebView2CookieManager *m = cookie_manager();
-    if (!m) return c->fail("unavailable", "sessions: no web view is ready yet");
-    bool started = get_cookies(m, url, [c, name](HRESULT hr, ICoreWebView2CookieList *list) {
-      if (FAILED(hr) || !list) return c->fail("unavailable", "cookies.get: " + hresult_message(hr));
-      json out = json::array();
-      UINT n = 0;
-      list->get_Count(&n);
-      for (UINT i = 0; i < n; i++) {
-        ICoreWebView2Cookie *cookie = nullptr;
-        if (FAILED(list->GetValueAtIndex(i, &cookie)) || !cookie) continue;
-        std::string found = cookie_name(cookie);
-        if (found != kGateCookie && (name.empty() || found == name)) out.push_back(cookie_json(cookie));
-        cookie->Release();
+    with_store(c, s, [c, s, url, name] {
+      ICoreWebView2CookieManager *m = session_cookie_manager(s);
+      if (!m) {
+        s->pending--;
+        return c->fail("unavailable", "sessions: no web view is ready yet");
       }
-      c->ok(out);
+      bool started = session_get_cookies(m, url, [c, s, name](HRESULT hr, ICoreWebView2CookieList *list) {
+        s->pending--;
+        if (FAILED(hr) || !list) return c->fail("unavailable", "cookies.get: " + hresult_message(hr));
+        json out = json::array();
+        UINT n = 0;
+        list->get_Count(&n);
+        for (UINT i = 0; i < n; i++) {
+          ICoreWebView2Cookie *cookie = nullptr;
+          if (FAILED(list->GetValueAtIndex(i, &cookie)) || !cookie) continue;
+          std::string found = cookie_name(cookie);
+          if (found != kGateCookie && (name.empty() || found == name)) out.push_back(cookie_json(cookie));
+          cookie->Release();
+        }
+        c->ok(out);
+      });
+      m->Release();
+      if (!started) {
+        s->pending--;
+        c->fail("unavailable", "cookies.get: the cookie manager refused");
+      }
     });
-    m->Release();
-    if (!started) c->fail("unavailable", "cookies.get: the cookie manager refused");
   });
   reg("sessions", "cookiesSet", [](CallPtr c) {
-    if (!default_session(c)) return;
+    SessionPtr s = session_arg(c);
+    if (!s) return;
     std::string url, name;
     if (!filter(c, url, name)) return;
     for (const char *key : {"domain", "path", "sameSite"})
@@ -257,71 +315,90 @@ void register_sessions() {
     if (!same.empty() && same != "Lax" && same != "Strict" && same != "None") return c->fail("invalid_args", "cookies.set: invalid sameSite");
     if (c->has("expires") && !c->args["expires"].is_number()) return c->fail("invalid_args", "cookies.set: expires must be seconds since epoch");
     if ((secure && !https) || (same == "None" && !secure)) return c->fail("invalid_args", "cookies.set: Secure requires HTTPS; SameSite=None requires Secure");
-    ICoreWebView2CookieManager *m = cookie_manager();
-    if (!m) return c->fail("unavailable", "sessions: no web view is ready yet");
-    ICoreWebView2Cookie *cookie = nullptr;
-    HRESULT hr = m->CreateCookie(wide(name).c_str(), wide(value).c_str(), wide(domain).c_str(), wide(path).c_str(), &cookie);
-    if (FAILED(hr) || !cookie) {
-      m->Release();
-      return c->fail("invalid_args", "cookies.set: invalid cookie");
-    }
-    cookie->put_IsSecure(secure ? TRUE : FALSE);
-    cookie->put_IsHttpOnly(c->flag("httpOnly", false) ? TRUE : FALSE);
-    if (!same.empty()) cookie->put_SameSite(same == "None" ? COREWEBVIEW2_COOKIE_SAME_SITE_KIND_NONE : same == "Strict" ? COREWEBVIEW2_COOKIE_SAME_SITE_KIND_STRICT : COREWEBVIEW2_COOKIE_SAME_SITE_KIND_LAX);
-    double expires = c->num("expires", -1);
-    if (c->has("expires")) cookie->put_Expires(expires);
-    hr = m->AddOrUpdateCookie(cookie);
-    cookie->Release();
-    if (FAILED(hr)) {
-      m->Release();
-      return c->fail("unavailable", "cookies.set: " + hresult_message(hr));
-    }
-    // Answered once it reads back, like the WebKit side.
-    bool expired = c->has("expires") && expires <= (double)time(nullptr);
-    bool started = get_cookies(m, url, [c, name, value, path, expired](HRESULT, ICoreWebView2CookieList *list) {
-      bool found = false;
-      UINT n = 0;
-      if (list) list->get_Count(&n);
-      for (UINT i = 0; list && i < n && !found; i++) {
-        ICoreWebView2Cookie *x = nullptr;
-        if (FAILED(list->GetValueAtIndex(i, &x)) || !x) continue;
-        json d = cookie_json(x);
-        found = jstr(d, "name") == name && jstr(d, "value") == value && jstr(d, "path") == path;
-        x->Release();
+    with_store(c, s, [c, s, url, name, value, path, domain, secure, same] {
+      ICoreWebView2CookieManager *m = session_cookie_manager(s);
+      if (!m) {
+        s->pending--;
+        return c->fail("unavailable", "sessions: no web view is ready yet");
       }
-      refresh_cookies();
-      found || expired ? c->ok() : c->fail("unavailable", "WebView2 did not retain the cookie");
+      ICoreWebView2Cookie *cookie = nullptr;
+      HRESULT hr = m->CreateCookie(wide(name).c_str(), wide(value).c_str(), wide(domain).c_str(), wide(path).c_str(), &cookie);
+      if (FAILED(hr) || !cookie) {
+        s->pending--;
+        m->Release();
+        return c->fail("invalid_args", "cookies.set: invalid cookie");
+      }
+      cookie->put_IsSecure(secure ? TRUE : FALSE);
+      cookie->put_IsHttpOnly(c->flag("httpOnly", false) ? TRUE : FALSE);
+      if (!same.empty()) cookie->put_SameSite(same == "None" ? COREWEBVIEW2_COOKIE_SAME_SITE_KIND_NONE : same == "Strict" ? COREWEBVIEW2_COOKIE_SAME_SITE_KIND_STRICT : COREWEBVIEW2_COOKIE_SAME_SITE_KIND_LAX);
+      double expires = c->num("expires", -1);
+      if (c->has("expires")) cookie->put_Expires(expires);
+      hr = m->AddOrUpdateCookie(cookie);
+      cookie->Release();
+      if (FAILED(hr)) {
+        s->pending--;
+        m->Release();
+        return c->fail("unavailable", "cookies.set: " + hresult_message(hr));
+      }
+      // Answered once it reads back, like the WebKit side.
+      bool expired = c->has("expires") && expires <= (double)time(nullptr);
+      bool started = session_get_cookies(m, url, [c, s, name, value, path, expired](HRESULT, ICoreWebView2CookieList *list) {
+        s->pending--;
+        bool found = false;
+        UINT n = 0;
+        if (list) list->get_Count(&n);
+        for (UINT i = 0; list && i < n && !found; i++) {
+          ICoreWebView2Cookie *x = nullptr;
+          if (FAILED(list->GetValueAtIndex(i, &x)) || !x) continue;
+          json d = cookie_json(x);
+          found = jstr(d, "name") == name && jstr(d, "value") == value && jstr(d, "path") == path;
+          x->Release();
+        }
+        refresh_cookies(s);
+        found || expired ? c->ok() : c->fail("unavailable", "WebView2 did not retain the cookie");
+      });
+      m->Release();
+      if (!started) {
+        s->pending--;
+        c->fail("unavailable", "cookies.set: the cookie manager refused");
+      }
     });
-    m->Release();
-    if (!started) c->fail("unavailable", "cookies.set: the cookie manager refused");
   });
   reg("sessions", "cookiesRemove", [](CallPtr c) {
-    if (!default_session(c)) return;
+    SessionPtr s = session_arg(c);
+    if (!s) return;
     std::string url, name;
     if (!filter(c, url, name)) return;
     if (url.empty() || name.empty()) return c->fail("invalid_args", "cookies.remove: url and name are required");
-    ICoreWebView2CookieManager *m = cookie_manager();
-    if (!m) return c->fail("unavailable", "sessions: no web view is ready yet");
-    m->AddRef(); // kept by the completion
-    bool started = get_cookies(m, url, [c, m, name](HRESULT hr, ICoreWebView2CookieList *list) {
-      int count = 0;
-      UINT n = 0;
-      if (SUCCEEDED(hr) && list) list->get_Count(&n);
-      for (UINT i = 0; i < n; i++) {
-        ICoreWebView2Cookie *x = nullptr;
-        if (FAILED(list->GetValueAtIndex(i, &x)) || !x) continue;
-        if (cookie_name(x) == name && SUCCEEDED(m->DeleteCookie(x))) count++;
-        x->Release();
+    with_store(c, s, [c, s, url, name] {
+      ICoreWebView2CookieManager *m = session_cookie_manager(s);
+      if (!m) {
+        s->pending--;
+        return c->fail("unavailable", "sessions: no web view is ready yet");
       }
+      m->AddRef(); // kept by the completion
+      bool started = session_get_cookies(m, url, [c, s, m, name](HRESULT hr, ICoreWebView2CookieList *list) {
+        s->pending--;
+        int count = 0;
+        UINT n = 0;
+        if (SUCCEEDED(hr) && list) list->get_Count(&n);
+        for (UINT i = 0; i < n; i++) {
+          ICoreWebView2Cookie *x = nullptr;
+          if (FAILED(list->GetValueAtIndex(i, &x)) || !x) continue;
+          if (cookie_name(x) == name && SUCCEEDED(m->DeleteCookie(x))) count++;
+          x->Release();
+        }
+        m->Release();
+        refresh_cookies(s);
+        FAILED(hr) ? c->fail("unavailable", "cookies.remove: " + hresult_message(hr)) : c->ok(json{{"removed", count}});
+      });
       m->Release();
-      refresh_cookies();
-      FAILED(hr) ? c->fail("unavailable", "cookies.remove: " + hresult_message(hr)) : c->ok(json{{"removed", count}});
+      if (!started) {
+        s->pending--;
+        m->Release();
+        c->fail("unavailable", "cookies.remove: the cookie manager refused");
+      }
     });
-    m->Release();
-    if (!started) {
-      m->Release();
-      c->fail("unavailable", "cookies.remove: the cookie manager refused");
-    }
   });
 }
 

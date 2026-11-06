@@ -1,7 +1,8 @@
 // The Windows build (KITOP_TARGET=windows bunx --bun vite build) on a Windows
 // machine: WebView2 window, host global, WinRT toasts, the COM toast activator; then the rest of
 // the shell (windows, menus, tray, dialogs, clipboard, views, DPI, jobs, MCP, relaunch) and web
-// content control (permissions, downloads, printing, navigation policy, cookies).
+// content control (permissions, downloads, printing, navigation policy, cookies). windows-web.test.ts
+// and windows-sessions.test.ts have the rest of web content control.
 //   WINDOWS_E2E=1 [WINDOWS_APP=<app folder>] bun test --timeout 120000 tests/windows.test.ts
 // Skipped unless WINDOWS_E2E is set (CI: .github/workflows/windows.yml).
 //
@@ -887,9 +888,6 @@ describe.skipIf(!process.env.WINDOWS_E2E)('windows: beyond notifications', () =>
 			expect({ name, status: report.services.webview?.[name] }).toEqual({ name, status: 'implemented' });
 		for (const name of ['list', 'capabilities', 'cookiesGet', 'cookiesSet', 'cookiesRemove', 'watchCookies'])
 			expect({ name, status: report.services.sessions?.[name] }).toEqual({ name, status: 'implemented' });
-		// What isn't finished says so, instead of half-working.
-		expect(await code('sessions', 'create', { id: 'x', persistent: false })).toBe('unsupported');
-		expect(await code('webview', 'setContentRules', { id: 'x', rules: [] })).toBe('unsupported');
 	});
 
 	// ── windows ─────────────────────────────────────────────────────────────
@@ -1703,7 +1701,6 @@ Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64Strin
 		const url = `${ext}/`;
 		try {
 			expect(await op('sessions', 'list')).toEqual([{ id: 'default', persistent: true }]);
-			expect(await op('sessions', 'capabilities')).toEqual({ private: false, persistentNamed: false, proxy: false, proxyAuthentication: false, pac: false, customBypass: false });
 			expect(await op('sessions', 'getProxy')).toBeNull();
 			await op('sessions', 'cookiesSet', { url, name: 'e2e', value: 'one' });
 			expect(await inView('e2e-cookies', 'document.cookie')).toContain('e2e=one');

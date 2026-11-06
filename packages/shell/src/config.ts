@@ -113,7 +113,7 @@ export interface DesktopConfig {
   };
   /** Deep-link URL schemes (CFBundleURLTypes). */
   schemes?: string[];
-  /** Resource schemes handled by host.protocol in the Bun Worker (macOS and Linux). Not http/https/file. */
+  /** Resource schemes handled by host.protocol in the Bun Worker. Not http/https/file. */
   protocols?: string[];
   /** Document types the app opens (CFBundleDocumentTypes) → `openFiles` events. */
   fileTypes?: FileTypeConfig[];

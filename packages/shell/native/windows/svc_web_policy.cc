@@ -242,9 +242,22 @@ static void on_basic_auth(int id, ICoreWebView2BasicAuthenticationRequestedEvent
   LPWSTR uri = nullptr, text = nullptr;
   args->get_Uri(&uri);
   args->get_Challenge(&text);
-  std::string site = http_origin(take(uri)), challenge = take(text);
+  std::string address = take(uri), site = http_origin(address), challenge = take(text);
   std::string method = lower(challenge.substr(0, challenge.find(' ')));
   View *v = find_view(id);
+  // A session's proxy has its credentials from the app already. They don't go to a handler, or a site.
+  bool hasCredentials = false;
+  std::string proxyUser, proxyPassword;
+  bool proxy = session_proxy_challenge(v, address, hasCredentials, proxyUser, proxyPassword);
+  if (hasCredentials) {
+    ICoreWebView2BasicAuthenticationResponse *response = nullptr;
+    if (SUCCEEDED(args->get_Response(&response)) && response) {
+      response->put_UserName(wide(proxyUser).c_str());
+      response->put_Password(wide(proxyPassword).c_str());
+      response->Release();
+    }
+    return;
+  }
   ICoreWebView2Deferral *deferral = nullptr;
   bool known = method == "basic" || method == "digest" || method == "ntlm";
   if (!v || !g_auth_handler || !known || site.empty() || site == app_origin() || FAILED(args->GetDeferral(&deferral)) || !deferral) {
@@ -254,8 +267,7 @@ static void on_basic_auth(int id, ICoreWebView2BasicAuthenticationRequestedEvent
   std::string realm = challenge_realm(challenge), key = site + "\n" + realm, navigation = view_url(v);
   args->AddRef();
   // A credential is kept for the origin and realm once it works: asked again, the last one didn't.
-  // The event doesn't say whether it's for a proxy.
-  request_policy("webAuthChallenge", challenge_event(v, site, realm, method, false, g_auth_answers[key]), [=](const json &answer) {
+  request_policy("webAuthChallenge", challenge_event(v, site, realm, method, proxy, g_auth_answers[key]), [=](const json &answer) {
     View *now = find_view(id);
     ICoreWebView2BasicAuthenticationResponse *response = nullptr;
     bool credential = now && view_url(now) == navigation && answer.is_object() && jhas(answer, "username") && answer["username"].is_string() && jhas(answer, "password") && answer["password"].is_string();
@@ -410,21 +422,28 @@ void web_auth_attach(View *v) {
   }
 }
 
-// What WebView2 allowed stays allowed until this: every view shares it. Pins left bring theirs back.
+// What WebView2 allowed stays allowed until this: every view of a profile shares it. Pins left bring theirs back.
 static void forget_allowed_certificates(std::function<void()> done) {
-  ICoreWebView2_14 *wv14 = nullptr;
+  std::map<std::string, ICoreWebView2_14 *> profiles;
   for (auto &[id, v] : views())
-    if (!wv14 && v->webview) wv14 = query<ICoreWebView2_14>(v->webview, IID_ICoreWebView2_14);
-  if (!wv14) return done();
-  auto *cb = new Cb<ICoreWebView2ClearServerCertificateErrorActionsCompletedHandler, HRESULT>(
-      IID_ICoreWebView2ClearServerCertificateErrorActionsCompletedHandler, [done](HRESULT) -> HRESULT {
-        done();
-        return S_OK;
-      });
-  HRESULT hr = wv14->ClearServerCertificateErrorActions(cb);
-  cb->Release();
-  wv14->Release();
-  if (FAILED(hr)) done();
+    if (v->webview && !profiles.count(v->session))
+      if (auto *wv14 = query<ICoreWebView2_14>(v->webview, IID_ICoreWebView2_14)) profiles[v->session] = wv14;
+  auto left = std::make_shared<size_t>(profiles.size() + 1);
+  auto one_done = [left, done] {
+    if (!--*left) done();
+  };
+  for (auto &[session, wv14] : profiles) {
+    auto *cb = new Cb<ICoreWebView2ClearServerCertificateErrorActionsCompletedHandler, HRESULT>(
+        IID_ICoreWebView2ClearServerCertificateErrorActionsCompletedHandler, [one_done](HRESULT) -> HRESULT {
+          one_done();
+          return S_OK;
+        });
+    HRESULT hr = wv14->ClearServerCertificateErrorActions(cb);
+    cb->Release();
+    wv14->Release();
+    if (FAILED(hr)) one_done();
+  }
+  one_done();
 }
 
 // The personal store, the one WebView2 offers from: what has a private key, in date.
