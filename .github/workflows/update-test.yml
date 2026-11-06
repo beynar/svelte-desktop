@@ -13,6 +13,9 @@ on:
       - .github/workflows/update-test.yml
       - packages/shell/test/update-real/**
       - packages/shell/src/updater/**
+      - packages/shell/src/supervisor.ts
+      - packages/shell/native/windows/svc_app.cc
+      - packages/shell/native/platform_app.mm
       - packages/shell/scripts/updater-cli.ts
       - packages/shell/src/build/package.ts
       - packages/shell/src/build/package-windows.ts

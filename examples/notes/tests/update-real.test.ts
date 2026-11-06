@@ -33,6 +33,8 @@ function state() {
 	}
 }
 const helperLog = () => (existsSync(helperPath) ? readFileSync(helperPath, 'utf8') : '(no helper log)');
+const appLogPath = join(appDirs('dev.kitop.notes').logs, 'app.log');
+const appLog = () => (existsSync(appLogPath) ? readFileSync(appLogPath, 'utf8').slice(-2000) : '(no app log)');
 
 function executable(app: string): string {
 	if (WINDOWS) return join(app, readdirSync(app).find((f) => /\.exe$/i.test(f) && f !== 'Uninstall.exe')!);
@@ -67,7 +69,7 @@ function kept(moves: { dest: string; backup: string }[]) {
 async function until(what: string, fn: () => unknown, ms = 90_000) {
 	const end = Date.now() + ms;
 	while (!fn()) {
-		if (Date.now() > end) throw new Error(`timed out waiting for ${what}\nprobe: ${probe()}\nstate: ${JSON.stringify(state())}\nhelper: ${helperLog()}\nnext to the install: ${readdirSync(join(W, 'installed'))}`);
+		if (Date.now() > end) throw new Error(`timed out waiting for ${what}\nprobe: ${probe()}\nstate: ${JSON.stringify(state())}\nhelper: ${helperLog()}\nnext to the install: ${readdirSync(join(W, 'installed'))}\nrunning: ${running()}\napp log: ${appLog()}`);
 		await Bun.sleep(200);
 	}
 }
@@ -96,6 +98,7 @@ function install() {
 	rmSync(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 	rmSync(probeFile, { force: true });
 	for (const file of ['.crash-restarts', '.last-error', '.running']) rmSync(join(appDirs('dev.kitop.notes').data, file), { force: true });
+	rmSync(appLogPath, { force: true });
 	mkdirSync(join(W, 'installed'), { recursive: true });
 	cpSync(built('a'), target, { recursive: true, verbatimSymlinks: true });
 }

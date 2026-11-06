@@ -30,7 +30,13 @@ build() {
     f.version = '$1';
     await Bun.write('package.json', JSON.stringify(f, null, '\t') + '\n');
   "
-  bunx --bun vite build 2>&1 | grep -E " error|✓ /" | tail -2
+  # All of it when it fails: not every failure says " error".
+  if ! bunx --bun vite build >"$W/build-$1.log" 2>&1 || [ ! -d ".desktop/dist/release/$1" ]; then
+    tail -60 "$W/build-$1.log"
+    echo "the build of $1 failed" >&2
+    exit 1
+  fi
+  grep -E " error|✓ /" "$W/build-$1.log" | tail -2
   mkdir -p "$W/$2"
   case "$PLATFORM" in
     windows-*) cp -R ".desktop/dist/Svelte Notes-windows-x64" "$W/$2/app" ;;

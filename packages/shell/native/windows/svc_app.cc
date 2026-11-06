@@ -294,7 +294,8 @@ void register_app() {
   });
   reg("app", "relaunch", [](CallPtr c) {
     emit("willRestart", json::object());
-    // A hidden PowerShell waits for this pid to exit, then starts a fresh copy.
+    // A hidden PowerShell waits for this pid to exit, then starts a fresh copy. With a console nobody
+    // sees: with DETACHED_PROCESS, which has none, PowerShell exits at once without running anything.
     wchar_t sys[MAX_PATH];
     GetSystemDirectoryW(sys, MAX_PATH);
     std::wstring ps = std::wstring(sys) + L"\\WindowsPowerShell\\v1.0\\powershell.exe";
@@ -305,7 +306,7 @@ void register_app() {
                        std::to_wstring(GetCurrentProcessId()) + L" -ErrorAction SilentlyContinue; Start-Process -FilePath '" + quoted + L"'\"";
     STARTUPINFOW si{sizeof si};
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr, nullptr, &si, &pi))
+    if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
       return c->fail("internal", "app.relaunch: " + last_error_message());
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
