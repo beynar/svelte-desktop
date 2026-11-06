@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -1525,10 +1526,23 @@ void backend_set_frameless(int nativeId, bool frameless) {
 void backend_window_drag(int nativeId, bool doubleClick) {
   Window *w = find_window(nativeId);
   if (!w) return;
-  if (doubleClick) {
+  // The press reaches here through the page, some time after it happened. A move loop started once
+  // the button is back up swallows the next click, and taking the capture from the page can make
+  // it count that click as a first one: so a double click is also two presses close together.
+  static DWORD lastPress = 0;
+  static POINT lastAt{};
+  POINT at{};
+  GetCursorPos(&at);
+  DWORD now = GetTickCount();
+  bool second = lastPress && now - lastPress <= GetDoubleClickTime() && std::abs(at.x - lastAt.x) <= GetSystemMetrics(SM_CXDOUBLECLK) && std::abs(at.y - lastAt.y) <= GetSystemMetrics(SM_CYDOUBLECLK);
+  if (doubleClick || second) {
+    lastPress = 0;
     ShowWindow(w->hwnd, IsZoomed(w->hwnd) ? SW_RESTORE : SW_MAXIMIZE);
     return;
   }
+  lastPress = now;
+  lastAt = at;
+  if (!(GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON) & 0x8000)) return;
   // The classic move loop: as if the caption had been pressed.
   ReleaseCapture();
   SendMessageW(w->hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);

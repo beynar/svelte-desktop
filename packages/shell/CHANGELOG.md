@@ -93,6 +93,7 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 
 ### Fixed
 
+- Windows: a double click on a drag region could do nothing: the first press started a move loop that swallowed the second.
 - A job keeps running no longer when its app dies without a word: it gets its `signal` aborted, then two seconds to leave.
 - A store or window-state write is on the disk when it returns, and the store comes back from its previous save if its file goes bad.
 - A check that gets no answer gives up after 30 s, a download after 60 s without a byte.
