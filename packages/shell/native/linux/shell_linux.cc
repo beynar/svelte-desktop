@@ -101,7 +101,7 @@ static bool scheme_is_web(const std::string &url) {
 
 static bool internal_url(const std::string &url) {
   std::string s = scheme_of(url);
-  return s == "about" || s == "data" || s == "blob" || app_origin().empty() || same_origin(url);
+  return s == "about" || s == "data" || s == "blob" || protocol_scheme(s) || app_origin().empty() || same_origin(url);
 }
 
 std::string exe_path() {
@@ -369,6 +369,10 @@ static int create_window(const json &o) {
   // the running instance (openUrls / openFiles there) and leave before any window.
   if (g_order.empty() && o.value("singleInstance", false) && !claim_single_instance()) _exit(0);
   if (g_order.empty() && o.contains("quitOnLastWindowClosed")) g_quit_on_last_window = o.value("quitOnLastWindowClosed", true);
+  if (g_order.empty()) set_protocol_schemes(o.contains("protocols") ? o["protocols"] : json());
+  bool validSession = false;
+  WebKitWebContext *context = session_context(o, &validSession);
+  if (!validSession) return -5;
   Window *w = new Window;
   w->id = g_next_id++;
   w->label = str("label");
@@ -401,7 +405,7 @@ static int create_window(const json &o) {
   } else if (o.contains("x") && o.contains("y")) gtk_window_move(win, (int)num("x", 0), (int)num("y", 0));
   else gtk_window_set_position(win, GTK_WIN_POS_CENTER);
 
-  w->webview = make_webview(w->id, flag("debug", false), "");
+  w->webview = make_webview(w->id, flag("debug", false), "", context);
   if (!str("titleBarStyle").empty()) set_title_bar_style(w->id, str("titleBarStyle"));
   if (flag("transparent", false)) {
     GdkScreen *screen = gtk_widget_get_screen(w->window);
@@ -443,7 +447,7 @@ static int create_window(const json &o) {
   else g_timeout_add((guint)num("readyTimeoutMs", 3000), reveal_timeout, id);
 
   std::string url = str("url"), html = str("html");
-  if (!url.empty()) webkit_web_view_load_uri(w->webview, url.c_str());
+  if (!url.empty()) session_load(w->webview, url);
   else if (!html.empty()) webkit_web_view_load_html(w->webview, html.c_str(), nullptr);
   return w->id;
 }
@@ -579,9 +583,10 @@ static void on_webview_close(WebKitWebView *, gpointer data) {
   else if (!popover_ident(id).empty()) emit("closeRequested", json{{"popoverId", popover_ident(id)}});
 }
 
-WebKitWebView *make_webview(int native_id, bool debug, const std::string &extra_script) {
+WebKitWebView *make_webview(int native_id, bool debug, const std::string &extra_script, WebKitWebContext *context) {
+  bool valid;
   WebKitUserContentManager *ucm = webkit_user_content_manager_new();
-  WebKitWebView *wv = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "user-content-manager", ucm, nullptr));
+  WebKitWebView *wv = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", context ? context : session_context(json::object(), &valid), "user-content-manager", ucm, nullptr));
   g_object_unref(ucm); // the view holds it
   Page page;
   page.wv = wv;
@@ -610,6 +615,7 @@ WebKitWebView *make_webview(int native_id, bool debug, const std::string &extra_
   g_signal_connect(wv, "create", G_CALLBACK(on_create), id);
   g_signal_connect(wv, "close", G_CALLBACK(on_webview_close), id);
   g_pages[native_id] = page;
+  web_sessions_attach(native_id, wv);
   return wv;
 }
 
@@ -741,6 +747,7 @@ void backend_init_services() {
   lx::register_webview();
   lx::register_web_control();
   lx::register_web_downloads();
+  lx::register_web_sessions();
   lx::register_optional();
 }
 
@@ -812,7 +819,7 @@ SHELL_API int shell_quit(void) {
 SHELL_API int shell_window_navigate(int id, const char *url) {
   if (!url) return -3;
   std::string s(url);
-  ON_WINDOW(id, webkit_web_view_load_uri(w->webview, s.c_str()));
+  ON_WINDOW(id, lx::session_load(w->webview, s));
 }
 SHELL_API int shell_window_eval(int id, const char *js) {
   if (!js) return -3;

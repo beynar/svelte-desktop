@@ -5,8 +5,8 @@
 // setInspectable, capturePage (webkit_web_view_get_snapshot → PNG/JPEG),
 // getOpenedFiles. Target: popoverId, viewId, windowId (0 = primary), the calling
 // page, the primary window. Policy, find, context menu, JS dialogs, media and file
-// drop are in svc_web_control.cc, downloads, print and clearData in svc_web_downloads.cc.
-// Other webview ops (cookies, content rules, scripts) are not registered → `unsupported`.
+// drop are in svc_web_control.cc, downloads, print and clearData in svc_web_downloads.cc, cookies,
+// content rules, scripts and input policy in svc_web_sessions.cc.
 //
 // popover: a borderless GtkWindow holding a WebKitWebView, created (and loaded,
 // unless preload:false) at popover.create and kept warm while unmapped, so the
@@ -176,6 +176,7 @@ static Popover *build(CallPtr c, const std::string &ident, std::string *error) {
   auto *p = new Popover;
   p->id = ident;
   p->nativeId = g_next_native++;
+  g_popovers[ident] = p; // a script registered for it looks at what it is when its web view is made
   p->style = c->str("style") == "panel" ? "panel" : "popover";
   p->behavior = c->has("behavior") ? c->str("behavior") : "transient";
   p->url = url;
@@ -189,7 +190,8 @@ static Popover *build(CallPtr c, const std::string &ident, std::string *error) {
 
   std::string script = "window.__shellPopover=Object.freeze({id:" + json(ident).dump() +
                        "});document.documentElement.setAttribute('data-shell-popover','');";
-  p->wv = make_webview(p->nativeId, c->flag("debug", false), script);
+  bool validSession = false;
+  p->wv = make_webview(p->nativeId, c->flag("debug", false), script, session_context(c->args, &validSession));
   p->win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
   GtkWindow *w = GTK_WINDOW(p->win);
   gtk_window_set_decorated(w, FALSE);
@@ -217,7 +219,7 @@ static Popover *build(CallPtr c, const std::string &ident, std::string *error) {
   gtk_widget_realize(p->win);
   if (c->flag("preload", true)) {
     p->loaded = true;
-    webkit_web_view_load_uri(p->wv, url.c_str());
+    session_load(p->wv, url);
   }
   return p;
 }
@@ -352,7 +354,7 @@ static std::string show_now(Popover *p, const json &args, int caller) {
 static std::string show_popover(Popover *p, const json &args, int caller) {
   if (p->loaded) return show_now(p, args, caller);
   p->loaded = true;
-  webkit_web_view_load_uri(p->wv, p->url.c_str());
+  session_load(p->wv, p->url);
   std::string id = p->id;
   auto fire = [id, args, caller] {
     auto it = g_popovers.find(id);
@@ -408,13 +410,15 @@ static void pop(const std::string &name, PopoverOp body) {
 
 static void register_popover() {
   reg("popover", "create", [](CallPtr c) {
+    bool validSession = false;
+    session_context(c->args, &validSession);
+    if (!validSession) return c->fail("invalid_args", "popover.create: unknown session or invalid recovery policy");
     std::string ident = c->has("id") ? c->str("id") : "popover-" + std::to_string(g_next_native);
     auto old = g_popovers.find(ident);
     if (old != g_popovers.end()) destroy_popover(old->second); // re-create replaces
     std::string error;
     Popover *p = build(c, ident, &error);
     if (!p) return c->fail("unavailable", error);
-    g_popovers[ident] = p;
     if (c->flag("tray", false)) tray_bind_popover(ident);
     c->ok(describe(p));
   });

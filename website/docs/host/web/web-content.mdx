@@ -5,7 +5,7 @@ description: Declarative request blocking, user scripts, content worlds and serv
 
 These members of `host.webview` control what web views load and which scripts run in their documents. Rules, the script registry and [custom protocols](/host/web/protocol) are global across [sessions](/host/web/sessions); a session does not isolate their configuration. Script targets can narrow injection to particular views.
 
-How-to: [Web view](/ui/web-view#declarative-request-rules-macos).
+How-to: [Web view](/ui/web-view#declarative-request-rules-macos-linux).
 
 ## Methods
 
@@ -32,7 +32,7 @@ Resolves `null` after compilation. Reusing an `id` replaces the previous list on
 
 Rules affect subsequent requests, including requests from existing documents. They last for this app run. The shell adds exceptions for its own origin and event WebSocket, so rules cannot block the app's documents, resources or bridge.
 
-macOS only.
+macOS and Linux.
 
 #### `ContentRule`
 
@@ -62,7 +62,7 @@ Other actions retain WebKit's normal condition validation. This is not Electron'
 
 ### `listContentRules()`
 
-Resolves `{ id, rules }[]`: the lists in place, with the rules as given. The reactive field `host.webview.contentRules` holds the same list and updates when you set or remove one. macOS only.
+Resolves `{ id, rules }[]`: the lists in place, with the rules as given. The reactive field `host.webview.contentRules` holds the same list and updates when you set or remove one. macOS and Linux.
 
 ### `removeContentRules(id)`
 
@@ -72,7 +72,7 @@ Remove a list from all web views and cancel any in-flight replacement for that `
 await host.webview.removeContentRules('privacy');
 ```
 
-`id: string` must contain 1–256 characters, otherwise the call rejects with `invalid_args`. Resolves `null`, including when no list has that identifier. macOS only.
+`id: string` must contain 1–256 characters, otherwise the call rejects with `invalid_args`. Resolves `null`, including when no list has that identifier. macOS and Linux.
 
 ### `scripts.register(script)`
 
@@ -115,7 +115,7 @@ Stop future injection of a registered script.
 await host.webview.scripts.unregister('reader');
 ```
 
-`id: string` must contain 1–256 characters, otherwise the call rejects with `invalid_args`. Resolves `null`, including for an unknown identifier. Existing document effects are not undone. macOS only.
+`id: string` must contain 1–256 characters, otherwise the call rejects with `invalid_args`. Resolves `null`, including for an unknown identifier. Existing document effects are not undone. macOS and Linux.
 
 ### `scripts.list()`
 
@@ -125,7 +125,7 @@ Return the global registry in registration order.
 const scripts = await host.webview.scripts.list();
 ```
 
-Resolves `UserScript[]`, with the fields described above. Native records include the resolved `mainFrameOnly` default. macOS only.
+Resolves `UserScript[]`, with the fields described above. Native records include the resolved `mainFrameOnly` default. macOS and Linux.
 
 ### `setNavigationPolicy(policy)`
 
@@ -162,8 +162,8 @@ To run code in a named world, pass `world` to [`executeJavaScript(code, target)`
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `setContentRules`, `removeContentRules`, `listContentRules` | ✓ | — | — |
-| `scripts.register`, `scripts.unregister`, `scripts.list` | ✓ | — | — |
+| `setContentRules`, `removeContentRules`, `listContentRules` | ✓ | ✓ | — |
+| `scripts.register`, `scripts.unregister`, `scripts.list` | ✓ | ✓ | — |
 | `setNavigationPolicy` | ✓ | ✓² | ✓¹ |
 
 1. On Windows only embedded views are asked, main frame and frames; `<a download>` links aren't. WebView2 can't defer a navigation, so the UI thread waits for the answer with a nested message loop, for ten seconds at most. Platform calls keep working meanwhile, but WebView2's own callbacks wait: a policy that needs one, such as `executeJavaScript`, runs into the deadline and the navigation is canceled. A refused request gets a local answer, so it doesn't reach the server.

@@ -71,7 +71,7 @@ static json bounds_json(Window *w) {
 
 static json info_row(int id) {
   Window *w = find_window(id);
-  return json{{"windowId", public_id(id)}, {"label", w->label}, {"focused", (bool)gtk_window_is_active(GTK_WINDOW(w->window))}, {"visible", (bool)gtk_widget_get_visible(w->window)}, {"bounds", bounds_json(w)}};
+  return json{{"windowId", public_id(id)}, {"label", w->label}, {"focused", (bool)gtk_window_is_active(GTK_WINDOW(w->window))}, {"visible", (bool)gtk_widget_get_visible(w->window)}, {"bounds", bounds_json(w)}, {"session", session_of(w->webview)}};
 }
 
 /// Decoration size (frame − client area); 0 before the window is mapped.
@@ -105,6 +105,7 @@ void register_window() {
   reg("window", "create", [](CallPtr c) {
     int id = create_window_from_platform(c->args);
     if (id == -4) return c->fail("invalid_args", "window.create: label `" + c->str("label") + "` is already used");
+    if (id == -5) return c->fail("invalid_args", "window.create: unknown session or invalid recovery policy");
     if (id <= 0) return c->fail("internal", "window.create failed");
     Window *w = find_window(id);
     if (c->has("opacity")) gtk_widget_set_opacity(w->window, c->num("opacity", 1));

@@ -13,6 +13,8 @@ export interface Harness {
   page<T = unknown>(js: string): Promise<T>;
   /** Platform events received so far, by name. */
   events: Map<string, any[]>;
+  /** Calls back with each platform event as it comes (feeds src/platform/bus.ts in a suite). */
+  onEvent(cb: (name: string, data: any) => void): void;
   waitEvent(name: string, ms?: number): Promise<any | null>;
   check(name: string, pass: unknown, detail?: unknown): void;
   /** Mark as not testable here (needs a bundle, a permission prompt, a human...). */
@@ -25,6 +27,7 @@ export interface Harness {
 self.onmessage = async (e: MessageEvent) => {
   const { lib, windowId, suite, keepOpen } = e.data;
   const native = openNative(lib);
+  let listener: ((name: string, data: any) => void) | undefined;
   const pending = new Map<number, (r: Reply) => void>();
   const events = new Map<string, any[]>();
   const waiters = new Map<string, Array<(d: any) => void>>();
@@ -38,6 +41,7 @@ self.onmessage = async (e: MessageEvent) => {
       else if (ev.type === "platform") {
         (events.get(ev.name) ?? events.set(ev.name, []).get(ev.name)!).push(ev.data);
         for (const w of waiters.get(ev.name)?.splice(0) ?? []) w(ev.data);
+        listener?.(ev.name, ev.data);
       } else if (ev.type === "ready") readyResolve();
     },
     { args: [FFIType.ptr], returns: FFIType.void, threadsafe: true },
@@ -129,6 +133,7 @@ self.onmessage = async (e: MessageEvent) => {
       skipped++;
       console.log(JSON.stringify({ check: name, skip: why }));
     },
+    onEvent(cb) { listener = cb; },
     sleep: (ms) => Bun.sleep(ms),
   };
 

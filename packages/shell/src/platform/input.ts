@@ -13,7 +13,7 @@ export type BeforeInputEvent = {
 	intercepted: true;
 };
 export const input = {
-	/** macOS. Replaces this window's policy. Decisions are native; events are observational. */
+	/** macOS and Linux. Replaces this window's policy. Decisions are native; events are observational. */
 	setInputPolicy: (policy: InputPolicy, windowId?: number) =>
 		callPlatform<{ monitorInstalled: boolean; interceptCount: number; menuShortcuts: boolean }>('webview', 'setInputPolicy', { ...policy, ...(windowId === undefined ? {} : { windowId }) }),
 	getInputPolicy: (windowId?: number) =>

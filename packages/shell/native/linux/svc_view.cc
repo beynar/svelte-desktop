@@ -1,6 +1,6 @@
 // view.* — extra web views embedded in a window (Electron's BrowserView), same ops
 // and events as native/platform_view.mm:
-//   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, hidden?, debug?} → {id, windowId}
+//   create {id?, windowId?, url|route, bounds:{x,y,width,height}, autoresize?, transparent?, hidden?, debug?, session?} → {id, windowId}
 //   (`hidden`: it loads out of sight, until `show`)
 //   (the view's page has window.__desktopView = its id)
 //   setBounds {id, x, y, width, height} · getBounds · navigate {id, url|route} · show · hide · reload
@@ -34,6 +34,14 @@ struct View {
 static std::map<std::string, View *> g_views;
 static std::map<int, int> g_owners; // the window of every view there was, this run
 static int g_next_view = 2000;
+
+static std::string lower_scheme(const std::string &url) {
+  char *s = g_uri_parse_scheme(url.c_str());
+  std::string out = s ? s : "";
+  g_free(s);
+  for (auto &ch : out) ch = (char)g_ascii_tolower(ch);
+  return out;
+}
 
 static std::string url_from(const CallPtr &c) {
   std::string u = c->str("url");
@@ -95,7 +103,7 @@ static gboolean on_view_policy(WebKitWebView *wv, WebKitPolicyDecision *d, WebKi
     WebKitNavigationAction *a = webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(d));
     const char *uri = webkit_uri_request_get_uri(webkit_navigation_action_get_request(a));
     std::string u = uri ? uri : "";
-    bool ok = u.rfind("http:", 0) == 0 || u.rfind("https:", 0) == 0 || u.rfind("about:", 0) == 0 || u.rfind("data:", 0) == 0 || u.rfind("blob:", 0) == 0;
+    bool ok = u.rfind("http:", 0) == 0 || u.rfind("https:", 0) == 0 || u.rfind("about:", 0) == 0 || u.rfind("data:", 0) == 0 || u.rfind("blob:", 0) == 0 || protocol_scheme(lower_scheme(u));
     if (!ok) {
       webkit_policy_decision_ignore(d);
       return TRUE;
@@ -225,6 +233,9 @@ void register_view() {
     c->ok();
   });
   reg("view", "create", [](CallPtr c) {
+    bool validSession = false;
+    WebKitWebContext *context = session_context(c->args, &validSession);
+    if (!validSession) return c->fail("invalid_args", "view.create: unknown session or invalid recovery policy");
     Window *w = find_window(resolve_window(*c));
     if (!w) return c->fail("invalid_args", "view.create: no such window");
     if (!c->args.contains("bounds") || !c->args["bounds"].is_object()) return c->fail("invalid_args", "view.create: `bounds` {x,y,width,height} is required");
@@ -248,7 +259,8 @@ void register_view() {
     // The shell's web view (bridge, origin tracking), with browser-style navigation.
     // A tab's page is its window's: inspectable if the window's is.
     bool debug = c->flag("debug", c->flag("tab", false) && w->webview && webkit_settings_get_enable_developer_extras(webkit_web_view_get_settings(w->webview)));
-    v->wv = make_webview(v->nativeId, debug, "window.__desktopView=" + json(ident).dump() + ";" + (c->flag("pane", false) ? "window.__desktopPaneView=true;" : "") + (c->flag("tab", false) ? "window.__desktopTabView=true;" : "")); // the page knows it's a view
+    if (c->flag("tab", false) && w->webview && !c->has("session")) context = webkit_web_view_get_context(w->webview); // and its profile
+    v->wv = make_webview(v->nativeId, debug, "window.__desktopView=" + json(ident).dump() + ";" + (c->flag("pane", false) ? "window.__desktopPaneView=true;" : "") + (c->flag("tab", false) ? "window.__desktopTabView=true;" : ""), context); // the page knows it's a view
     g_signal_handlers_disconnect_matched(v->wv, G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, GINT_TO_POINTER(v->nativeId));
     gpointer key = (gpointer)v->ident.c_str();
     g_signal_connect(v->wv, "decide-policy", G_CALLBACK(on_view_policy), key);
@@ -270,7 +282,7 @@ void register_view() {
     gtk_overlay_add_overlay(GTK_OVERLAY(w->overlay), wid);
     if (!c->flag("hidden", false)) gtk_widget_show(wid);
     if (v->autoresize != "none") v->sizeHandler = g_signal_connect(w->overlay, "size-allocate", G_CALLBACK(on_overlay_size), key);
-    webkit_web_view_load_uri(v->wv, url.c_str());
+    session_load(v->wv, url);
     c->ok(json{{"id", ident}, {"windowId", public_id(w->id)}});
   });
   op("setBounds", [](CallPtr c, View *v) {
@@ -288,7 +300,7 @@ void register_view() {
   op("navigate", [](CallPtr c, View *v) {
     std::string url = url_from(c);
     if (url.empty()) return c->fail("invalid_args", "view.navigate: `url` or `route` is required");
-    webkit_web_view_load_uri(v->wv, url.c_str());
+    session_load(v->wv, url);
     c->ok();
   });
   op("focus", [](CallPtr c, View *v) {

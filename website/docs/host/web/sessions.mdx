@@ -3,9 +3,9 @@ title: host.sessions
 description: Manage website profiles, cookies and per-session proxies.
 ---
 
-`host.sessions` manages the website data stores used by [web views](/host/web/webview). Use named profiles for separate accounts or private browsing. This service has no reactive state. Named profiles and proxies are macOS only; Windows manages the cookies of the default profile. See [Platform support](#platform-support).
+`host.sessions` manages the website data stores used by [web views](/host/web/webview). Use named profiles for separate accounts or private browsing. This service has no reactive state. Named profiles and proxies are for macOS and Linux; Windows manages the cookies of the default profile. See [Platform support](#platform-support).
 
-How-to: [Sessions and private profiles](/ui/web-view#sessions-and-private-profiles-macos).
+How-to: [Sessions and private profiles](/ui/web-view#sessions-and-private-profiles-macos-linux).
 
 ## Methods
 
@@ -24,7 +24,7 @@ const profile = await host.sessions.create({ id: 'work', persistent: true });
 
 `SessionInfo` has `id: string` and `persistent: boolean`. The shell owns the persistent `'default'` profile. Select a profile with the `session` option when creating a [window](/host/windows/windows), [view](/host/windows/view) or [popover](/host/windows/popover). New views use `'default'` unless explicitly configured; they do not inherit the caller's profile. A view's profile cannot change after construction.
 
-Persistent named profiles require macOS 14+. Recreating the same id with the same app identifier opens its existing data. Private profiles keep their cookies and storage separate from other profiles.
+Persistent named profiles require macOS 14+ on macOS. Recreating the same id with the same app identifier opens its existing data. Private profiles keep their cookies and storage separate from other profiles.
 
 Other cookies and storage are not copied from the default profile, and the app's own server still works in a named profile. Rejects with `invalid_args` for an invalid or duplicate id, `unsupported` for persistent named profiles before macOS 14, or `unavailable` when app authentication is not ready or WebKit does not retain it. Profiles still share the app's server authority.
 
@@ -48,7 +48,7 @@ Close or destroy every window, view and popover using the profile, and await its
 
 ### `setProxy(id, proxy)`
 
-Sets a profile's HTTP CONNECT or SOCKSv5 proxy. Pass `null` to restore system defaults. Resolves `null`. Requires macOS 14+.
+Sets a profile's HTTP CONNECT or SOCKSv5 proxy. Pass `null` to restore system defaults. Resolves `null`. Requires macOS 14+ on macOS.
 
 ```ts
 await host.sessions.setProxy('work', {
@@ -93,9 +93,9 @@ Resolves `SessionCapabilities` for the running OS version. On Windows every fiel
 | Property | Type | Description |
 | --- | --- | --- |
 | `private` | `boolean` | Private profiles are supported (`true`). |
-| `persistentNamed` | `boolean` | Named persistent profiles are supported on macOS 14+. |
-| `proxy` | `boolean` | Per-profile proxies are supported on macOS 14+. |
-| `proxyAuthentication` | `boolean` | Proxy credentials are supported on macOS 14+. |
+| `persistentNamed` | `boolean` | Named persistent profiles are supported on macOS 14+ and on Linux. |
+| `proxy` | `boolean` | Per-profile proxies are supported on macOS 14+ and on Linux. |
+| `proxyAuthentication` | `boolean` | Proxy credentials are supported on macOS 14+ and on Linux. |
 | `pac` | `boolean` | PAC configuration is unsupported (`false`). |
 | `customBypass` | `boolean` | Custom bypass rules are unsupported (`false`). |
 
@@ -170,18 +170,20 @@ Subscribes to cookie changes across profiles and returns `() => void` to unsubsc
 
 `CookieChangedEvent` contains `session: string`, `cookie: SessionCookie` and `removed: boolean`. Additions and updates have `removed: false`; removals carry the previous cookie and `removed: true`. The shell authentication cookie is excluded.
 
-`onChanged` can miss very short-lived changes, so it is not an audit log. To catch `document.cookie` changes that WebKit does not report, the shell polls profiles with open views once per second, only while someone listens through `cookies.onChanged`. `host.on('sessionCookieChanged', callback)` does not enable that polling; use `cookies.onChanged`.
+`onChanged` can miss very short-lived changes, so it is not an audit log. To catch `document.cookie` changes that WebKit does not report, on macOS the shell polls profiles with open views once per second, only while someone listens through `cookies.onChanged`. `host.on('sessionCookieChanged', callback)` does not enable that polling; use `cookies.onChanged`. Linux polls nothing: WebKitGTK reports every change.
 
 ## Platform support
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `create`, `remove`, `setProxy` | ✓¹ | — | — |
-| `list`, `getProxy`, `capabilities` | ✓ | — | ✓² |
-| `cookies.get`, `cookies.set`, `cookies.remove`, `cookies.onChanged` | ✓ | — | ✓² |
+| `create`, `remove`, `setProxy` | ✓¹ | ✓³ | — |
+| `list`, `getProxy`, `capabilities` | ✓ | ✓ | ✓² |
+| `cookies.get`, `cookies.set`, `cookies.remove`, `cookies.onChanged` | ✓ | ✓⁴ | ✓² |
 
 1. Private profiles work on any supported macOS; `persistent: true` and `setProxy` need macOS 14+.
 2. The default profile only: `list` gives that one, `getProxy` gives `null`, and another `session` rejects with `invalid_args`. WebView2 has no cookie event, so `cookies.onChanged` compares the whole profile once a second while someone listens.
+3. A persistent profile's data is in `sessions/` under the app's data folder, and removing it deletes that folder. A plain HTTP proxy receives `http://` requests directly (`GET http://host/`) rather than through CONNECT; over TLS, and for `https://` URLs, it's a CONNECT. Run against local HTTP, TLS and SOCKS5 proxies written for the tests, not against commercial ones.
+4. A cookie set without `SameSite` reads back as `Lax`, where macOS omits the field. The default profile keeps its lasting cookies in `cookies.sqlite` in the app's data folder.
 
 ## Example
 

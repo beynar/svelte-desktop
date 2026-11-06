@@ -14,16 +14,16 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 
 | Feature | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| [Custom resource protocols](/features/protocols) | Supported | Unsupported | Unsupported |
-| Website sessions and per-session proxies | Supported | Unsupported | Unsupported |
-| Cookie management | Supported | Unsupported | Default profile |
+| [Custom resource protocols](/features/protocols) | Supported | Supported | Unsupported |
+| Website sessions and per-session proxies | Supported | Supported | Unsupported |
+| Cookie management | Supported | Supported | Default profile |
 | Server-owned web permission handlers | Supported | Supported | Supported |
 | Server-owned authentication handlers and certificate exceptions | Supported | Supported, top-level loads for certificates | Unsupported |
-| Registered web scripts and content rules | Supported | Unsupported | Unsupported |
+| Registered web scripts and content rules | Supported | Supported | Unsupported |
 | Navigation policy | Supported | Supported | Supported |
 | Native download management | Supported | Supported, resume starts over | Supported |
 | File bookmarks | Supported | Unsupported | Unsupported |
-| Native input policy | Supported | Unsupported | Unsupported |
+| Native input policy | Supported | Supported | Unsupported |
 | Web-view printing and PDF export | Supported | Supported | Supported with a recent WebView2 runtime |
 
 These are shell API limits. The page still has the web APIs its installed web engine provides.
@@ -58,6 +58,9 @@ These are shell API limits. The page still has the web APIs its installed web en
 - Camera, microphone and screen requests have been run on WebKit's mock devices, under Xvfb. Real devices, the desktop's screen-share portal and location through GeoClue haven't been covered.
 - A paused download keeps nothing: `resume` downloads the whole file again, which only a GET over http(s) can do. WebKitGTK can't pause and can't ask a server for a range. See [downloads](/host/web/downloads#platform-support).
 - Printing has been run against GTK's real print dialog and its CUPS backend talking to a small IPP server in the test, under Xvfb. A real printer and `cupsd` haven't been covered. `copies` are in the document WebKit sends, not an option of the job. See [web view](/host/web/webview#printoptions).
+- A custom protocol's handler isn't told when a request goes away before it answers, only once its response has started. See [protocols](/host/web/protocol#platform-support).
+- An input policy's `meta` is the Super key and `keyCode` a hardware key code. It has been run with real X11 key events under Xvfb, not on Wayland. See [input policy](/host/input/input-policy#platform-support).
+- A plain HTTP proxy receives `http://` requests directly rather than through CONNECT. See [sessions](/host/web/sessions#platform-support).
 - Self-update has been run through real updates and rollbacks on Ubuntu 24.04 only, under Xvfb. Other distributions and real desktop sessions haven't been covered.
 
 ## Tooling

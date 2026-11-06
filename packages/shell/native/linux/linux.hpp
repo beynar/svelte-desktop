@@ -13,6 +13,7 @@
 //   svc_web_control.cc  webview.*: navigation policy, web policy, find, context menu,
 //                       JS dialogs, media, crash recovery, file drop
 //   svc_web_downloads.cc webview.*: downloads, printing, clearData
+//   svc_web_sessions.cc sessions.*, protocol.*, webview.*: content rules, registered scripts, input policy
 //   svc_optional.cc     tray.* (ayatana-appindicator), secureStorage.* (libsecret)
 //                       — dlopen()ed at runtime
 //   svc_notifications.cc notifications.* (libnotify, dlopen()ed; Unity badge over
@@ -105,7 +106,8 @@ void request_quit();
 /// document start in the top frame, `__shell__` message handler, nonce-checked)
 /// and the shell's navigation policy / crash recovery. `extra_script` is an
 /// optional additional top-frame document-start script (popovers).
-WebKitWebView *make_webview(int native_id, bool debug, const std::string &extra_script);
+/// `context`: its session (session_context), the default one if null.
+WebKitWebView *make_webview(int native_id, bool debug, const std::string &extra_script, WebKitWebContext *context = nullptr);
 void detach_webview(int native_id);
 WebKitWebView *webview_for(int native_id); // windows and popovers
 bool same_origin(const std::string &url);
@@ -149,6 +151,18 @@ void web_downloads_attach(WebKitWebView *wv); // make_webview
 bool web_response_download(WebKitPolicyDecision *d);
 void web_print_dialogs_close(); // quitting: gtk_main can't return from under the loop of a print dialog
 void register_web_downloads();
+
+// ---- sessions, protocols, content rules, scripts, input policy (svc_web_sessions.cc) ---
+/// The context of options.session (absent: the default one). *valid false, null: it isn't a session.
+WebKitWebContext *session_context(const json &options, bool *valid);
+json session_of(WebKitWebView *wv); // its named session, null for the default
+/// Loads a URL. In a named session the app's own pages need the app's cookie first.
+void session_load(WebKitWebView *wv, const std::string &url);
+/// desktop.config protocols, from the first window's options, before any web view exists.
+void set_protocol_schemes(const json &input);
+bool protocol_scheme(const std::string &scheme);
+void web_sessions_attach(int native_id, WebKitWebView *wv); // make_webview: content rules and scripts
+void register_web_sessions();
 
 // ---- misc helpers ---------------------------------------------------------
 inline json rect_json(double x, double y, double w, double h) { return json{{"x", x}, {"y", y}, {"width", w}, {"height", h}}; }

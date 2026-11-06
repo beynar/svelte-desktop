@@ -943,10 +943,11 @@ static void register_clear_data() {
 // ===========================================================================
 
 void web_downloads_attach(WebKitWebView *wv) {
-  static bool connected = false;
-  if (!connected) {
-    connected = true;
-    g_signal_connect(webkit_web_view_get_context(wv), "download-started", G_CALLBACK(on_download_started), nullptr);
+  // A signal of the context, and each session has its own.
+  WebKitWebContext *context = webkit_web_view_get_context(wv);
+  if (!g_object_get_data(G_OBJECT(context), "sd-downloads")) {
+    g_object_set_data(G_OBJECT(context), "sd-downloads", GINT_TO_POINTER(1));
+    g_signal_connect(context, "download-started", G_CALLBACK(on_download_started), nullptr);
   }
   // Not the view's native id as data: svc_view.cc disconnects what carries it.
   g_signal_connect(wv, "print", G_CALLBACK(on_print), nullptr);

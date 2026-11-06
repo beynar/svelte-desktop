@@ -54,7 +54,7 @@ export interface ShellOptions {
   pagePermissions?: string[];
   /** Dev mode: the config's usage descriptions (no Info.plist then; a bundle has its own). */
   usageDescriptions?: Record<string, string>;
-  /** Custom resource schemes registered before any web view is created (macOS). */
+  /** Custom resource schemes registered before any web view is created (macOS and Linux). */
   protocols?: string[];
   /** Main window URL override (dev mode points it at the Vite server). */
   url?: string;

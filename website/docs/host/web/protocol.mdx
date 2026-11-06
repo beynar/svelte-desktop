@@ -3,7 +3,7 @@ title: host.protocol
 description: Serve custom-scheme web resources from server-side Request handlers.
 ---
 
-`host.protocol` registers custom resource handlers for URLs such as `asset://archive/cover.svg`. Native resource loading is macOS only. All three methods are synchronous and server-only.
+`host.protocol` registers custom resource handlers for URLs such as `asset://archive/cover.svg`. Native resource loading works on macOS and Linux. All three methods are synchronous and server-only.
 
 How-to: [Custom resource protocols](/features/protocols).
 
@@ -88,9 +88,11 @@ Validate URLs before serving private files. Neither the scheme nor the requested
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `handle`, `unhandle`, `isProtocolHandled` | ✓ | partial | partial |
+| `handle`, `unhandle`, `isProtocolHandled` | ✓ | ✓ | partial |
 
-On Linux and Windows, the JavaScript registry methods run, but native custom resource protocols are not implemented. A successful registration or `isProtocolHandled` result does not mean a resource can load there. On macOS, handlers run in the Bun Worker in packaged apps and in the Vite server during development.
+On Windows, the JavaScript registry methods run, but native custom resource protocols are not implemented. A successful registration or `isProtocolHandled` result does not mean a resource can load there. Handlers run in the Bun Worker in packaged apps and in the Vite server during development.
+
+On Linux, a page loaded from a scheme can `fetch()` it, with methods, bodies, statuses and headers. A `fetch()` from another origin, such as the app's own pages, is refused: use an image, a frame or a script there. The page gets a response's headers with its first bytes, not before. If a request goes away before the handler answers, nothing tells the handler: what it sends is dropped, and `request.signal` only aborts for a request stopped after its response started. Requests come from every session.
 
 ## Example
 
