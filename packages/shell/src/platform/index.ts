@@ -1568,9 +1568,9 @@ export interface WebviewInfo extends WebviewSource {
 	fileDrop: boolean;
 	contextMenu: ContextMenuMode;
 	inspectable?: boolean;
-	/** setBackgroundThrottling's state (macOS). */
+	/** setBackgroundThrottling's state (macOS, Linux). */
 	backgroundThrottling?: boolean;
-	/** setRecovery's state (macOS). */
+	/** setRecovery's state (macOS, Linux). */
 	recovery?: WebviewRecovery;
 }
 
@@ -1700,14 +1700,14 @@ export const webview = {
 	clearData: (options: { types?: WebsiteDataType[]; app?: boolean } = {}) =>
 		callPlatform<{ cleared: string[] }>('webview', 'clearData', options),
 	/** false: the page runs at full speed when hidden or covered (timers, audio, sockets), at an energy
-	 *  cost. WebKit throttles by default (macOS). */
+	 *  cost. WebKit throttles by default (macOS, Linux). */
 	setBackgroundThrottling: (enabled: boolean, target: WebviewTarget = {}) =>
 		callPlatform<null>('webview', 'setBackgroundThrottling', { ...target, enabled }),
-	/** The page's sound muted (it keeps playing), or back (macOS). */
+	/** The page's sound muted (it keeps playing), or back (macOS, Linux). */
 	setAudioMuted: (muted: boolean, target: WebviewTarget = {}) => callPlatform<null>('webview', 'setAudioMuted', { ...target, muted }),
-	/** Pause every audio and video of the page (macOS). */
+	/** Pause every audio and video of the page (macOS, Linux). */
 	pauseMedia: (target: WebviewTarget = {}) => callPlatform<null>('webview', 'pauseMedia', target),
-	/** What the page plays and captures (macOS). */
+	/** What the page plays and captures (macOS, Linux). */
 	getMediaState: (target: WebviewTarget = {}) =>
 		callPlatform<MediaState>('webview', 'getMediaState', target),
 	setZoom: (zoom: number, target: WebviewTarget = {}) =>

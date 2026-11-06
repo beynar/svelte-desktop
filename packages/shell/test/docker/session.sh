@@ -21,6 +21,8 @@ eval "$(printf 'test' | gnome-keyring-daemon --unlock --components=secrets 2>/de
 /tmp/fake-screensaver >/tmp/fake-screensaver.log 2>&1 &
 # Scriptable notification server for linux-notifications-fake (started by that suite, replacing dunst).
 [ -x /tmp/fake-notifications ] || gcc "$here/fake-notifications.c" $(pkg-config --cflags --libs gio-2.0) -o /tmp/fake-notifications
+# Real XDND drag source for linux-web-control (started by that suite).
+[ -x /tmp/fake-drag ] || gcc "$here/fake-drag.c" $(pkg-config --cflags --libs gtk+-3.0) -o /tmp/fake-drag
 mkdir -p /tmp/fakebin
 cat > /tmp/fakebin/xdg-open <<'X'
 #!/bin/sh

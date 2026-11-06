@@ -17,10 +17,10 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 | [Custom resource protocols](/features/protocols) | Supported | Unsupported | Unsupported |
 | Website sessions and per-session proxies | Supported | Unsupported | Unsupported |
 | Cookie management | Supported | Unsupported | Default profile |
-| Server-owned web permission handlers | Supported | Unsupported | Supported |
-| Server-owned authentication handlers and certificate exceptions | Supported | Unsupported | Unsupported |
+| Server-owned web permission handlers | Supported | Supported | Supported |
+| Server-owned authentication handlers and certificate exceptions | Supported | Supported, top-level loads for certificates | Unsupported |
 | Registered web scripts and content rules | Supported | Unsupported | Unsupported |
-| Navigation policy | Supported | Unsupported | Supported |
+| Navigation policy | Supported | Supported | Supported |
 | Native download management | Supported | Unsupported | Supported |
 | File bookmarks | Supported | Unsupported | Unsupported |
 | Native input policy | Supported | Unsupported | Unsupported |
@@ -52,6 +52,10 @@ These are shell API limits. The page still has the web APIs its installed web en
 - C/C++ plugins, source addons, Rust and Go plugins need a Linux host. See [Distribution](/shipping/distribution#linux).
 - Native inline notification replies are unavailable; reply buttons become plain actions. Scheduling catches up when the app restarts rather than delivering while it is closed.
 - The build makes an app folder and an AppImage, not deb, rpm or Flatpak packages. Self-update covers those two; an install this user can't write to, in `/opt` for instance, answers `not_writable`. See [Self-update](/shipping/self-update#linux).
+- A navigation policy can't tell frames from the main frame: `isMainFrame` is `null`. See [web content](/host/web/web-content#platform-support).
+- Permission requests name neither origin nor frame, certificate exceptions take effect on top-level loads, and there are no client identities. See [web policy](/host/web/web-policy#platform-support).
+- `pauseMedia` and `getMediaState` reach what the page's document and same-origin frames hold, and `new Audio()`. `onLifecycle` only reports `terminated`. A page's DOM `drop` has no `files`; `onFileDrop` has the paths. See [web view](/host/web/webview).
+- Camera, microphone and screen requests have been run on WebKit's mock devices, under Xvfb. Real devices, the desktop's screen-share portal and location through GeoClue haven't been covered.
 - Self-update has been run through real updates and rollbacks on Ubuntu 24.04 only, under Xvfb. Other distributions and real desktop sessions haven't been covered.
 
 ## Tooling

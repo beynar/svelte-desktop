@@ -26,7 +26,7 @@ The reasons in the OS prompts are defaults; set your own, or turn one off with `
 
 ## File drop
 
-The page keeps its normal DOM drag events with `File` objects. The shell adds the real paths, which the DOM can't expose (macOS):
+The page keeps its normal DOM drag events with `File` objects. The shell adds the real paths, which the DOM can't expose (macOS and Linux; on Linux the DOM event's `files` is empty):
 
 ```ts
 host.webview.onFileDrop(({ paths, x, y }) => importFiles(paths)); // x, y in CSS px
@@ -81,7 +81,7 @@ await host.webview.clearFind();
 await host.webview.setZoom(1.25); // clamped to 0.25 to 5
 ```
 
-`find` is macOS only; zoom also works on Linux and Windows.
+`find` works on macOS and Linux; zoom works on all three.
 
 ## Context menu
 
@@ -95,7 +95,7 @@ await host.webview.setContextMenu({ mode: 'custom', items: [{ id: 'paste-plain',
 | `default` | WebKit's own menu (the default in debug views). |
 | `custom` | Your items, which fire `menuAction`, with the edit items above them when editing. |
 
-Whatever the mode, `onContextMenu` reports `{ x, y, linkURL, srcURL, selectionText, editable }`, and a page can `preventDefault()` its own `contextmenu` event and call `host.menu.popup`. Windows supports only `none` and `default`; Linux doesn't implement this control. See [`setContextMenu`](/host/web/webview#setcontextmenuoptions) for `all`.
+Whatever the mode, `onContextMenu` reports `{ x, y, linkURL, srcURL, selectionText, editable }`, and a page can `preventDefault()` its own `contextmenu` event and call `host.menu.popup`. Windows supports only `none` and `default`. See [`setContextMenu`](/host/web/webview#setcontextmenuoptions) for `all`.
 
 ## Sound and media
 
@@ -246,4 +246,4 @@ await host.webview.setNavigationPolicy(async ({ url }) =>
 );
 ```
 
-Both are covered in [content rules and scripts](/host/web/web-content), along with user scripts and content worlds (`host.webview.scripts`). The navigation policy also works on Windows; the rest of this section is macOS only.
+Both are covered in [content rules and scripts](/host/web/web-content), along with user scripts and content worlds (`host.webview.scripts`). The navigation policy also works on Windows and Linux; the rest of this section is macOS only.

@@ -25,7 +25,12 @@ export type UserScript = {
 	/** Omitted: every existing and future web view, across sessions. */
 	target?: WebviewTarget;
 };
-export type NavigationRequest = { url: string; isMainFrame: boolean; viewId: string };
+export type NavigationRequest = {
+	url: string;
+	/** Null on Linux: WebKitGTK doesn't say which frame a navigation targets when it asks. */
+	isMainFrame: boolean | null;
+	viewId: string;
+};
 export type NavigationPolicy = (request: NavigationRequest) => 'allow' | 'cancel' | Promise<'allow' | 'cancel'>;
 const navigationState = ((globalThis as Record<symbol, { off?: () => void } | undefined>)[Symbol.for('kitop.navigation-policy')] ??= {});
 

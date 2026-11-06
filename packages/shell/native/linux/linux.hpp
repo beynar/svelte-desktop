@@ -10,6 +10,8 @@
 //                       capabilities.describe, power.*
 //   svc_dialog.cc       dialog.* (GtkFileChooserNative, GtkMessageDialog)
 //   svc_webview.cc      webview.*, popover.*, events.emit
+//   svc_web_control.cc  webview.*: navigation policy, web policy, find, context menu,
+//                       JS dialogs, media, crash recovery, file drop
 //   svc_optional.cc     tray.* (ayatana-appindicator), secureStorage.* (libsecret)
 //                       — dlopen()ed at runtime
 //   svc_notifications.cc notifications.* (libnotify, dlopen()ed; Unity badge over
@@ -107,6 +109,7 @@ void detach_webview(int native_id);
 WebKitWebView *webview_for(int native_id); // windows and popovers
 bool same_origin(const std::string &url);
 std::string origin_of(const std::string &url);
+std::string page_origin(int native_id); // of its last committed top-level load
 
 // ---- popovers (svc_webview.cc) -------------------------------------------
 bool popover_page_ready(int native_id); // true if native_id is a popover
@@ -121,6 +124,22 @@ void execute_js(WebKitWebView *wv, const std::string &code, CallPtr c);
 /// A web view committed a top-level load: track its origin (the bridge checks it).
 void page_committed(int native_id, const char *uri);
 void register_view();
+
+/// What a webview.* op acts on: popoverId, viewId, windowId, the calling page, the primary window.
+struct Target {
+  WebKitWebView *wv = nullptr;
+  json source; // {windowId} | {popoverId} | {viewId, windowId}
+};
+bool resolve_target(CallPtr c, Target *t); // false: the call has failed
+
+// ---- web control (svc_web_control.cc) ---------------------------------------
+/// make_webview: its signal handlers and per-view settings. detach_webview: they end.
+void web_control_attach(int native_id, WebKitWebView *wv);
+void web_control_detach(WebKitWebView *wv);
+/// The navigation policy holds this navigation (it answers `d` later): the decide-policy handler returns TRUE.
+bool web_navigation_held(WebKitWebView *wv, WebKitPolicyDecision *d, const std::string &url);
+json web_control_info(WebKitWebView *wv); // getInfo's fileDrop, contextMenu, backgroundThrottling, recovery
+void register_web_control();
 
 // ---- misc helpers ---------------------------------------------------------
 inline json rect_json(double x, double y, double w, double h) { return json{{"x", x}, {"y", y}, {"width", w}, {"height", h}}; }

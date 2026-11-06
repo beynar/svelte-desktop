@@ -4,7 +4,7 @@ export type WebPermission = 'camera' | 'microphone' | 'location' | 'speech' | 's
 export type WebPermissionDecision = 'allow' | 'deny' | 'prompt';
 export type WebPermissionRequest = {
 	origin: string;
-	/** Null when the engine doesn't expose the initiating frame: WebKit's speech SPI, WebView2's permission event. */
+	/** Null when the engine doesn't expose the initiating frame: WebKit's speech SPI, WebView2's permission event, WebKitGTK. */
 	frame: { origin: string; url: string; main: boolean } | null;
 	permission: WebPermission;
 	viewId?: string;
@@ -54,7 +54,7 @@ function listen() {
 	});
 }
 
-/** Server-only policy, shared by all shell views. Permissions: macOS and Windows. Auth and certificates: macOS. */
+/** Server-only policy, shared by all shell views. Permissions: every OS. Auth and certificates: macOS and Linux. Client identities: macOS. */
 export const webPolicy = {
 	async setPermissionHandler(handler: PermissionHandler | null, options: { timeoutMs?: number } = {}): Promise<void> {
 		assertServer(); listen();

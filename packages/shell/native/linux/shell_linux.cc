@@ -508,7 +508,7 @@ static void open_external(int id, const std::string &url) {
   emit_raw(json{{"type", "external-navigation"}, {"window", id}, {"url", url}});
 }
 
-static gboolean on_decide_policy(WebKitWebView *, WebKitPolicyDecision *d, WebKitPolicyDecisionType type, gpointer data) {
+static gboolean on_decide_policy(WebKitWebView *wv, WebKitPolicyDecision *d, WebKitPolicyDecisionType type, gpointer data) {
   int id = GPOINTER_TO_INT(data);
   if (type == WEBKIT_POLICY_DECISION_TYPE_RESPONSE) {
     // Top-frame loads that end up on another origin (scripted navigations,
@@ -529,7 +529,7 @@ static gboolean on_decide_policy(WebKitWebView *, WebKitPolicyDecision *d, WebKi
     if (!url.empty() && url != "about:blank") open_external(id, url);
     return TRUE;
   }
-  if (internal_url(url)) return FALSE;
+  if (internal_url(url)) return web_navigation_held(wv, d, url);
   // The navigation decision doesn't say which frame it targets. Link clicks and
   // form submissions to another origin leave the app right away (no request
   // sent, macOS parity); other loads (iframe src, scripted top-level
@@ -541,7 +541,7 @@ static gboolean on_decide_policy(WebKitWebView *, WebKitPolicyDecision *d, WebKi
     open_external(id, url);
     return TRUE;
   }
-  return FALSE;
+  return web_navigation_held(wv, d, url);
 }
 
 // window.open() asks for a new web view: hand the URL to the browser instead.
@@ -570,27 +570,6 @@ static gboolean on_load_failed(WebKitWebView *, WebKitLoadEvent, gchar *uri, GEr
   // DNS): no WebKit error page in place of the app — hand it to the browser.
   open_external(GPOINTER_TO_INT(data), uri);
   return TRUE;
-}
-
-static gboolean reload_after_crash(gpointer data) {
-  WebKitWebView *wv = WEBKIT_WEB_VIEW(data);
-  if (!gtk_widget_in_destruction(GTK_WIDGET(wv))) webkit_web_view_reload(wv);
-  return G_SOURCE_REMOVE;
-}
-
-static gboolean on_web_process_terminated(WebKitWebView *wv, WebKitWebProcessTerminationReason, gpointer data) {
-  static std::map<int, ReloadBudget> budgets;
-  int id = GPOINTER_TO_INT(data);
-  int delay = budgets[id].next(g_get_monotonic_time() / 1e6);
-  emit_raw(json{{"type", "webcontent-terminated"}, {"window", id}, {"gaveUp", delay < 0}});
-  if (delay >= 0) {
-    g_timeout_add_full(G_PRIORITY_DEFAULT, delay, reload_after_crash, g_object_ref(wv), g_object_unref);
-  } else {
-    const char *uri = webkit_web_view_get_uri(wv);
-    std::string page = crashed_page_url(app_origin(), uri ? uri : "");
-    if (!page.empty()) webkit_web_view_load_uri(wv, page.c_str());
-  }
-  return FALSE;
 }
 
 static void on_webview_close(WebKitWebView *, gpointer data) {
@@ -622,11 +601,11 @@ WebKitWebView *make_webview(int native_id, bool debug, const std::string &extra_
   // window.open must reach decide-policy (→ default browser) instead of being
   // swallowed by the popup blocker.
   webkit_settings_set_javascript_can_open_windows_automatically(settings, TRUE);
+  web_control_attach(native_id, wv); // first: its load-failed comes before the shell's
   g_signal_connect(wv, "decide-policy", G_CALLBACK(on_decide_policy), id);
   g_signal_connect(wv, "load-changed", G_CALLBACK(on_load_changed), id);
   g_signal_connect(wv, "load-failed", G_CALLBACK(on_load_failed), id);
   g_signal_connect(wv, "create", G_CALLBACK(on_create), id);
-  g_signal_connect(wv, "web-process-terminated", G_CALLBACK(on_web_process_terminated), id);
   g_signal_connect(wv, "close", G_CALLBACK(on_webview_close), id);
   g_pages[native_id] = page;
   return wv;
@@ -636,11 +615,17 @@ void detach_webview(int native_id) {
   auto it = g_pages.find(native_id);
   if (it == g_pages.end()) return;
   if (it->second.wv) {
+    web_control_detach(it->second.wv);
     WebKitUserContentManager *ucm = webkit_web_view_get_user_content_manager(it->second.wv);
     g_signal_handlers_disconnect_by_func(ucm, (gpointer)on_script_message, GINT_TO_POINTER(native_id));
     webkit_user_content_manager_unregister_script_message_handler(ucm, "__shell__");
   }
   g_pages.erase(it);
+}
+
+std::string page_origin(int native_id) {
+  auto it = g_pages.find(native_id);
+  return it == g_pages.end() ? "" : it->second.origin;
 }
 
 WebKitWebView *webview_for(int native_id) {
@@ -752,6 +737,7 @@ void backend_init_services() {
   lx::register_misc();
   lx::register_dialog();
   lx::register_webview();
+  lx::register_web_control();
   lx::register_optional();
 }
 

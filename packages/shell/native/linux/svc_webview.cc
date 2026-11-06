@@ -3,9 +3,10 @@
 // webview: executeJavaScript (promises awaited, JSON result), setZoom/getZoom,
 // reload/stop/goBack/goForward, getInfo, setUserAgent/getUserAgent,
 // setInspectable, capturePage (webkit_web_view_get_snapshot → PNG/JPEG),
-// getOpenedFiles. Target: popoverId, windowId (0 = primary), the calling page,
-// the primary window. Other webview ops (find, context menu, downloads, print,
-// file drop, JS dialogs) are not registered → `unsupported`.
+// getOpenedFiles. Target: popoverId, viewId, windowId (0 = primary), the calling
+// page, the primary window. Policy, find, context menu, JS dialogs, media and file
+// drop are in svc_web_control.cc. Other webview ops (downloads, print, cookies,
+// content rules, scripts) are not registered → `unsupported`.
 //
 // popover: a borderless GtkWindow holding a WebKitWebView, created (and loaded,
 // unless preload:false) at popover.create and kept warm while unmapped, so the
@@ -486,12 +487,7 @@ static void register_popover() {
 // ===========================================================================
 // webview.*
 
-struct Target {
-  WebKitWebView *wv = nullptr;
-  json source; // {windowId} | {popoverId} | {viewId, windowId}
-};
-
-static bool resolve_target(CallPtr c, Target *t) {
+bool resolve_target(CallPtr c, Target *t) {
   if (c->has("popoverId")) {
     auto it = g_popovers.find(c->str("popoverId"));
     if (it == g_popovers.end()) {
@@ -626,8 +622,9 @@ void register_webview() {
     d.update(json{{"url", uri ? json(uri) : json(nullptr)}, {"title", title ? title : ""}, {"loading", (bool)webkit_web_view_is_loading(t.wv)},
                   {"canGoBack", (bool)webkit_web_view_can_go_back(t.wv)}, {"canGoForward", (bool)webkit_web_view_can_go_forward(t.wv)},
                   {"zoom", webkit_web_view_get_zoom_level(t.wv)}, {"userAgent", ua ? json(ua) : json(nullptr)},
-                  {"debug", (bool)webkit_settings_get_enable_developer_extras(s)}, {"fileDrop", false}, {"contextMenu", "default"},
+                  {"debug", (bool)webkit_settings_get_enable_developer_extras(s)},
                   {"inspectable", (bool)webkit_settings_get_enable_developer_extras(s)}});
+    d.update(web_control_info(t.wv));
     c->ok(d);
   });
   view("setUserAgent", [](CallPtr c, Target &t) {

@@ -143,14 +143,14 @@ await host.webview.setNavigationPolicy(({ url }) =>
 | `NavigationRequest` field | Type | Description |
 | --- | --- | --- |
 | `url` | `string` | Requested navigation URL. |
-| `isMainFrame` | `boolean` | Whether the navigation targets the main frame. |
+| `isMainFrame` | `boolean \| null` | Whether the navigation targets the main frame. `null` on Linux, where WebKitGTK doesn't say when it asks. |
 | `viewId` | `string` | Embedded-view id, popover id, or `window:` followed by the public window id. |
 
 Resolves `void` after installation. Calling from a page rejects with `denied`. Replacing or removing the policy cancels pending decisions. A thrown/rejected handler, an answer other than `allow`, or a ten-second timeout cancels the navigation.
 
 The shell's existing navigation checks still apply: `allow` cannot bypass them. App-origin navigation is exempt. The policy covers navigations, not fetches or other subresources, and is shared across sessions. It runs in the Bun Worker in packaged apps and in the Vite server during development.
 
-macOS only.
+macOS, Linux and Windows. See [Platform support](#platform-support).
 
 ## Content worlds
 
@@ -164,9 +164,10 @@ To run code in a named world, pass `world` to [`executeJavaScript(code, target)`
 | --- | --- | --- | --- |
 | `setContentRules`, `removeContentRules`, `listContentRules` | ✓ | — | — |
 | `scripts.register`, `scripts.unregister`, `scripts.list` | ✓ | — | — |
-| `setNavigationPolicy` | ✓ | — | ✓¹ |
+| `setNavigationPolicy` | ✓ | ✓² | ✓¹ |
 
 1. On Windows only embedded views are asked, main frame and frames; `<a download>` links aren't. WebView2 can't defer a navigation, so the UI thread waits for the answer with a nested message loop, for ten seconds at most. Platform calls keep working meanwhile, but WebView2's own callbacks wait: a policy that needs one, such as `executeJavaScript`, runs into the deadline and the navigation is canceled. A refused request gets a local answer, so it doesn't reach the server.
+2. On Linux views, windows and popovers are asked, frames too, and `isMainFrame` is `null`. A refused navigation sends no request. Because the frame isn't known, a window's scripted navigation to another origin is asked as well, where macOS sends it to the browser at once: `allow` still ends in the browser.
 
 ## Example
 

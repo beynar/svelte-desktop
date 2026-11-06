@@ -53,6 +53,14 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 
 ### Added
 
+- Linux: `setNavigationPolicy` holds a navigation until the answer, so a refused one sends no request. `isMainFrame` is `null` there.
+- Linux: `setPermissionHandler` and saved decisions, for camera, microphone, screen and location. `getUserMedia` now exists on Linux.
+- Linux: `onAuthChallenge`, `allowCertificate` and `revokeCertificate`. `listClientIdentities` stays unsupported. Without a handler, a page asked for a login gets the server's answer instead of WebKit's login box.
+- Linux: `find` and `clearFind`.
+- Linux: `setContextMenu`, `getContextMenu` and `onContextMenu`, with the same modes as macOS. Without `debug`, a page now has no menu by default, as on macOS.
+- Linux: `getDialog`, `respondToDialog` and `onJsDialog`. JavaScript dialogs are now the shell's own.
+- Linux: `setAudioMuted`, `pauseMedia`, `getMediaState`, `setBackgroundThrottling` and `setRecovery`. Views now reload after a crash too, and `onLifecycle` reports `terminated`.
+- Linux: `setFileDrop` with `onFileDragEnter`, `onFileDragLeave` and `onFileDrop`. `getInfo` reports real `fileDrop`, `contextMenu`, `backgroundThrottling` and `recovery` values.
 - An update for a signed app has to be signed by the same Apple team or Windows publisher.
 - `release merge` and `make-manifest` take `--expires-in-days`: after that date, clients refuse the manifest.
 - A project can be a website and a desktop app. With `desktop()` next to `sveltekit({ adapter: adapter() })`, `kitop dev` and `kitop build` are the website, on your adapter, and `--mac`, `--windows` or `--linux` make them the desktop app. `kitop init` now sets a project up this way, and `desktop({ website: false })` is a desktop app only.

@@ -78,7 +78,7 @@ static void on_overlay_size(GtkWidget *, GdkRectangle *alloc, gpointer data) {
   }
 }
 
-static gboolean on_view_policy(WebKitWebView *, WebKitPolicyDecision *d, WebKitPolicyDecisionType type, gpointer) {
+static gboolean on_view_policy(WebKitWebView *wv, WebKitPolicyDecision *d, WebKitPolicyDecisionType type, gpointer) {
   if (type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION) {
     // target=_blank / window.open → the default browser.
     WebKitNavigationAction *a = webkit_navigation_policy_decision_get_navigation_action(WEBKIT_NAVIGATION_POLICY_DECISION(d));
@@ -100,6 +100,7 @@ static gboolean on_view_policy(WebKitWebView *, WebKitPolicyDecision *d, WebKitP
       webkit_policy_decision_ignore(d);
       return TRUE;
     }
+    return web_navigation_held(wv, d, u);
   }
   return FALSE;
 }

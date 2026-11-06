@@ -22,7 +22,7 @@ Methods with a `target` argument accept `WebviewTarget`, defaulting to `{}`. Opt
 | `popoverId` | `string` | Omitted | [Popover](/host/windows/popover) identifier. |
 | `windowId` | `number` | Omitted | Public [window](/host/windows/windows#finding-windows) id; `0` is the main window. |
 
-On macOS, selection order is `viewId`, `popoverId`, `windowId`, the calling page, then the main window. Windows resolves `popoverId`, `viewId`, `windowId`, the calling page, then the main window. Linux resolves `popoverId`, `windowId`, the calling page, then the main window; it does not resolve `viewId` in these methods. Select a window or popover explicitly there. Unknown selected targets reject with `invalid_args`.
+On macOS, selection order is `viewId`, `popoverId`, `windowId`, the calling page, then the main window. Windows resolves `popoverId`, `viewId`, `windowId`, the calling page, then the main window. Linux resolves `popoverId`, `viewId`, `windowId`, the calling page, then the main window. Unknown selected targets reject with `invalid_args`.
 
 `WebviewSource` has the same optional fields. Events identify their source with `windowId`, `popoverId`, or `viewId` plus the owning `windowId`.
 
@@ -59,11 +59,11 @@ const { matchFound } = await host.webview.find({ text: 'todo', caseSensitive: fa
 | `caseSensitive` | `boolean` | `false` | Match letter case. |
 | `wraps` | `boolean` | `true` | Continue from the other end of the document. |
 
-Resolves `{ matchFound: boolean }`. Empty text rejects with `invalid_args`. macOS only.
+Resolves `{ matchFound: boolean }`. Empty text rejects with `invalid_args`. macOS and Linux.
 
 ### `clearFind(target?)`
 
-Clear the page selection used by find. `target` is `WebviewTarget`. Resolves `null`. macOS only.
+Clear the page selection used by find. `target` is `WebviewTarget`. Resolves `null`. macOS and Linux.
 
 ### `reload(options?)`
 
@@ -101,11 +101,11 @@ Read a snapshot of the web view. `target` is `WebviewTarget`. Resolves `WebviewI
 | `zoom` | `number` | Current page zoom. |
 | `userAgent` | `string \| null` | macOS/Windows custom override, or `null`; Linux reports the configured user agent. |
 | `debug` | `boolean` | Debug state reported by the backend. |
-| `fileDrop` | `boolean` | Native file-path drop enabled. Linux reports `false`; Windows currently omits this declared field. |
-| `contextMenu` | `ContextMenuMode` | Current context-menu mode. Linux reports `default`. |
+| `fileDrop` | `boolean` | Native file-path drop enabled. Windows currently omits this declared field. |
+| `contextMenu` | `ContextMenuMode` | Current context-menu mode. |
 | `inspectable` | `boolean`, optional | Inspector access; macOS includes it from 13.3 onward. |
-| `backgroundThrottling` | `boolean`, optional | State set by `setBackgroundThrottling`; macOS only. |
-| `recovery` | `WebviewRecovery`, optional | Policy set by `setRecovery`; macOS only. |
+| `backgroundThrottling` | `boolean`, optional | State set by `setBackgroundThrottling`; macOS and Linux. |
+| `recovery` | `WebviewRecovery`, optional | Policy set by `setRecovery`; macOS and Linux. |
 
 ### `setUserAgent(userAgent, target?)`
 
@@ -129,11 +129,11 @@ await host.webview.setInspectable(true);
 
 Set behavior after the web content process terminates.
 
-`recovery` is `WebviewRecovery`, `'reload' | 'manual'`; new views default to `reload`. `target` is `WebviewTarget`. Resolves `null`. Invalid values reject with `invalid_args`. macOS only.
+`recovery` is `WebviewRecovery`, `'reload' | 'manual'`; new views default to `reload`. `target` is `WebviewTarget`. Resolves `null`. Invalid values reject with `invalid_args`. macOS and Linux.
 
 `reload` starts a new document at the last URL and loses in-memory JavaScript state, up to three times in five minutes and later each time; then [it stops](/concepts/architecture#when-something-crashes). `manual` leaves it stopped until an explicit `reload`. Handle termination from a surviving page or server: the terminated document cannot handle its own crash.
 
-Read the current policy from `getInfo().recovery` (macOS).
+Read the current policy from `getInfo().recovery` (macOS and Linux).
 
 ### `clearData(options?)`
 
@@ -152,19 +152,19 @@ Resolves `{ cleared: string[] }` with WebKit site display names. Unknown types r
 
 ### `setBackgroundThrottling(enabled, target?)`
 
-Control throttling while the page is hidden or covered. `enabled: boolean` restores throttling when `true`; `false` keeps timers and the page running at an energy cost. The default is enabled. `target` is `WebviewTarget`. Resolves `null`. macOS only.
+Control throttling while the page is hidden or covered. `enabled: boolean` restores throttling when `true`; `false` keeps timers and the page running at an energy cost. The default is enabled. `target` is `WebviewTarget`. Resolves `null`. macOS and Linux.
 
-macOS 14+ uses the public inactive scheduling policy as well as available WebKit controls; older systems use available WebKit SPI.
+macOS 14+ uses the public inactive scheduling policy as well as available WebKit controls; older systems use available WebKit SPI. Linux switches WebKit's hidden-page throttling features. The timers of a hidden window have been measured there; a covered one's haven't.
 
-Read the current state from `getInfo().backgroundThrottling` (macOS).
+Read the current state from `getInfo().backgroundThrottling` (macOS and Linux).
 
 ### `setAudioMuted(muted, target?)`
 
-Mute the page's output without stopping playback or muting capture devices. `muted: boolean` is required; `target` is `WebviewTarget`. Resolves `null`. macOS only; rejects with `unsupported` when the required WebKit muting SPI is unavailable.
+Mute the page's output without stopping playback or muting capture devices. `muted: boolean` is required; `target` is `WebviewTarget`. Resolves `null`. macOS and Linux; macOS rejects with `unsupported` when the required WebKit muting SPI is unavailable.
 
 ### `pauseMedia(target?)`
 
-Pause every audio and video playback in the selected page. `target` is `WebviewTarget`. Resolves `null`. macOS only.
+Pause every audio and video playback in the selected page. `target` is `WebviewTarget`. Resolves `null`. macOS and Linux. WebKitGTK has no call for this, so Linux pauses the elements it can reach: those in the document and its same-origin frames, and those played with `new Audio()`. A cross-origin frame's media and Web Audio keep playing.
 
 ### `getMediaState(target?)`
 
@@ -178,7 +178,7 @@ Read playback and capture state. `target` is `WebviewTarget`. Resolves `MediaSta
 | `camera` | `'none' \| 'active' \| 'muted'` | Camera capture state. |
 | `microphone` | `'none' \| 'active' \| 'muted'` | Microphone capture state. |
 
-macOS only. Audio flags use WebKit SPI; an unavailable observation reports `false`.
+macOS and Linux. On macOS, audio flags use WebKit SPI; an unavailable observation reports `false`. On Linux, `playback` comes from the same elements as `pauseMedia` and is never `suspended`.
 
 ### `setContextMenu(options)`
 
@@ -187,17 +187,17 @@ Choose the native context menu mode. `ContextMenuOptions` extends `WebviewTarget
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `mode` | `ContextMenuMode` | Required | `default`, `none` or `custom`. |
-| `items` | `MenuItemSpec[]` | Omitted | Required for `custom` on macOS; [menu item fields](/host/input/menu). |
-| `editMenu` | `boolean` | Initially `true`; unchanged when omitted | Keep editing and spelling items in `none`/`custom` mode. macOS only. |
-| `all` | `boolean` | `false` | Apply to every current web view. On macOS, also set the mode/items default for future views. |
+| `items` | `MenuItemSpec[]` | Omitted | Required for `custom` on macOS and Linux; [menu item fields](/host/input/menu). |
+| `editMenu` | `boolean` | Initially `true`; unchanged when omitted | Keep editing and spelling items in `none`/`custom` mode. macOS and Linux. |
+| `all` | `boolean` | `false` | Apply to every current web view. On macOS and Linux, also set the mode/items default for future views. |
 
-Resolves `{ mode: ContextMenuMode }`. `default` uses the engine menu. On macOS, `none` is the production default and retains editing items unless disabled; debug views default to `default`. `custom` adds your items, which emit `menuAction` through [menus](/host/input/menu). Invalid modes or custom item definitions reject with `invalid_args`.
+Resolves `{ mode: ContextMenuMode }`. `default` uses the engine menu. On macOS and Linux, `none` is the production default and retains editing items unless disabled; debug views default to `default`. `custom` adds your items, which emit `menuAction` through [menus](/host/input/menu). Invalid modes or custom item definitions reject with `invalid_args`.
 
-macOS supports all options. Windows supports only `default` and `none`; `custom` rejects with `unsupported`, `items`/`editMenu` are not applied, and `all` affects current views only. Linux is unsupported.
+macOS and Linux support all options. Windows supports only `default` and `none`; `custom` rejects with `unsupported`, `items`/`editMenu` are not applied, and `all` affects current views only.
 
 ### `getContextMenu(target?)`
 
-Read context-menu settings. `target` is `WebviewTarget`. Resolves `{ mode: ContextMenuMode; editMenu: boolean; debug: boolean; items: MenuItemSpec[] }`. Windows returns `editMenu: true` and empty `items`. macOS and Windows only.
+Read context-menu settings. `target` is `WebviewTarget`. Resolves `{ mode: ContextMenuMode; editMenu: boolean; debug: boolean; items: MenuItemSpec[] }`. Windows returns `editMenu: true` and empty `items`.
 
 ### `setFileDrop(options)`
 
@@ -209,7 +209,7 @@ Enable native drag/drop events with real file paths. This leaves ordinary DOM dr
 | `enabled` | `boolean` | Required | Native file-path reporting; initially enabled. |
 | `all` | `boolean` | `false` | Apply to all current and future web views. |
 
-Resolves `{ enabled: boolean }`. A missing `enabled` rejects with `invalid_args`. macOS only.
+Resolves `{ enabled: boolean }`. A missing `enabled` rejects with `invalid_args`. macOS and Linux. On Linux, the page's DOM `drop` event fires, but WebKitGTK leaves `dataTransfer.files` empty: use `onFileDrop` for the paths.
 
 ### `setDownloadDirectory(path)`
 
@@ -300,11 +300,11 @@ Answer an open JavaScript `alert`, `confirm` or `prompt`, for automation.
 | `accept` | `boolean` | `true` | Accept, or dismiss/cancel when `false`. |
 | `text` | `string` | Current prompt value | Replace prompt input before answering. |
 
-Resolves `{ type: 'alert' | 'confirm' | 'prompt' }`. No open dialog rejects with `unavailable`. The options object defaults to `{}`. macOS only.
+Resolves `{ type: 'alert' | 'confirm' | 'prompt' }`. No open dialog rejects with `unavailable`. The options object defaults to `{}`. macOS and Linux.
 
 ### `getDialog(target?)`
 
-Read the open JavaScript dialog. `target` is `WebviewTarget`. Resolves `{ type: 'alert' | 'confirm' | 'prompt'; message: string } | null`. macOS only.
+Read the open JavaScript dialog. `target` is `WebviewTarget`. Resolves `{ type: 'alert' | 'confirm' | 'prompt'; message: string } | null`. macOS and Linux.
 
 ### `executeJavaScript(code, target?)`
 
@@ -345,12 +345,12 @@ Each helper takes a callback and returns `() => void` to unsubscribe. The same e
 
 | Helper | Event | Payload | When / support |
 | --- | --- | --- | --- |
-| `onLifecycle` | `webviewLifecycle` | `WebviewLifecycleEvent`, below | Full native navigation or content-process termination. macOS. |
-| `onFileDragEnter` | `fileDragEnter` | `FileDropEvent`: `WebviewSource & { paths: string[]; x: number; y: number }` | Files enter the view; coordinates in CSS pixels. macOS. |
-| `onFileDragLeave` | `fileDragLeave` | `WebviewSource` | File drag leaves. macOS. |
-| `onFileDrop` | `fileDrop` | `FileDropEvent` | Files dropped with real paths. macOS. |
-| `onContextMenu` | `contextMenu` | `ContextMenuEvent`, below | Context-menu request, regardless of mode. macOS. |
-| `onJsDialog` | `jsDialog` | `JsDialogEvent`, below | Native JavaScript dialog opens. macOS. |
+| `onLifecycle` | `webviewLifecycle` | `WebviewLifecycleEvent`, below | Full native navigation or content-process termination. macOS. Linux emits `terminated` only. |
+| `onFileDragEnter` | `fileDragEnter` | `FileDropEvent`: `WebviewSource & { paths: string[]; x: number; y: number }` | Files enter the view; coordinates in CSS pixels. macOS and Linux. |
+| `onFileDragLeave` | `fileDragLeave` | `WebviewSource` | File drag leaves. macOS and Linux. |
+| `onFileDrop` | `fileDrop` | `FileDropEvent` | Files dropped with real paths. macOS and Linux. |
+| `onContextMenu` | `contextMenu` | `ContextMenuEvent`, below | Context-menu request, regardless of mode. macOS and Linux. |
+| `onJsDialog` | `jsDialog` | `JsDialogEvent`, below | Native JavaScript dialog opens. macOS and Linux. |
 | `onDownloadStarted` | `downloadStarted` | `DownloadStartedEvent`, below | Destination chosen and transfer starts. macOS and Windows. |
 | `onDownloadProgress` | `downloadProgress` | `DownloadProgressEvent`, below | Transfer progress. macOS and Windows. |
 | `onDownloadFinished` | `downloadFinished` | `DownloadFinishedEvent`, below | Download finishes. macOS and Windows. |
@@ -398,24 +398,25 @@ Download byte totals and fractions are `-1` when unknown; a known fraction is fr
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
 | `setZoom`, `getZoom` | ✓ | ✓ | ✓ |
-| `find`, `clearFind` | ✓ | — | — |
+| `find`, `clearFind` | ✓ | ✓ | — |
 | `reload`, `stop`, `goBack`, `goForward` | ✓ | ✓ | ✓ |
 | `getInfo` | ✓ | ✓ | partial¹ |
 | `setUserAgent`, `getUserAgent` | ✓ | ✓ | ✓² |
 | `setInspectable` | 13.3+ | ✓ | ✓ |
-| `setRecovery` | ✓ | — | — |
+| `setRecovery` | ✓ | ✓ | — |
 | `clearData` | ✓ | — | — |
-| `setBackgroundThrottling`, `setAudioMuted`, `pauseMedia`, `getMediaState` | ✓³ | — | — |
-| `setContextMenu`, `getContextMenu` | ✓ | — | partial⁴ |
-| `setFileDrop` | ✓ | — | — |
+| `setBackgroundThrottling`, `setAudioMuted`, `pauseMedia`, `getMediaState` | ✓³ | ✓⁹ | — |
+| `setContextMenu`, `getContextMenu` | ✓ | ✓ | partial⁴ |
+| `setFileDrop` | ✓ | ✓ | — |
 | `setDownloadDirectory`, `getDownloadDirectory`, `download`, `cancelDownload`, `listDownloads` | ✓ | — | ✓⁸ |
 | `print`, `printToPDF` | ✓ | — | ✓⁵ |
 | `getPrinters` | ✓ | — | ✓ |
-| `respondToDialog`, `getDialog` | ✓ | — | — |
+| `respondToDialog`, `getDialog` | ✓ | ✓ | — |
 | `executeJavaScript` | ✓ | partial⁶ | partial⁶ |
 | `capturePage` | ✓ | ✓ | partial⁷ |
 | `getOpenedFiles` | ✓ | ✓ | ✓ |
-| `onLifecycle`, `onFileDragEnter`, `onFileDragLeave`, `onFileDrop`, `onContextMenu`, `onJsDialog` | ✓ | — | — |
+| `onLifecycle` | ✓ | `terminated` only | — |
+| `onFileDragEnter`, `onFileDragLeave`, `onFileDrop`, `onContextMenu`, `onJsDialog` | ✓ | ✓ | — |
 | `onDownloadStarted`, `onDownloadProgress`, `onDownloadFinished`, `onDownloadFailed`, `onPrintFinished` | ✓ | — | ✓ |
 | `onCloseRequested` | ✓ | ✓ | — |
 | `onOpenFiles` | ✓ | ✓ | ✓ |
@@ -428,8 +429,9 @@ Download byte totals and fractions are `-1` when unknown; a known fraction is fr
 6. Linux and Windows ignore `world` and run in the page world.
 7. Windows ignores output `width`.
 8. From another origin, `download` needs an attachment. See [`download`](#downloadurl-options).
+9. Linux pauses and reports the media it can reach. See [`pauseMedia`](#pausemediatarget) and [`getMediaState`](#getmediastatetarget).
 
-Linux and Windows target support is limited as described under [Targets](#targets). Event support is listed in the events table; subscribing does not make an unsupported event available.
+Windows target support is limited as described under [Targets](#targets). Event support is listed in the events table; subscribing does not make an unsupported event available.
 
 ## Example
 

@@ -191,10 +191,21 @@ await host.webview.revokeCertificate({
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `setPermissionHandler`, `setPermissionDecision`, `listPermissionDecisions`, `revokePermissionDecision` | ✓ | — | ✓ |
-| `onAuthChallenge`, `allowCertificate`, `revokeCertificate`, `listClientIdentities` | ✓ | — | — |
+| `setPermissionHandler`, `setPermissionDecision`, `listPermissionDecisions`, `revokePermissionDecision` | ✓ | ✓ | ✓ |
+| `onAuthChallenge`, `allowCertificate`, `revokeCertificate` | ✓ | ✓ | — |
+| `listClientIdentities` | ✓ | — | — |
 
 What isn't available returns `unsupported`. These methods do not add WebUSB, HID or serial support. These are handler registrations and request/reply flows, not page-broadcast events. Use the callbacks above to receive requests.
+
+On Linux:
+
+- `camera` and `microphone` come from `getUserMedia`, `screenRecording` from `getDisplayMedia` and `location` from `navigator.geolocation`; `speech` never asks. WebKitGTK's request names neither its origin nor its frame, so `origin` is the page's and `frame` is `null`. A frame can only ask if the page delegated with `allow=`.
+- `prompt` shows the shell's own dialog: WebKitGTK has none.
+- `previousFailures` is `0` or `1`: WebKitGTK only says whether it is a retry.
+- With no handler, or on `'default'`, the page gets the server's own answer. WebKit's login box isn't used.
+- `serverTrust` is only raised for top-level loads, once the TLS handshake has failed. A frame or a fetch to a host with a bad certificate just fails. A pin takes effect at the next top-level load to that host.
+- WebKitGTK can't forget an exception it was given: after a page has loaded with a pinned certificate, `revokeCertificate` doesn't stop that certificate working on that host until the app quits. Revoking before the load does.
+- There is no system store of client identities to list, so `listClientIdentities` returns `unsupported`, `identities` is empty and an `{ identity }` answer cancels. `'default'` goes on without a certificate.
 
 On Windows, `camera`, `microphone` and `location` come from WebView2's permission event and `screenRecording` from its screen capture event; `speech` never asks. The permission event names the requesting origin but not its frame, so `frame` is `null` and frame origins aren't compared; screen capture reports its frame. `prompt` leaves the request to WebView2's own dialog, except for screen capture, where it means the same as `allow`. WebView2 is told not to save answers in its profile, so a handler keeps being asked. Clipboard and notification requests have no `WebPermission` name: the app's own origin is allowed and others are denied, with no handler involved.
 
