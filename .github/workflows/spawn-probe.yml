@@ -1,0 +1,15 @@
+name: spawn-probe
+on:
+  push:
+    branches: [bun-webview-shell]
+    paths: [.github/workflows/spawn-probe.yml, packages/shell/test/update-real/spawn-probe.ts]
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun packages/shell/test/update-real/spawn-probe.ts
