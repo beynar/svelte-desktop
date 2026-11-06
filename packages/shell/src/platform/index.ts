@@ -1694,7 +1694,7 @@ export const webview = {
 	/** Default reload; manual leaves a terminated page stopped until explicitly reloaded. */
 	setRecovery: (recovery: WebviewRecovery, target: WebviewTarget = {}) =>
 		callPlatform<null>('webview', 'setRecovery', { ...target, recovery }),
-	/** Clear what sites stored (macOS). Other sites' data (tabs on other sites), and with `app: true`
+	/** Clear what sites stored (macOS, Linux). Other sites' data (tabs on other sites), and with `app: true`
 	 *  the app's own too — except its cookies, which hold its session with the app's server. Default
 	 *  types: all. Resolves to the sites cleared. */
 	clearData: (options: { types?: WebsiteDataType[]; app?: boolean } = {}) =>

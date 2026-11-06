@@ -5,11 +5,11 @@ export type DownloadState = 'requested' | 'downloading' | 'pausing' | 'finishing
 export type DownloadRecord = WebviewSource & {
 	id: string; url: string; path?: string; suggestedFilename: string; mimeType: string | null;
 	state: DownloadState; receivedBytes: number; totalBytes: number; fraction: number;
-	/** Requires opaque resume data and a known total length. */
+	/** Requires opaque resume data and a known total length. Linux: a GET over http(s), which it downloads again. */
 	canResume: boolean;
 	/** Opaque native checkpoint reference. WebKit bytes stay native; resume by id. */
 	resumeData?: string;
-	/** Bytes in the durable checkpoint; later resumes can rewind to this position. */
+	/** Bytes in the durable checkpoint; later resumes can rewind to this position. Always 0 on Linux. */
 	resumeBytes?: number;
 	startedAt: number; updatedAt: number; error?: string;
 };
@@ -35,7 +35,7 @@ export const downloads = {
 	},
 	get: (id: string) => callPlatform<DownloadRecord | null>('webview', 'getDownload', { id }),
 	list: () => callPlatform<DownloadRecord[]>('webview', 'listDownloads'),
-	/** Cancel the transfer and retain resume data when the server/WebKit provides it. */
+	/** Cancel the transfer and retain resume data when the server/WebKit provides it. Linux keeps none: resume starts over. */
 	pause: (id: string) => callPlatform<DownloadRecord>('webview', 'pauseDownload', { id }),
 	resume: (id: string, target: WebviewTarget = {}) => callPlatform<DownloadRecord>('webview', 'resumeDownload', { ...target, id }),
 	cancel: (id: string) => callPlatform<DownloadRecord>('webview', 'cancelDownload', { id, snapshot: true }),

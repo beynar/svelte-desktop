@@ -51,8 +51,6 @@ export default async (t: Harness) => {
   t.check("stop", (await wv(t, "stop")).ok);
   t.check("unknown popoverId → invalid_args", (await wv(t, "getZoom", { popoverId: "nope" })).error?.code === "invalid_args");
   t.check("getOpenedFiles", Array.isArray((await wv(t, "getOpenedFiles")).value?.paths));
-  for (const op of ["download", "print", "printToPDF"])
-    t.check(`${op} → unsupported on Linux`, (await wv(t, op, { url: "/x", path: "/tmp/x" })).error?.code === "unsupported");
   const viaPage = (await t.pageCall("webview", "executeJavaScript", { code: "location.pathname" })) as any;
   t.check("page bridge: webview.executeJavaScript targets the caller", viaPage.ok && typeof viaPage.value === "string", viaPage);
 };

@@ -21,10 +21,10 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 | Server-owned authentication handlers and certificate exceptions | Supported | Supported, top-level loads for certificates | Unsupported |
 | Registered web scripts and content rules | Supported | Unsupported | Unsupported |
 | Navigation policy | Supported | Supported | Supported |
-| Native download management | Supported | Unsupported | Supported |
+| Native download management | Supported | Supported, resume starts over | Supported |
 | File bookmarks | Supported | Unsupported | Unsupported |
 | Native input policy | Supported | Unsupported | Unsupported |
-| Web-view printing and PDF export | Supported | Unsupported | Supported with a recent WebView2 runtime |
+| Web-view printing and PDF export | Supported | Supported | Supported with a recent WebView2 runtime |
 
 These are shell API limits. The page still has the web APIs its installed web engine provides.
 
@@ -56,6 +56,8 @@ These are shell API limits. The page still has the web APIs its installed web en
 - Permission requests name neither origin nor frame, certificate exceptions take effect on top-level loads, and there are no client identities. See [web policy](/host/web/web-policy#platform-support).
 - `pauseMedia` and `getMediaState` reach what the page's document and same-origin frames hold, and `new Audio()`. `onLifecycle` only reports `terminated`. A page's DOM `drop` has no `files`; `onFileDrop` has the paths. See [web view](/host/web/webview).
 - Camera, microphone and screen requests have been run on WebKit's mock devices, under Xvfb. Real devices, the desktop's screen-share portal and location through GeoClue haven't been covered.
+- A paused download keeps nothing: `resume` downloads the whole file again, which only a GET over http(s) can do. WebKitGTK can't pause and can't ask a server for a range. See [downloads](/host/web/downloads#platform-support).
+- Printing has been run against GTK's real print dialog and its CUPS backend talking to a small IPP server in the test, under Xvfb. A real printer and `cupsd` haven't been covered. `copies` are in the document WebKit sends, not an option of the job. See [web view](/host/web/webview#printoptions).
 - Self-update has been run through real updates and rollbacks on Ubuntu 24.04 only, under Xvfb. Other distributions and real desktop sessions haven't been covered.
 
 ## Tooling

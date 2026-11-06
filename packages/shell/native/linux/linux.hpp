@@ -12,6 +12,7 @@
 //   svc_webview.cc      webview.*, popover.*, events.emit
 //   svc_web_control.cc  webview.*: navigation policy, web policy, find, context menu,
 //                       JS dialogs, media, crash recovery, file drop
+//   svc_web_downloads.cc webview.*: downloads, printing, clearData
 //   svc_optional.cc     tray.* (ayatana-appindicator), secureStorage.* (libsecret)
 //                       — dlopen()ed at runtime
 //   svc_notifications.cc notifications.* (libnotify, dlopen()ed; Unity badge over
@@ -139,7 +140,15 @@ void web_control_detach(WebKitWebView *wv);
 /// The navigation policy holds this navigation (it answers `d` later): the decide-policy handler returns TRUE.
 bool web_navigation_held(WebKitWebView *wv, WebKitPolicyDecision *d, const std::string &url);
 json web_control_info(WebKitWebView *wv); // getInfo's fileDrop, contextMenu, backgroundThrottling, recovery
+json source_of(int native_id); // what events say they came from: {windowId} | {popoverId} | {viewId, windowId}
 void register_web_control();
+
+// ---- downloads, printing, website data (svc_web_downloads.cc) -----------------
+void web_downloads_attach(WebKitWebView *wv); // make_webview
+/// A response policy decision for something a view can't show: true when it became a download.
+bool web_response_download(WebKitPolicyDecision *d);
+void web_print_dialogs_close(); // quitting: gtk_main can't return from under the loop of a print dialog
+void register_web_downloads();
 
 // ---- misc helpers ---------------------------------------------------------
 inline json rect_json(double x, double y, double w, double h) { return json{{"x", x}, {"y", y}, {"width", w}, {"height", h}}; }

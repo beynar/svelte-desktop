@@ -181,6 +181,7 @@ static bool g_quit_on_last_window = true; // desktop.config quitOnLastWindowClos
 void request_quit() {
   g_quit_requested = true;
   if (g_in_main) gtk_main_quit();
+  web_print_dialogs_close();
 }
 
 GdkRectangle frame_rect(Window *w) {
@@ -514,9 +515,9 @@ static gboolean on_decide_policy(WebKitWebView *wv, WebKitPolicyDecision *d, Web
     // Top-frame loads that end up on another origin (scripted navigations,
     // server redirects): refused before commit, so the app page stays.
     WebKitResponsePolicyDecision *r = WEBKIT_RESPONSE_POLICY_DECISION(d);
-    if (!webkit_response_policy_decision_is_main_frame_main_resource(r)) return FALSE;
+    if (!webkit_response_policy_decision_is_main_frame_main_resource(r)) return web_response_download(d);
     const char *uri = webkit_uri_response_get_uri(webkit_response_policy_decision_get_response(r));
-    if (!uri || internal_url(uri)) return FALSE;
+    if (!uri || internal_url(uri)) return web_response_download(d);
     webkit_policy_decision_ignore(d);
     open_external(id, uri);
     return TRUE;
@@ -602,6 +603,7 @@ WebKitWebView *make_webview(int native_id, bool debug, const std::string &extra_
   // swallowed by the popup blocker.
   webkit_settings_set_javascript_can_open_windows_automatically(settings, TRUE);
   web_control_attach(native_id, wv); // first: its load-failed comes before the shell's
+  web_downloads_attach(wv);
   g_signal_connect(wv, "decide-policy", G_CALLBACK(on_decide_policy), id);
   g_signal_connect(wv, "load-changed", G_CALLBACK(on_load_changed), id);
   g_signal_connect(wv, "load-failed", G_CALLBACK(on_load_failed), id);
@@ -738,6 +740,7 @@ void backend_init_services() {
   lx::register_dialog();
   lx::register_webview();
   lx::register_web_control();
+  lx::register_web_downloads();
   lx::register_optional();
 }
 

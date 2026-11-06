@@ -148,7 +148,7 @@ const { cleared } = await host.webview.clearData({ types: ['cache'], app: true }
 | `types` | `WebsiteDataType[]` | `['all']` | `cookies`, `localStorage`, `sessionStorage`, `indexedDB`, `cache`, `serviceWorkers` or `all`. |
 | `app` | `boolean` | `false` | Include app storage as well as other sites' storage. |
 
-Resolves `{ cleared: string[] }` with WebKit site display names. Unknown types reject with `invalid_args`. App cookies are always retained to preserve authentication with the app server. Native filtering protects the app host, `localhost` and `127.0.0.1` as app records. macOS only.
+Resolves `{ cleared: string[] }` with WebKit site display names. Unknown types reject with `invalid_args`. App cookies are always retained to preserve authentication with the app server. Native filtering protects the app host, `localhost` and `127.0.0.1` as app records. macOS and Linux.
 
 ### `setBackgroundThrottling(enabled, target?)`
 
@@ -215,11 +215,11 @@ Resolves `{ enabled: boolean }`. A missing `enabled` rejects with `invalid_args`
 
 Set the app-wide default download directory. `path: string | null` accepts `null` to restore `~/Downloads`; a string expands `~` and creates missing directories.
 
-Resolves `{ path: string }`. Directory creation failure rejects with `denied`. Downloads without an explicit path receive unique names, including concurrent downloads. macOS and Windows.
+Resolves `{ path: string }`. Directory creation failure rejects with `denied`. Downloads without an explicit path receive unique names, including concurrent downloads. macOS, Windows and Linux.
 
 ### `getDownloadDirectory()`
 
-Read the default download directory. Resolves `{ path: string }`. macOS and Windows.
+Read the default download directory. Resolves `{ path: string }`. macOS, Windows and Linux.
 
 ### `download(url, options?)`
 
@@ -237,17 +237,17 @@ const { id, url } = await host.webview.download('/export.csv');
 
 Resolves `{ id: string; url: string }` when WebKit creates the download, before completion. Schemes other than HTTP, HTTPS, `blob:` and `data:`, or nonabsolute explicit paths, reject with `invalid_args`. Observe completion with the download events below.
 
-The destination handler on [`host.downloads`](/host/web/downloads) can override the destination or cancel the request. Automatic attachment and link downloads share the same records. macOS and Windows.
+The destination handler on [`host.downloads`](/host/web/downloads) can override the destination or cancel the request. Automatic attachment and link downloads share the same records. macOS, Windows and Linux.
 
 WebView2 has no call that starts a download, so on Windows the page does it, and the view must have one loaded. On its own origin, and for `blob:` and `data:`, that is a link with the `download` attribute. From another origin it is a hidden frame, so the response must be an attachment: otherwise the page stays where it is and the call rejects with `unavailable` after 15 seconds. It also rejects with `unavailable` if the page's frame policy blocks the request.
 
 ### `cancelDownload(id)`
 
-Cancel an active transfer. `id: string` is required. Resolves `null` as an acknowledgement; native cancellation and `downloadFailed` follow asynchronously. An unknown id rejects with `invalid_args`; a transfer that is no longer active rejects with `unavailable`. Use [`host.downloads.cancel`](/host/web/downloads) to await its final record. macOS and Windows.
+Cancel an active transfer. `id: string` is required. Resolves `null` as an acknowledgement; native cancellation and `downloadFailed` follow asynchronously. An unknown id rejects with `invalid_args`; a transfer that is no longer active rejects with `unavailable`. Use [`host.downloads.cancel`](/host/web/downloads) to await its final record. macOS, Windows and Linux.
 
 ### `listDownloads()`
 
-Read download history, newest first, including completed, canceled, paused and interrupted transfers. Resolves [`DownloadRecord[]`](/host/web/downloads), the same records as `host.downloads.list()`. macOS and Windows.
+Read download history, newest first, including completed, canceled, paused and interrupted transfers. Resolves [`DownloadRecord[]`](/host/web/downloads), the same records as `host.downloads.list()`. macOS, Windows and Linux.
 
 ### `print(options?)`
 
@@ -268,7 +268,9 @@ The options object defaults to `{}`. On macOS, interactive printing resolves `{ 
 
 On macOS, the view must be attached to a window without another open sheet. Physical printing accepts one contiguous page range. Invalid options reject with `invalid_args`; failed/canceled jobs, unattached views or an existing sheet reject with `unavailable`. PDF ranges beyond the generated page count fail with `unavailable` after pagination.
 
-On Windows, the same options are validated the same way. `silent` prints to `printer`, or to the default printer, and resolves `{ success: true }` when the job is done. `pdfPath` writes a PDF and resolves `{ success: true; path: string }`. Without either, it opens the browser print dialog and resolves `{ started: true }`: the dialog takes no settings, so the user picks them there and no `printFinished` follows. The required WebView2 interfaces may reject with `unsupported`; print failures reject with `unavailable`. Linux is unsupported.
+On Windows, the same options are validated the same way. `silent` prints to `printer`, or to the default printer, and resolves `{ success: true }` when the job is done. `pdfPath` writes a PDF and resolves `{ success: true; path: string }`. Without either, it opens the browser print dialog and resolves `{ started: true }`: the dialog takes no settings, so the user picks them there and no `printFinished` follows. The required WebView2 interfaces may reject with `unsupported`; print failures reject with `unavailable`.
+
+On Linux, the same options are validated the same way, and go through GTK's print system. Without `silent` or `pdfPath` it opens GTK's print dialog and resolves `{ started: true }`, with the options already filled in, and `printFinished` follows: `success: false` if the user cancels. A view shows one dialog at a time; a second call rejects with `unavailable`. `silent` prints to `printer`, or to the default printer: with none, it rejects with `unavailable`. `printer` must be one `getPrinters` lists. WebKit puts `copies` in the document it sends, so `copies: 3` of 2 pages is a job of 6 pages. `window.print()` opens the same dialog. PDF output goes through GTK's file print backend, without a dialog.
 
 ### `printToPDF(path, options?)`
 
@@ -284,11 +286,11 @@ await host.webview.printToPDF('/Users/me/notes.pdf', {
 
 `path: string` is required. The second argument is `Omit<PrintOptions, 'pdfPath' | 'silent'>`, defaulting to `{}`; its fields are described above. Resolves `{ path: string }`.
 
-macOS and Windows expand `~` and support the print options and validation above, apart from `printer` and `copies`, which a PDF ignores. On Windows, a missing path rejects with `invalid_args`, an old runtime with `unsupported`, and a write failure with `unavailable`. Linux is unsupported.
+macOS, Windows and Linux expand `~` and support the print options and validation above, apart from `printer` and `copies`, which a PDF ignores. On Windows and Linux, a missing path rejects with `invalid_args` and a write failure with `unavailable`; on Windows, an old runtime rejects with `unsupported`. Linux writes the PDF next to the destination first and only moves it there once it's complete, and `pageRanges` past the end of the document reject with `unavailable` as on macOS, which leaves a file already there as it was.
 
 ### `getPrinters()`
 
-List installed printer names. Resolves `string[]`, possibly empty. macOS and Windows.
+List installed printer names. Resolves `string[]`, possibly empty. On Linux, what GTK's print backends find, without its "Print to File", which isn't a printer. All platforms.
 
 ### `respondToDialog(options?)`
 
@@ -351,11 +353,11 @@ Each helper takes a callback and returns `() => void` to unsubscribe. The same e
 | `onFileDrop` | `fileDrop` | `FileDropEvent` | Files dropped with real paths. macOS and Linux. |
 | `onContextMenu` | `contextMenu` | `ContextMenuEvent`, below | Context-menu request, regardless of mode. macOS and Linux. |
 | `onJsDialog` | `jsDialog` | `JsDialogEvent`, below | Native JavaScript dialog opens. macOS and Linux. |
-| `onDownloadStarted` | `downloadStarted` | `DownloadStartedEvent`, below | Destination chosen and transfer starts. macOS and Windows. |
-| `onDownloadProgress` | `downloadProgress` | `DownloadProgressEvent`, below | Transfer progress. macOS and Windows. |
-| `onDownloadFinished` | `downloadFinished` | `DownloadFinishedEvent`, below | Download finishes. macOS and Windows. |
-| `onDownloadFailed` | `downloadFailed` | `DownloadFailedEvent`, below | Download fails or is canceled. macOS and Windows. |
-| `onPrintFinished` | `printFinished` | `WebviewSource & { success: boolean; path?: string }` | Print/PDF job finishes; PDF includes its path. macOS and Windows. |
+| `onDownloadStarted` | `downloadStarted` | `DownloadStartedEvent`, below | Destination chosen and transfer starts. macOS, Windows and Linux. |
+| `onDownloadProgress` | `downloadProgress` | `DownloadProgressEvent`, below | Transfer progress. macOS, Windows and Linux. |
+| `onDownloadFinished` | `downloadFinished` | `DownloadFinishedEvent`, below | Download finishes. macOS, Windows and Linux. |
+| `onDownloadFailed` | `downloadFailed` | `DownloadFailedEvent`, below | Download fails or is canceled. macOS, Windows and Linux. |
+| `onPrintFinished` | `printFinished` | `WebviewSource & { success: boolean; path?: string }` | Print/PDF job finishes; PDF includes its path. macOS, Windows and Linux. |
 | `onCloseRequested` | `closeRequested` | `WebviewSource` | A popover page calls `window.close()`. macOS and Linux. |
 | `onOpenFiles` | `openFiles` | `{ paths: string[] }` | Documents opened with the app. All three platforms. |
 
@@ -404,20 +406,20 @@ Download byte totals and fractions are `-1` when unknown; a known fraction is fr
 | `setUserAgent`, `getUserAgent` | ✓ | ✓ | ✓² |
 | `setInspectable` | 13.3+ | ✓ | ✓ |
 | `setRecovery` | ✓ | ✓ | — |
-| `clearData` | ✓ | — | — |
+| `clearData` | ✓ | ✓ | — |
 | `setBackgroundThrottling`, `setAudioMuted`, `pauseMedia`, `getMediaState` | ✓³ | ✓⁹ | — |
 | `setContextMenu`, `getContextMenu` | ✓ | ✓ | partial⁴ |
 | `setFileDrop` | ✓ | ✓ | — |
-| `setDownloadDirectory`, `getDownloadDirectory`, `download`, `cancelDownload`, `listDownloads` | ✓ | — | ✓⁸ |
-| `print`, `printToPDF` | ✓ | — | ✓⁵ |
-| `getPrinters` | ✓ | — | ✓ |
+| `setDownloadDirectory`, `getDownloadDirectory`, `download`, `cancelDownload`, `listDownloads` | ✓ | ✓ | ✓⁸ |
+| `print`, `printToPDF` | ✓ | ✓ | ✓⁵ |
+| `getPrinters` | ✓ | ✓ | ✓ |
 | `respondToDialog`, `getDialog` | ✓ | ✓ | — |
 | `executeJavaScript` | ✓ | partial⁶ | partial⁶ |
 | `capturePage` | ✓ | ✓ | partial⁷ |
 | `getOpenedFiles` | ✓ | ✓ | ✓ |
 | `onLifecycle` | ✓ | `terminated` only | — |
 | `onFileDragEnter`, `onFileDragLeave`, `onFileDrop`, `onContextMenu`, `onJsDialog` | ✓ | ✓ | — |
-| `onDownloadStarted`, `onDownloadProgress`, `onDownloadFinished`, `onDownloadFailed`, `onPrintFinished` | ✓ | — | ✓ |
+| `onDownloadStarted`, `onDownloadProgress`, `onDownloadFinished`, `onDownloadFailed`, `onPrintFinished` | ✓ | ✓ | ✓ |
 | `onCloseRequested` | ✓ | ✓ | — |
 | `onOpenFiles` | ✓ | ✓ | ✓ |
 

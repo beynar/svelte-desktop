@@ -61,6 +61,9 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 - Linux: `getDialog`, `respondToDialog` and `onJsDialog`. JavaScript dialogs are now the shell's own.
 - Linux: `setAudioMuted`, `pauseMedia`, `getMediaState`, `setBackgroundThrottling` and `setRecovery`. Views now reload after a crash too, and `onLifecycle` reports `terminated`.
 - Linux: `setFileDrop` with `onFileDragEnter`, `onFileDragLeave` and `onFileDrop`. `getInfo` reports real `fileDrop`, `contextMenu`, `backgroundThrottling` and `recovery` values.
+- Linux: `download`, `setDownloadDirectory`, `host.downloads` and their events, with history across launches. `<a download>` works, and what a view can't show is saved instead of ignored. WebKitGTK can't pause: `pause` cancels and `resume` downloads the whole file again.
+- Linux: `print`, `printToPDF` and `getPrinters`, with the options of the other platforms. `window.print()` now reports `onPrintFinished`.
+- Linux: `clearData`.
 - An update for a signed app has to be signed by the same Apple team or Windows publisher.
 - `release merge` and `make-manifest` take `--expires-in-days`: after that date, clients refuse the manifest.
 - A project can be a website and a desktop app. With `desktop()` next to `sveltekit({ adapter: adapter() })`, `kitop dev` and `kitop build` are the website, on your adapter, and `--mac`, `--windows` or `--linux` make them the desktop app. `kitop init` now sets a project up this way, and `desktop({ website: false })` is a desktop app only.

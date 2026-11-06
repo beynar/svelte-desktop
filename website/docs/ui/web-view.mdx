@@ -38,7 +38,7 @@ Call `preventDefault()` on the DOM `drop` event as usual. `host.webview.setFileD
 
 ## Downloads
 
-On macOS and Windows, `<a download>`, attachments and responses the web view can't display are saved to the download directory (`~/Downloads` by default) under a unique name. Start one yourself and follow it:
+`<a download>`, attachments and responses the web view can't display are saved to the download directory (`~/Downloads` by default) under a unique name. Start one yourself and follow it:
 
 ```ts
 const { id } = await host.webview.download('/export.csv'); // uses the page's cookies
@@ -71,7 +71,7 @@ await host.webview.printToPDF('/Users/me/notes.pdf', {
 });
 ```
 
-Omit `printer` for the system default. `pdfPath` on `print` saves a PDF silently. Invalid options reject before a job starts, and failed or canceled jobs reject with `unavailable`. The view must be attached to a window. The extended options need macOS or Windows; see the [reference](/host/web/webview#printoptions) for limits on copies, ranges and margins.
+Omit `printer` for the system default. `pdfPath` on `print` saves a PDF silently. Invalid options reject before a job starts, and failed or canceled jobs reject with `unavailable`. The view must be attached to a window. The extended options work on all three; see the [reference](/host/web/webview#printoptions) for limits on copies, ranges and margins.
 
 ## Find and zoom
 

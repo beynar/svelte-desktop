@@ -5,8 +5,8 @@
 // setInspectable, capturePage (webkit_web_view_get_snapshot → PNG/JPEG),
 // getOpenedFiles. Target: popoverId, viewId, windowId (0 = primary), the calling
 // page, the primary window. Policy, find, context menu, JS dialogs, media and file
-// drop are in svc_web_control.cc. Other webview ops (downloads, print, cookies,
-// content rules, scripts) are not registered → `unsupported`.
+// drop are in svc_web_control.cc, downloads, print and clearData in svc_web_downloads.cc.
+// Other webview ops (cookies, content rules, scripts) are not registered → `unsupported`.
 //
 // popover: a borderless GtkWindow holding a WebKitWebView, created (and loaded,
 // unless preload:false) at popover.create and kept warm while unmapped, so the

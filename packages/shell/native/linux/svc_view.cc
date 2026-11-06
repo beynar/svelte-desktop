@@ -102,7 +102,7 @@ static gboolean on_view_policy(WebKitWebView *wv, WebKitPolicyDecision *d, WebKi
     }
     return web_navigation_held(wv, d, u);
   }
-  return FALSE;
+  return web_response_download(d);
 }
 
 static void on_view_load(WebKitWebView *wv, WebKitLoadEvent ev, gpointer data) {

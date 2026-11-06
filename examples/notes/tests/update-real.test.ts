@@ -222,8 +222,10 @@ describe.skipIf(!W)('a real update', () => {
 			});
 			expect(existsSync(join(appDirs('dev.kitop.notes').data, '.last-error'))).toBe(true);
 			// On screen for the user to read, and not going anywhere: no restart behind it.
-			const pids = () => Bun.spawnSync(WINDOWS ? ['tasklist', '/FI', 'IMAGENAME eq SvelteNotes.exe', '/NH', '/FO', 'CSV'] : ['pgrep', '-x', 'SvelteNotes']).stdout.toString();
-			await until('the last one to be the only one', () => pids().trim().split('\n').length === 1);
+			// tasklist's other columns change by themselves: its memory use, for one.
+			const pids = () =>
+				(WINDOWS ? Bun.spawnSync(['tasklist', '/FI', 'IMAGENAME eq SvelteNotes.exe', '/NH', '/FO', 'CSV']).stdout.toString().trim().split('\n').map((line) => line.split(',')[1]) : Bun.spawnSync(['pgrep', '-x', 'SvelteNotes']).stdout.toString().trim().split('\n')).join();
+			await until('the last one to be the only one', () => pids() && !pids().includes(','));
 			const shown = pids();
 			await Bun.sleep(6000);
 			expect(pids()).toBe(shown);

@@ -3,7 +3,7 @@ title: host.downloads
 description: Choose download destinations, control transfers and inspect persistent history.
 ---
 
-`host.downloads` manages the same native transfers as [`host.webview.download()`](/host/web/webview). Use it for destination decisions, pause and resume controls, and history across launches. It has no reactive state and works on macOS and Windows. See [Platform support](#platform-support).
+`host.downloads` manages the same native transfers as [`host.webview.download()`](/host/web/webview). Use it for destination decisions, pause and resume controls, and history across launches. It has no reactive state and works on macOS, Windows and Linux. See [Platform support](#platform-support).
 
 How-to: [Downloads](/ui/web-view#downloads).
 
@@ -156,10 +156,11 @@ Subscribes to progress and state changes with `(download: DownloadRecord) => voi
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `onRequested`, `get`, `list`, `pause`, `cancel`, `onChanged` | ✓ | — | ✓ |
-| `resume` | ✓ | — | same run¹ |
+| `onRequested`, `get`, `list`, `pause`, `cancel`, `onChanged` | ✓ | ✓ | ✓ |
+| `resume` | ✓ | starts over² | same run¹ |
 
 1. WebView2 keeps the transfer: on Windows `pause` suspends it instead of canceling with a checkpoint, and `resume` continues it. `canResume` is what WebView2 reports, `resumeData` and `resumeBytes` are never set, and `finishing` isn't used. Transfers don't survive the app: after a relaunch a paused or active download is `interrupted` with `canResume: false`. History keeps the newest 200 records.
+2. WebKitGTK can't pause, gives no resume data and can't ask a server for a range. On Linux `pause` cancels the transfer and the partial file is deleted, and `resume` downloads the whole file again to the same destination, as the same record, with `receivedBytes` back at 0. So `canResume` means a GET over http(s) with a destination, in the `paused` or `interrupted` state, whatever the length, and also after a relaunch. `resumeBytes` is always 0 and `resumeData` is never set. A POST, a `blob:` or a `data:` download ends `interrupted` when paused, with `canResume: false`. A canceled download doesn't resume. `finishing` isn't used. The server may send a different file by then. An HTTP status from 400 up ends `interrupted` instead of saving the error page, as on Windows, and so does a connection closed before the `Content-Length`. History keeps the newest 200 records.
 
 ## Example
 

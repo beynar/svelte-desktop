@@ -69,7 +69,7 @@ static void run_after(guint ms, std::function<void()> fn) {
   }, new std::function<void()>(std::move(fn)), [](gpointer d) { delete static_cast<std::function<void()> *>(d); });
 }
 
-static json source_of(int id) {
+json source_of(int id) {
   std::string popover = popover_ident(id);
   if (!popover.empty()) return json{{"popoverId", popover}};
   if (int owner = view_owner(id)) return json{{"viewId", view_ident(id)}, {"windowId", public_id(owner)}};
