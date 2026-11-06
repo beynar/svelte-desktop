@@ -51,6 +51,8 @@ export interface UpdateManifest {
 	channel: string;
 	/** ISO-8601 timestamp. */
 	releasedAt: string;
+	/** ISO-8601. After it, clients refuse the manifest: someone replaying an old one can't hold an app back forever. */
+	expiresAt?: string;
 	notes?: string;
 	artifacts: Partial<Record<PlatformKey, Artifact>>;
 	/** Installs older than this are told the update is mandatory. */
@@ -158,6 +160,7 @@ export function validateManifest(m: unknown, opts: { unsigned?: boolean } = {}):
 	if (!isSemver(o.version)) fail(`version ${JSON.stringify(o.version)} is not semver`);
 	if (typeof o.channel !== "string" || !/^[a-z0-9][a-z0-9._-]*$/i.test(o.channel)) fail("invalid channel");
 	if (typeof o.releasedAt !== "string" || Number.isNaN(Date.parse(o.releasedAt))) fail("releasedAt must be an ISO date");
+	if (o.expiresAt !== undefined && (typeof o.expiresAt !== "string" || Number.isNaN(Date.parse(o.expiresAt)))) fail("expiresAt must be an ISO date");
 	if (o.notes !== undefined && typeof o.notes !== "string") fail("notes must be a string");
 	if (o.minimumVersion !== undefined && !isSemver(o.minimumVersion)) fail("minimumVersion is not semver");
 	if (!opts.unsigned && (typeof o.signature !== "string" || !o.signature)) fail("missing signature");

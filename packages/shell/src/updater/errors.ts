@@ -3,6 +3,7 @@ export type UpdateErrorCode =
 	| "manifest_fetch_failed"
 	| "manifest_invalid"
 	| "signature_invalid"
+	| "manifest_expired"
 	| "name_mismatch"
 	| "channel_mismatch"
 	| "download_failed"

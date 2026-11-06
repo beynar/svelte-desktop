@@ -36,6 +36,23 @@ async function setup(fields: Partial<UpdateManifest>, opts: Partial<UpdaterOptio
 }
 
 describe("check()", () => {
+	test("a manifest past its expiry is refused, before it is one is fine", async () => {
+		const past = await setup({ expiresAt: new Date(Date.now() - 1000).toISOString() });
+		await expect(past.updater.check()).rejects.toMatchObject({ code: "manifest_expired" });
+		await past.cleanup();
+		const future = await setup({ expiresAt: new Date(Date.now() + 86_400_000).toISOString() });
+		expect((await future.updater.check())?.version).toBe("2.0.0");
+		await future.cleanup();
+	});
+
+	test("a server that accepts and never answers fails the check", async () => {
+		const hanging = ((_: unknown, init: RequestInit) =>
+			new Promise((_resolve, reject) => init.signal!.addEventListener("abort", () => reject(new Error("timed out"))))) as unknown as typeof fetch;
+		const { updater, cleanup } = await setup({}, { fetch: hanging, checkTimeoutMs: 50 });
+		await expect(updater.check()).rejects.toMatchObject({ code: "manifest_fetch_failed" });
+		await cleanup();
+	});
+
 	test("newer version: returns info with resolved relative URL", async () => {
 		const { updater, cleanup } = await setup({});
 		const info = await updater.check();

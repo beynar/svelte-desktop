@@ -1,6 +1,8 @@
 import { defineConfig } from '@kitop/shell/config';
 
 export default defineConfig({
+	// This example exercises the whole API from its pages. A real app lists what its pages use.
+	bridge: { allow: ['*'] },
 	appName: 'Svelte Notes',
 	identifier: 'dev.kitop.notes',
 	window: { width: 960, height: 680, minWidth: 520, minHeight: 400, autosaveName: 'main', titleBarStyle: 'hiddenInset' },

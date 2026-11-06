@@ -8,6 +8,8 @@ The first version made to be installed as a package.
 
 ### Breaking
 
+Pages can't call native operations until you say so: without `bridge.allow`, the list is empty rather than everything. A refused call rejects with `denied`, and the console names the rule to add. `bridge: { allow: ['*'] }` brings back the old behavior. Server code isn't affected.
+
 `desktop()` no longer wraps SvelteKit's plugin: it goes next to it, `plugins: [sveltekit({ … }), desktop()]`, and SvelteKit's options stay in `sveltekit()`. A desktop-only app writes `desktop({ website: false })`, and what was the second argument of `desktop()` is now its only one.
 
 These were made before there was a version to bump. They're listed for anyone who followed the repository.
@@ -51,6 +53,8 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 
 ### Added
 
+- An update for a signed app has to be signed by the same Apple team or Windows publisher.
+- `release merge` and `make-manifest` take `--expires-in-days`: after that date, clients refuse the manifest.
 - A project can be a website and a desktop app. With `desktop()` next to `sveltekit({ adapter: adapter() })`, `kitop dev` and `kitop build` are the website, on your adapter, and `--mac`, `--windows` or `--linux` make them the desktop app. `kitop init` now sets a project up this way, and `desktop({ website: false })` is a desktop app only.
 - The package is ready to publish: `files`, `exports` with `types` and `svelte` conditions, `engines`, `repository`, `publishConfig`, and `bun run check:package`, which fails if the package is incomplete. It stays `private` for now.
 - `kitop create` pins `@kitop/shell` to the version that ran it, and takes the required versions of SvelteKit, the adapter and Svelte from the package.
@@ -58,6 +62,9 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 
 ### Fixed
 
+- A job keeps running no longer when its app dies without a word: it gets its `signal` aborted, then two seconds to leave.
+- A store or window-state write is on the disk when it returns, and the store comes back from its previous save if its file goes bad.
+- A check that gets no answer gives up after 30 s, a download after 60 s without a byte.
 - Windows: `app.relaunch()` started nothing, so neither did the restart after a server crash: the hidden PowerShell was created without a console and exited at once.
 - Windows: an update never installed, for the same reason in its helper, and a user name with an accent broke the helper's script.
 - `vite dev` works with the package installed in `node_modules`: the dependency optimizer could not read its `.svelte.ts` sources.

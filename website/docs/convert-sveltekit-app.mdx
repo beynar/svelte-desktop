@@ -95,7 +95,7 @@ The steps below make that change for you, then get the app running and built.
     bunx kitop doctor
     ```
 
-    Fix what's marked `✗`. Warnings are fine for now, such as a missing icon or `bridge.allow`: they matter when you ship.
+    Fix what's marked `✗`. Warnings are fine for now, such as a missing icon: they matter when you ship.
   </Step>
 
   <Step title="Run it">
@@ -153,6 +153,12 @@ Nothing above required any new code. When you want more than a browser gives you
 </script>
 
 <button onclick={rename}>Rename the window</button>
+```
+
+A page can only make the native calls you list, so this one needs a line in `desktop.config.ts`. Server code needs none:
+
+```ts desktop.config.ts
+bridge: { allow: ['window.setTitle'] },
 ```
 
 ## Where next

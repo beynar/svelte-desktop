@@ -25,8 +25,8 @@ jobs:
           bun-version: 1.4.4
       - name: Install (the shell, examples/notes)
         run: |
-          (cd packages/shell && bun install)
-          (cd examples/notes && bun install)
+          (cd packages/shell && bun install --frozen-lockfile)
+          (cd examples/notes && bun install --frozen-lockfile)
       - name: Build the Windows app (shell.dll, addon and installer through the Docker toolchain)
         working-directory: examples/notes
         run: KITOP_TARGET=windows bunx --bun vite build

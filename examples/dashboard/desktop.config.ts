@@ -1,6 +1,8 @@
 import { defineConfig } from '@kitop/shell/config';
 
 export default defineConfig({
+	// This example exercises the whole API from its pages. A real app lists what its pages use.
+	bridge: { allow: ['*'] },
 	appName: 'Dashboard',
 	identifier: 'dev.kitop.dashboard',
 	// `dashboard file.md` in a terminal opens it here (the Modules page installs the command).

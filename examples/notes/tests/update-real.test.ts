@@ -203,4 +203,37 @@ describe.skipIf(!W)('a real update', () => {
 		if (WINDOWS) await until('0.1.0 to answer', () => probe().includes('check none'));
 		await broughtBack(hits, stagingDir);
 	}, 180_000);
+
+	// Not an update: 0.3.0 as it is, and nothing to go back to. macOS restarts it through `open`, which
+	// passes on launchd's environment, not this test's.
+	test('a server that keeps dying: a few restarts, then the app says so and stops trying', async () => {
+		install();
+		rmSync(target, { recursive: true, force: true });
+		cpSync(built('c'), target, { recursive: true, verbatimSymlinks: true });
+		if (!WINDOWS) Bun.spawnSync(['launchctl', 'setenv', 'NOTES_UPDATE_CRASH', 'throw']);
+		try {
+			const restarts = join(appDirs('dev.kitop.notes').data, '.crash-restarts');
+			const count = () => (existsSync(restarts) ? JSON.parse(readFileSync(restarts, 'utf8')).length : 0);
+			let most = 0;
+			start({ NOTES_UPDATE_CRASH: 'throw' });
+			await until('the restarts to stop', () => {
+				most = Math.max(most, count());
+				return most === 3 && count() === 0;
+			});
+			expect(existsSync(join(appDirs('dev.kitop.notes').data, '.last-error'))).toBe(true);
+			// On screen for the user to read, and not going anywhere: no restart behind it.
+			const pids = () => Bun.spawnSync(WINDOWS ? ['tasklist', '/FI', 'IMAGENAME eq SvelteNotes.exe', '/NH', '/FO', 'CSV'] : ['pgrep', '-x', 'SvelteNotes']).stdout.toString();
+			await until('the last one to be the only one', () => pids().trim().split('\n').length === 1);
+			const shown = pids();
+			await Bun.sleep(6000);
+			expect(pids()).toBe(shown);
+			expect(count()).toBe(0);
+			if (WINDOWS) {
+				const titles = Bun.spawnSync(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', "(Get-Process SvelteNotes | Where-Object MainWindowHandle -ne 0).MainWindowTitle"]).stdout.toString();
+				expect(titles).toContain('stopped working');
+			}
+		} finally {
+			if (!WINDOWS) Bun.spawnSync(['launchctl', 'unsetenv', 'NOTES_UPDATE_CRASH']);
+		}
+	}, 180_000);
 });

@@ -165,8 +165,8 @@ export interface DesktopConfig {
   push?: PushConfig;
   /** The page → native bridge. */
   bridge?: {
-    /** Native ops pages may call (`service.op` or `service.*`). Server code is never restricted.
-     *  Default: everything. */
+    /** Native ops pages may call (`service.op`, `service.*` or `*`). Server code is never restricted.
+     *  Default: none. */
     allow?: string[];
   };
   /** Extra Info.plist keys. */
@@ -266,8 +266,8 @@ export interface ResolvedConfig extends Omit<DesktopConfig, "window" | "native">
   configFile: string | null;
   /** `permissions` (+ legacy `usageDescriptions`): OS permission → reason. */
   osPermissions: Record<string, string>;
-  /** `bridge.allow` (or legacy `permissions.pages`); undefined = every op. */
-  bridgeAllow?: string[];
+  /** `bridge.allow` (or legacy `permissions.pages`). Empty when neither is set: pages call nothing. */
+  bridgeAllow: string[];
 }
 
 export async function loadConfig(root = process.cwd(), inline?: Partial<DesktopConfig>): Promise<ResolvedConfig> {
@@ -317,7 +317,7 @@ export function resolveConfig(root: string, config: Partial<DesktopConfig>, conf
   for (const [k, reason] of Object.entries(PAGE_PERMISSIONS)) if (config.permissions?.[k] !== false) osPermissions[k] = reason(appName);
   Object.assign(osPermissions, config.usageDescriptions);
   for (const [k, v] of Object.entries(config.permissions ?? {})) if (k !== "pages" && typeof v === "string") osPermissions[k] = v;
-  const bridgeAllow = config.bridge?.allow ?? config.permissions?.pages;
+  const bridgeAllow = config.bridge?.allow ?? config.permissions?.pages ?? [];
   return {
     ...config,
     osPermissions,

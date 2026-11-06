@@ -8,7 +8,7 @@ Your app is a local web server plus a window. Most of the protection is on by de
 ## What you should do
 
 - **Treat server code as fully privileged.** Remote functions, endpoints and hooks run with all of Bun's APIs and the whole `host` API. Nothing restricts them. Validate every argument as you would on a public server.
-- **Narrow the page bridge before you ship.** By default a page can call every native operation, so a script injected into it (an XSS) can read the keychain or open files. [`bridge.allow`](/reference/config#bridge) lists the operations pages may call (`window.*`, `clipboard.readText`, `*`), enforced natively. It does not limit server code, and it does not make a page's own JavaScript trustworthy: whatever your pages are allowed to do, a script injected into them can do too. Keep dependencies and rendered HTML (`{@html}`) under control.
+- **Keep the page bridge narrow.** By default a page can call no native operation. [`bridge.allow`](/reference/config#bridge) lists the ones it may call (`window.*`, `clipboard.readText`, `*`), and each one you add is also open to a script injected into the page (an XSS), `*` above all. It's enforced natively. It does not limit server code, and it does not make a page's own JavaScript trustworthy: whatever your pages are allowed to do, a script injected into them can do too. Keep dependencies and rendered HTML (`{@html}`) under control.
 - **Don't load untrusted content into app pages.** Use a [web view](/ui/web-view) for third-party sites. The native bridge answers only the app's own origin, so external content can't call `host`.
 - **Check origins on servers you add.** A [sidecar](/native/sidecars) or other local server listening on `127.0.0.1` has no cookie gate; see [Other servers](/features/websockets#other-servers).
 
@@ -23,6 +23,10 @@ In the built app the server listens on `127.0.0.1` behind a gate, on a port deri
 Behind the cookie like the app, and added by the shell: `/__desktop/page-crashed`, the static page shown when a page keeps crashing. Its only link stays on the app's own origin, whatever its URL says.
 
 Not behind the cookie: immutable build assets, including prerendered pages, and the single-use callback URL of a system-browser [OAuth](/host/web/oauth) sign-in. Don't put secrets in prerendered pages.
+
+## Data on disk
+
+The store, the window state and the updater's state are written to a temporary file, flushed to the disk, then renamed, so a crash or a power cut leaves the previous version whole. The store also keeps the save before as `kitop-store.json.bak`, and goes back to it if the file turns out unreadable, which it keeps as `.corrupt`.
 
 ## What is not protected
 

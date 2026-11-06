@@ -68,9 +68,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install
         run: |
-          (cd packages/shell && bun install)
-          (cd examples/notes && bun install)
-          (cd examples/panes && bun install)
+          (cd packages/shell && bun install --frozen-lockfile)
+          (cd examples/notes && bun install --frozen-lockfile)
+          (cd examples/panes && bun install --frozen-lockfile)
       - name: Build notes (plugins in Swift, Rust, Go and Python included)
         working-directory: examples/notes
         run: bunx --bun vite build

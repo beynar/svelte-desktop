@@ -11,6 +11,7 @@ import { UpdateError } from "./errors.ts";
 import { helperCommand, psQuote, renderPs1Helper, renderShHelper, shQuote, windowsLauncher, type HelperPlan } from "./helper.ts";
 import { isSemver, parseSignedManifest, type Artifact, type PlatformKey, type UpdateManifest } from "./manifest.ts";
 import { APP_FOLDER_MARKER, defaultDataDir, isCompiledBinary, locateInstall, platformKeyOf, type InstallLocation } from "./platform.ts";
+import { verifyMacUpdate, verifyWindowsUpdate } from "./signature.ts";
 import { readState, writeState, clearState, type Move, type UpdateState } from "./state.ts";
 
 export { UpdateError, type UpdateErrorCode } from "./errors.ts";
@@ -40,6 +41,8 @@ export interface UpdaterOptions {
 	arch?: string;
 	/** Executable or .app to update. Default: derived from process.execPath (compiled binaries only). */
 	installPath?: string;
+	/** How long check() waits for the manifest. Default 30 s. */
+	checkTimeoutMs?: number;
 	/** Unconfirmed starts of a new version before rollbackIfNeeded() restores the old one. Default 2. */
 	maxAttempts?: number;
 	/** How long the helper waits for the app to exit. Default 120 s. */
@@ -159,6 +162,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 	const keys = typeof options.publicKey === "string" ? [options.publicKey] : [...options.publicKey];
 	const doFetch = options.fetch ?? fetch;
 	const maxAttempts = options.maxAttempts ?? 2;
+	const checkTimeoutMs = options.checkTimeoutMs ?? 30_000;
 	const waitTimeoutSec = options.waitTimeoutSec ?? 120;
 	const { currentVersion, appName } = options;
 
@@ -205,14 +209,18 @@ export function createUpdater(options: UpdaterOptions): Updater {
 
 	async function check(opts: { signal?: AbortSignal } = {}): Promise<UpdateInfo | null> {
 		const url = options.manifestUrl.replaceAll("{channel}", encodeURIComponent(channel));
+		// A server that accepts and never answers doesn't keep a check going forever.
+		const limit = AbortSignal.timeout(checkTimeoutMs);
 		let res: Response;
+		let text: string;
 		try {
-			res = await doFetch(url, { headers: { "cache-control": "no-cache" }, signal: opts.signal });
+			res = await doFetch(url, { headers: { "cache-control": "no-cache" }, signal: opts.signal ? AbortSignal.any([opts.signal, limit]) : limit });
+			if (!res.ok) throw new UpdateError("manifest_fetch_failed", `cannot fetch ${url}: HTTP ${res.status}`);
+			text = await res.text();
 		} catch (err) {
+			if (err instanceof UpdateError) throw err;
 			throw new UpdateError("manifest_fetch_failed", `cannot fetch ${url}: ${(err as Error).message}`, { cause: err });
 		}
-		if (!res.ok) throw new UpdateError("manifest_fetch_failed", `cannot fetch ${url}: HTTP ${res.status}`);
-		const text = await res.text();
 		if (text.length > MAX_MANIFEST_BYTES) throw new UpdateError("manifest_invalid", "update manifest is too large");
 
 		// Nothing in the manifest is looked at before the signature is verified.
@@ -222,6 +230,10 @@ export function createUpdater(options: UpdaterOptions): Updater {
 		}
 		if (manifest.channel !== channel) {
 			throw new UpdateError("channel_mismatch", `manifest is for channel ${JSON.stringify(manifest.channel)}, expected ${JSON.stringify(channel)}`);
+		}
+		// A feed that stopped being published, or someone replaying an old one to hold updates back.
+		if (manifest.expiresAt && Date.parse(manifest.expiresAt) < Date.now()) {
+			throw new UpdateError("manifest_expired", `the update manifest expired on ${manifest.expiresAt}`);
 		}
 		// Strictly newer only: replaying an older signed manifest cannot downgrade.
 		if (Bun.semver.order(manifest.version, currentVersion) <= 0) return null;
@@ -311,6 +323,11 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			if (!(await exists(join(app, "Contents", "MacOS"))) || !(await exists(join(app, "Contents", "Info.plist")))) {
 				throw new UpdateError("layout_invalid", `${basename(app)} is not an app bundle (missing Contents/MacOS or Contents/Info.plist)`);
 			}
+			if (process.platform === "darwin" && platform === "darwin") await verifyMacUpdate(loc.target, app);
+		}
+		if (loc.kind === "executable" && process.platform === "win32" && platform === "win32") {
+			const exe = moves.find((m) => m.dest === loc.target);
+			if (exe) await verifyWindowsUpdate(loc.target, exe.src);
 		}
 	}
 

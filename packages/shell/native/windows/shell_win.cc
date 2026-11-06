@@ -874,6 +874,7 @@ void view_resize(View *v) {
 }
 
 void view_destroy(View *v) {
+  web_policy_forget(v->id);
   g_views.erase(v->id);
   v->pending.clear();
   v->ready = false;

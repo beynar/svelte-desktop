@@ -39,8 +39,8 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Install
         run: |
-          (cd packages/shell && bun install)
-          (cd examples/notes && bun install)
+          (cd packages/shell && bun install --frozen-lockfile)
+          (cd examples/notes && bun install --frozen-lockfile)
       - name: 0.1.0, 0.2.0 and 0.3.0
         run: packages/shell/test/update-real/build.sh "$RUNNER_TEMP/update" darwin-arm64
       - name: 0.1.0 updates itself
@@ -59,8 +59,8 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Install
         run: |
-          (cd packages/shell && bun install)
-          (cd examples/notes && bun install)
+          (cd packages/shell && bun install --frozen-lockfile)
+          (cd examples/notes && bun install --frozen-lockfile)
       - name: 0.1.0, 0.2.0 and 0.3.0
         run: packages/shell/test/update-real/build.sh "$RUNNER_TEMP/update" windows-x64
       - uses: actions/upload-artifact@v4
@@ -84,8 +84,8 @@ jobs:
           path: ${{ runner.temp }}/update
       - name: Install
         run: |
-          cd packages/shell; bun install --ignore-scripts; cd ../..
-          cd examples/notes; bun install --ignore-scripts
+          cd packages/shell; bun install --frozen-lockfile --ignore-scripts; cd ../..
+          cd examples/notes; bun install --frozen-lockfile --ignore-scripts
       - name: 0.1.0 updates itself
         working-directory: examples/notes
         env:

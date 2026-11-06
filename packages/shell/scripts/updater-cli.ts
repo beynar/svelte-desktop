@@ -10,9 +10,9 @@
  *        --artifact <os-arch>=<archive> [--artifact ...] [--base-url <url>]    (Linux: linux-<arch> is the
  *        app folder's archive, appimage-<arch> the archive of the AppImage)
  *        (--key <file> | --key-env VAR) [--notes <text> | --notes-file <file>]
- *        [--minimum-version <x.y.z>] [--released-at <iso>] [--out update.json]
+ *        [--minimum-version <x.y.z>] [--released-at <iso>] [--expires-in-days <n>] [--out update.json]
  *   bun scripts/updater-cli.ts merge <manifest.json>... (--key <file> | --key-env VAR) --out update.json
- *        [--notes <text> | --notes-file <file>] [--minimum-version <x.y.z>]
+ *        [--notes <text> | --notes-file <file>] [--minimum-version <x.y.z>] [--expires-in-days <n>]
  *        one release built on several machines (one manifest each, signed or not) → one signed update.json
  *   bun scripts/updater-cli.ts fetch-previous <update.json URL> --platform <os-arch> [--platform ...]
  *        [--dir .desktop/dist/release] [--public-key <base64>]
@@ -125,6 +125,7 @@ async function makeManifest(args: string[]): Promise<void> {
 			"notes-file": { type: "string" },
 			"minimum-version": { type: "string" },
 			"released-at": { type: "string" },
+			"expires-in-days": { type: "string" },
 			out: { type: "string" },
 		},
 	});
@@ -160,6 +161,7 @@ async function makeManifest(args: string[]): Promise<void> {
 		version: values.version,
 		channel: values.channel!,
 		releasedAt: values["released-at"] ?? new Date().toISOString(),
+		...expiry(values["expires-in-days"]),
 		...(notes !== undefined ? { notes } : {}),
 		...(values["minimum-version"] ? { minimumVersion: values["minimum-version"] } : {}),
 		artifacts,
@@ -168,6 +170,13 @@ async function makeManifest(args: string[]): Promise<void> {
 	const signed = await signManifest(unsigned, key);
 	await writeJson(values.out, signed);
 	if (values.out) console.error(`wrote signed manifest ${values.out}`);
+}
+
+/** `--expires-in-days`: after that, clients refuse this manifest. Publish a new one before then. */
+function expiry(days: string | undefined): { expiresAt?: string } {
+	if (days === undefined) return {};
+	if (!/^[1-9]\d*$/.test(days)) throw new CliError(`--expires-in-days ${days}: expected a number of days`);
+	return { expiresAt: new Date(Date.now() + Number(days) * 86_400_000).toISOString() };
 }
 
 async function merge(args: string[]): Promise<void> {
@@ -181,6 +190,7 @@ async function merge(args: string[]): Promise<void> {
 			notes: { type: "string" },
 			"notes-file": { type: "string" },
 			"minimum-version": { type: "string" },
+			"expires-in-days": { type: "string" },
 		},
 	});
 	if (!positionals.length) throw new CliError("merge: pass the manifests of every platform (release/update.json or update.unsigned.json)");
@@ -198,6 +208,7 @@ async function merge(args: string[]): Promise<void> {
 		version: first.version,
 		channel: first.channel,
 		releasedAt: parts.map((p) => p.m.releasedAt).sort().at(-1)!,
+		...expiry(values["expires-in-days"]),
 		...(notes !== undefined ? { notes } : {}),
 		...(minimumVersion ? { minimumVersion } : {}),
 		artifacts: Object.assign({}, ...parts.map((p) => p.m.artifacts)),

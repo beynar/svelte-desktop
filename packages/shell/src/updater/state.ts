@@ -1,3 +1,4 @@
+import { closeSync, fsyncSync, openSync, writeSync } from "node:fs";
 import { rename, rm } from "node:fs/promises";
 
 /** One filesystem swap: `src` (staged) replaces `dest`; the previous `dest` is kept at `backup`. */
@@ -51,7 +52,14 @@ export async function readState(path: string): Promise<UpdateState | null> {
 
 export async function writeState(path: string, state: UpdateState): Promise<void> {
 	const tmp = `${path}.tmp`;
-	await Bun.write(tmp, `${JSON.stringify(state, null, 2)}\n`);
+	// Durable: a power cut must not lose how many times a new version has failed to start.
+	const fd = openSync(tmp, "w");
+	try {
+		writeSync(fd, `${JSON.stringify(state, null, 2)}\n`);
+		fsyncSync(fd);
+	} finally {
+		closeSync(fd);
+	}
 	await rename(tmp, path);
 }
 

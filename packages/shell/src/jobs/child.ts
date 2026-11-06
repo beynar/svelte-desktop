@@ -26,5 +26,10 @@ export function runJob(job: JobFunction) {
     // Let the last IPC message flush, then leave.
     setTimeout(() => process.exit(0), 20);
   });
+  // The app died without saying so (a crash, a kill): nobody is left to answer or to stop this job.
+  process.on("disconnect", () => {
+    controller.abort();
+    setTimeout(() => process.exit(1), 2000);
+  });
   send({ t: "ready" });
 }

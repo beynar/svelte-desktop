@@ -103,11 +103,15 @@ export const store = {
 		try {
 			parsed = JSON.parse(text);
 		} catch {
-			// Corrupt file falls back to {} — matches windowState.load()'s
-			// tolerance; a broken store must not brick the namespace. Its content stays
+			// Corrupt file falls back to the previous save, then {} — a broken store must not
+			// brick the namespace. Its content stays
 			// beside it: the next save would otherwise erase what might be recovered.
-			console.error(`store: ${FILE_NAME} isn't valid JSON: starting empty, its content is kept in ${CORRUPT_NAME}`);
 			await writeAppFile('userData', CORRUPT_NAME, text).catch(() => {});
+			const previous = await readAppFile('userData', `${FILE_NAME}.bak`).catch(() => null);
+			try {
+				parsed = previous === null ? null : JSON.parse(previous);
+			} catch {}
+			console.error(`store: ${FILE_NAME} isn't valid JSON: ${parsed === null ? 'starting empty' : 'back to the previous save'}, its content is kept in ${CORRUPT_NAME}`);
 		}
 		data =
 			parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)

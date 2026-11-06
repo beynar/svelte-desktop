@@ -196,7 +196,7 @@ static NSString *const kBridgeScript =
      "addEventListener('mousedown',(e)=>{if(e.button!==0||!dr(e.target,e.clientY))return;"
      "if(e.detail===2){e.preventDefault();post({t:'dragDouble'});}else if(e.detail===1)post({t:'drag'});},true);})();";
 
-// Page permissions (desktop.config `permissions.pages`): nil = everything.
+// `bridge.allow` in desktop.config: nil = everything, for what has no config (the native test suites). A configured app always sets a list.
 static NSArray<NSString *> *g_page_permissions = nil;
 
 static BOOL page_may_call(NSString *service, NSString *op) {
@@ -267,7 +267,7 @@ static BOOL origin_allowed(WKFrameInfo *frame) {
   }
   NSString *service = [req[@"service"] description] ?: @"", *op = [req[@"op"] description] ?: @"";
   if (!page_may_call(service, op)) {
-    reply(@{@"ok" : @NO, @"error" : @{@"code" : @"denied", @"message" : [NSString stringWithFormat:@"%@.%@ is not in permissions.pages (desktop.config)", service, op]}});
+    reply(@{@"ok" : @NO, @"error" : @{@"code" : @"denied", @"message" : [NSString stringWithFormat:@"%@.%@ can't be called from a page: add it to bridge.allow in desktop.config, or call it from server code", service, op]}});
     return;
   }
   dispatch_call(req, self.windowId, reply);

@@ -251,7 +251,7 @@ void on_bridge_message(int native_id, const std::string &body, const std::string
     return reply(json{{"ok", false}, {"error", {{"code", "denied"}, {"message", "platform calls are only accepted from the app origin's main frame"}}}});
   std::string service = req.value("service", ""), op = req.value("op", "");
   if (!page_may_call(service, op))
-    return reply(json{{"ok", false}, {"error", {{"code", "denied"}, {"message", service + "." + op + " is not in permissions.pages (desktop.config)"}}}});
+    return reply(json{{"ok", false}, {"error", {{"code", "denied"}, {"message", service + "." + op + " can't be called from a page: add it to bridge.allow in desktop.config, or call it from server code"}}}});
   dispatch(req, native_id, reply);
 }
 

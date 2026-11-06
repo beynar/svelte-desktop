@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PlatformTransport, initPlatformForTests } from './bus';
@@ -24,6 +24,7 @@ test('what server code just set is written at quit, once nothing answers platfor
 	expect(t.requests.filter((r) => r.op === 'getPath').length).toBe(1);
 
 	// The native run loop has stopped: a platform call would never come back.
+	const realCall = t.platformCall.bind(t);
 	t.platformCall = () => '{"pending":true}';
 	store.set('last', 'before quit');
 	for (const flush of quitFlushes()) await flush();
@@ -34,6 +35,13 @@ test('what server code just set is written at quit, once nothing answers platfor
 	for (const flush of quitFlushes()) await flush();
 	await Bun.sleep(300);
 	expect(JSON.parse(readFileSync(join(dir, 'kitop-store.json'), 'utf8'))).toEqual({ last: 'before quit', later: 1 });
+
+	// Each save keeps the one before. A file that went bad comes back from it, and isn't lost either.
+	expect(JSON.parse(readFileSync(join(dir, 'kitop-store.json.bak'), 'utf8'))).toEqual({ last: 'before quit' });
+	t.platformCall = realCall;
+	writeFileSync(join(dir, 'kitop-store.json'), '{"last": "cut off');
+	expect(await store.load()).toEqual({ last: 'before quit' });
+	expect(readFileSync(join(dir, 'kitop-store.json.corrupt'), 'utf8')).toBe('{"last": "cut off');
 });
 
 test('a write that never finishes does not hold up the quit, and the rest of it still runs', async () => {

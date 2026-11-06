@@ -16,6 +16,16 @@ afterAll(async () => {
 });
 
 describe("downloadVerified", () => {
+	test("a connection that goes quiet fails instead of holding the download forever", async () => {
+		const sha256 = "0".repeat(64);
+		const quiet = serveStatic({ "/quiet": () => new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(10)); } }), { headers: { "content-type": "application/octet-stream" } }) });
+		const started = Date.now();
+		await expect(downloadVerified(`${quiet.base}/quiet`, join(root.dir, "quiet.bin"), { sha256, size: 100 }, { stallTimeoutMs: 300 })).rejects.toMatchObject({ code: "download_failed", message: expect.stringContaining("nothing received") });
+		expect(Date.now() - started).toBeLessThan(5000);
+		expect(await Bun.file(join(root.dir, "quiet.bin.part")).exists()).toBe(false);
+		quiet.stop();
+	});
+
 	const payload = crypto.getRandomValues(new Uint8Array(3 * 65536 + 17));
 	const sha256 = new Bun.CryptoHasher("sha256").update(payload).digest("hex");
 

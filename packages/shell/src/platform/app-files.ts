@@ -25,15 +25,39 @@ async function filePath(dir: AppDir, name: string): Promise<string> {
 	return `${path}/${name}`;
 }
 
+/** So the rename itself survives a power cut. Windows can't open a directory for this, and doesn't need it. */
+function syncDir(fs: typeof import('node:fs'), path: string) {
+	if (process.platform === 'win32') return;
+	const fd = fs.openSync(path.slice(0, path.lastIndexOf('/')) || '/', 'r');
+	try {
+		fs.fsyncSync(fd);
+	} finally {
+		fs.closeSync(fd);
+	}
+}
+
 async function local(op: 'read' | 'write', dir: AppDir, name: string, text?: string): Promise<string | null> {
 	const path = await filePath(dir, name);
 	if (op === 'write') {
-		// All or nothing: a crash or a full disk mid-write leaves the previous file whole.
+		// All or nothing, and on the disk once this returns: a crash, a power cut or a full disk leaves
+		// the previous file whole. Through the process: this module is in pages too, which never come here.
+		const fs = process.getBuiltinModule('node:fs');
 		const temp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
 		try {
-			await Bun.write(temp, text ?? '');
-			// Through the process: this module is in pages too, which never come here.
-			process.getBuiltinModule('node:fs').renameSync(temp, path);
+			const fd = fs.openSync(temp, 'w');
+			try {
+				fs.writeSync(fd, text ?? '');
+				fs.fsyncSync(fd);
+			} finally {
+				fs.closeSync(fd);
+			}
+			// What was there stays as .bak: a file that went bad some other way can still be recovered.
+			if (fs.existsSync(path)) {
+				fs.rmSync(`${path}.bak`, { force: true });
+				fs.linkSync(path, `${path}.bak`);
+			}
+			fs.renameSync(temp, path);
+			syncDir(fs, path);
 		} catch (err) {
 			await Bun.file(temp).delete().catch(() => {});
 			throw err;

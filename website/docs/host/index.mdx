@@ -69,13 +69,13 @@ try {
 
 ## Restricting pages
 
-By default pages may call every operation, so a script injected into your page (an XSS) can read the keychain or open files. Before shipping, list what your pages use. `bridge.allow` is enforced natively; server code is never restricted, so sensitive work belongs there. `kitop doctor` tells you when there's no list:
+By default a page can call no native operation, so a script injected into it (an XSS) can't read the keychain or open files. List what your pages use in `bridge.allow`, or make the call from server code, which is never restricted and is where sensitive work belongs. The list is enforced natively. A call it refuses rejects with `denied`, and the page's console names the rule to add:
 
 ```ts desktop.config.ts
 bridge: { allow: ['window.*', 'clipboard.readText', 'notifications.*', 'events.emit', 'app.getInfo', 'app.getPath'] },
 ```
 
-A refused call rejects with `denied`. Rules are `service.op`, `service.*` or `*`, and apply to plugin commands too (`text.*`). Only calls the page makes are checked: events the native side pushes to the page (window events, broadcasts from the server) still arrive.
+Rules are `service.op`, `service.*` or `*`, and apply to plugin commands too (`text.*`). Only calls the page makes are checked: events the native side pushes to the page (window events, broadcasts from the server) still arrive.
 
 The list is checked against every operation behind a `host` member, including ones you don't call directly. Several page features go through `events.emit`, so a list without it breaks them silently or with `denied`:
 
@@ -84,7 +84,7 @@ The list is checked against every operation behind a `host` member, including on
 - `host.notifications`, which also asks the server over `events.emit`.
 - `host.app.info` (and `host.app.name`, `version`...) needs `app.getInfo`.
 
-Add the operations for each member the page uses, or test the page with the list on. Server code is unaffected, so the same members work from an endpoint or remote function.
+`*` gives pages everything, and `kitop doctor` warns about it. Server code is unaffected, so the same members work from an endpoint or remote function.
 
 ## Imports instead of the global
 

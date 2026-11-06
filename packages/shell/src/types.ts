@@ -50,7 +50,7 @@ export interface ShellOptions {
   singleInstance?: boolean;
   /** desktop.config quitOnLastWindowClosed (default true). */
   quitOnLastWindowClosed?: boolean;
-  /** permissions.pages from desktop.config; undefined = allow all. */
+  /** `bridge.allow` from desktop.config, an empty list when it isn't set. Undefined only outside a configured app (the native test suites). */
   pagePermissions?: string[];
   /** Dev mode: the config's usage descriptions (no Info.plist then; a bundle has its own). */
   usageDescriptions?: Record<string, string>;

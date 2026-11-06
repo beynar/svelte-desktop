@@ -341,6 +341,7 @@ void web_permission_requested(View *v, ICoreWebView2PermissionRequestedEventArgs
 void web_screen_capture_starting(View *v, ICoreWebView2ScreenCaptureStartingEventArgs *args);
 void web_navigation_policy(View *v, const std::string &url, bool main_frame, ICoreWebView2NavigationStartingEventArgs *args);
 void web_policy_attach(View *v);
+void web_policy_forget(int view);
 /// Downloads (svc_downloads.cc).
 void downloads_attach(View *v);
 void downloads_detach(View *v);

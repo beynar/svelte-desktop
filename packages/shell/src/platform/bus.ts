@@ -200,9 +200,18 @@ export function watchPlatformOp(key: string) {
 	S.watched.add(key);
 }
 
+const deniedOnce = new Set<string>();
+
 export function callPlatform<T = unknown>(service: string, op: string, args: Record<string, unknown> = {}): Promise<T> {
-	const result = sendPlatform<T>(service, op, args);
 	const key = `${service}.${op}`;
+	const result = sendPlatform<T>(service, op, args).catch((error) => {
+		// Reactive state swallows its errors: said once, or a closed bridge looks like a blank value.
+		if (error?.code === 'denied' && String(error.message).includes('bridge.allow') && !deniedOnce.has(key)) {
+			deniedOnce.add(key);
+			console.warn(`[kitop] ${error.message}`);
+		}
+		throw error;
+	});
 	if (S.watched.has(key)) void result.then(() => sendPlatform('events', 'emit', { channel: STATE_CHANNEL, data: { op: key } })).catch(() => {});
 	return result;
 }

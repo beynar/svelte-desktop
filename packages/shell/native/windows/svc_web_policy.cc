@@ -184,6 +184,8 @@ static std::string without_fragment(const std::string &url) { return url.substr(
 // and cancelling doesn't stop it either. A handler on document requests holds it, because WebView2
 // waits for that handler and keeps it until the navigation's has returned. So it runs knowing the
 // answer, and a refused request gets a response of its own instead of going out.
+void web_policy_forget(int view) { g_refused.erase(view); }
+
 void web_policy_attach(View *v) {
   if (!g_navigation_policy || v->browserView.empty() || !v->webview || v->holdsRequests) return;
   auto *onRequest = new Cb<ICoreWebView2WebResourceRequestedEventHandler, ICoreWebView2 *, ICoreWebView2WebResourceRequestedEventArgs *>(
