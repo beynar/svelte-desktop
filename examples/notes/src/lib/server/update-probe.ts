@@ -3,17 +3,18 @@
 import { onDesktopReady } from '@kitop/shell/server';
 
 if (Bun.env.NOTES_UPDATE_PROBE) {
+	const log = Bun.env.NOTES_UPDATE_PROBE_LOG ?? '/tmp/upd/probe.log';
 	onDesktopReady(async () => {
 		const { updater, app } = await import('@kitop/shell/platform');
 		const info = await app.getInfo();
-		await Bun.write('/tmp/upd/probe.log', `started ${info.version}\n`, { createPath: true }).catch(() => {});
+		await Bun.write(log, `started ${info.version}\n`, { createPath: true }).catch(() => {});
 		if (Bun.env.NOTES_UPDATE_PROBE !== '1') return;
 		try {
 			const update = await updater.check();
-			await Bun.write('/tmp/upd/probe.log', `started ${info.version}\ncheck ${update ? update.version : 'none'}\n`);
+			await Bun.write(log, `started ${info.version}\ncheck ${update ? update.version : 'none'}\n`);
 			if (update) await update.downloadAndInstall();
 		} catch (e) {
-			await Bun.write('/tmp/upd/probe.log', `started ${info.version}\nerror ${(e as Error).message}\n`);
+			await Bun.write(log, `started ${info.version}\nerror ${(e as Error).message}\n`);
 		}
 	});
 }

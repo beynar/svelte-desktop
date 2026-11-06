@@ -165,6 +165,7 @@ async function doctor() {
     const { loadConfig } = await import("../src/config.ts");
     const c = await loadConfig(root);
     ok(`desktop.config: ${c.appName} (${c.identifier}) v${c.version}${c.native ? `, native plugin in ${c.native}` : ""}`);
+    if (c.identifier.startsWith("com.example.")) warn(`identifier ${c.identifier}: use a domain you own before you ship. It names the app to the OS and locates its data, so changing it later strands what users saved`);
     c.icon ? ok(`icon ${relative(root, c.icon.source)}`) : warn("no icon (icon.png, static/icon.png or `icon` in desktop.config)");
     c.bridgeAllow ? ok(`bridge.allow: pages can call ${c.bridgeAllow.length} rule${c.bridgeAllow.length === 1 ? "" : "s"}`) : warn("no bridge.allow: a page can call every native operation, so an XSS reaches the keychain and files. List what your pages use before shipping");
     // Apple's signing tools: nothing to check on another OS.

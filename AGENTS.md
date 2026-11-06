@@ -1,4 +1,13 @@
-# AGENTS.md — svelte-desktop
+# AGENTS.md
+
+This repository holds two projects. Check which one a task is about.
+
+- **kitop** is a desktop app from a SvelteKit app, on the system's web view: `packages/shell`, `packages/push-worker`, `examples/`, `website/`. It doesn't use anything below, and has its own install in `packages/shell`. See `README.md` and `CLAUDE.md`.
+- **The GPUI project**, which the rest of this file describes: `app`, `documentation`, `packages/{gpuix,platform,svelte,tests,vite}`, and the root `package.json` and its workspaces.
+
+`experiments`, `spikes` and `results` are earlier work, kept for reference.
+
+## The GPUI project
 
 SvelteKit-shaped app rendered natively through GPUI (Zed's renderer). Bun
 hosts JS; compiled Svelte drives a fake-DOM bridge (`gdom`) whose mutations

@@ -1,0 +1,90 @@
+# A real update from one version to the next on macOS and Windows: examples/notes built as 0.1.0 and
+# 0.2.0, published with the commands of the release workflow in the docs, and an installed 0.1.0
+# updating itself. No certificates and no bucket: signing and uploading aren't tested here. Linux has
+# its own, in packages/shell/test/docker/update.sh. It takes a while, so it runs when it's asked for
+# or when what it tests changes.
+name: update-test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, bun-webview-shell]
+    paths:
+      - .github/workflows/update-test.yml
+      - packages/shell/test/update-real/**
+      - packages/shell/src/updater/**
+      - packages/shell/scripts/updater-cli.ts
+      - packages/shell/src/build/package.ts
+      - packages/shell/src/build/package-windows.ts
+      - examples/notes/tests/update-real.test.ts
+
+concurrency:
+  group: update-test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: 1.4.4
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install
+        run: |
+          (cd packages/shell && bun install)
+          (cd examples/notes && bun install)
+      - name: 0.1.0 and 0.2.0
+        run: packages/shell/test/update-real/build.sh "$RUNNER_TEMP/update" darwin-arm64
+      - name: 0.1.0 updates itself
+        working-directory: examples/notes
+        env:
+          UPDATE_E2E: ${{ runner.temp }}/update
+        run: bun test --timeout 180000 tests/update-real.test.ts
+
+  windows-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install
+        run: |
+          (cd packages/shell && bun install)
+          (cd examples/notes && bun install)
+      - name: 0.1.0 and 0.2.0
+        run: packages/shell/test/update-real/build.sh "$RUNNER_TEMP/update" windows-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-windows
+          path: ${{ runner.temp }}/update
+          if-no-files-found: error
+
+  windows:
+    needs: windows-build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: update-windows
+          path: ${{ runner.temp }}/update
+      - name: Install
+        run: |
+          cd packages/shell; bun install --ignore-scripts; cd ../..
+          cd examples/notes; bun install --ignore-scripts
+      - name: 0.1.0 updates itself
+        working-directory: examples/notes
+        env:
+          UPDATE_E2E: ${{ runner.temp }}/update
+        run: bun test --timeout 180000 tests/update-real.test.ts
