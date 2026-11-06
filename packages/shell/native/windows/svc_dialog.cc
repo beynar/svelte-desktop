@@ -3,6 +3,11 @@
 // Every dialog runs from a posted task, never inside the call that requested
 // it (WebView2 event handlers must not host nested modal loops); the reply
 // arrives when the user answers.
+//   sheet {route, width?, height?, style?, top?, title?} → {result}: a route of the app in a window owned by
+//   the calling one, which is disabled meanwhile: its page alone (window.__desktopView, X-Desktop-View), shown
+//   once loaded. `close {result?}` from that page ends it, Escape cancels it (result null), and so does closing it.
+//   style "sheet" (default): borderless, centered on the window. "attached": borderless, at the top of the
+//   window's content or `top` below it. "window": a title bar (`title`, else the page's).
 #include "win.hpp"
 
 #include <commctrl.h>
@@ -232,7 +237,227 @@ static void message_box(CallPtr c, bool confirm) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Route dialogs
+
+struct Sheet {
+  CallPtr call;
+  View view;
+  HWND hwnd = nullptr;
+  int parent = 0;
+  bool presented = false, done = false, attached = false, titled = false;
+  double top = -1;
+};
+static std::map<int, Sheet *> g_sheets;
+static int g_next_sheet = 3000;
+static const wchar_t kSheetClass[] = L"KitopSheet";
+
+static Sheet *sheet_of(int id) {
+  auto it = g_sheets.find(id);
+  return it == g_sheets.end() ? nullptr : it->second;
+}
+
+static void present_sheet(Sheet *s) {
+  if (s->presented || s->done) return;
+  s->presented = true;
+  RECT own{};
+  GetWindowRect(s->hwnd, &own);
+  int w = own.right - own.left, h = own.bottom - own.top, x, y;
+  Window *parent = find_window(s->parent);
+  if (parent) {
+    RECT frame{}, client{};
+    GetWindowRect(parent->hwnd, &frame);
+    GetClientRect(parent->hwnd, &client);
+    POINT origin{0, 0};
+    ClientToScreen(parent->hwnd, &origin);
+    x = frame.left + (frame.right - frame.left - w) / 2;
+    if (s->attached) y = origin.y + (s->top >= 0 ? (int)(s->top * hwnd_scale(parent->hwnd)) : 0);
+    else y = origin.y + (client.bottom - h) / 2;
+    EnableWindow(parent->hwnd, FALSE); // only it: the app's other windows aren't this one's business
+  } else {
+    MONITORINFO mi{sizeof mi};
+    GetMonitorInfoW(MonitorFromWindow(s->hwnd, MONITOR_DEFAULTTOPRIMARY), &mi);
+    x = mi.rcWork.left + (mi.rcWork.right - mi.rcWork.left - w) / 2;
+    y = mi.rcWork.top + (mi.rcWork.bottom - mi.rcWork.top - h) / 2;
+  }
+  SetWindowPos(s->hwnd, HWND_TOP, x, y, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+  SetForegroundWindow(s->hwnd);
+  // Loaded out of sight, the page's autofocus didn't take.
+  if (s->view.controller) s->view.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+  view_eval(&s->view, "document.querySelector('[autofocus]')?.focus()");
+}
+
+static void finish_sheet(Sheet *s, const json &result) {
+  if (s->done) return;
+  s->done = true;
+  s->call->ok(json{{"result", result}});
+  // After this turn: `close` comes from the sheet's own page, its web view still in that call.
+  int id = s->view.id;
+  backend_run_on_main([id] {
+    if (Sheet *s = sheet_of(id)) DestroyWindow(s->hwnd);
+  });
+}
+
+static LRESULT CALLBACK sheet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+  Sheet *s = reinterpret_cast<Sheet *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+  if (msg == WM_NCCREATE) {
+    s = static_cast<Sheet *>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams);
+    s->hwnd = hwnd;
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(s));
+  }
+  if (!s) return DefWindowProcW(hwnd, msg, wp, lp);
+  switch (msg) {
+    case WM_SIZE:
+      view_resize(&s->view);
+      return 0;
+    case WM_ACTIVATE:
+      if (LOWORD(wp) != WA_INACTIVE && s->view.controller) s->view.controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+      return 0;
+    case WM_CLOSE:
+      finish_sheet(s, nullptr);
+      return 0;
+    case WM_DESTROY: {
+      // Its parent can go first, and take it along: the opener gets its answer all the same.
+      SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+      if (!s->done) {
+        s->done = true;
+        s->call->ok(json{{"result", nullptr}});
+      }
+      g_sheets.erase(s->view.id);
+      Window *parent = find_window(s->parent);
+      bool another = false; // on the same window: it stays blocked for that one
+      for (auto &[id, other] : g_sheets) another = another || (other->parent == s->parent && other->presented);
+      if (parent && s->presented && !another) {
+        EnableWindow(parent->hwnd, TRUE); // before this one goes, or Windows activates another app
+        if (GetForegroundWindow() == hwnd) SetForegroundWindow(parent->hwnd);
+      }
+      view_destroy(&s->view);
+      delete s;
+      return 0;
+    }
+    case WM_ERASEBKGND: {
+      RECT r;
+      GetClientRect(hwnd, &r);
+      HBRUSH b = CreateSolidBrush(app_dark() ? RGB(32, 32, 32) : RGB(255, 255, 255));
+      FillRect(reinterpret_cast<HDC>(wp), &r, b);
+      DeleteObject(b);
+      return 1;
+    }
+  }
+  return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+bool sheet_page_ready(int native_id) {
+  if (!sheet_of(native_id)) return false;
+  run_after(30, [native_id] { // a frame later, painted
+    if (Sheet *s = sheet_of(native_id)) present_sheet(s);
+  });
+  return true;
+}
+
+// Before the page has it, as a cancel key on macOS.
+bool sheet_key(int native_id, UINT vk) {
+  Sheet *s = sheet_of(native_id);
+  if (!s || !s->presented || vk != VK_ESCAPE) return false;
+  finish_sheet(s, nullptr);
+  return true;
+}
+
+static void open_sheet(CallPtr c) {
+  std::string route = c->str("route"), origin = app_origin();
+  if (route.empty() || origin.empty()) return c->fail("invalid_args", "dialog.sheet: `route` is required");
+  std::string style = c->str("style", "sheet");
+  static bool registered = false;
+  if (!registered) {
+    registered = true;
+    WNDCLASSEXW wc{sizeof wc};
+    wc.style = CS_DROPSHADOW;
+    wc.lpfnWndProc = sheet_proc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hIcon = app_icon(false);
+    wc.hIconSm = app_icon(true);
+    wc.lpszClassName = kSheetClass;
+    RegisterClassExW(&wc);
+  }
+  auto *s = new Sheet;
+  s->view.id = g_next_sheet++;
+  s->call = c;
+  s->attached = style == "attached";
+  s->top = c->has("top") ? c->num("top") : -1;
+  HWND owner = parent_for(*c);
+  Window *parent = owner ? find_window_hwnd(owner) : nullptr;
+  s->parent = parent ? parent->id : 0;
+  double scale = owner ? hwnd_scale(owner) : monitor_scale(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
+  DWORD windowStyle = style == "window" ? WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN : WS_POPUP | WS_BORDER | WS_CLIPCHILDREN;
+  RECT frame{0, 0, (LONG)(c->num("width", 440) * scale), (LONG)(c->num("height", 280) * scale)};
+  adjust_for_dpi(&frame, windowStyle, FALSE, 0, (UINT)(scale * 96));
+  std::string title = c->str("title");
+  s->titled = !title.empty();
+  // Hidden until it's loaded. Owned: above its parent, and no taskbar button of its own.
+  HWND hwnd = CreateWindowExW(0, kSheetClass, wide(title).c_str(), windowStyle, 0, 0, frame.right - frame.left, frame.bottom - frame.top, owner, nullptr, GetModuleHandleW(nullptr), s);
+  if (!hwnd) {
+    delete s;
+    return c->fail("internal", "dialog.sheet: " + last_error_message());
+  }
+  std::string ident = "sheet-" + std::to_string(s->view.id);
+  int id = s->view.id;
+  s->view.host = hwnd;
+  if (parent) s->view.session = parent->view.session;
+  // The page alone, as in a kept-alive tab's view.
+  s->view.extraScript = "if(window.top===window){window.__desktopView=" + json(ident).dump() + ";}";
+  g_sheets[id] = s;
+  views()[id] = &s->view;
+  set_dark_title_bar(hwnd, app_dark());
+  view_create(&s->view);
+  std::string url = origin + (route[0] == '/' ? route : "/" + route);
+  s->view.lastUrl = url;
+  view_when_ready(&s->view, [id, url, ident] {
+    Sheet *s = sheet_of(id);
+    if (!s || !s->view.webview) return;
+    auto *onTitle = new Cb<ICoreWebView2DocumentTitleChangedEventHandler, ICoreWebView2 *, IUnknown *>(
+        IID_ICoreWebView2DocumentTitleChangedEventHandler, [id](ICoreWebView2 *sender, IUnknown *) -> HRESULT {
+          Sheet *s = sheet_of(id);
+          LPWSTR text = nullptr;
+          sender->get_DocumentTitle(&text);
+          if (s && !s->titled && text) SetWindowTextW(s->hwnd, text);
+          if (text) CoTaskMemFree(text);
+          return S_OK;
+        });
+    s->view.webview->add_DocumentTitleChanged(onTitle, &s->view.tokens[7]);
+    onTitle->Release();
+    session_before_load(&s->view, url, [id, url, ident] {
+      Sheet *s = sheet_of(id);
+      if (!s || !s->view.webview) return;
+      auto *wv2 = query<ICoreWebView2_2>(s->view.webview, IID_ICoreWebView2_2);
+      ICoreWebView2Environment *env = nullptr;
+      ICoreWebView2Environment2 *env2 = nullptr;
+      ICoreWebView2WebResourceRequest *request = nullptr;
+      // X-Desktop-View: the server renders the route as a view.
+      if (wv2 && SUCCEEDED(wv2->get_Environment(&env)) && env && (env2 = query<ICoreWebView2Environment2>(env, IID_ICoreWebView2Environment2)) &&
+          SUCCEEDED(env2->CreateWebResourceRequest(wide(url).c_str(), L"GET", nullptr, wide("X-Desktop-View: " + ident).c_str(), &request)) && request)
+        wv2->NavigateWithWebResourceRequest(request);
+      else s->view.webview->Navigate(wide(url).c_str());
+      if (request) request->Release();
+      if (env2) env2->Release();
+      if (env) env->Release();
+      if (wv2) wv2->Release();
+    });
+  });
+  // However long it takes, or if it never loads: it's the only way out for the user.
+  run_after(1500, [id] {
+    if (Sheet *s = sheet_of(id)) present_sheet(s);
+  });
+}
+
 void register_dialog() {
+  reg("dialog", "sheet", open_sheet);
+  reg("dialog", "close", [](CallPtr c) {
+    Sheet *s = sheet_of(c->caller);
+    if (!s) return c->fail("invalid_args", "dialog.close: not called from a sheet's page");
+    finish_sheet(s, c->args.contains("result") ? c->args["result"] : json(nullptr));
+    c->ok();
+  });
   reg("dialog", "showMessageBox", [](CallPtr c) { message_box(c, false); });
   reg("dialog", "showConfirm", [](CallPtr c) { message_box(c, true); });
   reg("dialog", "showOpenDialog", [](CallPtr c) {

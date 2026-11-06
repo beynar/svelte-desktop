@@ -30,9 +30,9 @@ The accent color is a snapshot, with no change subscription on this namespace: t
 
 ### `biometrics()`
 
-Read whether biometric authentication can be evaluated, without showing a prompt. Resolves `{ available: boolean; type: 'touchID' | 'faceID' | 'opticID' | 'none'; enrolled: boolean }`.
+Read whether biometric authentication can be evaluated, without showing a prompt. Resolves `{ available: boolean; type: 'touchID' | 'faceID' | 'opticID' | 'windowsHello' | 'none'; enrolled: boolean }`.
 
-`available` is the current result of the native biometric policy check. `enrolled` is `false` when that check reports biometry not enrolled; it is not a substitute for checking `available`. `opticID` is recognized on macOS 14 or later.
+`available` is the current result of the native biometric policy check. `enrolled` is `false` when that check reports biometry not enrolled; it is not a substitute for checking `available`. `opticID` is recognized on macOS 14 or later. On Windows it's whether Windows Hello can be asked (`UserConsentVerifier`), a PIN included: `type` is `'none'` with no Hello on the device, and `enrolled` is `false` until it's set up.
 
 ```ts
 const biometrics = await host.system.biometrics();
@@ -67,7 +67,7 @@ Resolves `AccentColor`; does not update `accentColor`. Rejects with `unavailable
 
 ### `getAccessibility()`
 
-Resolves `AccessibilityInfo`; does not update `accessibility`. Linux and Windows report the fields they can't read as `false`: `false` can mean "not asked" or "can't tell". On Linux, `reduceMotion` is `gtk-enable-animations` and `highContrast` GNOME's high-contrast switch or a GTK theme named so; `differentiateWithoutColor` and `reduceTransparency` are always `false`, since Linux has no such setting. See [Accessibility](/ui/accessibility#system-preferences).
+Resolves `AccessibilityInfo`; does not update `accessibility`. Linux and Windows report the fields they can't read as `false`: `false` can mean "not asked" or "can't tell". On Linux, `reduceMotion` is `gtk-enable-animations` and `highContrast` GNOME's high-contrast switch or a GTK theme named so; `differentiateWithoutColor` and `reduceTransparency` are always `false`, since Linux has no such setting. Windows has no `differentiateWithoutColor` either: always `false`. Its color filters change the screen, and say nothing of what an app should draw. See [Accessibility](/ui/accessibility#system-preferences).
 
 ### `checkPermission(name)` and `requestPermission(name)`
 
@@ -99,7 +99,7 @@ Use `host.system.onKeyboardLayoutChange(fn)`, `host.system.on('keyboardLayoutCha
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `biometrics` | ✓ (`opticID`: 14+) | — | — |
+| `biometrics` | ✓ (`opticID`: 14+) | — | ✓ (Windows Hello) |
 | `getKeyboardLayout` | ✓ | partial (X11) | ✓ |
 | `getAccentColor` | ✓ | ✓ | ✓ |
 | `fonts` | ✓ | ✓ (fontconfig) | ✓ |

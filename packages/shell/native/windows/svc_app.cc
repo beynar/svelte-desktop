@@ -1,7 +1,7 @@
 // app.* — identity, paths, lifecycle, single instance, taskbar progress/badge,
 // login item; deepLink.register; system.*; diagnostics.info; capabilities.describe.
-// Events: willQuit, willRestart, secondInstance {argv, cwd}, openUrls {urls},
-// openFiles {paths} (argv of the first and of later instances).
+// Events: quitRequested, beforeQuit, willQuit, quitCancelled, quitTimedOut, willRestart,
+// secondInstance {argv, cwd}, openUrls {urls}, openFiles {paths} (argv of the first and of later instances).
 #include "win.hpp"
 
 #include <shellapi.h>
@@ -12,6 +12,7 @@
 
 #include <cmath>
 #include <map>
+#include <set>
 
 
 namespace sd::win {
@@ -108,7 +109,224 @@ void on_first_page_ready() {
   if (!packaged()) return; // `bun vite dev` argv is not ours
   auto args = command_line_args();
   if (!args.empty()) args.erase(args.begin());
+  if (jump_task_args(args)) return;
   handle_open_args(args);
+}
+
+// ---------------------------------------------------------------------------
+// Quit: every source goes through these phases, as on macOS (platform_app.mm). Each phase holds until
+// the handlers subscribed when it started have answered, or 10 seconds. A cancel in the first phase
+// ends it all. A page that goes away while it has to answer the first phase counts as a cancel.
+//
+// A session ending is asked with a message that wants an answer at once, and a guard takes its time.
+// So with guards the answer to WM_QUERYENDSESSION is no, with a reason Windows shows the user while the
+// vote goes on: the session carries on when the app is gone, and WM_ENDSESSION says if the user gave up on
+// the wait or forced it. Once it's really ending nothing can be refused, and the phases get what time there
+// is before the process is ended.
+
+static const char *const kQuitPhases[] = {"quitRequested", "beforeQuit", "willQuit"};
+static const UINT kQuitTimeout = 10000;
+static const ULONGLONG kSessionEndBudget = 4000; // Windows starts calling an app hung at 5 s
+
+struct QuitHandler {
+  std::string phase;
+  int owner = 0; // native id of the page, 0 = server code
+};
+static std::map<std::string, QuitHandler> g_quit_handlers;
+static std::map<std::string, int> g_quit_pending; // token → owner, in this phase
+static unsigned g_quit_id = 0, g_quit_stage = 0;
+static bool g_quit_active = false, g_quit_done = false;
+static bool g_session_vote = false, g_session_ending = false;
+static std::string g_quit_reason;
+
+static void quit_phase();
+
+static void quit_finish(bool allow) {
+  g_quit_pending.clear();
+  g_quit_active = false;
+  if (g_session_vote) ShutdownBlockReasonDestroy(hidden_window());
+  g_session_vote = false;
+  if (allow) {
+    g_quit_done = true;
+    return request_quit();
+  }
+  emit("quitCancelled", json{{"requestId", g_quit_id}, {"reason", g_quit_reason}});
+}
+
+static void quit_advance() {
+  if (!g_quit_active || !g_quit_pending.empty()) return;
+  if (++g_quit_stage == sizeof kQuitPhases / sizeof *kQuitPhases) quit_finish(true);
+  else quit_phase();
+}
+
+static void quit_phase() {
+  std::string phase = kQuitPhases[g_quit_stage];
+  json tokens = json::array();
+  for (auto &[token, h] : g_quit_handlers)
+    if (h.phase == phase) {
+      g_quit_pending[token] = h.owner;
+      tokens.push_back(token);
+    }
+  FILETIME ft;
+  GetSystemTimeAsFileTime(&ft);
+  ULARGE_INTEGER now{{ft.dwLowDateTime, ft.dwHighDateTime}};
+  double deadline = (double)((now.QuadPart - 116444736000000000ULL) / 10000 + kQuitTimeout);
+  emit(phase, json{{"requestId", g_quit_id}, {"reason", g_quit_reason}, {"deadline", deadline}, {"tokens", tokens}});
+  unsigned request = g_quit_id, stage = g_quit_stage;
+  run_after(kQuitTimeout, [request, stage, phase] {
+    if (!g_quit_active || g_quit_id != request || g_quit_stage != stage) return;
+    emit("quitTimedOut", json{{"requestId", request}, {"phase", phase}, {"reason", g_quit_reason}});
+    g_quit_pending.clear();
+    quit_advance();
+  });
+  // Let the initiating call's result land first. Nobody to wait for: on to the next phase.
+  backend_run_on_main([request, stage] {
+    if (g_quit_active && g_quit_id == request && g_quit_stage == stage) quit_advance();
+  });
+}
+
+void quit_request(const std::string &reason) {
+  if (g_quit_active || g_quit_done) return;
+  g_quit_active = true;
+  g_quit_stage = 0;
+  g_quit_id++;
+  g_quit_reason = reason;
+  quit_phase();
+}
+
+void quit_page_unloaded(int native_id) {
+  if (!native_id) return;
+  bool voting = false;
+  for (auto it = g_quit_handlers.begin(); it != g_quit_handlers.end();) {
+    if (it->second.owner != native_id) {
+      ++it;
+      continue;
+    }
+    voting = g_quit_pending.erase(it->first) > 0 || voting;
+    it = g_quit_handlers.erase(it);
+  }
+  // A disappearing document cannot consent to losing its unsaved work.
+  if (g_quit_active && voting && g_quit_stage == 0 && !g_session_ending) quit_finish(false);
+  else if (g_quit_active) quit_advance();
+}
+
+static std::string session_reason(LPARAM lp) {
+  if (lp & ENDSESSION_CLOSEAPP) return "system"; // the Restart Manager, for an update or an installer
+  return lp & ENDSESSION_LOGOFF ? "logout" : "shutdown";
+}
+
+static LRESULT query_end_session(LPARAM lp) {
+  // ENDSESSION_CRITICAL: going down whatever anyone answers. With no guard there's nothing to ask.
+  if ((lp & ENDSESSION_CRITICAL) || g_quit_done) return TRUE;
+  if (g_quit_active) { // past the vote: on its way out
+    if (g_quit_stage > 0) return TRUE;
+  } else {
+    bool guarded = false;
+    for (auto &[token, h] : g_quit_handlers) guarded = guarded || h.phase == kQuitPhases[0];
+    if (!guarded) return TRUE;
+    quit_request(session_reason(lp));
+  }
+  g_session_vote = true;
+  ShutdownBlockReasonCreate(hidden_window(), L"Checking for unsaved work");
+  return FALSE;
+}
+
+static void end_session(bool ending, LPARAM lp) {
+  if (!ending) { // called off, or the user stopped waiting: what was voted for isn't happening
+    if (g_session_vote && g_quit_active && g_quit_stage == 0) quit_finish(false);
+    return;
+  }
+  g_session_ending = true;
+  if (g_session_vote) ShutdownBlockReasonDestroy(hidden_window());
+  g_session_vote = false;
+  quit_request(session_reason(lp));
+  if (g_quit_active && g_quit_stage == 0) { // nobody can say no now
+    g_quit_pending.clear();
+    quit_advance();
+  }
+  // The process can be ended as soon as this returns.
+  const ULONGLONG deadline = GetTickCount64() + kSessionEndBudget;
+  bool quit = false;
+  while (!g_quit_done && !quit) {
+    ULONGLONG now = GetTickCount64();
+    if (now >= deadline) break;
+    MsgWaitForMultipleObjectsEx(0, nullptr, (DWORD)(deadline - now), QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    MSG msg;
+    while (!g_quit_done && PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+      if (msg.message == WM_QUIT) { // for the real loop
+        PostQuitMessage((int)msg.wParam);
+        quit = true;
+        break;
+      }
+      TranslateMessage(&msg);
+      DispatchMessageW(&msg);
+    }
+  }
+  if (!g_quit_done && !quit) quit_finish(true);
+}
+
+static void register_quit() {
+  reg("app", "subscribeQuit", [](CallPtr c) {
+    std::string token = c->str("token"), phase = c->str("phase");
+    bool known = false;
+    for (const char *p : kQuitPhases) known = known || phase == p;
+    if (token.empty() || token.size() > 128 || !known) return c->fail("invalid_args", "app.subscribeQuit: token and lifecycle phase required");
+    auto it = g_quit_handlers.find(token);
+    if (it != g_quit_handlers.end() && it->second.owner != c->caller) return c->fail("denied", "quit handler belongs to another context");
+    g_quit_handlers[token] = QuitHandler{phase, c->caller};
+    c->ok();
+  });
+  reg("app", "unsubscribeQuit", [](CallPtr c) {
+    std::string token = c->str("token");
+    if (token.empty()) return c->fail("invalid_args", "app.unsubscribeQuit: token required");
+    auto it = g_quit_handlers.find(token);
+    if (it != g_quit_handlers.end() && it->second.owner != c->caller) return c->fail("denied", "quit handler belongs to another context");
+    if (it != g_quit_handlers.end()) g_quit_handlers.erase(it);
+    g_quit_pending.erase(token);
+    c->ok();
+    quit_advance();
+  });
+  reg("app", "replyQuit", [](CallPtr c) {
+    std::string token = c->str("token"), decision = c->str("decision");
+    if (token.empty() || (decision != "quit" && decision != "cancel")) return c->fail("invalid_args", "app.replyQuit: token and quit|cancel decision required");
+    auto it = g_quit_pending.find(token);
+    if (!g_quit_active || c->num("requestId", -1) != g_quit_id || c->str("phase") != kQuitPhases[g_quit_stage] || it == g_quit_pending.end())
+      return c->ok(); // late or duplicate, including a phase that timed out
+    if (it->second != c->caller) return c->fail("denied", "quit reply belongs to another context");
+    g_quit_pending.erase(it);
+    c->ok();
+    if (g_quit_stage == 0 && decision == "cancel" && !g_session_ending) quit_finish(false);
+    else quit_advance();
+  });
+  add_hidden_hook([](HWND, UINT msg, WPARAM wp, LPARAM lp, LRESULT *result) {
+    if (msg == WM_QUERYENDSESSION) {
+      *result = query_end_session(lp);
+      return true;
+    }
+    if (msg == WM_ENDSESSION) {
+      end_session(wp != 0, lp);
+      *result = 0;
+      return true;
+    }
+    return false;
+  });
+}
+
+// What app.hide took off the screen: showAll brings back those, not what the app hid on its own.
+static std::set<int> g_hidden_by_app;
+
+void app_hide_windows() {
+  for (int id : window_order())
+    if (Window *w = find_window(id); w && IsWindowVisible(w->hwnd)) {
+      ShowWindow(w->hwnd, SW_HIDE);
+      g_hidden_by_app.insert(id);
+    }
+}
+
+void app_show_hidden_windows() {
+  for (int id : g_hidden_by_app)
+    if (Window *w = find_window(id)) ShowWindow(w->hwnd, SW_SHOW);
+  g_hidden_by_app.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +474,7 @@ static std::string keyboard_layout() {
 }
 
 void register_app() {
+  register_quit();
   reg("app", "whenReady", [](CallPtr c) { c->ok(true); });
   reg("app", "getInfo", [](CallPtr c) {
     c->ok(json{{"name", app_name()},
@@ -288,9 +507,8 @@ void register_app() {
     c->ok();
   });
   reg("app", "quit", [](CallPtr c) {
-    emit("willQuit", json::object());
     c->ok();
-    request_quit();
+    quit_request("api");
   });
   reg("app", "relaunch", [](CallPtr c) {
     emit("willRestart", json::object());
@@ -313,12 +531,15 @@ void register_app() {
     c->ok();
     // After a crash (src/supervisor.ts): nothing is left to quit gracefully.
     if (c->flag("crashed")) ExitProcess(1);
-    request_quit();
+    quit_request("api");
   });
   reg("app", "exit", [](CallPtr c) { ExitProcess((UINT)c->num("code", 0)); });
   reg("app", "hide", [](CallPtr c) {
-    for (int id : window_order())
-      if (Window *w = find_window(id)) ShowWindow(w->hwnd, SW_HIDE);
+    app_hide_windows();
+    c->ok();
+  });
+  reg("app", "showAll", [](CallPtr c) {
+    app_show_hidden_windows();
     c->ok();
   });
   reg_many("app", {"show", "activate"}, [](CallPtr c) {
@@ -378,7 +599,6 @@ void register_app() {
     c->ok();
   });
   reg("app", "getLoginItem", [](CallPtr c) { c->ok(login_item()); });
-  reg("app", "getActivationPolicy", [](CallPtr c) { c->ok("regular"); });
   reg("app", "setLoginItem", [](CallPtr c) {
     if (!packaged()) return c->ok(login_item());
     bool want = c->flag("enabled", true);
@@ -420,10 +640,12 @@ void register_app() {
     json d = json::parse(std::string(static_cast<const char *>(cds->lpData), cds->cbData), nullptr, false);
     if (d.is_object()) {
       json argv = d.contains("argv") && d["argv"].is_array() ? d["argv"] : json::array();
-      emit("secondInstance", json{{"argv", argv}, {"cwd", jstr(d, "cwd")}});
       std::vector<std::wstring> args;
       for (size_t i = 1; i < argv.size(); i++)
         if (argv[i].is_string()) args.push_back(wide(argv[i].get<std::string>()));
+      *result = TRUE;
+      if (jump_task_args(args)) return true; // a click in the jump list, not a second launch
+      emit("secondInstance", json{{"argv", argv}, {"cwd", jstr(d, "cwd")}});
       std::wstring cwd = wide(jstr(d, "cwd")), prev = current_dir();
       if (!cwd.empty()) SetCurrentDirectoryW(cwd.c_str()); // resolve relative paths against the sender's cwd
       handle_open_args(args);
@@ -552,6 +774,7 @@ void register_system() {
     DWORD transparency = 1, size = sizeof transparency;
     RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"EnableTransparency", RRF_RT_REG_DWORD,
                  nullptr, &transparency, &size);
+    // Windows has no such setting: nothing says a user asked for it. (Color filters change the screen, not apps.)
     c->ok(json{{"reduceMotion", !anim},
                {"highContrast", (hc.dwFlags & HCF_HIGHCONTRASTON) != 0},
                {"differentiateWithoutColor", false},
@@ -582,7 +805,8 @@ void register_diagnostics() {
       if (dot == std::string::npos) continue;
       std::string service = key.substr(0, dot), op = key.substr(dot + 1);
       std::string status = "implemented";
-      if (!packaged() && ((service == "deepLink" && op != "isDefault") || key == "app.setLoginItem")) status = "unavailable";
+      if (!packaged() && ((service == "deepLink" && op != "isDefault") || key == "app.setLoginItem" || key == "menu.setDockMenu")) status = "unavailable";
+      if (service == "power" && (op == "getThermalState" || op == "thermalState")) status = "unavailable"; // no machine answers: svc_desktop.cc
       services[service][op] = status;
     }
     c->ok(json{{"platform", "windows"}, {"arch", diag_arch()}, {"services", services}});

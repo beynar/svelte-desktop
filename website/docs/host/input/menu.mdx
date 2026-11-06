@@ -165,7 +165,7 @@ await host.menu.popup({ id: 'note-actions', items: [{ id: 'rename', label: 'Rena
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `items` | `MenuItemSpec[]` | Required | Context menu contents. |
-| `id` | `string` | `'context'` | macOS lifecycle and `closePopup` identity; `closePopup` identity on Linux. Ignored on Windows. |
+| `id` | `string` | `'context'` | macOS lifecycle and `closePopup` identity; `closePopup` identity on Linux and Windows. |
 | `x` | `number` | Cursor | Horizontal position; supply together with `y`. |
 | `y` | `number` | Cursor | Vertical position. macOS and Windows use top-left screen coordinates (logical units); Linux uses coordinates in the caller's web view in CSS pixels. |
 
@@ -201,6 +201,8 @@ await host.menu.setDockMenu([{ id: 'new-window', label: 'New Window' }], 'dock')
 Resolves `null`. Invalid items reject with `invalid_args`. macOS only.
 
 `getDockMenu()` resolves what `setDockMenu()` set, or `null` without one.
+
+On Windows it's the taskbar's jump list (`ICustomDestinationList`): items are its Tasks, in a flat list. A submenu rejects with `invalid_args`, and a disabled item is left out. `checked` and `icon` aren't shown. Windows keeps the list after the app quits, and a task starts the executable with an argument: a running app gets `menuAction` (or runs the role) from the instance that started. A closed app starts, and sends it once its first page is ready, which hasn't been run. It needs a built app, and rejects with `unavailable` under `vite dev`.
 
 ### `addRecentDocument(path)`
 
@@ -296,8 +298,8 @@ Lifecycle identities default to `MenuSpec.name` for app menus, a submenu item's 
 | `getAppMenu` | ✓ | ✓ | ✓ |
 | `remove`, `addRecentDocument` | ✓ | ✓ | ✓ |
 | `popup` | ✓ | partial | partial |
-| `setDockMenu`, `getDockMenu` | ✓ | — | — |
-| `closePopup` | ✓ | ✓ | — |
+| `setDockMenu`, `getDockMenu` | ✓ | — | partial (jump list tasks) |
+| `closePopup` | ✓ | ✓ | ✓ |
 | `update`, `get`, `items` | ✓ | partial | partial |
 | `init`, `dispose`, `on`, `once`, `onAction` | ✓ | ✓ | ✓ |
 | `onWillShow`, `onDidClose` | ✓ | — | — |

@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { launch, type AppHandle } from '@kitop/shell/test';
 import { toastActivatorClsid } from '../../../packages/shell/src/build/package-windows.ts';
-import { APP, driver, log, ps, stopLeftovers, tmp, win, within } from './windows-input.ts';
+import { APP, driver, log, pngDataUrl, ps, stopLeftovers, tmp, win, within } from './windows-input.ts';
 
 const ID = 'dev.kitop.notes';
 const CLSID = toastActivatorClsid(ID);
@@ -262,17 +262,6 @@ const SHOTS = process.env.WINDOWS_SHOTS ?? tmp;
 const shot = async (name: string) => (await uia('shot', { path: join(SHOTS, name) }), log('screenshot', join(SHOTS, name)));
 
 /** A real PNG as a data: URL (RGB gradient / disc), for the hero image and the logo. */
-function pngDataUrl(w: number, h: number, px: (x: number, y: number) => [number, number, number, number]) {
-	const crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
-	const crc = (b: Buffer) => { let c = 0xffffffff; for (const x of b) c = crcT[(c ^ x) & 0xff]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
-	const chunk = (type: string, data: Buffer) => { const t = Buffer.from(type); const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const c = Buffer.alloc(4); c.writeUInt32BE(crc(Buffer.concat([t, data]))); return Buffer.concat([len, t, data, c]); };
-	const raw = Buffer.alloc((w * 4 + 1) * h);
-	for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) raw.set(px(x, y), y * (w * 4 + 1) + 1 + x * 4);
-	const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 6;
-	const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', require('node:zlib').deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
-	return `data:image/png;base64,${png.toString('base64')}`;
-}
-
 const reg = (...a: string[]) => Bun.spawnSync(['reg', ...a], { stdout: 'pipe', stderr: 'pipe' });
 
 describe.skipIf(!process.env.WINDOWS_E2E)('windows', () => {

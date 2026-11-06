@@ -338,6 +338,7 @@ void register_window() {
   wreg("close", [](CallPtr c, Window *w) {
     c->ok();
     w->veto = false; // programmatic close bypasses the veto
+    w->closing = true;
     PostMessageW(w->hwnd, WM_CLOSE, 0, 0);
   });
   wreg("setCloseVeto", [](CallPtr c, Window *w) {

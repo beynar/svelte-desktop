@@ -109,13 +109,13 @@ Read thermal state, idle time and battery concurrently; resolves the namespace. 
 
 The helpers live on `host.power`. Each returns an unsubscribe function. `host.on(event, fn)` observes any of these events and also returns an unsubscribe function. The typed `host.power.on(event, fn)` and `once(event, fn)` cover thermal, sleep, wake, lock, unlock, power-source and shutdown events; `once()` removes its listener after delivery. Use the dedicated helper or `host.on()` for `memoryPressure`.
 
-`powerSourceChanged` fires when the machine switches between battery and external power, not for every percentage change and not as an initial snapshot. `shutdown` announces macOS shutdown, restart or logout. It is an observation and can't veto termination: use [`host.app.onQuitRequested()`](/host/app/app#cancellable-quit) to guard a quit and [`host.app.onBeforeQuit()`](/host/app/app#cancellable-quit) for cleanup. Windows uses its app lifecycle for OS termination and does not emit this power event.
+`powerSourceChanged` fires when the machine switches between battery and external power, not for every percentage change and not as an initial snapshot. `shutdown` announces macOS shutdown, restart or logout. It is an observation and can't veto termination: use [`host.app.onQuitRequested()`](/host/app/app#cancellable-quit) to guard a quit and [`host.app.onBeforeQuit()`](/host/app/app#cancellable-quit) for cleanup. Windows has [the quit reasons](/host/app/app#windows-sessions) for a session ending, and does not emit this power event.
 
 ## Platform support
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `getThermalState` | ✓ | partial (where the machine has trip points) | — |
+| `getThermalState` | ✓ | partial (where the machine has trip points) | — (`unavailable`) |
 | `getSystemIdleTime` | ✓ | partial (X11) | ✓ |
 | `getBattery` | ✓ | ✓ | ✓ |
 | `blockSleep`, `acquireSleepBlocker` | ✓ | partial (desktop D-Bus inhibitor) | ✓ |

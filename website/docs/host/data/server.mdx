@@ -120,7 +120,7 @@ Server only. The app's command in the user's terminal, set by the config's `comm
 
 Server only. Registers `fn: () => void | Promise<void>` and returns `void`. Callbacks run in registration order and are awaited; thrown errors are logged and later callbacks still run. There is no unsubscribe function and no veto return value.
 
-In packaged macOS apps these hooks run in the final `willQuit` phase. For a decision that can cancel quitting, use [`host.app.onQuitRequested`](/host/app/app). For work needing live windows, use `host.app.onBeforeQuit`. The dev bridge invokes server cleanup when its connection closes. Forced process termination cannot guarantee cleanup.
+In packaged macOS apps these hooks run in the final `willQuit` phase. On Linux and Windows they run after the phases, when the run loop has ended, which a Windows session ending doesn't always leave time for. For a decision that can cancel quitting, use [`host.app.onQuitRequested`](/host/app/app). For work needing live windows, use `host.app.onBeforeQuit`. The dev bridge invokes server cleanup when its connection closes. Forced process termination cannot guarantee cleanup.
 
 ### `ready(fn)`
 

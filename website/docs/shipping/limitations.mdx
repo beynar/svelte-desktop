@@ -25,17 +25,20 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 | Registered web scripts and content rules | Supported | Supported | Supported, no `block-cookies`, nor WebSockets |
 | Navigation policy | Supported | Supported | Supported |
 | Native download management | Supported | Supported, resume starts over | Supported |
-| File bookmarks | Supported | Supported, within a folder | Unsupported |
-| Cancellable quit | Supported | Supported | Unsupported |
-| Rich clipboard (`read`, `write`) | Supported | Supported | Unsupported |
-| Route dialogs (`dialog.sheet`) | Supported | Supported | Unsupported |
-| Process metrics | Supported | Supported, no window per process | Unsupported |
+| File bookmarks | Supported | Supported, within a folder | Supported, within a volume |
+| Cancellable quit | Supported | Supported | Supported |
+| Rich clipboard (`read`, `write`) | Supported | Supported | Supported |
+| Route dialogs (`dialog.sheet`) | Supported | Supported | Supported |
+| Process metrics | Supported | Supported, no window per process | Supported |
 | Dock or launcher badge and progress | Supported | Supported, a number and a fraction | Supported |
 | Global shortcuts and screen capture | Supported | On Wayland through the portal, run against a stand-in only | Supported |
-| Thermal state | Supported | Where the machine has trip points | Unsupported |
+| Thermal state | Supported | Where the machine has trip points | Unavailable |
 | System idle time | Supported | X11 | Supported |
 | Quick Look | Supported | GNOME's previewer, run against a stand-in only | Unsupported |
-| Dragging files out of a page | Supported | X11 | Unsupported |
+| Share sheet | Supported | Unsupported | Opens, no target chosen in a test |
+| Device owner authentication | Supported | Unsupported | Windows Hello, its prompt not run |
+| Dock menu | Supported | Unsupported | The jump list's tasks |
+| Dragging files out of a page | Supported | X11 | Supported |
 | Native input policy | Supported | Supported | Supported, keys WebView2 reports |
 | Web-view printing and PDF export | Supported | Supported | Supported with a recent WebView2 runtime |
 
@@ -52,8 +55,22 @@ These are shell API limits. The page still has the web APIs its installed web en
 
 ## Windows
 
-- **Tested on a Windows runner, not on a PC:** CI runs end-to-end tests on a Windows runner for notifications, windows, title-bar dragging, menus, tray, dialogs, clipboard, views, background jobs, MCP, relaunch, permissions, downloads, printing, navigation policy, cookies, authentication, certificates, find, JavaScript dialogs, media, crash recovery, file drop, `clearData`, sessions, proxies, custom protocols, content rules, registered scripts and the input policy. High-DPI and multi-monitor setups aren't covered, since the runner has one display at 100%, and only x64 runs: arm64 is compiled. Test your app on a real PC.
+- **Tested on a Windows runner, not on a PC:** CI runs end-to-end tests on a Windows runner for notifications, windows, title-bar dragging, menus, tray, dialogs, clipboard, views, background jobs, MCP, relaunch, permissions, downloads, printing, navigation policy, cookies, authentication, certificates, find, JavaScript dialogs, media, crash recovery, file drop, `clearData`, sessions, proxies, custom protocols, content rules, registered scripts, the input policy, the cancellable quit, process metrics, the app's icon and activation policy, the rich clipboard, route dialogs, the jump list, bookmarks and dragging files out. High-DPI and multi-monitor setups aren't covered, since the runner has one display at 100%, and only x64 runs: arm64 is compiled. Test your app on a real PC.
 - **Windows differs where WebView2 does:** a paused download resumes only in the run that started it, `host.webview.download` needs an attachment from another origin, a navigation policy holds the navigation with a bounded wait, `fileDragEnter` has no paths, `clearData` reaches the sites views loaded, a custom protocol's response reaches the page whole when it ends and a request going away isn't noticed before its document does, a proxy can't change while a view is open in its session and the default session can't have one, content rules have no `block-cookies` and don't reach WebSockets, and the input policy only has keys held with Control or Alt and keys that make no character. See [downloads](/host/web/downloads#platform-support), [navigation policy](/host/web/web-content#platform-support), [web view](/host/web/webview#platform-support), [web policy](/host/web/web-policy#platform-support), [protocols](/host/web/protocol#platform-support), [sessions](/host/web/sessions#windows), [content rules](/host/web/web-content#rules-on-windows) and [input policy](/host/input/input-policy#platform-support).
+- **What the runner couldn't show:**
+  - A real logoff or shutdown, which would end the machine running the tests. The messages a session sends were sent by another process, and the Restart Manager really closed the app and was really refused. See [Windows sessions](/host/app/app#windows-sessions).
+  - A share target. The sheet opens, and on the runner says it can't list where to share, so no app has received anything. Its data was accepted, and closing it answers `null`. See [shell](/host/os/shell#shareitems-windowid).
+  - Windows Hello's prompt. The runner has no Hello: only its `available: false` path has run. See [secure storage](/host/os/secure-storage#authenticatereason-options).
+  - A jump list task starting a closed app, whose `menuAction` waits for its first page. A running app gets it, from the real list and from what the list stores.
+- **Windows differs where Windows does:** `dialog.sheet` doesn't dim or slide. A jump list is flat: submenus are refused, disabled items are left out, `checked` isn't shown, and a task has the executable's icon. A bookmark can't follow a file to another volume. `biometricsOnly` is refused, as Windows Hello's PIN is always a way in, and `biometrics` says `windowsHello` for a PIN too. `accessory` windows have a small title bar. A real session end gives quit phases about 4 seconds, and server cleanup after them isn't sure to finish.
+- `host.system.getAccessibility` reports `differentiateWithoutColor` as `false`: Windows has no such setting. Its color filters change the screen, and say nothing of what an app should draw.
+- Not available:
+  - `app.hideOthers`: Windows has no such idea of hiding another app. It rejects with `unsupported`.
+  - `shell.previewFile`: Windows has no system previewer. Opening the default app under this name would be something else, and `shell.openPath` does that. It rejects with `unsupported`.
+  - `power.getThermalState`: no public Windows call says this. It rejects with `unavailable`, and `thermalStateChanged` never fires.
+  - `permissions.guide`, `guideState`, `cancelGuide`: no system panel to float a guide over, nor anything to drag into it. They reject with `unknown`, and `host.permissions.guide()` opens the settings page and reads the status.
+  - `notifications.simulateResponse`, `window.testScroll`: test-only hooks of the macOS build. They reject with `unsupported`.
+  - These `window` calls reject with `unsupported`: a parent after creation (`setParent`, `getParent`, `getChildren`), `getLevel`, `setAspectRatio`, `setFocusable`, `setMovable`, `setHasShadow`, `setSimpleFullscreen`, `setVisibleOnAllWorkspaces`, `setRepresentedFilename`, `showCharacterPalette` and `controlsArea`, with their getters, and macOS's own materials and traffic lights. They haven't been looked at for Windows.
 - The WebView2 runtime must be installed. The shell offers an Evergreen download link when it is missing; it does not bundle the runtime.
 - Rust and Go plugins need a Windows host. See [Distribution](/shipping/distribution#windows).
 - Windows repeating notifications queue at most 128 occurrences over the next 30 days, topped up while the app runs. They do not repeat indefinitely while closed.

@@ -325,7 +325,7 @@ double hwnd_scale(HWND hwnd) {
   return monitor_scale(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY));
 }
 
-static void adjust_for_dpi(RECT *rc, DWORD style, BOOL menu, DWORD ex, UINT dpi) {
+void adjust_for_dpi(RECT *rc, DWORD style, BOOL menu, DWORD ex, UINT dpi) {
   static auto fn = reinterpret_cast<AdjustWindowRectExForDpi_t>(user32_proc("AdjustWindowRectExForDpi"));
   if (fn) fn(rc, style, menu, ex, dpi);
   else AdjustWindowRectEx(rc, style, menu, ex);
@@ -803,6 +803,7 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
   // view.*: once it's there. A response that turns out to be a download leaves the page where it is.
   auto *onContent = new Cb<ICoreWebView2ContentLoadingEventHandler, ICoreWebView2 *, ICoreWebView2ContentLoadingEventArgs *>(
       IID_ICoreWebView2ContentLoadingEventHandler, [id](ICoreWebView2 *wv, ICoreWebView2ContentLoadingEventArgs *) -> HRESULT {
+        quit_page_unloaded(id); // its document is gone, and with it the guards it set
         View *bv = find_view(id);
         if (bv) web_sessions_content_loading(bv);
         if (!bv || bv->browserView.empty()) return S_OK;
@@ -908,7 +909,7 @@ static void setup_controller(View *v, ICoreWebView2Controller *ctl) {
           return S_OK;
         }
         if (kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN) return S_OK;
-        if (popover_key(id, vk) || (menus && handle_accelerator(vk, find_window_unchecked(id) ? id : 0))) args->put_Handled(TRUE);
+        if (popover_key(id, vk) || sheet_key(id, vk) || (menus && handle_accelerator(vk, find_window_unchecked(id) ? id : 0))) args->put_Handled(TRUE);
         return S_OK;
       });
   ctl->add_AcceleratorKeyPressed(onKey, &v->tokens[6]);
@@ -1019,6 +1020,7 @@ void view_apply_visibility(View *v) {
 }
 
 void view_destroy(View *v) {
+  quit_page_unloaded(v->id);
   web_policy_forget(v->id);
   web_control_detach(v->id);
   web_sessions_detach(v);
@@ -1281,8 +1283,9 @@ static void destroy_window_state(Window *w) {
   views_window_closed(id);
   emit_raw(json{{"type", "closed"}, {"window", id}});
   emit("closed", json{{"windowId", publicId}});
-  // Same as macOS: closing the last window ends the run loop (graceful quit).
-  if (g_order.empty() && g_quit_on_last_window) request_quit();
+  // Same as macOS: closing the last window asks to quit. (window.close gets here. A close from the
+  // user was asked before, with its document still up.)
+  if (g_order.empty() && g_quit_on_last_window) quit_request("lastWindowClosed");
 }
 
 static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -1365,6 +1368,11 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         emit("willClose", json{{"windowId", window_event_id(w->id)}});
         return 0;
       }
+      // The last window: its document stays until every quit guard has answered.
+      if (!w->closing && g_quit_on_last_window && g_order.size() == 1) {
+        quit_request("lastWindowClosed");
+        return 0;
+      }
       // quitOnLastWindowClosed: false — the last visible window hides instead (as on macOS and
       // Linux): the app, its page and its push connection live on; a toast click or a second
       // launch shows it again (show_main_window).
@@ -1409,15 +1417,6 @@ static LRESULT CALLBACK hidden_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   for (auto &hook : g_hidden_hooks) {
     LRESULT result = 0;
     if (hook(hwnd, msg, wp, lp, &result)) return result;
-  }
-  switch (msg) {
-    case WM_QUERYENDSESSION:
-      // Logoff / shutdown / restart: same graceful path as Cmd+Q on macOS.
-      emit("willQuit", json::object());
-      request_quit();
-      return TRUE;
-    case WM_ENDSESSION:
-      return 0;
   }
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -1538,6 +1537,7 @@ static int create_window(const json &o) {
   w->view.session = session;
   g_views[w->id] = &w->view;
   attach_app_menu(w);
+  apply_app_look(w);
   theme_apply_window(w);
   view_create(&w->view);
   if (!jstr(o, "titleBarStyle", "").empty()) set_title_bar_style(w->id, jstr(o, "titleBarStyle", ""));
@@ -1597,7 +1597,7 @@ static void page_ready(int id) {
   if (Window *w = find_window(id)) {
     reveal_window(w);
     emit_raw(json{{"type", "ready"}, {"window", id}});
-  } else {
+  } else if (!sheet_page_ready(id)) {
     popover_page_ready(id);
   }
   if (!g_first_ready) {
@@ -1609,7 +1609,7 @@ static void page_ready(int id) {
 static BOOL WINAPI console_handler(DWORD type) {
   const char *sig = type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT ? "SIGINT" : type == CTRL_CLOSE_EVENT ? "SIGHUP" : "SIGTERM";
   emit_raw(json{{"type", "signal"}, {"signal", sig}});
-  shell_quit();
+  backend_run_on_main([] { quit_request("signal"); });
   // The process is terminated as soon as these return: leave time for the graceful path.
   if (type == CTRL_CLOSE_EVENT || type == CTRL_LOGOFF_EVENT || type == CTRL_SHUTDOWN_EVENT) Sleep(4000);
   return TRUE;
@@ -1738,6 +1738,8 @@ void *backend_native_webview(int nativeId) {
 
 void backend_init_services() {
   register_app();
+  register_desktop();
+  register_winrt();
   register_window();
   register_embed();
   register_screen();
@@ -1788,7 +1790,7 @@ SHELL_API int shell_run(void) {
 }
 
 SHELL_API int shell_quit(void) {
-  sd::backend_run_on_main([] { request_quit(); });
+  sd::backend_run_on_main([] { quit_request("api"); });
   return 0;
 }
 

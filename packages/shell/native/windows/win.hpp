@@ -194,6 +194,7 @@ struct Window {
   std::string autosaveName;
   bool startMaximized = false; // restored autosave placement was maximized
   HMENU menu = nullptr;   // menu bar (owned)
+  bool closing = false;   // window.close: it goes, whatever the last window's rule says
 };
 
 Window *find_window(int nativeId);
@@ -217,6 +218,7 @@ int create_app_window(const json &opts);
 /// windows exist (or none was ever created), else the new native id.
 int show_main_window();
 void reveal_window(Window *w);
+void adjust_for_dpi(RECT *rc, DWORD style, BOOL menu, DWORD ex, UINT dpi);
 /// Resize the client area to width x height DIPs (keeps the position).
 void set_content_size(Window *w, double width, double height);
 json window_bounds_json(HWND hwnd);
@@ -231,8 +233,15 @@ std::wstring exe_path();
 bool packaged();
 std::string arch_name(); // "x64" | "arm64"
 
-/// Graceful quit (emits nothing; callers emit willQuit when appropriate).
+/// Leaves the run loop now. What ends the app otherwise goes through quit_request.
 void request_quit();
+/// The cancellable quit (svc_app.cc): quitRequested, beforeQuit and willQuit, then request_quit.
+/// reason: api, menu, lastWindowClosed, logout, shutdown, system, signal. Joins one under way.
+void quit_request(const std::string &reason);
+void quit_page_unloaded(int native_id); // its guards can't answer: it voted against, if it had to answer
+/// app.hide, the role too: which windows it took off the screen, for app.showAll.
+void app_hide_windows();
+void app_show_hidden_windows();
 
 // Hidden top-level window: tray callbacks, hotkeys, clipboard owner and the
 // system broadcasts (WM_SETTINGCHANGE, WM_DISPLAYCHANGE, WM_POWERBROADCAST,
@@ -460,4 +469,13 @@ bool claim_single_instance();
 /// view.* (svc_embed.cc): keep autoresizing views in step with their window.
 void embedded_views_resized(Window *w);
 void register_embed(); // view.*, capture.*
+void register_desktop(); // svc_desktop.cc: metrics, the app's icon and activation policy, bookmarks, thermal state, drag out
+void register_winrt(); // svc_winrt.cc: the share sheet, Windows Hello
+/// What a new window takes from the app (svc_desktop.cc).
+void apply_app_look(Window *w);
+/// Route dialogs (svc_dialog.cc).
+bool sheet_page_ready(int native_id);
+bool sheet_key(int native_id, UINT vk); // Escape cancels. true = handled.
+/// A jump list task's arguments (svc_menu.cc). true: they were one, and it ran.
+bool jump_task_args(const std::vector<std::wstring> &args);
 } // namespace sd::win

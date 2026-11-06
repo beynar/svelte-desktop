@@ -427,8 +427,8 @@ function bind() {
 		});
 	onPlatformReady(() => {
 		// Responses that happened before this context was listening (a click that launched the app).
-		if (isPage) callPlatform<WireResponse[]>('notifications', 'claim').then((list) => list.forEach((r) => handleResponse(r, { target: true })), () => {});
-		else callPlatform<WireResponse[]>('notifications', 'responses').then((list) => list.forEach((r) => handleResponse(r)), () => {});
+		if (isPage) callPlatform<WireResponse[]>('notifications', 'claim').then((list) => list?.forEach((r) => handleResponse(r, { target: true })), () => {});
+		else callPlatform<WireResponse[]>('notifications', 'responses').then((list) => list?.forEach((r) => handleResponse(r)), () => {});
 	});
 	// A plain browser tab (no native transport after startup): clicks come from the service worker.
 	if (isPage) setTimeout(() => !native() && web.bind(), 0);

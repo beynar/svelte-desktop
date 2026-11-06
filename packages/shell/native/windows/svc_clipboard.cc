@@ -1,5 +1,5 @@
-// clipboard.* — text (CF_UNICODETEXT), html (CF_HTML), rtf, image (PNG / CF_DIB
-// <-> PNG through WIC), paths (CF_HDROP). Also the shared WIC image and icon helpers.
+// clipboard.* — text (CF_UNICODETEXT), html (CF_HTML), rtf, image (PNG / CF_DIBV5
+// <-> PNG through WIC), paths (CF_HDROP), registered formats by name. Also the shared WIC image and icon helpers.
 #include "win.hpp"
 
 #include <shellapi.h>
@@ -7,7 +7,10 @@
 #include <shlwapi.h>
 #include <wincodec.h>
 
+#include <wininet.h>
+
 #include <cstring>
+#include <set>
 
 
 namespace sd::win {
@@ -249,6 +252,10 @@ struct ClipboardLock {
   }
 };
 
+#define WITH_CLIPBOARD(c)                                                                                                    \
+  ClipboardLock lock_;                                                                                                       \
+  if (!lock_.open) return (c)->fail("unavailable", "clipboard." + (c)->op + ": the clipboard is busy (" + last_error_message() + ")")
+
 static std::string get_bytes(UINT format) {
   HANDLE h = GetClipboardData(format);
   if (!h) return "";
@@ -350,19 +357,219 @@ static bool dib_to_bgra(const std::string &dib, std::vector<uint8_t> &out, UINT 
   return true;
 }
 
-static std::string bgra_to_dib(const std::vector<uint8_t> &px, UINT w, UINT h) {
-  BITMAPINFOHEADER bi{};
-  bi.biSize = sizeof bi;
-  bi.biWidth = (LONG)w;
-  bi.biHeight = (LONG)h; // bottom-up: what most consumers expect
-  bi.biPlanes = 1;
-  bi.biBitCount = 32;
-  bi.biCompression = BI_RGB;
-  bi.biSizeImage = w * h * 4;
+// CF_DIBV5, for readers that take its alpha. Windows makes CF_DIB and CF_BITMAP out of it.
+static std::string bgra_to_dibv5(const std::vector<uint8_t> &px, UINT w, UINT h) {
+  BITMAPV5HEADER bi{};
+  bi.bV5Size = sizeof bi;
+  bi.bV5Width = (LONG)w;
+  bi.bV5Height = (LONG)h;
+  bi.bV5Planes = 1;
+  bi.bV5BitCount = 32;
+  bi.bV5Compression = BI_BITFIELDS;
+  bi.bV5SizeImage = w * h * 4;
+  bi.bV5RedMask = 0x00ff0000;
+  bi.bV5GreenMask = 0x0000ff00;
+  bi.bV5BlueMask = 0x000000ff;
+  bi.bV5AlphaMask = 0xff000000;
+  bi.bV5CSType = LCS_sRGB;
+  bi.bV5Intent = LCS_GM_IMAGES;
   std::string out(reinterpret_cast<const char *>(&bi), sizeof bi);
   out.resize(sizeof bi + (size_t)w * h * 4);
   for (UINT y = 0; y < h; y++) memcpy(&out[sizeof bi + (size_t)(h - 1 - y) * w * 4], &px[(size_t)y * w * 4], (size_t)w * 4);
   return out;
+}
+
+static std::string make_hdrop(const std::vector<std::wstring> &paths) {
+  std::wstring list;
+  for (auto &p : paths) {
+    list += p;
+    list.push_back(L'\0');
+  }
+  list.push_back(L'\0');
+  std::string buf(sizeof(DROPFILES) + list.size() * sizeof(wchar_t), '\0');
+  auto *df = reinterpret_cast<DROPFILES *>(&buf[0]);
+  df->pFiles = sizeof(DROPFILES);
+  df->fWide = TRUE;
+  memcpy(&buf[sizeof(DROPFILES)], list.data(), list.size() * sizeof(wchar_t));
+  return buf;
+}
+
+static std::vector<std::wstring> read_hdrop() {
+  std::vector<std::wstring> paths;
+  HDROP drop = static_cast<HDROP>(GetClipboardData(CF_HDROP));
+  if (!drop) return paths;
+  UINT n = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+  for (UINT i = 0; i < n; i++) {
+    UINT len = DragQueryFileW(drop, i, nullptr, 0);
+    std::wstring p(len + 1, L'\0');
+    DragQueryFileW(drop, i, &p[0], len + 1);
+    p.resize(len);
+    paths.push_back(p);
+  }
+  return paths;
+}
+
+// The PNG on the clipboard, else one made from a bitmap (what most programs put there), "" with neither.
+static std::string read_png() {
+  std::string png = get_bytes(fmt_png());
+  if (!png.empty()) return png;
+  std::vector<uint8_t> px;
+  UINT w = 0, h = 0;
+  std::string dib = get_bytes(CF_DIBV5);
+  if (dib.empty()) dib = get_bytes(CF_DIB);
+  if (dib.empty() || !dib_to_bgra(dib, px, w, h) || !wic_encode(px.data(), w, h, w * 4, false, 1, png)) return "";
+  return png;
+}
+
+static const size_t kClipLimit = 16 * 1024 * 1024;
+
+static std::string file_url(const std::wstring &path) {
+  wchar_t url[INTERNET_MAX_URL_LENGTH];
+  DWORD n = INTERNET_MAX_URL_LENGTH;
+  return SUCCEEDED(UrlCreateFromPathW(path.c_str(), url, &n, 0)) ? utf8(url, (int)n) : "";
+}
+
+// As on macOS, all at once, and read back as bytes: text in UTF-8, CF_HTML's fragment.
+static void clip_write(CallPtr c) {
+  std::vector<std::pair<UINT, std::string>> out;
+  size_t size = 0;
+  std::set<UINT> taken;
+  auto add = [&](UINT format, std::string bytes) {
+    taken.insert(format);
+    out.emplace_back(format, std::move(bytes));
+  };
+  auto add_text = [&](const std::string &text) {
+    size += text.size();
+    std::wstring w = wide(text);
+    add(CF_UNICODETEXT, std::string(reinterpret_cast<const char *>(w.c_str()), (w.size() + 1) * sizeof(wchar_t)));
+  };
+  auto add_html = [&](const std::string &html) {
+    size += html.size();
+    std::string cf = make_cf_html(html);
+    add(fmt_html(), std::string(cf.c_str(), cf.size() + 1));
+  };
+  auto add_rtf = [&](const std::string &rtf) {
+    size += rtf.size();
+    add(fmt_rtf(), std::string(rtf.c_str(), rtf.size() + 1));
+  };
+  auto add_image = [&](const std::string &bytes) {
+    std::vector<uint8_t> px;
+    UINT w = 0, h = 0;
+    std::string png;
+    if (!wic_decode(bytes, px, w, h) || !wic_encode(px.data(), w, h, w * 4, false, 1, png)) return false;
+    size += png.size();
+    add(fmt_png(), png);
+    add(CF_DIBV5, bgra_to_dibv5(px, w, h));
+    return true;
+  };
+  for (const char *key : {"text", "html", "rtf"}) {
+    if (!c->has(key)) continue;
+    if (!c->args[key].is_string()) return c->fail("invalid_args", "clipboard.write: text, html and rtf must be strings");
+    std::string v = c->args[key].get<std::string>();
+    if (!strcmp(key, "text")) add_text(v);
+    else if (!strcmp(key, "html")) add_html(v);
+    else add_rtf(v);
+  }
+  if (c->has("image")) {
+    const json &encoded = c->args["image"];
+    std::string bytes;
+    if (!encoded.is_string() || encoded.get<std::string>().size() > kClipLimit * 4 / 3 + 4) return c->fail("invalid_args", "clipboard.write: invalid or oversized image");
+    if (!base64_decode(encoded.get<std::string>(), bytes) || !add_image(bytes)) return c->fail("invalid_args", "clipboard.write: image must be base64 image bytes");
+  }
+  if (c->has("formats")) {
+    const json &custom = c->args["formats"];
+    if (!custom.is_object()) return c->fail("invalid_args", "clipboard.write: formats must map types to base64 bytes");
+    for (auto &[name, encoded] : custom.items()) {
+      if (name.empty() || !encoded.is_string() || encoded.get<std::string>().size() > kClipLimit * 4 / 3 + 4) return c->fail("invalid_args", "clipboard.write: invalid or oversized format");
+      std::string bytes;
+      if (!base64_decode(encoded.get<std::string>(), bytes)) return c->fail("invalid_args", "clipboard.write: invalid base64 or duplicate representation");
+      UINT format = name == "text/plain" ? CF_UNICODETEXT : name == "text/html" ? fmt_html() : name == "text/rtf" ? fmt_rtf() : name == "image/png" ? fmt_png() : name == "files" ? CF_HDROP : RegisterClipboardFormatW(wide(name).c_str());
+      if (!format) return c->fail("invalid_args", "clipboard.write: invalid clipboard format `" + name + "`");
+      if (taken.count(format)) return c->fail("invalid_args", "clipboard.write: invalid base64 or duplicate representation");
+      if (format == CF_HDROP) return c->fail("invalid_args", "clipboard.write: give file paths in `files`");
+      if (format == CF_UNICODETEXT) add_text(bytes);
+      else if (format == fmt_html()) add_html(bytes);
+      else if (format == fmt_rtf()) add_rtf(bytes);
+      else if (format == fmt_png()) {
+        if (!add_image(bytes)) return c->fail("invalid_args", "clipboard.write: image must be base64 image bytes");
+      } else {
+        size += bytes.size();
+        add(format, std::move(bytes));
+      }
+    }
+  }
+  if (c->has("files")) {
+    if (!c->args["files"].is_array()) return c->fail("invalid_args", "clipboard.write: files must be absolute paths");
+    std::vector<std::wstring> paths;
+    for (auto &f : c->args["files"]) {
+      std::wstring p = f.is_string() ? wide(f.get<std::string>()) : L"";
+      for (auto &ch : p)
+        if (ch == L'/') ch = L'\\';
+      if (p.empty() || PathIsRelativeW(p.c_str())) return c->fail("invalid_args", "clipboard.write: files must be absolute paths");
+      paths.push_back(p);
+    }
+    if (!paths.empty()) {
+      std::string hdrop = make_hdrop(paths);
+      size += hdrop.size();
+      add(CF_HDROP, hdrop);
+    }
+  }
+  if (size > kClipLimit || out.empty()) return c->fail("invalid_args", "clipboard.write: supply representations totaling at most 16 MiB");
+  WITH_CLIPBOARD(c);
+  double previous = GetClipboardSequenceNumber();
+  if (!EmptyClipboard()) return c->fail("unavailable", "clipboard.write: " + last_error_message());
+  for (auto &[format, bytes] : out)
+    if (!set_bytes(format, bytes.data(), bytes.size())) return c->fail("unavailable", "clipboard.write: " + last_error_message());
+  // The count that's there once they're all published: another program opens it after this.
+  CloseClipboard();
+  lock_.open = false;
+  c->ok(json{{"changeCount", (double)GetClipboardSequenceNumber()}, {"previousChangeCount", previous}});
+}
+
+static void clip_read(CallPtr c) {
+  double limit = c->has("maxBytes") && c->args["maxBytes"].is_number() ? c->num("maxBytes") : c->has("maxBytes") ? -1 : (double)kClipLimit;
+  if (!c->args.contains("formats") || !c->args["formats"].is_array() || c->args["formats"].size() > 128 || limit < 1 || limit > (double)kClipLimit || limit != (double)(long long)limit)
+    return c->fail("invalid_args", "clipboard.read: formats array and maxBytes between 1 and 16777216 required");
+  for (auto &name : c->args["formats"])
+    if (!name.is_string() || name.get<std::string>().empty()) return c->fail("invalid_args", "clipboard.read: formats must be nonempty strings");
+  WITH_CLIPBOARD(c); // nobody can change it while it's open
+  double changes = GetClipboardSequenceNumber();
+  json result = json::object();
+  size_t size = 0;
+  auto terminated = [](std::string s) {
+    while (!s.empty() && s.back() == '\0') s.pop_back();
+    return s;
+  };
+  for (auto &entry : c->args["formats"]) {
+    std::string name = entry, bytes;
+    if (result.contains(name)) continue;
+    bool found = false;
+    if (name == "text/plain") {
+      json text = read_text();
+      if ((found = text.is_string())) bytes = text.get<std::string>();
+    } else if (name == "text/html") {
+      std::string cf = terminated(get_bytes(fmt_html()));
+      if ((found = !cf.empty())) bytes = html_fragment(cf);
+    } else if (name == "text/rtf") {
+      bytes = terminated(get_bytes(fmt_rtf()));
+      found = !bytes.empty();
+    } else if (name == "image/png") {
+      bytes = read_png();
+      found = !bytes.empty();
+    } else if (name == "files") { // file URLs, one a line, what the other platforms have
+      for (auto &p : read_hdrop()) {
+        bytes += file_url(p) + "\r\n";
+        found = true;
+      }
+    } else if (UINT format = RegisterClipboardFormatW(wide(name).c_str()); format && IsClipboardFormatAvailable(format)) {
+      bytes = get_bytes(format);
+      found = true;
+    }
+    if (bytes.size() > (size_t)limit - size) return c->fail("invalid_args", "clipboard.read: result exceeds maxBytes");
+    size += bytes.size();
+    result[name] = found ? json(base64_encode(bytes.data(), bytes.size())) : json(nullptr);
+  }
+  c->ok(json{{"changeCount", changes}, {"formats", result}});
 }
 
 static const std::map<std::string, std::function<bool()>> &formats() {
@@ -370,15 +577,11 @@ static const std::map<std::string, std::function<bool()>> &formats() {
       {"text/plain", [] { return IsClipboardFormatAvailable(CF_UNICODETEXT) != 0; }},
       {"text/html", [] { return IsClipboardFormatAvailable(fmt_html()) != 0; }},
       {"text/rtf", [] { return IsClipboardFormatAvailable(fmt_rtf()) != 0; }},
-      {"image/png", [] { return IsClipboardFormatAvailable(fmt_png()) || IsClipboardFormatAvailable(CF_DIB); }},
+      {"image/png", [] { return IsClipboardFormatAvailable(fmt_png()) || IsClipboardFormatAvailable(CF_DIB) || IsClipboardFormatAvailable(CF_DIBV5); }},
       {"files", [] { return IsClipboardFormatAvailable(CF_HDROP) != 0; }},
   };
   return m;
 }
-
-#define WITH_CLIPBOARD(c)                                                                                                    \
-  ClipboardLock lock_;                                                                                                       \
-  if (!lock_.open) return (c)->fail("unavailable", "clipboard." + (c)->op + ": the clipboard is busy (" + last_error_message() + ")")
 
 static void write_string(CallPtr c, const char *key, UINT format, bool html) {
   if (!(c->args.contains(key) && c->args[key].is_string()))
@@ -397,6 +600,8 @@ static void write_string(CallPtr c, const char *key, UINT format, bool html) {
 }
 
 void register_clipboard() {
+  reg("clipboard", "write", clip_write);
+  reg("clipboard", "read", clip_read);
   reg("clipboard", "readText", [](CallPtr c) {
     WITH_CLIPBOARD(c);
     c->ok(read_text());
@@ -431,6 +636,14 @@ void register_clipboard() {
     json out = json::array();
     for (auto &[name, test] : formats())
       if (test()) out.push_back(name);
+    // Other programs' and the app's registered formats, by name. The numbered ones are the system's own,
+    // which the contract's names above stand for.
+    WITH_CLIPBOARD(c);
+    for (UINT f = EnumClipboardFormats(0); f; f = EnumClipboardFormats(f)) {
+      wchar_t name[256];
+      int n = f >= 0xC000 && f != fmt_html() && f != fmt_rtf() && f != fmt_png() ? GetClipboardFormatNameW(f, name, 256) : 0;
+      if (n > 0) out.push_back(utf8(name, n));
+    }
     c->ok(out);
   });
   reg("clipboard", "has", [](CallPtr c) {
@@ -443,13 +656,8 @@ void register_clipboard() {
   });
   reg("clipboard", "readImage", [](CallPtr c) {
     WITH_CLIPBOARD(c);
-    std::string png = get_bytes(fmt_png());
-    if (png.empty()) {
-      std::vector<uint8_t> px;
-      UINT w = 0, h = 0;
-      std::string dib = get_bytes(CF_DIB);
-      if (dib.empty() || !dib_to_bgra(dib, px, w, h) || !wic_encode(px.data(), w, h, w * 4, false, 1, png)) return c->ok(nullptr);
-    }
+    std::string png = read_png();
+    if (png.empty()) return c->ok(nullptr);
     c->ok(json{{"bytes", base64_encode(png.data(), png.size())}, {"format", "png"}});
   });
   reg("clipboard", "writeImage", [](CallPtr c) {
@@ -461,39 +669,22 @@ void register_clipboard() {
     WITH_CLIPBOARD(c);
     EmptyClipboard();
     set_bytes(fmt_png(), png.data(), png.size());
-    std::string dib = bgra_to_dib(px, w, h);
-    set_bytes(CF_DIB, dib.data(), dib.size());
+    std::string dib = bgra_to_dibv5(px, w, h);
+    set_bytes(CF_DIBV5, dib.data(), dib.size());
     c->ok();
   });
   reg("clipboard", "readPaths", [](CallPtr c) {
     WITH_CLIPBOARD(c);
-    HDROP drop = static_cast<HDROP>(GetClipboardData(CF_HDROP));
-    if (!drop) return c->ok(nullptr);
     json paths = json::array();
-    UINT n = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
-    for (UINT i = 0; i < n; i++) {
-      UINT len = DragQueryFileW(drop, i, nullptr, 0);
-      std::wstring p(len + 1, L'\0');
-      DragQueryFileW(drop, i, &p[0], len + 1);
-      p.resize(len);
-      paths.push_back(utf8(p));
-    }
+    for (auto &p : read_hdrop()) paths.push_back(utf8(p));
     c->ok(paths.empty() ? json(nullptr) : paths);
   });
   reg("clipboard", "writePaths", [](CallPtr c) {
     if (!(c->args.contains("paths") && c->args["paths"].is_array())) return c->fail("invalid_args", "clipboard.writePaths: `paths` must be an array");
-    std::wstring list;
+    std::vector<std::wstring> paths;
     for (auto &p : c->args["paths"])
-      if (p.is_string()) {
-        list += wide(p.get<std::string>());
-        list.push_back(L'\0');
-      }
-    list.push_back(L'\0');
-    std::string buf(sizeof(DROPFILES) + list.size() * sizeof(wchar_t), '\0');
-    auto *df = reinterpret_cast<DROPFILES *>(&buf[0]);
-    df->pFiles = sizeof(DROPFILES);
-    df->fWide = TRUE;
-    memcpy(&buf[sizeof(DROPFILES)], list.data(), list.size() * sizeof(wchar_t));
+      if (p.is_string()) paths.push_back(wide(p.get<std::string>()));
+    std::string buf = make_hdrop(paths);
     WITH_CLIPBOARD(c);
     EmptyClipboard();
     set_bytes(CF_HDROP, buf.data(), buf.size());

@@ -54,6 +54,15 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 ### Added
 
 - One project, two sides: `+page.desktop.svelte`, `+page.server.desktop.ts`, `+layout.desktop.svelte`, `+server.desktop.ts` and `hooks.server.desktop.ts` take the place of their file in the desktop app, and the website ignores them. `desktop({ routes: { exclude } })` keeps routes out of the app. `import.meta.env.KITOP_DESKTOP` says which side the code is built for, at build time.
+- Windows: the cancellable quit, `host.app.onQuitRequested`, `onBeforeQuit` and `onWillQuit`, from the last window's close, the menu, the API, Ctrl+Break and a session's end, reported as `logout`, `shutdown` or `system`.
+- Windows: `host.app.metrics`, with the window whose page each process draws.
+- Windows: `host.app.showAll`, `setDockIcon`, `getDockIcon`, `defaultWindowIcon`, and `setActivationPolicy`: `accessory` is out of the taskbar.
+- Windows: `host.clipboard.read` and `write`, with registered formats.
+- Windows: `host.dialog.sheet` and `close`: a route as a modal window owned by its parent.
+- Windows: `host.menu.closePopup`, and `setDockMenu` as the taskbar's jump list, whose tasks reach the app as `menuAction`.
+- Windows: file bookmarks through NTFS ids, which follow a file within its volume.
+- Windows: `host.shell.startDrag`, and `share` through the system's share sheet.
+- Windows: `host.system.biometrics` and `host.secureStorage.authenticate` through Windows Hello. Its prompt hasn't been run.
 - Windows: `host.sessions.create` and `remove`, and the `session` option of windows, views and popovers: WebView2 profiles, with cookies per session.
 - Windows: `host.sessions.setProxy`, in a browser process of the session's own. It can't change while a view is open in the session, and the default session can't have one.
 - Windows: custom protocols, declared with `protocols` and answered by `host.protocol`. A response reaches the page whole, when it ends: WebView2 can't take less.

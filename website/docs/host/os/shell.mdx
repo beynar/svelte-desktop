@@ -84,7 +84,7 @@ const { service } = await host.shell.share({ text: 'Q3 report', files: [reportPa
 
 Resolves `{ service: string | null }`: the chosen service's title, or `null` when dismissed. This reports the choice, not completion of the service's work. Rejects with `invalid_args` for a missing window, a relative URL, missing files, or no content.
 
-macOS only.
+macOS and Windows. On Windows it's the system's share sheet (`IDataTransferManagerInterop`): `anchor` is ignored, since Windows puts it where it wants, and it rejects with `unavailable` when the sheet can't open or one is already open on that window. `service` is the name of the app chosen. On the test runner the sheet opens and says it can't list where to share, so no target has been chosen in a test, and that name hasn't been seen.
 
 ### `startDrag(options, windowId?)`
 
@@ -112,7 +112,7 @@ Call while the left mouse button is down: in `ondragstart` after `preventDefault
 }}>Report</div>
 ```
 
-The call can come from server code, but still requires a target page and the active mouse gesture. macOS and Linux. On Linux it has run as XDND to another program's real drop target on X11, not on Wayland, where GTK may refuse a drag without the press's own event.
+The call can come from server code, but still requires a target page and the active mouse gesture. Windows uses `DoDragDrop` over the shell's data object, also rejects with `unavailable` during another such drag, and only offers a copy. On Linux it has run as XDND to another program's real drop target on X11, not on Wayland, where GTK may refuse a drag without the press's own event.
 
 ### `previewFile(paths)`
 
@@ -126,7 +126,7 @@ await host.shell.previewFile(['/Users/me/report.pdf', '/Users/me/chart.png']);
 | --- | --- | --- |
 | `paths` | `string \| string[]` | One existing path, or a nonempty list. The panel's arrows move between items. |
 
-Resolves `null` after showing the panel. Rejects with `invalid_args` for missing files or an empty list, and `unavailable` if no app delegate can control the panel.
+Resolves `null` after showing the panel. Rejects with `invalid_args` for missing files or an empty list, and `unavailable` if no app delegate can control the panel. Windows has no system previewer: it rejects with `unsupported`, rather than opening the default app under another name. Use [`openPath()`](#openpathpath) for that.
 
 On Linux it asks `org.gnome.NautilusPreviewer` over D-Bus, the service of GNOME's `gnome-sushi` package, and shows the first file only. Other desktops, or GNOME without that package, reject with `unavailable`: there's no standard for this. The call has run against a stand-in for the service, built from its real interface, not against the previewer itself.
 
@@ -136,8 +136,8 @@ On Linux it asks `org.gnome.NautilusPreviewer` over D-Bus, the service of GNOME'
 | --- | --- | --- | --- |
 | `openExternal` | ✓ | ✓ | ✓ |
 | `openPath`, `showItemInFolder`, `trashItem`, `beep` | ✓ | ✓ | ✓ |
-| `share` | ✓ | — | — |
-| `startDrag` | ✓ | partial (X11) | — |
+| `share` | ✓ | — | ✓ |
+| `startDrag` | ✓ | partial (X11) | ✓ |
 | `previewFile` | ✓ | partial (GNOME) | — |
 
 `facetime` and `maps` URLs are accepted only on macOS. Other schemes listed above work where the OS has a handler.

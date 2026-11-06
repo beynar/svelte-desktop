@@ -9,7 +9,8 @@ CI runs `examples/notes/tests/windows.test.ts` on a real Windows runner (`.githu
 WebView2, WinRT toasts, the COM toast activator, windows, the title bar, menus, tray, dialogs, clipboard,
 views, screen and DPI, jobs, MCP, relaunch and web content control; `windows-web.test.ts` the rest of
 web control; `windows-sessions.test.ts` sessions, proxies, schemes, content rules, scripts and the input
-policy. x64 only, on one display at 100%.
+policy; `windows-desktop.test.ts` the quit phases, metrics, the icon, the rich clipboard, route dialogs, the
+jump list, bookmarks, drag out, the share sheet and Windows Hello. x64 only, on one display at 100%.
 
 ## Verified without Windows
 - Clean build (`-Wall -Wextra`, llvm-mingw, WebView2 SDK headers); every `shell.h` export
@@ -34,7 +35,7 @@ policy. x64 only, on one display at 100%.
 4. Bridge timing: `chrome.webview.postMessage` source origin and the `ready` message order.
 5. If an icon doesn't fit Bun's resource section, a new section is appended after `.bun`
    (Bun is assumed to locate its payload by section name; the example used the in-place path).
-6. Mixed-DPI multi-monitor coordinates; best-effort graceful quit at logoff.
+6. Mixed-DPI multi-monitor coordinates; a real logoff (see below).
 7. Missing WebView2 runtime → a dialog links to the Evergreen download
    (suppressed with `KITOP_TEST` / `KITOP_NO_DIALOGS`).
 
@@ -126,9 +127,32 @@ Same ops, result shapes and events as macOS, so `src/platform` doesn't know the 
   page, so rules for those are refused. A low-level keyboard hook could reach them, but it's a system-wide hook in
   every app: not done.
 
-## Not implemented (answer `unsupported`)
-Window: simple fullscreen, controlsArea, shadow, movable, all workspaces,
-focusable, represented file, character palette. App: activation policy, hide others,
-default icon. Dock menu. Permission checks / settings panes. Thermal state. Keychain-style
-`authenticate`. Webview: custom context menu, lifecycle events other than `terminated` and a session's failed load.
+## The app on the desktop
+- `svc_app.cc`, quit: every source goes through the phases of `platform_app.mm`: `app.quit`, the menu, `shell_quit`, the
+  console's Ctrl+C and Ctrl+Break, and a close of the last window, whose document stays until the vote ends. `window.close`
+  destroys it first and asks after, as on macOS. A session's end wants an answer at once: with a guard it's refused, with a reason
+  (`ShutdownBlockReasonCreate`), while the vote goes on. `WM_ENDSESSION` ends the vote one way or the other. Tried with those
+  messages sent from another process, and with the Restart Manager (`RmShutdown`), which is the system's own. No real logoff.
+- `svc_desktop.cc`, `app.metrics`: Toolhelp's process tree, `PrivateUsage` as the footprint, `GetProcessExtendedInfos` for which
+  are renderers and, from their frames, which window's page they draw.
+- `svc_desktop.cc`, the icon and `accessory`: `WM_SETICON` and `WS_EX_TOOLWINDOW`. Read back from another process; the taskbar's
+  button really goes away and comes back, through UI Automation.
+- `svc_desktop.cc`, `files.*`: `FILE_ID_INFO` in the bookmark, `OpenFileById` when it isn't at its path.
+- `svc_desktop.cc`, `shell.startDrag`: `DoDragDrop` on the shell's data object. It takes the files as `CF_HDROP`: given as items with
+  no parent folder, a drop target received nothing. The page's process has the keyboard, so `QueryContinueDrag` asks for Escape itself.
+- `svc_clipboard.cc`, `read`, `write`: as on macOS, with `CF_UNICODETEXT` and `CF_HTML` turned to and from plain bytes.
+- `svc_dialog.cc`, `dialog.sheet`: a window owned by its parent, which is disabled meanwhile, with a web view of its own. `X-Desktop-View`
+  goes on its first request through `NavigateWithWebResourceRequest`.
+- `svc_menu.cc`, `menu.setDockMenu`: the jump list's tasks, which start the executable with `--kitop-jump-task=<base64>`. The second
+  instance forwards it like any other. The list was seen on the real taskbar, and a real click on a task reached the app.
+- `svc_winrt.cc`, `shell.share`, Hello: a WinRT operation is looked at from the UI thread until it ends. The share sheet does open; on the
+  runner it says it can't list targets, so nothing has been chosen. `DataPackage.Destroyed` ends the call if the sheet just goes away.
+  The runner has no Hello: the prompt is unrun. The interfaces mingw-w64 has no header for are declared there, and a test asks the
+  runner's factories for their ids.
+
+## Not implemented
+`hideOthers`, `previewFile`, `permissions.*`, `thermalState` (registered, answers `unavailable`) and the test-only
+`simulateResponse`, `testScroll`: `website/docs/shipping/limitations.mdx` says why. Window: parent after creation, level, aspect ratio,
+simple fullscreen, controlsArea, shadow, movable, all workspaces, focusable, represented file, character palette, and macOS's materials.
+Webview: custom context menu, lifecycle events other than `terminated` and a session's failed load.
 `shortcutReleased` (Windows has no hotkey key-up).

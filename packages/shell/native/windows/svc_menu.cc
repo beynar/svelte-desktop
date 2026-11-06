@@ -8,6 +8,9 @@
 #include "win.hpp"
 
 #include <shlobj.h>
+#include <shobjidl.h>
+#include <propkey.h>
+#include <propvarutil.h>
 
 
 namespace sd::win {
@@ -35,6 +38,7 @@ static std::vector<HMENU> g_roots[3];
 static json g_app_menus;       // current [{name, items}] (null = no menu bar)
 static bool g_app_legacy = false;
 static HMENU g_detached_bar = nullptr; // app menu built while no window exists
+static std::string g_open_popup;       // the id of the popup on screen, for menu.closePopup
 
 void reset_menu_owner(MenuOwner owner) {
   int o = (int)owner;
@@ -251,8 +255,7 @@ static void perform_role(const std::string &r, int nativeWindow, bool legacy) {
   }
   if (r == "quit") {
     if (legacy) emit_raw(json{{"type", "quit-requested"}});
-    else emit("willQuit", json::object());
-    request_quit();
+    quit_request("menu");
     return;
   }
   if (r == "about") {
@@ -260,12 +263,9 @@ static void perform_role(const std::string &r, int nativeWindow, bool legacy) {
     MessageBoxW(w ? w->hwnd : nullptr, text.c_str(), wide("About " + app_name()).c_str(), MB_OK | MB_ICONINFORMATION);
     return;
   }
-  if (r == "hide") {
-    for (int id : window_order())
-      if (Window *x = find_window(id)) ShowWindow(x->hwnd, SW_HIDE);
-    return;
-  }
-  if (r == "showall" || r == "unhide" || r == "front") {
+  if (r == "hide") return app_hide_windows();
+  if (r == "showall" || r == "unhide") return app_show_hidden_windows();
+  if (r == "front") {
     for (int id : window_order())
       if (Window *x = find_window(id)) ShowWindow(x->hwnd, IsIconic(x->hwnd) ? SW_RESTORE : SW_SHOW);
     return;
@@ -523,6 +523,131 @@ static std::vector<HMENU> all_roots() {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// The jump list stands in for the Dock's menu: "Tasks", which start the app's executable with an
+// argument saying which. Windows keeps the list after the app quits, and runs a task whether the app is
+// running or not: a running one gets it from the second instance (svc_app.cc), a closed one starts.
+
+static const wchar_t kJumpTask[] = L"--kitop-jump-task=";
+static json g_dock_menu;
+
+static std::wstring jump_argument(const std::string &value) {
+  // A value of the app's own on a command line: base64 keeps quotes and spaces out of it.
+  return kJumpTask + wide(base64_encode(value.data(), value.size()));
+}
+
+static HRESULT jump_task(IObjectCollection *tasks, const std::wstring &title, const std::wstring &arguments, bool separator) {
+  IShellLinkW *link = nullptr;
+  HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW, reinterpret_cast<void **>(&link));
+  if (FAILED(hr)) return hr;
+  std::wstring exe = exe_path();
+  link->SetPath(exe.c_str());
+  link->SetArguments(arguments.c_str());
+  link->SetIconLocation(exe.c_str(), 0);
+  auto *store = query<IPropertyStore>(link, IID_IPropertyStore);
+  if (store) {
+    PROPVARIANT value;
+    if (separator) {
+      InitPropVariantFromBoolean(TRUE, &value);
+      hr = store->SetValue(PKEY_AppUserModel_IsDestListSeparator, value);
+    } else {
+      InitPropVariantFromString(title.c_str(), &value);
+      hr = store->SetValue(PKEY_Title, value);
+    }
+    PropVariantClear(&value);
+    if (SUCCEEDED(hr)) hr = store->Commit();
+    store->Release();
+  } else hr = E_NOINTERFACE;
+  if (SUCCEEDED(hr)) hr = tasks->AddObject(link);
+  link->Release();
+  return hr;
+}
+
+static void set_dock_menu(CallPtr c) {
+  if (!packaged()) return c->fail("unavailable", "menu.setDockMenu: a task starts the app's executable: it needs a built app");
+  json items = c->args.contains("items") && c->args["items"].is_array() ? c->args["items"] : json::array();
+  std::wstring appId = wide(app_identifier());
+  ICustomDestinationList *list = nullptr;
+  HRESULT hr = CoCreateInstance(CLSID_DestinationList, nullptr, CLSCTX_INPROC_SERVER, IID_ICustomDestinationList, reinterpret_cast<void **>(&list));
+  if (FAILED(hr)) return c->fail("unavailable", "menu.setDockMenu: " + hresult_message(hr));
+  list->SetAppID(appId.c_str());
+  auto failed = [&](const std::string &error) {
+    list->Release();
+    c->fail("invalid_args", "menu.setDockMenu: " + error);
+  };
+  IObjectCollection *tasks = nullptr;
+  hr = CoCreateInstance(CLSID_EnumerableObjectCollection, nullptr, CLSCTX_INPROC_SERVER, IID_IObjectCollection, reinterpret_cast<void **>(&tasks));
+  if (FAILED(hr)) {
+    list->Release();
+    return c->fail("unavailable", "menu.setDockMenu: " + hresult_message(hr));
+  }
+  for (auto &spec : items) {
+    if (!spec.is_object()) {
+      tasks->Release();
+      return failed("menu items must be objects");
+    }
+    std::string type = lower(jstr(spec, "type", "action")), role = lower(jstr(spec, "role"));
+    if (type == "separator" || type == "divider" || role == "separator") {
+      hr = jump_task(tasks, L"", L"", true);
+    } else {
+      // Tasks are one flat list of things to click: nothing to nest, nothing to show as disabled or checked.
+      if (spec.contains("submenu") || type == "submenu") {
+        tasks->Release();
+        return failed("a jump list has no submenus");
+      }
+      if (jbool(spec, "disabled", false) || (spec.contains("enabled") && !jbool(spec, "enabled", true))) continue;
+      if (!role.empty() && !known_role(role)) {
+        tasks->Release();
+        return failed("unknown menu item role `" + jstr(spec, "role") + "`");
+      }
+      std::string label = jstr(spec, "label", jstr(spec, "text", jstr(spec, "title")));
+      if (label.empty()) label = role_title(role);
+      std::wstring argument = jump_argument(role.empty() ? jstr(spec, "id", label) : "role:" + role);
+      hr = jump_task(tasks, wide(label), argument, false);
+    }
+    if (FAILED(hr)) {
+      tasks->Release();
+      list->Release();
+      return c->fail("internal", "menu.setDockMenu: " + hresult_message(hr));
+    }
+  }
+  UINT slots = 0, count = 0;
+  tasks->GetCount(&count);
+  if (count == 0) {
+    tasks->Release();
+    hr = list->DeleteList(appId.c_str());
+    list->Release();
+    if (FAILED(hr)) return c->fail("internal", "menu.setDockMenu: " + hresult_message(hr));
+    g_dock_menu = nullptr;
+    return c->ok();
+  }
+  IObjectArray *removed = nullptr;
+  hr = list->BeginList(&slots, IID_IObjectArray, reinterpret_cast<void **>(&removed));
+  if (removed) removed->Release();
+  auto *array = query<IObjectArray>(tasks, IID_IObjectArray);
+  if (SUCCEEDED(hr)) hr = array ? list->AddUserTasks(array) : E_NOINTERFACE;
+  if (SUCCEEDED(hr)) hr = list->CommitList();
+  else list->AbortList();
+  if (array) array->Release();
+  tasks->Release();
+  list->Release();
+  if (FAILED(hr)) return c->fail("internal", "menu.setDockMenu: " + hresult_message(hr));
+  g_dock_menu = items;
+  c->ok();
+}
+
+bool jump_task_args(const std::vector<std::wstring> &args) {
+  for (auto &a : args) {
+    if (a.rfind(kJumpTask, 0) != 0) continue;
+    std::string value;
+    if (!base64_decode(utf8(a.substr(wcslen(kJumpTask))), value)) return true;
+    if (value.rfind("role:", 0) == 0) perform_role(value.substr(5), 0, false);
+    else emit("menuAction", json{{"id", value}});
+    return true;
+  }
+  return false;
+}
+
 void register_menu() {
   reg("menu", "getAppMenu", [](CallPtr c) { c->ok(g_app_menus); });
   reg_many("menu", {"setAppMenu", "setApplicationMenu"}, [](CallPtr c) {
@@ -576,18 +701,27 @@ void register_menu() {
       pt = POINT{(LONG)(c->num("x", 0) * s), (LONG)(c->num("y", 0) * s)};
     }
     int caller = c->caller;
+    std::string id = c->str("id", "context");
     // Off the current call stack: TrackPopupMenu runs a modal loop until dismissed.
-    backend_run_on_main([c, m, pt, caller] {
+    backend_run_on_main([c, m, pt, caller, id] {
       Window *w = find_window(caller) ? find_window(caller) : find_window_hwnd(GetForegroundWindow());
       HWND owner = w ? w->hwnd : hidden_window();
       SetForegroundWindow(owner);
+      g_open_popup = id;
       UINT cmd = (UINT)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, pt.x, pt.y, 0, owner, nullptr);
+      g_open_popup.clear();
       PostMessageW(owner, WM_NULL, 0, 0);
       DestroyMenu(m);
       if (cmd) handle_menu_command(cmd, w ? w->id : 0);
       c->ok(json{{"dismissed", true}});
     });
   });
+  reg("menu", "closePopup", [](CallPtr c) {
+    if (!g_open_popup.empty() && g_open_popup == c->str("id", "context")) EndMenu();
+    c->ok();
+  });
+  reg("menu", "setDockMenu", set_dock_menu);
+  reg("menu", "getDockMenu", [](CallPtr c) { c->ok(g_dock_menu); });
   reg("menu", "update", [](CallPtr c) {
     std::string id = c->str("id");
     auto it = g_ids.find(id);

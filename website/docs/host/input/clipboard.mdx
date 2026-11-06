@@ -95,7 +95,7 @@ Read the names of available clipboard representations.
 const formats = await host.clipboard.availableFormats();
 ```
 
-Resolves `string[]`. Standard names are `'text/plain'`, `'text/html'`, `'text/rtf'`, `'image/png'` and `'files'`. macOS also reports `'image/tiff'` and custom native pasteboard types, and Linux `'image/tiff'` and other selection targets named like a MIME type. Windows enumerates the standard formats above. Does not update the store's `formats` field.
+Resolves `string[]`. Standard names are `'text/plain'`, `'text/html'`, `'text/rtf'`, `'image/png'` and `'files'`. macOS also reports `'image/tiff'` and custom native pasteboard types, Linux `'image/tiff'` and other selection targets named like a MIME type, and Windows registered clipboard formats by name. Does not update the store's `formats` field.
 
 ### `has(format)`
 
@@ -119,7 +119,7 @@ Read an image as base64-encoded PNG bytes.
 const image = await host.clipboard.readImage();
 ```
 
-Resolves `{ bytes: string; format: string } | null`; `format` is `'png'` and `bytes` has no data-URL prefix. macOS converts TIFF when PNG is absent; Windows can convert a DIB image; Linux uses the GTK image reader. No readable image returns `null`.
+Resolves `{ bytes: string; format: string } | null`; `format` is `'png'` and `bytes` has no data-URL prefix. macOS converts TIFF when PNG is absent; Windows converts a `CF_DIBV5` or `CF_DIB` image; Linux uses the GTK image reader. No readable image returns `null`.
 
 ### `writeImage(pngBase64)`
 
@@ -143,7 +143,7 @@ Read copied file paths.
 const paths = await host.clipboard.readPaths();
 ```
 
-Resolves `string[] | null`, with `null` when there are no copied file paths. To copy file paths on macOS, use `write({ files })`; the public `host.clipboard` API has no `writePaths` method.
+Resolves `string[] | null`, with `null` when there are no copied file paths. To copy file paths, use `write({ files })`; the public `host.clipboard` API has no `writePaths` method.
 
 ### `clear()`
 
@@ -179,7 +179,7 @@ const result = await host.clipboard.write({
 
 Resolves `{ changeCount: number; previousChangeCount: number }`. `previousChangeCount` is the native pasteboard counter observed on entry to the write; `changeCount` is its value after publication. X11 has no such counter: on Linux it's this process's own count of ownership changes, which goes up, starts over with the app and means nothing to another app.
 
-macOS and Linux. All representations are prepared before replacing the clipboard and published together. At least one representation is required and combined decoded data, including file URL bytes, must fit within 16 MiB.
+All representations are prepared before replacing the clipboard and published together. At least one representation is required and combined decoded data, including file URL bytes, must fit within 16 MiB.
 
 Rejects with `invalid_args` for non-string text fields, invalid base64 or image bytes, relative file paths, duplicate representations, invalid pasteboard types or data exceeding the limit. For example, supplying both `text` and `formats['text/plain']` duplicates one representation. A rejected native publication returns `unavailable`. After a successful native write, this wrapper refreshes its fields: a refresh failure can reject the promise even though publication already succeeded.
 
@@ -196,12 +196,12 @@ const copy = await host.clipboard.read({
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `formats` | `string[]` | Required | Up to 128 nonempty standard format names, native UTIs or Linux selection targets. Duplicate names are read once. |
+| `formats` | `string[]` | Required | Up to 128 nonempty standard format names, native UTIs, Linux selection targets or Windows registered formats. Duplicate names are read once. |
 | `maxBytes` | `number` | `16777216` | Maximum combined decoded result bytes; integer from `1` through `16777216` (16 MiB). |
 
-Resolves `ClipboardRead`: `{ changeCount: number; formats: Record<string, string | null> }`. Each requested name maps to base64 bytes, or `null` when absent. Recognized standard names are `'text/plain'`, `'text/html'`, `'text/rtf'`, `'image/png'`, `'image/tiff'` and `'files'`. Other names pass through unchanged as native types. `'files'` reads the first file URL as UTF-8 bytes (on Linux, the whole `text/uri-list`); use `readPaths()` for every path.
+Resolves `ClipboardRead`: `{ changeCount: number; formats: Record<string, string | null> }`. Each requested name maps to base64 bytes, or `null` when absent. Recognized standard names are `'text/plain'`, `'text/html'`, `'text/rtf'`, `'image/png'`, `'image/tiff'` and `'files'`. Other names pass through unchanged as native types. `'files'` reads the first file URL as UTF-8 bytes (on Linux and Windows, every one, a line each); use `readPaths()` for every path.
 
-macOS and Linux. Invalid arguments or a result exceeding `maxBytes` reject with `invalid_args`. If pasteboard ownership changes during the read, it rejects with `unavailable`; the caller can retry. This method does not refresh the reactive snapshot.
+Invalid arguments or a result exceeding `maxBytes` reject with `invalid_args`. If pasteboard ownership changes during the read, it rejects with `unavailable`; the caller can retry. On Windows, nothing can change it during a read, and `unavailable` means another process has it open. `changeCount` is `GetClipboardSequenceNumber`, which can move by more than one for a write. Text is UTF-8 bytes (`CF_UNICODETEXT` on the clipboard), HTML is the fragment (`CF_HTML` on the clipboard), an image is written as PNG and `CF_DIBV5`, and other names are registered with `RegisterClipboardFormat`, their bytes as given. This method does not refresh the reactive snapshot.
 
 ## Platform support
 
@@ -212,7 +212,7 @@ macOS and Linux. Invalid arguments or a result exceeding `maxBytes` reject with 
 | `readHtml`, `writeHtml`, `readRtf`, `writeRtf` | ✓ | ✓ | ✓ |
 | `availableFormats`, `has` | ✓ | ✓ | ✓ |
 | `readImage`, `writeImage`, `readPaths` | ✓ | ✓ | ✓ |
-| `write`, `read` | ✓ | ✓ | — |
+| `write`, `read` | ✓ | ✓ | ✓ |
 
 ## Example
 

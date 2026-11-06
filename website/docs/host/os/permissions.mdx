@@ -93,7 +93,7 @@ const { status, canceled } = await host.permissions.guide('screenRecording');
 
 Resolves `{ status: PermissionStatus; canceled: boolean }`. macOS supports guides for `screenRecording`, `accessibility`, `inputMonitoring`, `fullDiskAccess`, `camera` and `microphone`; other names reject with `invalid_args`. The panel displays the configured reason and live status. Eligible panes let the user drag the app icon into the list. Starting another guide cancels the previous one. A permission already granted resolves immediately with `canceled: false`. For Settings-only permissions such as Screen Recording, the user may need to relaunch the app before the grant applies.
 
-Linux and Windows have no guide panel. The wrapper attempts to open Settings for mapped names unless `open: false`, then reads the current status and returns `canceled: false`. That fallback returns `'unknown'` if the check fails and ignores errors opening Settings. It does not wait for a user decision.
+Linux and Windows have no guide panel: there's no window to guide over, and `permissions.guide`, `guideState` and `cancelGuide` aren't implemented. The wrapper attempts to open Settings for mapped names unless `open: false`, then reads the current status and returns `canceled: false`. That fallback returns `'unknown'` if the check fails and ignores errors opening Settings. It does not wait for a user decision.
 
 ### `cancelGuide()`
 

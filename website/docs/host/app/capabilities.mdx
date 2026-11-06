@@ -28,7 +28,7 @@ const report = await host.capabilities.describe();
 const canCapture = report.services.capture?.captureSource === 'implemented';
 ```
 
-On macOS, the report marks notification and deep-link registration operations unavailable when there is no bundle identifier. Linux marks operations unavailable when their optional library or service is missing. Windows marks deep-link operations unavailable outside a packaged app. All three mark `setLoginItem` unavailable outside a packaged app, where it does nothing. Other runtime constraints may still make an `'implemented'` operation fail.
+On macOS, the report marks notification and deep-link registration operations unavailable when there is no bundle identifier. Linux marks operations unavailable when their optional library or service is missing. Windows marks deep-link operations and `menu.setDockMenu` unavailable outside a packaged app, and `power.getThermalState` always. All three mark `setLoginItem` unavailable outside a packaged app, where it does nothing. Other runtime constraints may still make an `'implemented'` operation fail.
 
 ### `opStatus(service, op)`
 

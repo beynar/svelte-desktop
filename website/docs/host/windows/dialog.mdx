@@ -84,7 +84,7 @@ Windows uses `TaskDialogIndirect` when available. Its `MessageBox` fallback uses
 
 ### `sheet<T = unknown>(route, options?)`
 
-macOS and Linux; on Windows, open a window with [`host.windows.create()`](/host/windows/windows) instead. Open an app route as a dialog on the current window. Resolves the value from that page's `host.dialog.close(result)` as `T`, or `undefined` on cancellation. A `null` result also becomes `undefined`.
+Open an app route as a dialog on the current window. Resolves the value from that page's `host.dialog.close(result)` as `T`, or `undefined` on cancellation. A `null` result also becomes `undefined`.
 
 `route` is a `string` app route. Pass input data in its query string.
 
@@ -100,6 +100,8 @@ The page loads out of sight and presents after loading, with a 1.5-second presen
 
 On Linux it's a transient modal window. Only its parent is blocked, not the app's other windows. `'sheet'` is borderless and centered on the parent, which isn't dimmed. `'attached'` is borderless, placed at the top of the parent's content or `top` below it, without the sliding. `'window'` has the window manager's title bar. Escape cancels; there's no Command-period. The window manager has the last word on where it goes, and on Wayland chooses alone. Closing its parent with `host.windows.close()` closes it too, and the opener's call resolves `undefined`.
 
+On Windows it's a window owned by its parent, which is disabled meanwhile. Only its parent is blocked, not the app's other windows, and it has no taskbar button. `'sheet'` is borderless and centered on the parent, which isn't dimmed. `'attached'` is borderless, placed at the top of the parent's content or `top` below it, without the sliding. `'window'` has a title bar. Escape and closing it cancel; there's no Control-period. Closing its parent closes it too, and the opener's call resolves `undefined`.
+
 Rejects `invalid_args` for a missing route/app origin or an invalid route URL.
 
 ```ts
@@ -110,7 +112,7 @@ const board = await host.dialog.sheet<{ name: string }>('/sheets/new-board', {
 
 ### `close(result?)`
 
-Page-only: call from the route dialog's page. macOS and Linux.
+Page-only: call from the route dialog's page.
 
 Close that dialog and resolve its opener's `sheet()` call. `result` has type `unknown`, defaults to `null`, and must cross the JSON bridge. Resolves `null`. Calling it outside a route dialog page rejects `invalid_args`.
 
@@ -131,7 +133,7 @@ For a regular modal child created with [`host.windows.create()`](/host/windows/w
 | `showOpenDialog` | ✓ | partial | partial |
 | `showSaveDialog` | ✓ | ✓ | ✓ |
 | `showMessageBox` | ✓ | ✓ | partial |
-| `sheet`, `close` | ✓ | ✓ | — |
+| `sheet`, `close` | ✓ | ✓ | ✓ |
 
 Partial: Linux and Windows cannot select mixed files and directories or return security-scoped bookmarks. Windows' fallback message box has standard labels and at most three choices. These methods have no event subscriptions; their promises carry the response.
 

@@ -134,7 +134,7 @@ export const app = {
 	setDockBadge: (text: string | null) =>
 		callPlatform<boolean>('app', 'setDockBadge', { text }),
 	getDockBadge: () => callPlatform<string | null>('app', 'getDockBadge'),
-	/** macOS Dock icon, Linux windows' icon: an image path or native icon name; null restores the bundle's. */
+	/** macOS Dock icon, the windows' icon on Linux and Windows (the taskbar shows it): an image path or native icon name; null restores the bundle's. */
 	setDockIcon: (icon: IconSource | null) => callPlatform<null>('app', 'setDockIcon', { icon }),
 	/** What setDockIcon set; null with the bundle's. */
 	getDockIcon: () => callPlatform<IconSource | null>('app', 'getDockIcon'),
@@ -145,11 +145,10 @@ export const app = {
 	/** Turns launch at login on or off; resolves to the state after. Does nothing where it's not
 	 *  available (`vite dev`). */
 	setLoginItem: (enabled: boolean) => callPlatform<LoginItem>('app', 'setLoginItem', { enabled }),
-	/** macOS activation policy — 'accessory' hides the Dock icon. Linux: skip-taskbar and skip-pager on the app's windows. */
+	/** macOS activation policy — 'accessory' hides the Dock icon. Linux: skip-taskbar and skip-pager on the app's windows. Windows: tool windows, out of the taskbar and Alt+Tab. */
 	setActivationPolicy: (policy: ActivationPolicy) =>
 		callPlatform<boolean>('app', 'setActivationPolicy', { policy }),
-	/** 'regular' on Windows, which has no other. */
-	getActivationPolicy: () => callPlatform<ActivationPolicy>('app', 'getActivationPolicy'),
+		getActivationPolicy: () => callPlatform<ActivationPolicy>('app', 'getActivationPolicy'),
 	/** Acquire the single-instance lock; `acquired:false` means another
 	 *  instance holds it (second instances should quit). */
 	requestSingleInstanceLock: () =>
@@ -716,12 +715,12 @@ export const shell = {
 	trashItem: (path: string) => callPlatform<null>('shell', 'trashItem', { path }),
 	/** Play the system alert sound. */
 	beep: () => callPlatform<null>('shell', 'beep'),
-	/** The system share menu (macOS: AirDrop, Mail, Messages, Notes…) for text, a URL and files,
+	/** The system share menu (macOS: AirDrop, Mail, Messages, Notes…; Windows: its share sheet) for text, a URL and files,
 	 *  anchored on `anchor` (a rect in the page's CSS pixels, e.g. a button's getBoundingClientRect())
-	 *  or at the pointer. Resolves to the service chosen, or `null` when dismissed. */
+	 *  or at the pointer (macOS: Windows puts its sheet where it wants). Resolves to the service chosen, or `null` when dismissed. */
 	share: (items: ShareItems, windowId?: number) =>
 		callPlatform<{ service: string | null }>('shell', 'share', { ...items, anchor: items.anchor && rectOf(items.anchor), ...wid(windowId) }),
-	/** Drag files out of the page to the Finder or another app (macOS). Call it in a `dragstart`
+	/** Drag files out of the page to the Finder, Explorer or another app. Call it in a `dragstart`
 	 *  handler after `event.preventDefault()`, or on `mousedown`, while the button is down. Resolves
 	 *  once dropped (or abandoned). */
 	startDrag: (options: { files: string[]; icon?: string }, windowId?: number) =>
@@ -786,7 +785,7 @@ export const dialog = {
 		callPlatform<{ canceled: boolean; paths: string[]; bookmarks?: string[] }>('dialog', 'showOpenDialog', options),
 	showSaveDialog: (options: SaveDialogOptions = {}) =>
 		callPlatform<{ canceled: boolean; path: string | null }>('dialog', 'showSaveDialog', options),
-	/** A route of the app in a sheet on the window (macOS, Linux): its page alone, shown once loaded.
+	/** A route of the app in a sheet on the window: its page alone, shown once loaded.
 	 *  Resolves with what that page passes to `dialog.close(result)`; undefined when canceled
 	 *  (Escape, ⌘.). Pass data to it in the route (`/sheets/new?folder=…`).
 	 *  `style`: 'sheet' (default) the system's sheet — on macOS 26 centered, the window dimmed;
@@ -872,8 +871,8 @@ export const system = {
 		(options?: { styles?: false }): Promise<string[]>;
 		(options: { styles: true }): Promise<FontFamily[]>;
 	},
-	/** Whether Touch ID (or another biometry) can be asked, and which (the prompt: secureStorage.authenticate). */
-	biometrics: () => callPlatform<{ available: boolean; type: 'touchID' | 'faceID' | 'opticID' | 'none'; enrolled: boolean }>('system', 'biometrics'),
+	/** Whether Touch ID (or another biometry, Windows Hello on Windows) can be asked, and which (the prompt: secureStorage.authenticate). */
+	biometrics: () => callPlatform<{ available: boolean; type: 'touchID' | 'faceID' | 'opticID' | 'windowsHello' | 'none'; enrolled: boolean }>('system', 'biometrics'),
 	getKeyboardLayout: () => callPlatform<{ name: string }>('system', 'getKeyboardLayout'),
 	/** OS accent color (0–1 float channels, sRGB). */
 	getAccentColor: () => callPlatform<AccentColor>('system', 'getAccentColor'),
@@ -967,7 +966,8 @@ export const secureStorage = {
 		callPlatform<string | null>('secureStorage', 'getPassword', { service, account }),
 	deletePassword: (service: string, account: string) =>
 		callPlatform<null>('secureStorage', 'deletePassword', { service, account }),
-	/** Touch ID prompt, the account password as a fallback unless `biometricsOnly` (macOS LAContext):
+	/** Touch ID prompt, the account password as a fallback unless `biometricsOnly` (macOS LAContext); Windows Hello,
+	 *  which can't be limited to biometrics, so `biometricsOnly` is refused there:
 	 *  to confirm a sensitive action or gate a secret. `reason` completes "<App> is trying to …". */
 	authenticate: (reason?: string, options: { biometricsOnly?: boolean } = {}) =>
 		callPlatform<{ authenticated: boolean; reason?: string }>(

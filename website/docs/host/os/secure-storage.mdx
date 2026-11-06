@@ -55,7 +55,7 @@ Credential operations may trigger an OS access prompt. macOS maps cancellation, 
 
 ### `authenticate(reason?, options?)`
 
-Ask macOS to authenticate the device owner before a sensitive action.
+Ask macOS, or Windows Hello, to authenticate the device owner before a sensitive action.
 
 ```ts
 const result = await host.secureStorage.authenticate('unlock your notes', {
@@ -70,7 +70,9 @@ console.log(result.authenticated ? 'Confirmed' : result.reason);
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `biometricsOnly` | `boolean` | `false` | Require biometrics, such as Touch ID, without the account-password fallback. |
+| `biometricsOnly` | `boolean` | `false` | Require biometrics, such as Touch ID, without the account-password fallback. Windows Hello can't be held to this, its PIN always being a way in: it resolves `authenticated: false`. |
+
+Windows Hello's prompt hasn't been run: the test runner has no Hello, so only the path that resolves `authenticated: false` has.
 
 Resolves `{ authenticated: boolean; reason?: string }`. Unavailable authentication, cancellation and failed authentication resolve `authenticated: false` with a reason; check the boolean before proceeding. Success resolves `authenticated: true`.
 
@@ -83,7 +85,7 @@ macOS only.
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
 | `setPassword`, `getPassword`, `deletePassword` | ✓ | ✓ | ✓ |
-| `authenticate` | ✓ | — | — |
+| `authenticate` | ✓ | — | ✓ (`UserConsentVerifier`) |
 
 ## Example
 

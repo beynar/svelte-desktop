@@ -8,13 +8,13 @@ export type ClipboardData = {
 	image?: string;
 	/** Absolute file paths. */
 	files?: string[];
-	/** Native pasteboard UTIs or Linux selection targets (or standard MIME names) to base64 bytes. */
+	/** Native pasteboard UTIs, Linux selection targets or Windows registered formats (or standard MIME names) to base64 bytes. */
 	formats?: Record<string, string>;
 };
 export type ClipboardRead = { changeCount: number; formats: Record<string, string | null> };
 export const clipboardData = {
-	/** macOS, Linux. Publishes all representations with one ownership change. */
+	/** Publishes all representations with one ownership change. */
 	write: (data: ClipboardData) => callPlatform<{ changeCount: number; previousChangeCount: number }>('clipboard', 'write', data),
-	/** macOS, Linux. Base64 bytes; maxBytes caps the combined result (default/max 16 MiB). */
+	/** Base64 bytes; maxBytes caps the combined result (default/max 16 MiB). */
 	read: (options: { formats: string[]; maxBytes?: number }) => callPlatform<ClipboardRead>('clipboard', 'read', options),
 };

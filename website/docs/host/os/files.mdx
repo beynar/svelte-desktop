@@ -23,7 +23,7 @@ const { bookmark } = await host.files.createBookmark('/Users/me/Documents/Report
 
 Resolves `{ bookmark: string }`, a base64-encoded bookmark suitable for persistent storage. Rejects with `invalid_args` for a non-absolute path, or `unavailable` if the bookmark cannot be created, on Linux because the file doesn't exist. Creating a bookmark cannot grant new sandbox access.
 
-macOS and Linux. These methods aren't available on Windows.
+On Windows, a bookmark is the path and the file's NTFS id, read with `GetFileInformationByHandleEx`. A volume with no lasting ids, FAT for instance, gets one with the path alone.
 
 ### `openBookmark(bookmark)`
 
@@ -77,12 +77,14 @@ Linux has no sandbox to get through, so a bookmark is the path with the file's d
 
 macOS finds a file that moved to another folder. Linux has no index to ask.
 
+Windows finds it too, anywhere on its volume, through `OpenFileById`: it resolves the new path with `stale: true`, for a file or a folder. A move to another volume is a copy, which is a new file: it rejects with `unavailable`, or resolves what's now at the old path with `stale: true`. Replaced by another file at that path is the same as elsewhere.
+
 ## Platform support
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `createBookmark`, `openBookmark` | ✓ | partial | — |
-| `BookmarkAccess.release` | ✓ | ✓ | — |
+| `createBookmark`, `openBookmark` | ✓ | partial | ✓ (NTFS) |
+| `BookmarkAccess.release` | ✓ | ✓ | ✓ |
 
 ## Example
 
