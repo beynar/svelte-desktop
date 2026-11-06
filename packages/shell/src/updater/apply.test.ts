@@ -8,7 +8,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createUpdater, type Staged, type UpdaterOptions } from "./index.ts";
-import { renderPs1Helper, renderShHelper, type HelperPlan } from "./helper.ts";
+import { renderPs1Helper, renderShHelper, windowsLauncher, type HelperPlan } from "./helper.ts";
 import { buildArtifact, makeKeys, serveStatic, signedManifest, tempDir, waitFor, writeFakeApp, writeFakeExe } from "./test-utils.ts";
 
 const cleanups: (() => Promise<unknown> | unknown)[] = [];
@@ -249,6 +249,12 @@ describe("apply: macOS .app bundle", () => {
 		await Bun.write(join(staged.payloadDir, "stray.txt"), "x");
 		expect((await s.v1.apply({ ...staged, entries: ["MyApp.app", "stray.txt"] }, { quit: false }).catch((e) => e)).code).toBe("layout_invalid");
 	});
+});
+
+test("on Windows the helper starts through a PowerShell that leaves it running", () => {
+	const argv = windowsLauncher(["C:\\ps.exe", "-File", "C:\\Users\\Éric's Data\\apply.ps1"], "C:\\Apps\\My App");
+	expect(argv.slice(0, 6)).toEqual(["C:\\ps.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]);
+	expect(argv[6]).toBe(`(Start-Process -PassThru -WindowStyle Hidden -FilePath 'C:\\ps.exe' -ArgumentList '-File', '"C:\\Users\\Éric''s Data\\apply.ps1"' -WorkingDirectory 'C:\\Apps\\My App').Id`);
 });
 
 describe("helper scripts", () => {

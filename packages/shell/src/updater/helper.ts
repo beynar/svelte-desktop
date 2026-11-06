@@ -193,6 +193,17 @@ export function windowsPowerShell(): string {
 	return `${process.env.SystemRoot || "C:\\Windows"}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 }
 
+/** What the app runs on Windows to start a helper that outlives it, and that prints the helper's pid.
+ *  Spawned `detached`, PowerShell has no console and exits at once without running anything. Spawned
+ *  without it, the child dies with the app, in libuv's job. So a short-lived PowerShell, which the app
+ *  waits for, starts the helper out of the app's reach. */
+export function windowsLauncher(command: string[], cwd?: string): string[] {
+	const [exe, ...args] = command;
+	const list = args.map((a) => psQuote(/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)).join(", ");
+	const where = cwd ? ` -WorkingDirectory ${psQuote(cwd)}` : "";
+	return [exe!, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", `(Start-Process -PassThru -WindowStyle Hidden -FilePath ${psQuote(exe!)} -ArgumentList ${list}${where}).Id`];
+}
+
 /** argv used to start the helper script. */
 export function helperCommand(platform: string, scriptPath: string): string[] {
 	if (platform === "win32") {

@@ -8,7 +8,7 @@ import { basename, join } from "node:path";
 import { extractArchive } from "./archive.ts";
 import { downloadVerified, hasVerifiedFile, type DownloadProgress } from "./download.ts";
 import { UpdateError } from "./errors.ts";
-import { helperCommand, psQuote, renderPs1Helper, renderShHelper, shQuote, type HelperPlan } from "./helper.ts";
+import { helperCommand, psQuote, renderPs1Helper, renderShHelper, shQuote, windowsLauncher, type HelperPlan } from "./helper.ts";
 import { isSemver, parseSignedManifest, type Artifact, type PlatformKey, type UpdateManifest } from "./manifest.ts";
 import { APP_FOLDER_MARKER, defaultDataDir, isCompiledBinary, locateInstall, platformKeyOf, type InstallLocation } from "./platform.ts";
 import { readState, writeState, clearState, type Move, type UpdateState } from "./state.ts";
@@ -103,6 +103,7 @@ export interface ApplyHandle {
 	moves: Move[];
 	/** Set unless dryRun. */
 	pid?: number;
+	/** Not on Windows, where the helper isn't the app's child. */
 	exited?: Promise<number>;
 }
 
@@ -414,24 +415,38 @@ export function createUpdater(options: UpdaterOptions): Updater {
 		};
 		const isWin = platform === "win32";
 		const scriptPath = join(dataDir, isWin ? "apply-helper.ps1" : "apply-helper.sh");
-		await Bun.write(scriptPath, isWin ? renderPs1Helper(plan) : renderShHelper(plan));
+		// A BOM: without one Windows PowerShell reads the script as ANSI, and a path like C:\Users\Éric breaks.
+		await Bun.write(scriptPath, isWin ? `\uFEFF${renderPs1Helper(plan)}` : renderShHelper(plan));
 		if (!isWin) await chmod(scriptPath, 0o700);
 		const command = helperCommand(platform, scriptPath);
 		if (opts.dryRun) return { scriptPath, command, moves };
 
 		// Must be written before spawning: the helper may finish before we get to run again.
 		await writeState(statePath, { ...base, phase: "applying" });
-		let proc;
+		let started;
 		try {
-			proc = Bun.spawn(command, { detached: true, stdio: ["ignore", "ignore", "ignore"], windowsHide: true });
+			started = await startHelper(command);
 		} catch (err) {
 			await clearState(statePath);
 			throw new UpdateError("helper_failed", `cannot start update helper: ${(err as Error).message}`, { cause: err });
 		}
-		proc.unref();
-		const handle: ApplyHandle = { scriptPath, command, moves, pid: proc.pid, exited: proc.exited };
+		const handle: ApplyHandle = { scriptPath, command, moves, ...started };
 		if (opts.quit !== false) await quitApp();
 		return handle;
+	}
+
+	/** Starts a command that outlives the app. */
+	async function startHelper(command: string[], cwd?: string): Promise<{ pid: number; exited?: Promise<number> }> {
+		if (platform !== "win32") {
+			const proc = Bun.spawn(command, { detached: true, stdio: ["ignore", "ignore", "ignore"], cwd });
+			proc.unref();
+			return { pid: proc.pid, exited: proc.exited };
+		}
+		const launcher = Bun.spawn(windowsLauncher(command, cwd), { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+		const [code, out, err] = await Promise.all([launcher.exited, new Response(launcher.stdout).text(), new Response(launcher.stderr).text()]);
+		const pid = Number(out.trim());
+		if (code !== 0 || !pid) throw new Error(err.trim() || `PowerShell exited with ${code}`);
+		return { pid };
 	}
 
 	async function restoreBackups(moves: Move[]): Promise<boolean> {
@@ -525,8 +540,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 						`while (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 100 }; Start-Process -FilePath ${psQuote(argv[0]!)}${argv.length > 1 ? ` -ArgumentList @(${argv.slice(1).map(psQuote).join(", ")})` : ""}`,
 					]
 				: ["/bin/sh", "-c", `while kill -0 ${pid} 2>/dev/null; do sleep 0.1; done; ${argv.map(shQuote).join(" ")} >/dev/null 2>&1 &`];
-		const proc = Bun.spawn(command, { detached: true, stdio: ["ignore", "ignore", "ignore"], windowsHide: true, cwd: loc.dir });
-		proc.unref();
+		await startHelper(command, loc.dir);
 		if (opts.quit !== false) await quitApp();
 	}
 

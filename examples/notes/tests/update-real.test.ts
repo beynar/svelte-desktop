@@ -15,7 +15,7 @@ const OS = WINDOWS ? 'windows' : 'darwin';
 const PORT = 47992;
 const built = (dir: string) => join(W, dir, WINDOWS ? 'app' : 'app.app');
 // Under a name of the user's, not the release's.
-const target = join(W, 'installed', WINDOWS ? `Arnaud's Notes` : `Arnaud's Notes.app`);
+const target = join(W, 'installed', WINDOWS ? `Éric's Notes` : `Arnaud's Notes.app`);
 const probeFile = join(W, 'probe.log');
 const dataDir = defaultDataDir('dev.kitop.notes', OS);
 const statePath = join(dataDir, 'state.json');
