@@ -398,8 +398,7 @@ async function packageMac(c: ResolvedConfig, stage: string): Promise<PackageResu
     mkdirSync(src);
     await $`cp -R ${app} ${src}/`;
     await $`ln -s /Applications ${join(src, "Applications")}`; // drag-to-install
-    rmSync(result.dmg, { force: true });
-    await $`hdiutil create -quiet -volname ${c.appName} -srcfolder ${src} -fs APFS -format ULMO -ov ${result.dmg}`;
+    await createDmg(c.appName, src, result.dmg);
     rmSync(src, { recursive: true, force: true });
     if (signed === "identity") await codesign(result.dmg, signIdentity(c), { runtime: false });
     if (notarized && profile) await notarize(result.dmg, profile);
@@ -412,6 +411,20 @@ async function packageMac(c: ResolvedConfig, stage: string): Promise<PackageResu
   const size = Number((await $`du -sk ${app}`.text()).split("\t")[0]) / 1024;
   console.log(`\n  \x1b[32m✓\x1b[0m ${app} (${size.toFixed(1)} MB) in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
   return result;
+}
+
+/** hdiutil fails now and then with nothing wrong with what it was given: seen on CI runners. */
+async function createDmg(volume: string, src: string, dmg: string) {
+  const attempts = 4;
+  for (let attempt = 1; ; attempt++) {
+    rmSync(dmg, { force: true });
+    const r = await $`hdiutil create -volname ${volume} -srcfolder ${src} -fs APFS -format ULMO -ov ${dmg}`.nothrow().quiet();
+    if (r.exitCode === 0) return;
+    const why = `${r.stderr}`.trim() || `exit code ${r.exitCode}`;
+    if (attempt === attempts) throw new Error(`hdiutil could not make the DMG, ${attempts} times: ${why}`);
+    log(`hdiutil failed, trying again: ${why}`);
+    await Bun.sleep(attempt * 5000);
+  }
 }
 
 /** Updater release (archive + delta patch + signed manifest) for an app bundle/directory; `os` prefixes the artifact name and manifest keys. `appImage` adds that file under `appimage-<arch>`. */
