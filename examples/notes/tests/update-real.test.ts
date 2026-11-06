@@ -53,6 +53,24 @@ async function until(what: string, fn: () => unknown, ms = 90_000) {
 	}
 }
 
+/** What Windows can say about a helper that left no log: is it there, does it parse, does it run. */
+function diagnose() {
+	if (!WINDOWS) return;
+	const script = join(dataDir, 'apply-helper.ps1');
+	const ps = (command: string) => {
+		const r = Bun.spawnSync(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command], { timeout: 30_000 });
+		return `${r.stdout}${r.stderr}`.trim();
+	};
+	console.log('[update] processes', ps("Get-Process | Where-Object { $_.ProcessName -match 'SvelteNotes|powershell|msedgewebview2' } | Select-Object Id, ProcessName, StartTime | Format-Table -AutoSize | Out-String -Width 120"));
+	console.log('[update] data folder', readdirSync(dataDir));
+	if (!existsSync(script)) return console.log('[update] no script');
+	console.log('[update] script head', readFileSync(script, 'utf8').slice(0, 400));
+	console.log('[update] parse', ps(`$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('${script.replaceAll("'", "''")}', [ref]$null, [ref]$e); $e | ForEach-Object { $_.ToString() }; 'parse errors: ' + @($e).Count`));
+	const run = Bun.spawnSync(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { timeout: 25_000 });
+	console.log('[update] run by hand', run.exitCode, `${run.stdout}${run.stderr}`.slice(0, 1500));
+	console.log('[update] helper log after', helperLog());
+}
+
 // By its exact name, and only on a CI runner: UPDATE_E2E is never set elsewhere.
 function stopApp() {
 	if (WINDOWS) Bun.spawnSync(['taskkill', '/F', '/IM', 'SvelteNotes.exe']);
@@ -87,7 +105,10 @@ describe.skipIf(!W)('a real update', () => {
 				stderr: 'ignore',
 				env: { ...process.env, NOTES_UPDATE_PROBE: '1', NOTES_UPDATE_PROBE_LOG: probeFile },
 			});
-			await until('0.2.0 to run', () => probe().includes('started 0.2.0'));
+			await until('0.2.0 to run', () => probe().includes('started 0.2.0')).catch((e) => {
+				diagnose();
+				throw e;
+			});
 			console.log('[update] feed asked for', hits);
 			console.log('[update] state then', state());
 			await until('0.2.0 to find itself current', () => probe().includes('check none'));
