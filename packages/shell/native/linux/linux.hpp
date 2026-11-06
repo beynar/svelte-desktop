@@ -18,6 +18,10 @@
 //                       — dlopen()ed at runtime
 //   svc_notifications.cc notifications.* (libnotify, dlopen()ed; Unity badge over
 //                       GDBus), push.* (unsupported)
+//   svc_desktop.cc      app.* for the desktop: metrics, recent documents, launcher entry
+//                       (badge, progress), urgency, window icons, activation policy;
+//                       files.* (bookmarks); global shortcuts and screenshots through
+//                       xdg-desktop-portal on Wayland
 #pragma once
 #include <gtk/gtk.h>
 #include <webkit2/webkit2.h>
@@ -99,7 +103,12 @@ std::string app_identifier();
 std::string app_version();
 void set_app_name_override(const std::string &name);
 void set_app_identifier_override(const std::string &id);
+/// Leaves the run loop now. What ends the app otherwise goes through quit_request.
 void request_quit();
+/// The cancellable quit (svc_app.cc): quitRequested, beforeQuit and willQuit, then request_quit.
+/// `reason` is a QuitReason of app-lifecycle.ts. Ignored while one is running.
+void quit_request(const std::string &reason);
+void quit_page_unloaded(int native_id); // its guards can't answer: it voted against, if it had to answer
 
 // ---- web views (shell_linux.cc) ------------------------------------------
 /// Creates a WebKitWebView with the page bridge attached (bridge script at
@@ -157,7 +166,8 @@ void register_web_downloads();
 WebKitWebContext *session_context(const json &options, bool *valid);
 json session_of(WebKitWebView *wv); // its named session, null for the default
 /// Loads a URL. In a named session the app's own pages need the app's cookie first.
-void session_load(WebKitWebView *wv, const std::string &url);
+/// `view`: the X-Desktop-View header's value, for a page that shows alone (a route dialog).
+void session_load(WebKitWebView *wv, const std::string &url, const std::string &view = "");
 /// desktop.config protocols, from the first window's options, before any web view exists.
 void set_protocol_schemes(const json &input);
 bool protocol_scheme(const std::string &scheme);
@@ -188,14 +198,35 @@ void register_dialog();
 void register_webview(); // webview, popover, events
 void register_optional(); // notifications, tray, secureStorage
 void register_notifications(); // svc_notifications.cc (called by register_optional)
+void register_desktop(); // svc_desktop.cc
 /// "" when notifications can be shown, else why not (no libnotify / no server).
 std::string notifications_unavailable();
+/// com.canonical.Unity.LauncherEntry.Update with these properties ("" or why not).
+std::string launcher_update(GVariant *properties);
+/// The badge the launcher entry shows: both app.setDockBadge and notifications.setBadge set it.
+std::string set_badge_count(long long count); // "" or why not
+long long badge_count();
+/// A new window takes the activation policy's skip-taskbar and skip-pager hints.
+void apply_activation_policy(Window *w);
+/// {native}, {symbol}, {path} or a string → a freedesktop icon name or a path (svc_optional.cc).
+std::string resolve_icon(const json &icon, std::string *code, std::string *error);
+/// Wayland: shortcuts.* through org.freedesktop.portal.GlobalShortcuts.
+void portal_shortcut_register(CallPtr c, const std::string &id, const std::string &accel, guint key, GdkModifierType mods);
+void portal_shortcut_unregister(CallPtr c);
+void portal_shortcut_unregister_all(CallPtr c);
+bool portal_shortcut_registered(const std::string &id);
+/// Wayland: capture.* through org.freedesktop.portal.Screenshot.
+/// `done`: the interface's version, 0 when no portal offers it.
+void portal_version(const char *interface, std::function<void(unsigned version)> done);
+void portal_screenshot(CallPtr c, std::function<void(GdkPixbuf *image)> done);
 /// Ops that cannot work in this environment (library or daemon missing), for
 /// capabilities.describe: "service.op" → reason. Filled by register_optional().
 const std::vector<std::string> &unavailable_ops();
 /// Tray: bind a popover to the indicator (activations toggle it).
 void tray_bind_popover(const std::string &id);
 bool tray_is_set();
+
+void sheets_window_closing(int window); // its route dialogs end now: canceled (svc_dialog.cc)
 
 /// Legacy shell_dialog support: run the dialog service and translate its reply.
 void dialog_legacy(int request_id, const json &opts);

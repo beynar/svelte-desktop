@@ -303,28 +303,37 @@ static void cancel_pending(const std::string &id) {
 // ---------------------------------------------------------------------------
 // Badge: com.canonical.Unity.LauncherEntry.Update(app_uri, {count, count-visible})
 
-static std::string badge_error(long long count) {
+std::string launcher_update(GVariant *properties) {
   GError *err = nullptr;
   GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &err);
   if (!bus) {
     std::string m = err ? err->message : "no session bus";
     g_clear_error(&err);
+    g_variant_unref(g_variant_ref_sink(properties));
     return m;
   }
   std::string uri = "application://" + app_identifier() + ".desktop";
   std::string path = "/com/canonical/unity/launcherentry/" + std::to_string(g_str_hash(uri.c_str()));
-  GVariantBuilder b;
-  g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
-  g_variant_builder_add(&b, "{sv}", "count", g_variant_new_int64(count));
-  g_variant_builder_add(&b, "{sv}", "count-visible", g_variant_new_boolean(count > 0));
   bool ok = g_dbus_connection_emit_signal(bus, nullptr, path.c_str(), "com.canonical.Unity.LauncherEntry", "Update",
-                                          g_variant_new("(sa{sv})", uri.c_str(), &b), &err);
+                                          g_variant_new("(s@a{sv})", uri.c_str(), properties), &err);
   if (ok) g_dbus_connection_flush_sync(bus, nullptr, nullptr);
   std::string m = ok ? "" : err ? err->message : "emit failed";
   g_clear_error(&err);
   g_object_unref(bus);
   return m;
 }
+
+std::string set_badge_count(long long count) {
+  GVariantBuilder b;
+  g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
+  g_variant_builder_add(&b, "{sv}", "count", g_variant_new_int64(count));
+  g_variant_builder_add(&b, "{sv}", "count-visible", g_variant_new_boolean(count > 0));
+  std::string err = launcher_update(g_variant_builder_end(&b));
+  if (err.empty()) g_badge_count = count;
+  return err;
+}
+
+long long badge_count() { return g_badge_count; }
 
 // ---------------------------------------------------------------------------
 
@@ -419,9 +428,8 @@ void register_notifications() {
       if (!c->args["count"].is_number() || c->num("count") < 0) return c->fail("invalid_args", "notifications.setBadge: `count` must be a number ≥ 0 or null");
       count = (long long)c->num("count");
     }
-    std::string err = badge_error(count);
+    std::string err = set_badge_count(count);
     if (!err.empty()) return c->fail("unavailable", "notifications.setBadge: " + err);
-    g_badge_count = count;
     c->ok();
   });
   reg("notifications", "getBadge", [](CallPtr c) { c->ok(g_badge_count > 0 ? json(g_badge_count) : json(nullptr)); });

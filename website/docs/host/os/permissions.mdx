@@ -59,7 +59,7 @@ const status = await host.permissions.status('camera');
 
 Resolves `PermissionStatus`. On macOS, native checks exist for `camera`, `microphone`, `notifications`, `screenRecording`, `accessibility`, `inputMonitoring` and `fullDiskAccess`. Other names reject with `invalid_args`, even when declared. Full Disk Access detection can return `'unknown'`.
 
-Windows checks desktop-wide camera, microphone and location consent; other names return `'granted'`. Linux checks camera device access, X11 screen-capture availability and notification-service availability; other names return `'granted'`. These broad results do not prove a particular resource can be used. The Linux notification check can return `'unavailable'` at run time despite the narrower `PermissionStatus` type; use [`host.notifications.getPermissionStatus()`](/host/os/notifications) for notification-specific statuses.
+Windows checks desktop-wide camera, microphone and location consent; other names return `'granted'`. Linux checks camera device access, screen capture (`'granted'` on X11; on Wayland `'notDetermined'` with a portal, which asks at each capture, `'denied'` without) and notification-service availability; other names return `'granted'`. These broad results do not prove a particular resource can be used. The Linux notification check can return `'unavailable'` at run time despite the narrower `PermissionStatus` type; use [`host.notifications.getPermissionStatus()`](/host/os/notifications) for notification-specific statuses.
 
 ### `request(name, options?)`
 

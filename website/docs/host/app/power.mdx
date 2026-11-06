@@ -11,7 +11,7 @@ How-to: [Power](/ui/platform-services#power).
 
 | Property | Type | Description |
 | --- | --- | --- |
-| `thermal` | `ThermalState \| null` | Last thermal reading; macOS updates it on changes. |
+| `thermal` | `ThermalState \| null` | Last thermal reading, `null` where the machine doesn't say; macOS and Linux update it on changes. |
 | `battery` | `BatteryInfo \| null` | Battery snapshot; `null` before a successful query or after a failed refresh. |
 | `idleSeconds` | `number \| null` | Seconds since the last global input event, at the last refresh. |
 | `lastWakeAt` | `number \| null` | Local Unix milliseconds when the latest wake event arrived. |
@@ -27,11 +27,22 @@ Battery and idle readings do not update continuously. A wake updates only `lastW
 
 ### `getThermalState()`
 
-Resolves `{ state: ThermalState }`. Does not update `thermal`. macOS only.
+Resolves `{ state: ThermalState }`. Does not update `thermal`. macOS and Linux.
+
+On Linux it's the worst of the kernel's thermal zones in `/sys/class/thermal`, by the trip points they've reached:
+
+| Trip reached | State |
+| --- | --- |
+| None | `'nominal'` |
+| `active` (a fan turns up) | `'fair'` |
+| `passive` (the CPU is throttled) | `'serious'` |
+| `hot`, `critical` | `'critical'` |
+
+Rejects with `unavailable` when no zone has trip points, as on many desktops, virtual machines and containers: the state isn't known, and `thermal` stays `null`.
 
 ### `getSystemIdleTime()`
 
-Resolves `number`, seconds since the last global input event. Does not update `idleSeconds`. macOS and Windows only.
+Resolves `number`, seconds since the last global input event. Does not update `idleSeconds`. macOS, Windows and Linux on X11, through the XScreenSaver extension (`libXss.so.1`, loaded if it's there). Linux rejects with `unavailable` without it, and on Wayland, which doesn't tell applications.
 
 ### `getBattery()`
 
@@ -83,7 +94,7 @@ Read thermal state, idle time and battery concurrently; resolves the namespace. 
 
 | Event | Payload | Typed helper | Platforms |
 | --- | --- | --- | --- |
-| `thermalStateChanged` | `{}` | `onThermalStateChange(fn)` | macOS |
+| `thermalStateChanged` | `{}` | `onThermalStateChange(fn)` | macOS, Linux (read every 5 seconds) |
 | `systemSleep` | `{}` | `onSystemSleep(fn)` | macOS, Windows |
 | `systemWake` | `{}` | `onSystemWake(fn)` | macOS, Windows |
 | `screenLocked` | `{}` | `onScreenLocked(fn)` | macOS, Windows |
@@ -98,23 +109,24 @@ Read thermal state, idle time and battery concurrently; resolves the namespace. 
 
 The helpers live on `host.power`. Each returns an unsubscribe function. `host.on(event, fn)` observes any of these events and also returns an unsubscribe function. The typed `host.power.on(event, fn)` and `once(event, fn)` cover thermal, sleep, wake, lock, unlock, power-source and shutdown events; `once()` removes its listener after delivery. Use the dedicated helper or `host.on()` for `memoryPressure`.
 
-`powerSourceChanged` fires when the machine switches between battery and external power, not for every percentage change and not as an initial snapshot. `shutdown` announces macOS shutdown, restart or logout. It is an observation and can't veto termination: use [`host.app.onQuitRequested()`](/host/app/app#cancellable-quit-macos) to guard a quit and [`host.app.onBeforeQuit()`](/host/app/app#cancellable-quit-macos) for cleanup. Windows uses its app lifecycle for OS termination and does not emit this power event.
+`powerSourceChanged` fires when the machine switches between battery and external power, not for every percentage change and not as an initial snapshot. `shutdown` announces macOS shutdown, restart or logout. It is an observation and can't veto termination: use [`host.app.onQuitRequested()`](/host/app/app#cancellable-quit) to guard a quit and [`host.app.onBeforeQuit()`](/host/app/app#cancellable-quit) for cleanup. Windows uses its app lifecycle for OS termination and does not emit this power event.
 
 ## Platform support
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `getThermalState` | ✓ | — | — |
-| `getSystemIdleTime` | ✓ | — | ✓ |
+| `getThermalState` | ✓ | partial (where the machine has trip points) | — |
+| `getSystemIdleTime` | ✓ | partial (X11) | ✓ |
 | `getBattery` | ✓ | ✓ | ✓ |
 | `blockSleep`, `acquireSleepBlocker` | ✓ | partial (desktop D-Bus inhibitor) | ✓ |
 | `unblockSleep` | ✓ | ✓ | ✓ |
 | `refresh`, `init`, `dispose` | ✓ | ✓ | ✓ |
-| `on`, `once` | ✓ | — | partial |
+| `on`, `once` | ✓ | partial | partial |
 | `onSystemSleep`, `onSystemWake`, `onScreenLocked`, `onScreenUnlocked` | ✓ | — | ✓ |
-| `onThermalStateChange`, `onMemoryPressure`, `onPowerSourceChange`, `onShutdown` | ✓ | — | — |
+| `onThermalStateChange` | ✓ | ✓ | — |
+| `onMemoryPressure`, `onPowerSourceChange`, `onShutdown` | ✓ | — | — |
 
-Event listeners can be registered on every platform; the event table lists actual emitters. Linux does not emit these power events. Windows emits the sleep, wake, lock and display events.
+Event listeners can be registered on every platform; the event table lists actual emitters. Linux emits only `thermalStateChanged`. Windows emits the sleep, wake, lock and display events.
 
 ## Example
 

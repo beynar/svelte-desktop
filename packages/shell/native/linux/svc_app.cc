@@ -1,13 +1,15 @@
 // app.* — identity, XDG paths, lifecycle, single instance, login item (autostart),
-// About dialog. Events: willQuit, willRestart, secondInstance.
-// macOS-only ops (Dock badge/bounce/progress, activation policy, recent
-// documents, hideOthers/showAll) are not registered → `unsupported`.
+// About dialog. Events: quitRequested, beforeQuit, willQuit, quitCancelled, quitTimedOut,
+// willRestart, secondInstance. The desktop's side (recent documents, launcher, urgency, icons,
+// activation policy, metrics) is in svc_desktop.cc. hideOthers isn't registered → `unsupported`:
+// X11 and Wayland leave other applications to the window manager.
 #include <fcntl.h>
 #include <gio/gunixsocketaddress.h>
 #include <sys/file.h>
 #include <unistd.h>
 
 #include <fstream>
+#include <map>
 #include <sstream>
 
 #include "linux.hpp"
@@ -321,12 +323,141 @@ static void register_scheme(CallPtr c) {
   c->ok(json{{"scheme", scheme}, {"registered", true}});
 }
 
+// ---------------------------------------------------------------------------
+// Quit: every source goes through these phases, as on macOS (platform_app.mm). Each phase holds until
+// the handlers subscribed when it started have answered, or 10 seconds. A cancel in the first phase
+// ends it all. A page that goes away while it has to answer the first phase counts as a cancel.
+
+static const char *const kQuitPhases[] = {"quitRequested", "beforeQuit", "willQuit"};
+static const unsigned kQuitTimeout = 10;
+
+struct QuitHandler {
+  std::string phase;
+  int owner = 0; // native id of the page, 0 = server code
+};
+static std::map<std::string, QuitHandler> g_quit_handlers;
+static std::map<std::string, int> g_quit_pending; // token → owner, in this phase
+static unsigned g_quit_id = 0, g_quit_stage = 0;
+static guint g_quit_timer = 0;
+static bool g_quit_active = false, g_quit_done = false;
+static std::string g_quit_reason;
+
+static void quit_phase();
+
+static void quit_finish(bool allow) {
+  g_quit_pending.clear();
+  if (g_quit_timer) g_source_remove(g_quit_timer);
+  g_quit_timer = 0;
+  g_quit_active = false;
+  if (allow) {
+    g_quit_done = true;
+    return request_quit();
+  }
+  emit("quitCancelled", json{{"requestId", g_quit_id}, {"reason", g_quit_reason}});
+}
+
+static void quit_advance() {
+  if (!g_quit_active || !g_quit_pending.empty()) return;
+  if (++g_quit_stage == G_N_ELEMENTS(kQuitPhases)) quit_finish(true);
+  else quit_phase();
+}
+
+static void quit_phase() {
+  std::string phase = kQuitPhases[g_quit_stage];
+  json tokens = json::array();
+  for (auto &[token, h] : g_quit_handlers)
+    if (h.phase == phase) {
+      g_quit_pending[token] = h.owner;
+      tokens.push_back(token);
+    }
+  double deadline = (double)(g_get_real_time() / 1000 + kQuitTimeout * 1000);
+  emit(phase, json{{"requestId", g_quit_id}, {"reason", g_quit_reason}, {"deadline", deadline}, {"tokens", tokens}});
+  if (g_quit_timer) g_source_remove(g_quit_timer);
+  g_quit_timer = g_timeout_add_seconds(kQuitTimeout, [](gpointer) -> gboolean {
+    g_quit_timer = 0;
+    emit("quitTimedOut", json{{"requestId", g_quit_id}, {"phase", kQuitPhases[g_quit_stage]}, {"reason", g_quit_reason}});
+    g_quit_pending.clear();
+    quit_advance();
+    return G_SOURCE_REMOVE;
+  }, nullptr);
+  // Let the initiating call's result land first. Nobody to wait for: on to the next phase.
+  unsigned request = g_quit_id, stage = g_quit_stage;
+  auto *key = new std::pair<unsigned, unsigned>(request, stage);
+  g_idle_add([](gpointer data) -> gboolean {
+    auto *k = static_cast<std::pair<unsigned, unsigned> *>(data);
+    if (g_quit_active && g_quit_id == k->first && g_quit_stage == k->second) quit_advance();
+    delete k;
+    return G_SOURCE_REMOVE;
+  }, key);
+}
+
+void quit_request(const std::string &reason) {
+  if (g_quit_active || g_quit_done) return;
+  g_quit_active = true;
+  g_quit_stage = 0;
+  g_quit_id++;
+  g_quit_reason = reason;
+  quit_phase();
+}
+
+void quit_page_unloaded(int native_id) {
+  if (!native_id) return;
+  bool voting = false;
+  for (auto it = g_quit_handlers.begin(); it != g_quit_handlers.end();) {
+    if (it->second.owner != native_id) {
+      ++it;
+      continue;
+    }
+    voting = g_quit_pending.erase(it->first) > 0 || voting;
+    it = g_quit_handlers.erase(it);
+  }
+  // A disappearing document cannot consent to losing its unsaved work.
+  if (g_quit_active && voting && g_quit_stage == 0) quit_finish(false);
+  else if (g_quit_active) quit_advance();
+}
+
+static void register_quit() {
+  reg("app", "subscribeQuit", [](CallPtr c) {
+    std::string token = c->str("token"), phase = c->str("phase");
+    bool known = false;
+    for (const char *p : kQuitPhases) known = known || phase == p;
+    if (token.empty() || token.size() > 128 || !known) return c->fail("invalid_args", "app.subscribeQuit: token and lifecycle phase required");
+    auto it = g_quit_handlers.find(token);
+    if (it != g_quit_handlers.end() && it->second.owner != c->caller) return c->fail("denied", "quit handler belongs to another context");
+    g_quit_handlers[token] = QuitHandler{phase, c->caller};
+    c->ok();
+  });
+  reg("app", "unsubscribeQuit", [](CallPtr c) {
+    std::string token = c->str("token");
+    if (token.empty()) return c->fail("invalid_args", "app.unsubscribeQuit: token required");
+    auto it = g_quit_handlers.find(token);
+    if (it != g_quit_handlers.end() && it->second.owner != c->caller) return c->fail("denied", "quit handler belongs to another context");
+    if (it != g_quit_handlers.end()) g_quit_handlers.erase(it);
+    g_quit_pending.erase(token);
+    c->ok();
+    quit_advance();
+  });
+  reg("app", "replyQuit", [](CallPtr c) {
+    std::string token = c->str("token"), decision = c->str("decision");
+    if (token.empty() || (decision != "quit" && decision != "cancel")) return c->fail("invalid_args", "app.replyQuit: token and quit|cancel decision required");
+    auto it = g_quit_pending.find(token);
+    if (!g_quit_active || c->num("requestId", -1) != g_quit_id || c->str("phase") != kQuitPhases[g_quit_stage] || it == g_quit_pending.end())
+      return c->ok(); // late or duplicate, including a phase that timed out
+    if (it->second != c->caller) return c->fail("denied", "quit reply belongs to another context");
+    g_quit_pending.erase(it);
+    c->ok();
+    if (g_quit_stage == 0 && decision == "cancel") quit_finish(false);
+    else quit_advance();
+  });
+}
+
 static std::string icon_file() {
   std::string p = exe_dir() + "/" + app_identifier() + ".png";
   return g_file_test(p.c_str(), G_FILE_TEST_EXISTS) ? p : "";
 }
 
 void register_app() {
+  register_quit();
   reg("app", "whenReady", [](CallPtr c) { c->ok(true); });
   // Documents the app was opened with (launch arguments, later instances), as on macOS.
   auto opened = [](CallPtr c) { // read once, as on macOS
@@ -379,9 +510,8 @@ void register_app() {
     c->ok();
   });
   reg("app", "quit", [](CallPtr c) {
-    emit("willQuit");
     c->ok();
-    request_quit();
+    quit_request("api");
   });
   reg("app", "relaunch", [](CallPtr c) {
     emit("willRestart");
@@ -398,7 +528,7 @@ void register_app() {
     c->ok();
     // After a crash (src/supervisor.ts): nothing is left to quit gracefully.
     if (c->flag("crashed")) _exit(1);
-    request_quit();
+    quit_request("api");
   });
   reg("app", "exit", [](CallPtr c) { exit((int)c->num("code", 0)); });
   reg("app", "hide", [](CallPtr c) {
@@ -414,9 +544,16 @@ void register_app() {
     }
     c->ok();
   });
+  // The app's own windows that app.hide took off the screen: other applications aren't its to show.
+  reg("app", "showAll", [](CallPtr c) {
+    for (int id : window_ids()) {
+      Window *w = find_window(id);
+      if (w->visible || gtk_widget_get_visible(w->window)) gtk_widget_show(w->window);
+    }
+    c->ok();
+  });
   reg("app", "requestSingleInstanceLock", request_single_instance);
   reg("app", "getLoginItem", [](CallPtr c) { c->ok(login_item()); });
-  reg("app", "getActivationPolicy", [](CallPtr c) { c->ok("regular"); });
   reg("app", "setLoginItem", set_login_item);
   reg("app", "getBundleType", [](CallPtr c) { c->ok(json{{"type", packaged() ? "app" : "binary"}}); });
   reg("app", "defaultWindowIcon", [](CallPtr c) {

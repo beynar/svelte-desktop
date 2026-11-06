@@ -5,11 +5,11 @@ import { startGate } from "../../src/gate.ts";
 import type { Harness } from "../harness-worker.ts";
 
 export default async (t: Harness) => {
-  const reached: { gate: number; path: string; cookie: string | null }[] = [];
+  const reached: { gate: number; path: string; cookie: string | null; view: string | null }[] = [];
   const serve = (index: number) => startGate({
     secret: `secret-${index}`,
     handler: (req) => {
-      reached.push({ gate: index, path: new URL(req.url).pathname, cookie: req.headers.get("cookie") });
+      reached.push({ gate: index, path: new URL(req.url).pathname, cookie: req.headers.get("cookie"), view: req.headers.get("x-desktop-view") });
       return new Response(`<!doctype html><title>app ${index}</title><p id=p>${index}</p>`, { headers: { "content-type": "text/html", "cache-control": "no-store" } });
     },
   });
@@ -46,6 +46,17 @@ export default async (t: Harness) => {
   t.check("…nor in events", !(t.events.get("sessionCookieChanged") ?? []).some((e) => e.cookie.name === "__kitop"));
   await s("cookiesSet", { session: "gated", url: `${first.origin}/`, name: "session-only", value: "1" });
   t.check("cookiesGet in that session: only its own", JSON.stringify((await s("cookiesGet", { session: "gated", url: `${first.origin}/` })).value.map((c: any) => c.name)) === JSON.stringify(["session-only"]));
+
+  // A route dialog on a window in the session: its session, past the gate, as a view.
+  const inWindow = (await t.call("window", "create", { label: "gated", session: "gated", url: `${first.origin}/gated-window`, width: 500, height: 400 })).value;
+  await until(() => reached.some((r) => r.path === "/gated-window"));
+  await t.sleep(300);
+  const sheet = t.call("dialog", "sheet", { route: "/gated-sheet", windowId: inWindow.windowId });
+  t.check("a route dialog in the session gets past the gate", await until(() => reached.some((r) => r.path === "/gated-sheet")), reached);
+  const dialog = reached.find((r) => r.path === "/gated-sheet");
+  t.check("…with the shell's cookie, the session's, as a view", dialog?.cookie?.includes("__kitop=") && dialog.cookie.includes("session-only") && dialog.view?.startsWith("sheet-"), dialog);
+  await t.call("window", "close", { windowId: inWindow.windowId });
+  t.check("…and its window closing cancels it", (await sheet).value?.result === null);
 
   // The server restarted: a new secret, a new cookie on the same host. Copied again before the next load.
   const second = serve(2);

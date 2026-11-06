@@ -2,7 +2,7 @@
 # session — Xvfb, a D-Bus session bus, openbox (EWMH window manager), dunst
 # (notification server), gnome-keyring (Secret Service, unlocked), a stand-in
 # org.freedesktop.ScreenSaver, a scriptable fake notification server (built, not
-# started), and an xdg-open that records instead of opening.
+# started), a fake desktop portal (built, not started), and an xdg-open that records instead of opening.
 here=$(cd "$(dirname "${SESSION_SH:-$0}")" && pwd)
 export DISPLAY=${DISPLAY:-:99}
 export XDG_RUNTIME_DIR=/tmp/runtime-$(id -u); mkdir -p -m 700 "$XDG_RUNTIME_DIR"
@@ -23,6 +23,10 @@ eval "$(printf 'test' | gnome-keyring-daemon --unlock --components=secrets 2>/de
 [ -x /tmp/fake-notifications ] || gcc "$here/fake-notifications.c" $(pkg-config --cflags --libs gio-2.0) -o /tmp/fake-notifications
 # Real XDND drag source for linux-web-control (started by that suite).
 [ -x /tmp/fake-drag ] || gcc "$here/fake-drag.c" $(pkg-config --cflags --libs gtk+-3.0) -o /tmp/fake-drag
+# Real XDND drop target for linux-drag-out (started by that suite).
+[ -x /tmp/fake-drop ] || gcc "$here/fake-drop.c" $(pkg-config --cflags --libs gtk+-3.0) -o /tmp/fake-drop
+# Stand-ins for the desktop portal and GNOME's previewer (started by linux-portal and linux-desktop).
+[ -x /tmp/fake-portal ] || gcc "$here/fake-portal.c" $(pkg-config --cflags --libs gio-2.0 gdk-pixbuf-2.0) -o /tmp/fake-portal
 mkdir -p /tmp/fakebin
 cat > /tmp/fakebin/xdg-open <<'X'
 #!/bin/sh

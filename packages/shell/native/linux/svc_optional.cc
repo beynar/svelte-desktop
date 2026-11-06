@@ -80,7 +80,7 @@ static const std::map<std::string, std::string> &icon_names() {
 }
 
 /// icon spec → freedesktop icon name or absolute path. "" + *code/*error on failure; "-" = none given.
-static std::string resolve_icon(const json &icon, std::string *code, std::string *error) {
+std::string resolve_icon(const json &icon, std::string *code, std::string *error) {
   auto native = [&](std::string n) -> std::string {
     for (auto &ch : n) ch = (char)g_ascii_tolower(ch);
     auto it = icon_names().find(n);
@@ -143,11 +143,7 @@ static void on_item_activate(GtkMenuItem *item, gpointer) {
   const char *id = (const char *)g_object_get_data(G_OBJECT(item), "sd-id");
   const char *rolep = (const char *)g_object_get_data(G_OBJECT(item), "sd-role");
   std::string role = rolep ? rolep : "";
-  if (role == "quit") {
-    emit("willQuit");
-    request_quit();
-    return;
-  }
+  if (role == "quit") return quit_request("menu");
   if (role == "about") return dispatch(json{{"service", "app"}, {"op", "aboutPanel"}}, 0, [](const json &) {});
   if (!role.empty()) {
     Window *w = role_target();

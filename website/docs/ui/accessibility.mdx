@@ -74,7 +74,7 @@ A kept-alive tab, a pane's tab, a popover and a sheet are separate web views: ea
 | Tab past a view's last element | Not known: no key view loop is set | Not known | [Cycles inside the view](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2movefocusrequestedeventargs) by WebView2's documentation: `MoveFocusRequested` isn't handled, and the view's windows aren't tab stops |
 | A popover on show | Key window, focus in its page (`activate`, default on) | Presented, focus in its page | Focus in its page |
 | Escape closes a popover | Yes (`closeOnEscape`, default on) | Yes | Yes |
-| Sheet | macOS only: focus in its page, `[autofocus]` honored. `style: 'sheet'` is AppKit's; the attached and dialog styles are child windows over a view blocking clicks | | |
+| Sheet | Focus in its page, `[autofocus]` honored. `style: 'sheet'` is AppKit's; the attached and dialog styles are child windows over a view blocking clicks | A modal transient window: focus in its page, `[autofocus]` honored (tested), its parent blocked | Not available |
 
 Not known without a screen reader:
 
@@ -106,18 +106,18 @@ In panes, kitop sets the window page's `document.title` to the active tab's: no 
 | Field | macOS | Linux | Windows |
 | --- | --- | --- | --- |
 | `reduceMotion` | `accessibilityDisplayShouldReduceMotion` | `gtk-enable-animations` | `SPI_GETCLIENTAREAANIMATION` |
-| `highContrast` | Increase contrast | The GTK theme's name contains `Contrast`: a guess | `HCF_HIGHCONTRASTON` |
-| `differentiateWithoutColor` | Yes | Always `false` | Always `false` |
-| `reduceTransparency` | Yes | Always `false` | `EnableTransparency` in the registry |
+| `highContrast` | Increase contrast | GNOME's high-contrast switch (`org.gnome.desktop.a11y.interface`), or a GTK theme whose name contains `Contrast`, which elsewhere is a guess | `HCF_HIGHCONTRASTON` |
+| `differentiateWithoutColor` | Yes | Always `false`: no such setting | Always `false` |
+| `reduceTransparency` | Yes | Always `false`: no such setting | `EnableTransparency` in the registry |
 
-`false` can mean "not asked" or "can't tell". For styling, prefer CSS, which the engine answers: `prefers-reduced-motion`, `prefers-contrast`, `forced-colors`, `prefers-reduced-transparency`. Which of these each engine follows hasn't been checked on each OS.
+`false` can mean "not asked" or "can't tell". For styling, prefer CSS, which the engine answers: `prefers-reduced-motion`, `prefers-contrast`, `forced-colors`, `prefers-reduced-transparency`. Which of these each engine follows hasn't been checked on each OS, but on Linux `prefers-reduced-motion` follows `gtk-enable-animations` (tested).
 
 Compared with the others:
 
 | | kitop | [Electron](https://www.electronjs.org/docs/latest/api/native-theme) | [Tauri](https://v2.tauri.app/reference/javascript/api/namespacewindow/) |
 | --- | --- | --- | --- |
 | Reduced motion | ✓ | `systemPreferences.getAnimationSettings()` | CSS only |
-| High contrast | ✓ (a guess on Linux) | `nativeTheme.shouldUseHighContrastColors` (macOS, Windows) | CSS only |
+| High contrast | ✓ (from the theme's name outside GNOME on Linux) | `nativeTheme.shouldUseHighContrastColors` (macOS, Windows) | CSS only |
 | Forced colors | CSS only | `nativeTheme.inForcedColorsMode` (Windows) | CSS only |
 | Inverted colors | — | `nativeTheme.shouldUseInvertedColorScheme` (macOS, Windows) | — |
 | Reduced transparency | ✓ (not on Linux) | `nativeTheme.prefersReducedTransparency` | CSS only |

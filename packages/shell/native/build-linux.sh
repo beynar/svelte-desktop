@@ -2,7 +2,7 @@
 # Builds libshell.so for Linux: the portable core (portable/core.cc: dispatcher,
 # bridge protocol, permissions, plugin host) + the GTK 3 / WebKitGTK 4.1 backend
 # (linux/*.cc). Needs: g++, pkg-config, libgtk-3-dev, libwebkit2gtk-4.1-dev,
-# libsecret-1-dev (headers only: libnotify, appindicator and libsecret are
+# libsecret-1-dev (headers only: libnotify, appindicator, libsecret and libXss are
 # dlopen()ed at runtime, so the .so only hard-depends on GTK and WebKitGTK).
 # Usage: native/build-linux.sh            → native/build/linux-<arm64|x86_64>/libshell.so
 # On macOS use native/docker/build-lib.sh (same script inside the Docker image).

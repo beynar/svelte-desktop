@@ -278,6 +278,7 @@ class AppNamespace extends PlatformNamespace {
 	hideOthers = appSvc.hideOthers;
 	showAll = appSvc.showAll;
 	addRecentDocument = appSvc.addRecentDocument;
+	clearRecentDocuments = appSvc.clearRecentDocuments;
 	setDockBadge = thenPull(appSvc.setDockBadge, this.#dockBadge);
 	setDockIcon = thenPull(appSvc.setDockIcon, this.#dockIcon);
 	bounceDock = appSvc.bounceDock;

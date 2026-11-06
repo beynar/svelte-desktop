@@ -2,7 +2,7 @@ import { callPlatform } from './bus';
 
 export type BookmarkAccess = { path: string; stale: boolean; release(): Promise<void> };
 
-/** macOS file bookmarks. Outside the App Sandbox they resolve ordinary file bookmarks. */
+/** File bookmarks (macOS, Linux). Outside the App Sandbox they resolve ordinary file bookmarks; on Linux, the path and the file's identity. */
 export const files = {
 	/** Cannot grant new sandbox access: create from a path the app can already access. */
 	createBookmark: (path: string) => callPlatform<{ bookmark: string }>('files', 'createBookmark', { path }),

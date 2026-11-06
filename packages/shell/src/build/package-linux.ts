@@ -8,7 +8,7 @@
 // Runtime layout contract (src/os.ts bundledLibDir): libraries live in
 // <exeDir>/lib, so the directory is relocatable and an AppImage is just that
 // directory plus AppRun. GTK 3 and WebKitGTK 4.1 come from the system (like the
-// system WebKit on macOS); libnotify / appindicator / libsecret are optional
+// system WebKit on macOS); libnotify / appindicator / libsecret / libXss are optional
 // (dlopen()ed by libshell.so).
 //
 // Native code on Linux: the plugin folder's C/C++ sources are built with the

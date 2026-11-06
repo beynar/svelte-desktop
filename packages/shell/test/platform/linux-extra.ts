@@ -35,6 +35,28 @@ export default async (t: Harness) => {
   const got = await action;
   t.check("menu accelerator (Ctrl+Shift+H, real key event) → menuAction {id: hello}", got?.id === "hello", { got, sent, active: xdotool("getactivewindow", "getwindowname") });
   t.check("menu.addRecentDocument", (await t.call("menu", "addRecentDocument", { path: "/etc/hostname" })).ok);
+  // A real popup under a real pointer: a click picks from it, unless closePopup took it down first.
+  await t.page("document.body.style.cssText = 'margin:0;height:100vh'; return 1");
+  const winId = Bun.spawnSync(["xdotool", "search", "--onlyvisible", "--name", "^platform harness$"]).stdout.toString().trim().split("\n").pop()!;
+  const at = Object.fromEntries(Bun.spawnSync(["xdotool", "getwindowgeometry", "--shell", winId]).stdout.toString().trim().split("\n").map((l) => l.split("="))) as Record<string, string>;
+  const inMenu = [String(Number(at.X) + 60), String(Number(at.Y) + 70)];
+  const popupItems = [{ label: "Picked", id: "picked" }];
+  xdotool("mousemove", ...inMenu);
+  let popup = t.call("menu", "popup", { items: popupItems, x: 50, y: 50 });
+  await t.sleep(400);
+  const picked = t.waitEvent("menuAction", 2000);
+  xdotool("click", "1");
+  t.check("menu.popup: a real click picks its item", (await picked)?.id === "picked");
+  t.check("… {dismissed: true}", (await popup).value?.dismissed === true);
+  popup = t.call("menu", "popup", { items: popupItems, x: 50, y: 50, id: "mine" });
+  await t.sleep(400);
+  t.check("menu.closePopup: another id doesn't touch it", (await t.call("menu", "closePopup", { id: "other" })).value === null && (await Promise.race([popup.then(() => true), t.sleep(200).then(() => false)])) === false);
+  t.check("menu.closePopup → null", (await t.call("menu", "closePopup", { id: "mine" })).value === null);
+  t.check("… the menu is down: its popup call answers", (await popup).value?.dismissed === true);
+  const nothing = t.waitEvent("menuAction", 700);
+  xdotool("click", "1");
+  t.check("… and a click where it was picks nothing", (await nothing) === null);
+  t.check("menu.closePopup with none open: nothing to do", (await t.call("menu", "closePopup")).ok);
   t.check("menu.popup bad items → invalid_args", (await t.call("menu", "popup", { items: [{ role: "nope" }] })).error?.code === "invalid_args");
   t.check("menu.setAppMenu null → no menu bar", (await t.call("menu", "setAppMenu", { menus: null })).ok && (await t.call("menu", "items")).value.length === 0);
 
@@ -75,6 +97,24 @@ export default async (t: Harness) => {
   const accent = await t.call("system", "getAccentColor");
   t.check("system.getAccentColor → rgba (Adwaita selection color)", accent.ok && accent.value.b > accent.value.r, accent);
   const a11y = (await t.call("system", "getAccessibility")).value;
-  t.check("system.getAccessibility shape", typeof a11y.reduceMotion === "boolean" && typeof a11y.highContrast === "boolean", a11y);
+  t.check("system.getAccessibility: the defaults here", a11y.reduceMotion === false && a11y.highContrast === false && a11y.differentiateWithoutColor === false && a11y.reduceTransparency === false, a11y);
+  // The real settings a desktop writes, in a process of their own: GTK reads them once.
+  const harness = new URL("../harness.ts", import.meta.url).pathname, helper = new URL("./_a11y.ts", import.meta.url).pathname;
+  const settingsIn = async (env: Record<string, string>) => {
+    const proc = Bun.spawn([process.execPath, harness, helper], { env: { ...process.env, ...env }, stdout: "pipe", stderr: "ignore" });
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+    return JSON.parse(out.split("\n").find((l) => l.startsWith("A11Y "))?.slice(5) ?? "{}");
+  };
+  const config = "/tmp/kitop-a11y-config";
+  await Bun.write(`${config}/gtk-3.0/settings.ini`, "[Settings]\ngtk-enable-animations=0\ngtk-theme-name=HighContrast\n");
+  const fromIni = await settingsIn({ XDG_CONFIG_HOME: config });
+  t.check("gtk-enable-animations off: reduceMotion", fromIni.reduceMotion === true, fromIni);
+  t.check("… as the page's prefers-reduced-motion says", fromIni.media === true, fromIni);
+  t.check("a high-contrast GTK theme: highContrast", fromIni.highContrast === true, fromIni);
+  t.check("GTK_THEME high-contrast: highContrast", (await settingsIn({ GTK_THEME: "HighContrast" })).highContrast === true);
+  const keyfile = { GSETTINGS_BACKEND: "keyfile", XDG_CONFIG_HOME: "/tmp/kitop-a11y-gsettings" };
+  Bun.spawnSync(["gsettings", "set", "org.gnome.desktop.a11y.interface", "high-contrast", "true"], { env: { ...process.env, ...keyfile } });
+  t.check("GNOME's high-contrast switch, its theme name unchanged: highContrast", (await settingsIn(keyfile)).highContrast === true);
   t.check("system.checkPermission screenRecording (X11) → granted", (await t.call("system", "checkPermission", { name: "screenRecording" })).value.status === "granted");
 };

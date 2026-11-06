@@ -2,7 +2,7 @@
 #   docker build -t kitop-linux packages/shell/native/docker
 # Provides: compilers + GTK/WebKitGTK/appindicator/libnotify/libsecret headers,
 # Xvfb + openbox (EWMH window manager) + dunst (notification daemon) + D-Bus +
-# gnome-keyring (headless tests), Bun, appimagetool.
+# gnome-keyring (headless tests), weston, x11-utils, xclip, libxss1, Bun, appimagetool.
 FROM ubuntu:24.04
 ARG TARGETARCH
 ARG BUN_VERSION=1.4.4
@@ -26,5 +26,9 @@ RUN set -e; case "$TARGETARCH" in arm64) A=aarch64 ;; *) A=x86_64 ;; esac; \
     ln -s /opt/appimagetool/AppRun /usr/local/bin/appimagetool; \
     curl -fsSL -o /opt/appimage-runtime "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-${A}"; \
     appimagetool --version || true
+# Tests only: a headless Wayland compositor for the portal suite, X11 read-back (xprop, xwininfo), a
+# clipboard client that isn't this app (xclip), the XScreenSaver extension power.getSystemIdleTime dlopen()s.
+RUN apt-get update && apt-get install -y --no-install-recommends weston x11-utils xclip libxss1 \
+    && rm -rf /var/lib/apt/lists/*
 ENV APPIMAGE_RUNTIME=/opt/appimage-runtime NO_AT_BRIDGE=1
 WORKDIR /work

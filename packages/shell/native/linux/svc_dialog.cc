@@ -3,8 +3,17 @@
 // GTK's own otherwise). All asynchronous: the reply arrives when the user
 // answers; nothing blocks the GTK loop. Transient for the calling window.
 //
+// dialog.sheet {route, width?, height?, style?, top?, title?} → {result}: a route of the app in a
+// transient modal window, its page alone (window.__desktopView, X-Desktop-View), shown once loaded.
+// `close {result?}` from that page ends it; Escape cancels (result null). Only its parent is blocked.
+// style "sheet" (default): a borderless dialog, centered on the parent. "attached": borderless, its
+// top under the title bar or `top` px down the content. "window": a titled dialog, centered, whose
+// close button cancels. The window manager has the last word on all of this, on Wayland the only one.
+//
 // dialog._test (internal, like webview._test on macOS): inspect / answer the open
 // dialog without synthetic input — {action:"state"|"respond"|"cancel"}.
+#include <map>
+
 #include "linux.hpp"
 
 namespace sd {
@@ -115,7 +124,176 @@ static void run_chooser(CallPtr c, GtkFileChooserNative *n, bool save) {
   gtk_native_dialog_show(GTK_NATIVE_DIALOG(n));
 }
 
+// ---------------------------------------------------------------------------
+// Sheets with a route of the app
+
+struct Sheet {
+  int nativeId = 0, parent = 0;
+  CallPtr call;
+  GtkWidget *window = nullptr;
+  WebKitWebView *wv = nullptr;
+  bool presented = false, done = false, attached = false, titled = false;
+  double top = -1;
+};
+static std::map<int, Sheet *> g_sheets;
+static int g_next_sheet = 3000;
+
+static Sheet *sheet_of(gpointer id) {
+  auto it = g_sheets.find(GPOINTER_TO_INT(id));
+  return it == g_sheets.end() ? nullptr : it->second;
+}
+
+static void present_sheet(Sheet *s) {
+  if (s->presented || s->done) return;
+  s->presented = true;
+  Window *parent = find_window(s->parent);
+  if (parent && s->attached) {
+    int width = 0, height = 0;
+    gtk_window_get_size(GTK_WINDOW(s->window), &width, &height);
+    GdkRectangle content = content_rect(parent);
+    gtk_window_move(GTK_WINDOW(s->window), content.x + (content.width - width) / 2, content.y + (s->top >= 0 ? (int)s->top : 0));
+  }
+  gtk_widget_show(s->window);
+  gtk_window_present(GTK_WINDOW(s->window));
+  gtk_widget_grab_focus(GTK_WIDGET(s->wv));
+  // Loaded out of sight, the page's autofocus didn't take.
+  webkit_web_view_evaluate_javascript(s->wv, "document.querySelector('[autofocus]')?.focus()", -1, nullptr, nullptr, nullptr, nullptr, nullptr);
+}
+
+static gboolean sheet_teardown(gpointer id) {
+  Sheet *s = sheet_of(id);
+  if (!s) return G_SOURCE_REMOVE;
+  if (s->window) gtk_widget_destroy(s->window);
+  Window *parent = find_window(s->parent);
+  g_sheets.erase(s->nativeId);
+  if (parent && gtk_widget_get_visible(parent->window)) gtk_window_present(GTK_WINDOW(parent->window));
+  delete s;
+  return G_SOURCE_REMOVE;
+}
+
+static void finish_sheet(Sheet *s, const json &result) {
+  if (s->done) return;
+  s->done = true;
+  s->call->ok(json{{"result", result}});
+  // After this turn: `close` comes from the sheet's own page, its web view still in that call.
+  g_idle_add(sheet_teardown, GINT_TO_POINTER(s->nativeId));
+}
+
+static void on_sheet_load(WebKitWebView *, WebKitLoadEvent ev, gpointer id) {
+  if (ev != WEBKIT_LOAD_FINISHED) return;
+  // A frame later, painted.
+  g_timeout_add(30, [](gpointer id) -> gboolean {
+    if (Sheet *s = sheet_of(id)) present_sheet(s);
+    return G_SOURCE_REMOVE;
+  }, id);
+}
+
+static gboolean on_sheet_failed(WebKitWebView *, WebKitLoadEvent, gchar *, GError *, gpointer id) {
+  if (Sheet *s = sheet_of(id)) present_sheet(s);
+  return FALSE;
+}
+
+static void on_sheet_title(GObject *wv, GParamSpec *, gpointer id) {
+  Sheet *s = sheet_of(id);
+  const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(wv));
+  if (s && !s->titled && s->window) gtk_window_set_title(GTK_WINDOW(s->window), title ? title : "");
+}
+
+// The titled style's close button, or the window manager's way to close it: canceled.
+static gboolean on_sheet_delete(GtkWidget *, GdkEvent *, gpointer id) {
+  if (Sheet *s = sheet_of(id)) finish_sheet(s, nullptr);
+  return TRUE;
+}
+
+// Before the page has it, as a cancel key on macOS.
+static gboolean on_sheet_key(GtkWidget *, GdkEventKey *event, gpointer id) {
+  Sheet *s = sheet_of(id);
+  if (!s || !s->presented || event->keyval != GDK_KEY_Escape) return FALSE;
+  finish_sheet(s, nullptr);
+  return TRUE;
+}
+
+// The parent can go first (destroy-with-parent): the opener gets its answer all the same.
+static void on_sheet_destroy(GtkWidget *, gpointer id) {
+  Sheet *s = sheet_of(id);
+  if (!s) return;
+  s->window = nullptr;
+  detach_webview(s->nativeId);
+  finish_sheet(s, nullptr);
+}
+
+void sheets_window_closing(int window) {
+  for (auto it = g_sheets.begin(); it != g_sheets.end();) {
+    Sheet *s = (it++)->second;
+    if (s->parent == window && s->window) gtk_widget_destroy(s->window); // answers its opener
+  }
+}
+
+static void open_sheet(CallPtr c) {
+  std::string route = c->str("route"), origin = app_origin();
+  if (route.empty() || origin.empty()) return c->fail("invalid_args", "dialog.sheet: `route` is required");
+  std::string style = c->str("style", "sheet");
+  auto *s = new Sheet;
+  s->nativeId = g_next_sheet++;
+  s->call = c;
+  s->attached = style == "attached";
+  s->top = c->has("top") ? c->num("top") : -1;
+  GtkWindow *parent = parent_for(*c);
+  s->parent = parent ? resolve_window(*c) : 0;
+  std::string ident = "sheet-" + std::to_string(s->nativeId);
+  gpointer id = GINT_TO_POINTER(s->nativeId);
+  Window *from = find_window(s->parent ? s->parent : primary_window());
+  s->wv = make_webview(s->nativeId, false, "window.__desktopView=" + json(ident).dump() + ";", from ? webkit_web_view_get_context(from->webview) : nullptr);
+  gtk_widget_show(GTK_WIDGET(s->wv));
+
+  s->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  GtkWindow *win = GTK_WINDOW(s->window);
+  gtk_window_set_default_size(win, (int)c->num("width", 440), (int)c->num("height", 280));
+  gtk_window_set_type_hint(win, GDK_WINDOW_TYPE_HINT_DIALOG);
+  gtk_window_set_skip_taskbar_hint(win, TRUE);
+  gtk_window_set_skip_pager_hint(win, TRUE);
+  gtk_window_set_resizable(win, FALSE);
+  if (style != "window") gtk_window_set_decorated(win, FALSE);
+  if (c->has("title")) {
+    gtk_window_set_title(win, c->str("title").c_str());
+    s->titled = true;
+  }
+  if (parent) {
+    gtk_window_set_transient_for(win, parent);
+    gtk_window_set_destroy_with_parent(win, TRUE);
+    gtk_window_set_modal(win, TRUE);
+    // A modal window blocks its group. The app's other windows aren't this one's business.
+    if (!gtk_window_has_group(parent)) {
+      GtkWindowGroup *group = gtk_window_group_new();
+      gtk_window_group_add_window(group, parent);
+      g_object_unref(group);
+    }
+    gtk_window_group_add_window(gtk_window_get_group(parent), win);
+  }
+  gtk_window_set_position(win, parent ? GTK_WIN_POS_CENTER_ON_PARENT : GTK_WIN_POS_CENTER);
+  gtk_container_add(GTK_CONTAINER(s->window), GTK_WIDGET(s->wv));
+  g_sheets[s->nativeId] = s;
+  g_signal_connect(s->wv, "load-changed", G_CALLBACK(on_sheet_load), id);
+  g_signal_connect(s->wv, "load-failed", G_CALLBACK(on_sheet_failed), id);
+  g_signal_connect(s->wv, "notify::title", G_CALLBACK(on_sheet_title), id);
+  g_signal_connect(s->window, "delete-event", G_CALLBACK(on_sheet_delete), id);
+  g_signal_connect(s->window, "key-press-event", G_CALLBACK(on_sheet_key), id);
+  g_signal_connect(s->window, "destroy", G_CALLBACK(on_sheet_destroy), id);
+  session_load(s->wv, origin + (route[0] == '/' ? route : "/" + route), ident);
+  g_timeout_add(1500, [](gpointer id) -> gboolean {
+    if (Sheet *s = sheet_of(id)) present_sheet(s);
+    return G_SOURCE_REMOVE;
+  }, id);
+}
+
 void register_dialog() {
+  reg("dialog", "sheet", open_sheet);
+  reg("dialog", "close", [](CallPtr c) {
+    auto it = g_sheets.find(c->caller);
+    if (it == g_sheets.end()) return c->fail("invalid_args", "dialog.close: not called from a sheet's page");
+    finish_sheet(it->second, c->args.contains("result") ? c->args["result"] : json(nullptr));
+    c->ok();
+  });
   reg("dialog", "showMessageBox", [](CallPtr c) { message_box(c, false); });
   reg("dialog", "showConfirm", [](CallPtr c) { message_box(c, true); });
   reg("dialog", "showOpenDialog", [](CallPtr c) {

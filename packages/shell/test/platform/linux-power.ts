@@ -24,7 +24,19 @@ export default async (t: Harness) => {
   t.check("power.blockSleep unknown type → invalid_args", (await t.call("power", "blockSleep", { type: "nap" })).error?.code === "invalid_args");
   t.check("power.blockSleep missing type → invalid_args", (await t.call("power", "blockSleep")).error?.code === "invalid_args");
   t.check("power.unblockSleep bad id → invalid_args", (await t.call("power", "unblockSleep", { id: -3 })).error?.code === "invalid_args");
-  for (const op of ["getThermalState", "getSystemIdleTime"]) t.check(`power.${op} → unsupported on Linux`, (await t.call("power", op)).error?.code === "unsupported");
+  // Idle time: real input moves it, under Xvfb's XScreenSaver extension.
+  const xdotool = (...args: string[]) => Bun.spawnSync(["xdotool", ...args]);
+  xdotool("mousemove", "300", "300");
+  await t.sleep(1500);
+  const idle = await t.call("power", "getSystemIdleTime");
+  t.check("power.getSystemIdleTime: seconds without input", idle.ok && idle.value >= 1.2 && idle.value < 30, idle);
+  xdotool("mousemove", "320", "320");
+  await t.sleep(100);
+  const after = await t.call("power", "getSystemIdleTime");
+  t.check("… and input resets it", after.ok && after.value < idle.value && after.value < 1, after);
+  // This machine's own zones, whatever it has (linux-thermal runs them all): a state or `unavailable`.
+  const thermal = await t.call("power", "getThermalState");
+  t.check("power.getThermalState here: a state or unavailable, nothing else", thermal.ok ? ["nominal", "fair", "serious", "critical"].includes(thermal.value.state) : thermal.error?.code === "unavailable", thermal);
   const pageBlock = (await t.pageCall("power", "blockSleep", { type: "idle", reason })) as any;
   const pageUnblock = pageBlock.ok ? ((await t.pageCall("power", "unblockSleep", { id: pageBlock.value.id })) as any) : pageBlock;
   t.check("page bridge: blockSleep + unblockSleep", pageBlock.ok && pageUnblock.ok, { pageBlock, pageUnblock });

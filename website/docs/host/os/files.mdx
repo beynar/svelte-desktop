@@ -21,9 +21,9 @@ const { bookmark } = await host.files.createBookmark('/Users/me/Documents/Report
 | --- | --- | --- |
 | `path` | `string` | Absolute file or directory path. macOS expands `~` before checking it. |
 
-Resolves `{ bookmark: string }`, a base64-encoded bookmark suitable for persistent storage. Rejects with `invalid_args` for a non-absolute path, or `unavailable` if macOS cannot create the bookmark. Creating a bookmark cannot grant new sandbox access.
+Resolves `{ bookmark: string }`, a base64-encoded bookmark suitable for persistent storage. Rejects with `invalid_args` for a non-absolute path, or `unavailable` if the bookmark cannot be created, on Linux because the file doesn't exist. Creating a bookmark cannot grant new sandbox access.
 
-macOS only. These methods aren't available on Linux or Windows.
+macOS and Linux. These methods aren't available on Windows.
 
 ### `openBookmark(bookmark)`
 
@@ -54,7 +54,7 @@ Each open acquires an independent handle, even for the same bookmark. Release ea
 
 Rejects with `invalid_args` for empty or invalid base64 data, `unavailable` if bookmark resolution fails or does not yield a file URL, and `denied` if scoped access cannot start. Well-formed base64 containing an invalid bookmark may fail during resolution with `unavailable`.
 
-macOS only.
+macOS and Linux. See [Linux](#linux) for how far a bookmark follows a file there.
 
 ## Sandbox access
 
@@ -64,12 +64,25 @@ Start with [`host.dialog.showOpenDialog({ securityScoped: true })`](/host/window
 
 Outside the sandbox, the same API creates and resolves ordinary bookmarks. No extra file access is required, but each returned handle should still be released. Keep access open for the entire native or server operation, including work in another context that uses the resolved path.
 
+## Linux
+
+Linux has no sandbox to get through, so a bookmark is the path with the file's device and inode, and `release()` has nothing to do. It follows a file less far than on macOS:
+
+| What happened to the file | `path` | `stale` |
+| --- | --- | --- |
+| Nothing, or edited in place | The same | `false` |
+| Renamed in its folder | The new name | `true` |
+| Replaced by another file at that path (many apps save this way) | The same | `true` |
+| Moved to another folder, or deleted | Rejects with `unavailable` | |
+
+macOS finds a file that moved to another folder. Linux has no index to ask.
+
 ## Platform support
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `createBookmark`, `openBookmark` | ✓ | — | — |
-| `BookmarkAccess.release` | ✓ | — | — |
+| `createBookmark`, `openBookmark` | ✓ | partial | — |
+| `BookmarkAccess.release` | ✓ | ✓ | — |
 
 ## Example
 

@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 native/build-linux.sh >/dev/null || exit 1
 SESSION_SH=test/docker/session.sh . test/docker/session.sh
 # Portable suites run unchanged; linux-* are the variants of the Apple-specific ones.
-SUITES=${*:-"core screen clipboard shell theme popover secure_storage linux-app linux-window linux-navigation linux-webview linux-dialog linux-diagnostics linux-notifications linux-notifications-fake linux-tray linux-power linux-extra view linux-web-navigation linux-web-policy linux-web-control linux-web-gate linux-web-downloads linux-web-print linux-web-print-cups linux-web-data linux-web-cookies linux-web-sessions linux-web-proxy-tls linux-web-sessions-gate linux-web-protocol linux-web-content linux-input-policy"}
+SUITES=${*:-"core screen clipboard shell theme popover secure_storage linux-app linux-window linux-navigation linux-webview linux-dialog linux-diagnostics linux-notifications linux-notifications-fake linux-tray linux-power linux-extra view linux-web-navigation linux-web-policy linux-web-control linux-web-gate linux-web-downloads linux-web-print linux-web-print-cups linux-web-data linux-web-cookies linux-web-sessions linux-web-proxy-tls linux-web-sessions-gate linux-web-protocol linux-web-content linux-input-policy linux-quit linux-clipboard-data linux-sheet linux-desktop linux-drag-out linux-thermal linux-portal"}
 P=0; F=0; S=0
 for name in $SUITES; do
   [ "$name" = linux-keepalive ] && continue # below, with its own window options
@@ -19,6 +19,14 @@ for name in $SUITES; do
   case $name in linux-web-print-cups) channel=CUPS_SERVER=127.0.0.1:8631 ;; esac
   # Schemes are declared with the first window. http and BAD are refused: they stay plain.
   case $name in linux-web-protocol) channel='HARNESS_WINDOW={"protocols":["asset","http","BAD"]}' ;; esac
+  # What the machine's thermal zones would say: the suite writes them.
+  case $name in linux-thermal) channel=KITOP_THERMAL_DIR=/tmp/kitop-thermal ;; esac
+  # A real Wayland session, on a headless compositor, with the suite's stand-in for the portal.
+  case $name in linux-portal)
+    channel="GDK_BACKEND=wayland WAYLAND_DISPLAY=kitop-wayland"
+    [ -S "$XDG_RUNTIME_DIR/kitop-wayland" ] || { weston --backend=headless --socket=kitop-wayland --idle-time=0 >/tmp/weston.log 2>&1 & sleep 1.5; }
+    ;;
+  esac
   out=$(env $channel timeout 120 bun test/harness.ts "$suite" 2>&1)
   sum=$(echo "$out" | grep '"summary"' | tail -1)
   p=$(echo "$sum" | sed -E 's/.*"passed":([0-9]+).*/\1/'); f=$(echo "$sum" | sed -E 's/.*"failed":([0-9]+).*/\1/'); s=$(echo "$sum" | sed -E 's/.*"skipped":([0-9]+).*/\1/')

@@ -5,7 +5,7 @@ description: Register operating-system shortcuts that work while the app is in t
 
 `host.shortcuts` registers global hotkeys and reports presses. It combines a local registration list with the shortcut service. Use [menu accelerators](/host/input/menu) for application commands, or [input policy](/host/input/input-policy) for shortcuts intercepted within one native window.
 
-On Linux, global shortcuts need an X11 session; on Wayland `register` rejects with `unsupported`.
+On Linux, global shortcuts use an X11 key grab, or on Wayland the desktop's [GlobalShortcuts portal](#wayland).
 
 How-to: [Global shortcuts](/ui/platform-services#global-shortcuts) and [a panel on a global shortcut](/ui/menu-bar-and-popovers#a-panel-on-a-global-shortcut).
 
@@ -42,7 +42,7 @@ const { id } = await host.shortcuts.register({ accelerator: 'Ctrl+Alt+Space', id
 
 Resolves `{ id: string }`. Duplicate ids or combinations in this app reject with `invalid_args`. An OS refusal, including a collision with another app or system shortcut, rejects with `denied`. macOS can reject with `internal` if the native event handler cannot be installed. Its Carbon hotkeys need no Accessibility permission.
 
-On Linux, a key absent from the active X11 keyboard mapping rejects with `invalid_args`.
+On Linux under X11, a key absent from the active keyboard mapping rejects with `invalid_args`.
 
 ### `unregister(options)`
 
@@ -113,8 +113,8 @@ host.shortcuts.init();
 
 | Event | Payload | When | Platforms |
 | --- | --- | --- | --- |
-| `shortcutPressed` | `{ id: string }` | A registered global shortcut is pressed, including while the app is in the background. | macOS, Linux X11, Windows |
-| `shortcutReleased` | `{ id: string }` | The registered key is released. | macOS, Linux X11 |
+| `shortcutPressed` | `{ id: string }` | A registered global shortcut is pressed, including while the app is in the background. | macOS, Linux, Windows |
+| `shortcutReleased` | `{ id: string }` | The registered key is released. | macOS, Linux |
 
 `onPressed(cb)` and `onReleased(cb)` take `(data: { id: string }) => void` and return an unsubscribe function synchronously. Windows has no hotkey key-up notification and never emits `shortcutReleased`.
 
@@ -131,12 +131,22 @@ offRelease();
 
 | Method | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| `register`, `acquire` | ✓ | partial | ✓ |
+| `register`, `acquire` | ✓ | ✓ | ✓ |
 | `unregister`, `unregisterAll`, `isRegistered` | ✓ | ✓ | ✓ |
 | `init`, `onPressed`, `on`, `once` | ✓ | ✓ | ✓ |
-| `onReleased` | ✓ | partial | — |
+| `onReleased` | ✓ | ✓ | — |
 
-Linux global registration and its events require X11. Listener helpers are local subscriptions; calling them on a backend without the event does not create support.
+Listener helpers are local subscriptions; calling them on a backend without the event does not create support.
+
+## Wayland
+
+Wayland has no key grabs: `org.freedesktop.portal.GlobalShortcuts` does it, and the desktop decides.
+
+- `register` asks the desktop, which can show a dialog where the user accepts the keys or picks others. The accelerator is only a suggestion. A refusal, or leaving this shortcut out, rejects with `denied`.
+- A session binds its shortcuts once, so each change makes a new session with all of them. A desktop may ask again.
+- Without a portal that has it, `register` rejects with `unavailable`.
+
+This has run in a real Wayland session on a headless compositor, against a stand-in for the portal that follows its request and response protocol. No real portal has been exercised: what GNOME's or KDE's does with these calls isn't verified.
 
 ## Example
 

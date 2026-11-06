@@ -338,6 +338,7 @@ void register_window() {
   op("close", [](CallPtr c, Window *w) {
     c->ok();
     w->closing = true; // programmatic close bypasses the veto
+    sheets_window_closing(w->id); // GTK drops a delete event for a window blocked by a modal one
     gtk_window_close(GTK_WINDOW(w->window));
   });
   op("setCloseVeto", [](CallPtr c, Window *w) {

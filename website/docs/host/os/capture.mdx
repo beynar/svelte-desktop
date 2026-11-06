@@ -50,7 +50,7 @@ Query whether the backend supports capture-source enumeration.
 const { supported } = await host.capture.isSupported();
 ```
 
-Resolves `{ supported: boolean; stills?: boolean }`. macOS returns `supported: true` from 12.3 onward, and `stills` says whether `captureSource` works: it needs macOS 14, and rejects with `unavailable` before that. Linux returns `true` only on X11; Windows returns `true`. This query does not request permission or update the reactive `supported` field.
+Resolves `{ supported: boolean; stills?: boolean }`. macOS returns `supported: true` from 12.3 onward, and `stills` says whether `captureSource` works: it needs macOS 14, and rejects with `unavailable` before that. Linux returns `true` on X11, and on Wayland when a portal offers `org.freedesktop.portal.Screenshot`, with `stills: true`; Windows returns `true`. This query does not request permission or update the reactive `supported` field.
 
 ### `getSources(options?)`
 
@@ -66,7 +66,7 @@ const displays = await host.capture.getSources({ types: ['display'] });
 
 Resolves `CaptureSource[]`. macOS lists displays, visible ordinary windows and applications. Linux and Windows list displays and windows; asking only for applications returns an empty list.
 
-On macOS, requires 12.3+ and Screen Recording consent. Missing consent or a failed ScreenCaptureKit content query rejects with `denied`; older macOS rejects with `unsupported`. On Linux, Wayland rejects with `unsupported`; this API has no desktop-portal capture implementation.
+On macOS, requires 12.3+ and Screen Recording consent. Missing consent or a failed ScreenCaptureKit content query rejects with `denied`; older macOS rejects with `unsupported`. On Linux under Wayland, the portal can't list anything: this resolves one `display` source, the whole desktop, and no windows. It rejects with `unavailable` without a portal.
 
 ### `captureSource(id, type?)`
 
@@ -86,7 +86,7 @@ Resolves `CapturedImage`. A source can disappear after enumeration; an unknown d
 
 On macOS, needs 14+ and Screen Recording consent. Older macOS rejects with `unavailable`, missing consent with `denied`, and an image-capture failure with `unavailable`. Passing an application source rejects with `invalid_args`. Captures exclude the cursor.
 
-On Linux, Wayland rejects with `unsupported`; X11 image failures reject with `internal`. Windows capture failures reject with `internal`. Linux and Windows capture implementations handle displays and windows, not application process ids.
+On Linux under X11, image failures reject with `internal`. Under Wayland, the Screenshot portal gives the whole desktop whatever the display: a `window` source rejects with `unsupported`, the user's or the desktop's refusal with `denied`, no portal with `unavailable`. The desktop may ask the first time, and the file the portal makes is deleted once read. Windows capture failures reject with `internal`. Linux and Windows capture implementations handle displays and windows, not application process ids.
 
 ### `init()`
 
@@ -115,7 +115,7 @@ Windows uses native display/window capture without a permission prompt from this
 | `captureSource` | partial (14+) | partial | partial |
 | `init`, `refresh` | partial | partial | ✓ |
 
-Linux listing and capture require X11. Linux and Windows enumerate displays and windows, not applications, and no platform captures application stills. `init()` and `refresh()` inherit the enumeration requirements.
+Under Wayland, Linux lists and captures only the whole desktop. That has run in a real Wayland session on a headless compositor, against a stand-in for the portal that follows its request and response protocol: no real portal has been exercised. Linux and Windows enumerate displays and windows, not applications, and no platform captures application stills. `init()` and `refresh()` inherit the enumeration requirements.
 
 ## Example
 

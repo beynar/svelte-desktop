@@ -1,4 +1,4 @@
-// app.* on Linux (variant of app.ts: Dock / activation-policy checks are macOS-only).
+// app.* on Linux (variant of app.ts). The launcher, the windows and metrics: linux-desktop.ts. Quit: linux-quit.ts.
 import { homedir } from "node:os";
 import type { Harness } from "../harness-worker.ts";
 
@@ -21,10 +21,8 @@ export default async (t: Harness) => {
   t.check("whenReady", (await t.call("app", "whenReady")).value === true);
   t.check("getBundleType binary (unpackaged)", (await t.call("app", "getBundleType")).value?.type === "binary");
   t.check("defaultWindowIcon null unpackaged", (await t.call("app", "defaultWindowIcon")).value === null);
-  for (const op of ["setDockBadge", "bounceDock", "setDockProgress", "setActivationPolicy", "hideOthers", "showAll", "addRecentDocument"]) {
-    const r = await t.call("app", op, {});
-    t.check(`${op} → unsupported (macOS-only)`, r.error?.code === "unsupported", r.error);
-  }
+  const others = await t.call("app", "hideOthers");
+  t.check("hideOthers → unsupported (no meaning on X11 or Wayland)", others.error?.code === "unsupported", others.error);
   const lock = await t.call("app", "requestSingleInstanceLock");
   t.check("requestSingleInstanceLock acquired", lock.value?.acquired === true, lock);
   t.check("requestSingleInstanceLock idempotent", (await t.call("app", "requestSingleInstanceLock")).value?.acquired === true);

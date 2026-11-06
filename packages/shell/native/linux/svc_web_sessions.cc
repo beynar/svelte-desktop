@@ -247,22 +247,30 @@ static void provision(const SessionPtr &s, std::function<void(const std::string 
   });
 }
 
-void session_load(WebKitWebView *wv, const std::string &url) {
+static void load_as(WebKitWebView *wv, const std::string &url, const std::string &view) {
+  if (view.empty()) return webkit_web_view_load_uri(wv, url.c_str());
+  WebKitURIRequest *request = webkit_uri_request_new(url.c_str());
+  soup_message_headers_replace(webkit_uri_request_get_http_headers(request), "X-Desktop-View", view.c_str());
+  webkit_web_view_load_request(wv, request);
+  g_object_unref(request);
+}
+
+void session_load(WebKitWebView *wv, const std::string &url, const std::string &view) {
   SessionPtr s;
   WebKitWebContext *context = webkit_web_view_get_context(wv);
   for (auto &[ident, x] : g_sessions)
     if (ident != "default" && x->context == context) s = x;
   std::string origin = app_origin();
   bool app = !origin.empty() && url.rfind(origin + "/", 0) == 0 && url.rfind(origin + "/__desktop/auth", 0) != 0;
-  if (!s || !app) return webkit_web_view_load_uri(wv, url.c_str());
+  if (!s || !app) return load_as(wv, url, view);
   s->pending++;
   g_object_ref(wv);
-  provision(s, [s, wv, url](const std::string &error) {
+  provision(s, [s, wv, url, view](const std::string &error) {
     s->pending--;
     int id = 0;
     for (int page : backend_page_ids())
       if (webview_for(page) == wv) id = page;
-    if (id && error.empty()) webkit_web_view_load_uri(wv, url.c_str());
+    if (id && error.empty()) load_as(wv, url, view);
     else if (id) {
       json d = source_of(id);
       d.update(json{{"type", "failed"}, {"navigationId", nullptr}, {"url", url}, {"domain", "KitopSessionErrorDomain"}, {"code", 1}, {"message", error}, {"provisional", true}});

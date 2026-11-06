@@ -67,7 +67,7 @@ Resolves `AccentColor`; does not update `accentColor`. Rejects with `unavailable
 
 ### `getAccessibility()`
 
-Resolves `AccessibilityInfo`; does not update `accessibility`. Linux and Windows report the fields they can't read as `false`: `false` can mean "not asked" or "can't tell". On Linux, `highContrast` is a guess from the GTK theme's name.
+Resolves `AccessibilityInfo`; does not update `accessibility`. Linux and Windows report the fields they can't read as `false`: `false` can mean "not asked" or "can't tell". On Linux, `reduceMotion` is `gtk-enable-animations` and `highContrast` GNOME's high-contrast switch or a GTK theme named so; `differentiateWithoutColor` and `reduceTransparency` are always `false`, since Linux has no such setting. See [Accessibility](/ui/accessibility#system-preferences).
 
 ### `checkPermission(name)` and `requestPermission(name)`
 

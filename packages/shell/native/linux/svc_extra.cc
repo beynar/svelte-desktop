@@ -5,9 +5,10 @@
 //         updates (update/get/items), insert/remove, addRecentDocument (GtkRecentManager).
 //         MenuItemSpec: {type, id, label, submenu, checked, disabled, role, accelerator};
 //         items with an id emit menuAction {id}.
-//   shortcuts: global hotkeys with XGrabKey on the root window (X11). Wayland has no
-//         global hotkey API for applications: register answers `unsupported` there.
-//   capture: displays (GDK monitors) and windows (_NET_CLIENT_LIST), PNG stills (X11).
+//   shortcuts: global hotkeys with XGrabKey on the root window (X11). Wayland: the desktop's
+//         GlobalShortcuts portal (svc_desktop.cc).
+//   capture: displays (GDK monitors) and windows (_NET_CLIENT_LIST), PNG stills (X11). Wayland:
+//         the Screenshot portal, which gives the whole desktop and lists nothing.
 //   system: info, keyboard layout (XKB group name), accent color (GTK theme),
 //         accessibility (animations / high-contrast theme), permissions (Linux has no
 //         per-app privacy prompts: device access is the user's/sandbox's business).
@@ -18,6 +19,7 @@
 
 #include <map>
 #include <set>
+#include <cstring>
 #include <sys/utsname.h>
 #include <unistd.h>
 
@@ -200,6 +202,13 @@ static void register_menu() {
       }
     c->ok(out);
   });
+  // What menu.closePopup can close, by the id of menu.popup. The menu's gone from here once it's down.
+  static std::map<std::string, GtkWidget *> popups;
+  reg("menu", "closePopup", [](CallPtr c) {
+    auto it = popups.find(c->str("id", "context"));
+    if (it != popups.end()) gtk_menu_shell_cancel(GTK_MENU_SHELL(it->second));
+    c->ok();
+  });
   reg("menu", "popup", [](CallPtr c) {
     std::string error;
     GtkWidget *menu = build_gtk_menu(c->args.contains("items") ? c->args["items"] : json::array(), &error);
@@ -219,8 +228,12 @@ static void register_menu() {
       GdkDevice *pointer = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_window_get_display(gw)));
       gdk_window_get_device_position(gw, pointer, &rect.x, &rect.y, nullptr);
     }
-    g_signal_connect_data(menu, "deactivate", G_CALLBACK(+[](GtkMenuShell *, gpointer data) {
+    std::string ident = c->str("id", "context");
+    popups[ident] = menu;
+    g_signal_connect_data(menu, "deactivate", G_CALLBACK(+[](GtkMenuShell *shell, gpointer data) {
                             auto *call = static_cast<CallPtr *>(data);
+                            auto it = popups.find((*call)->str("id", "context"));
+                            if (it != popups.end() && it->second == GTK_WIDGET(shell)) popups.erase(it);
                             (*call)->ok(json{{"dismissed", true}});
                           }),
                           new CallPtr(c), [](gpointer data, GClosure *) { delete static_cast<CallPtr *>(data); }, (GConnectFlags)0);
@@ -303,12 +316,12 @@ static void register_shortcuts() {
   reg("shortcuts", "register", [](CallPtr c) {
     std::string accel = c->str("accelerator", c->str("accel"));
     if (accel.empty()) return c->fail("invalid_args", "shortcuts.register: missing `accelerator`");
-    if (!is_x11()) return c->fail("unsupported", "shortcuts.register: global hotkeys need X11 (Wayland has no global shortcut API for apps)");
     guint key;
     GdkModifierType mods;
     std::string error;
     if (!parse_accelerator(accel, &key, &mods, &error)) return c->fail("invalid_args", "shortcuts.register: " + error);
     std::string id = c->str("id", accel);
+    if (!is_x11()) return portal_shortcut_register(c, id, accel, key, mods);
     if (g_hotkeys.count(id)) return c->fail("invalid_args", "shortcuts.register: id `" + id + "` is already registered");
     HotKey h;
     h.accel = accel;
@@ -331,6 +344,7 @@ static void register_shortcuts() {
   reg("shortcuts", "unregister", [](CallPtr c) {
     std::string id = c->str("id");
     if (id.empty()) return c->fail("invalid_args", "shortcuts.unregister: missing `id`");
+    if (!is_x11()) return portal_shortcut_unregister(c);
     auto it = g_hotkeys.find(id);
     if (it == g_hotkeys.end()) return c->ok(json{{"unregistered", false}});
     grab(it->second, false);
@@ -338,6 +352,7 @@ static void register_shortcuts() {
     c->ok(json{{"unregistered", true}});
   });
   reg_many("shortcuts", {"unregisterAll", "unregister_all"}, [](CallPtr c) {
+    if (!is_x11()) return portal_shortcut_unregister_all(c);
     int n = (int)g_hotkeys.size();
     for (auto &[id, h] : g_hotkeys) grab(h, false);
     g_hotkeys.clear();
@@ -346,7 +361,7 @@ static void register_shortcuts() {
   reg("shortcuts", "isRegistered", [](CallPtr c) {
     std::string id = c->str("id");
     if (id.empty()) return c->fail("invalid_args", "shortcuts.isRegistered: missing `id`");
-    c->ok((bool)g_hotkeys.count(id));
+    c->ok(is_x11() ? g_hotkeys.count(id) > 0 : portal_shortcut_registered(id));
   });
 }
 
@@ -402,9 +417,11 @@ static json png_reply(GdkPixbuf *pb) {
 }
 
 static void register_capture() {
-  reg("capture", "isSupported", [](CallPtr c) { c->ok(json{{"supported", is_x11()}}); });
+  reg("capture", "isSupported", [](CallPtr c) {
+    if (is_x11()) return c->ok(json{{"supported", true}});
+    portal_version("org.freedesktop.portal.Screenshot", [c](unsigned version) { c->ok(json{{"supported", version > 0}, {"stills", version > 0}}); });
+  });
   reg("capture", "getSources", [](CallPtr c) {
-    if (!is_x11()) return c->fail("unsupported", "capture: X11 only (Wayland screen capture goes through the desktop portal)");
     std::set<std::string> types;
     if (c->args.contains("types") && c->args["types"].is_array())
       for (const auto &t : c->args["types"])
@@ -412,6 +429,21 @@ static void register_capture() {
     bool all = types.empty();
     json out = json::array();
     GdkDisplay *display = gdk_display_get_default();
+    if (!is_x11()) {
+      // The portal lists nothing and shoots the whole desktop: one source, and no windows.
+      GdkRectangle whole{0, 0, 0, 0};
+      for (int i = 0, n = gdk_display_get_n_monitors(display); i < n; i++) {
+        GdkRectangle g;
+        gdk_monitor_get_geometry(gdk_display_get_monitor(display, i), &g);
+        gdk_rectangle_union(&whole, &g, &whole);
+      }
+      if (all || types.count("display") || types.count("screen"))
+        out.push_back(json{{"id", 1}, {"type", "display"}, {"label", "Desktop"}, {"isMain", true}, {"resolution", {{"width", whole.width}, {"height", whole.height}}}});
+      return portal_version("org.freedesktop.portal.Screenshot", [c, out](unsigned version) {
+        if (!version) return c->fail("unavailable", "capture.getSources: no desktop portal for screenshots");
+        c->ok(out);
+      });
+    }
     if (all || types.count("display") || types.count("screen")) {
       GdkMonitor *primary = gdk_display_get_primary_monitor(display);
       for (int i = 0, n = gdk_display_get_n_monitors(display); i < n; i++) {
@@ -438,10 +470,14 @@ static void register_capture() {
   });
   reg("capture", "captureSource", [](CallPtr c) {
     if (!c->has("id")) return c->fail("invalid_args", "capture.captureSource: `id` is required");
-    if (!is_x11()) return c->fail("unsupported", "capture: X11 only");
-    GdkDisplay *display = gdk_display_get_default();
     std::string type = c->str("type", "");
     double ident = c->num("id", 0);
+    if (!is_x11()) {
+      if (type == "window") return c->fail("unsupported", "capture.captureSource: on Wayland the Screenshot portal only shoots the whole desktop");
+      if (ident != 1) return c->fail("invalid_args", "capture.captureSource: unknown display");
+      return portal_screenshot(c, [c](GdkPixbuf *image) { c->ok(png_reply(image)); });
+    }
+    GdkDisplay *display = gdk_display_get_default();
     GdkPixbuf *pb = nullptr;
     int n = gdk_display_get_n_monitors(display);
     if (type == "display" || (type.empty() && ident >= 1 && ident <= n)) {
@@ -544,8 +580,19 @@ static void register_system() {
     gboolean animations = TRUE;
     gchar *theme = nullptr;
     g_object_get(s, "gtk-enable-animations", &animations, "gtk-theme-name", &theme, nullptr);
-    bool contrast = theme && (g_strrstr(theme, "HighContrast") || g_strrstr(theme, "Contrast"));
+    const char *forced = getenv("GTK_THEME"); // wins over the setting, and the setting doesn't say so
+    bool contrast = (forced && strstr(forced, "Contrast")) || (theme && strstr(theme, "Contrast"));
     g_free(theme);
+    // GNOME's switch doesn't change the theme's name.
+    GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+    GSettingsSchema *schema = source ? g_settings_schema_source_lookup(source, "org.gnome.desktop.a11y.interface", TRUE) : nullptr;
+    if (schema && g_settings_schema_has_key(schema, "high-contrast")) {
+      GSettings *a11y = g_settings_new("org.gnome.desktop.a11y.interface");
+      contrast = contrast || g_settings_get_boolean(a11y, "high-contrast");
+      g_object_unref(a11y);
+    }
+    if (schema) g_settings_schema_unref(schema);
+    // Linux has no setting for the other two: false says that it isn't known.
     c->ok(json{{"reduceMotion", !animations}, {"highContrast", contrast}, {"differentiateWithoutColor", false}, {"reduceTransparency", false}});
   });
   // No per-app privacy prompts on a classic Linux desktop: devices are reachable or not.
@@ -555,8 +602,14 @@ static void register_system() {
     if (name == "notifications") return notifications_unavailable().empty() ? "granted" : "unavailable";
     return "granted";
   };
-  reg("system", "checkPermission", [status](CallPtr c) { c->ok(json{{"status", status(c->str("name"))}}); });
-  reg("system", "requestPermission", [status](CallPtr c) { c->ok(json{{"status", status(c->str("name"))}}); });
+  auto answer = [status](CallPtr c) {
+    // Wayland: the portal asks at each screenshot.
+    if (c->str("name") == "screenRecording" && !is_x11())
+      return portal_version("org.freedesktop.portal.Screenshot", [c](unsigned version) { c->ok(json{{"status", version ? "notDetermined" : "denied"}}); });
+    c->ok(json{{"status", status(c->str("name"))}});
+  };
+  reg("system", "checkPermission", answer);
+  reg("system", "requestPermission", answer);
   reg("system", "openSettings", [](CallPtr c) {
     const char *argv[] = {"gnome-control-center", nullptr};
     GError *err = nullptr;

@@ -1,11 +1,14 @@
 // screen.*, clipboard.*, shell.*, theme.*, diagnostics.info,
 // capabilities.describe, power.* on GTK/GIO.
+#include <dlfcn.h>
+#include <gdk/gdkx.h>
 #include <sys/utsname.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <set>
 #include <sstream>
 
@@ -106,7 +109,17 @@ static void clip_get(GtkClipboard *, GtkSelectionData *sel, guint, gpointer data
 }
 static void clip_clear(GtkClipboard *, gpointer data) { delete static_cast<ClipPayload *>(data); }
 
+// What clipboard.write and read report. X11 has no such count: it's this process's, from the owner
+// changes it sees. Its own writes count once, when made, so a read just after can compare.
+static double g_clip_changes = 0;
+
+static void on_clip_owner(GtkClipboard *, GdkEvent *event, gpointer) {
+  GdkWindow *owner = event->owner_change.owner;
+  if (!owner || gdk_window_get_window_type(owner) == GDK_WINDOW_FOREIGN) g_clip_changes++;
+}
+
 static void clip_set(ClipPayload *p) {
+  g_clip_changes++;
   GtkTargetList *list = gtk_target_list_new(nullptr, 0);
   for (auto &[target, _] : p->raw) gtk_target_list_add(list, gdk_atom_intern(target.c_str(), FALSE), 0, 0);
   if (p->hasText) gtk_target_list_add_text_targets(list, 0);
@@ -160,7 +173,144 @@ static std::set<std::string> clip_targets() {
   return out;
 }
 
+static const size_t kClipLimit = 16 * 1024 * 1024;
+
+// Contract format names ↔ selection targets; anything else is a target's own name.
+static std::string clip_target(const std::string &name) { return name == "files" ? "text/uri-list" : name; }
+
+static void clip_write(CallPtr c) {
+  auto p = std::make_unique<ClipPayload>();
+  size_t size = 0;
+  auto add = [&](const std::string &name, std::string bytes) {
+    size += bytes.size();
+    if (name == "text/plain") {
+      p->text = std::move(bytes);
+      p->hasText = true;
+    } else if (name == "text/rtf") {
+      p->raw["text/rtf"] = p->raw["application/rtf"] = std::move(bytes);
+    } else {
+      p->raw[clip_target(name)] = std::move(bytes);
+    }
+  };
+  for (auto [key, format] : {std::pair<const char *, const char *>{"text", "text/plain"}, {"html", "text/html"}, {"rtf", "text/rtf"}}) {
+    if (!c->has(key)) continue;
+    if (!c->args[key].is_string()) return c->fail("invalid_args", "clipboard.write: text, html and rtf must be strings");
+    add(format, c->str(key));
+  }
+  if (c->has("image")) {
+    const json &encoded = c->args["image"];
+    if (!encoded.is_string() || encoded.get<std::string>().size() > kClipLimit * 4 / 3 + 4) return c->fail("invalid_args", "clipboard.write: invalid or oversized image");
+    bool decoded = false;
+    auto bytes = base64_decode(encoded, &decoded);
+    GdkPixbufLoader *loader = gdk_pixbuf_loader_new();
+    bool loaded = decoded && gdk_pixbuf_loader_write(loader, bytes.data(), bytes.size(), nullptr);
+    loaded = gdk_pixbuf_loader_close(loader, nullptr) && loaded;
+    GdkPixbuf *image = loaded ? gdk_pixbuf_loader_get_pixbuf(loader) : nullptr;
+    gchar *png = nullptr;
+    gsize length = 0;
+    if (!image || !gdk_pixbuf_save_to_buffer(image, &png, &length, "png", nullptr, nullptr)) {
+      g_object_unref(loader);
+      return c->fail("invalid_args", "clipboard.write: image must be base64 image bytes");
+    }
+    add("image/png", std::string(png, length));
+    g_free(png);
+    g_object_unref(loader);
+  }
+  if (c->has("formats")) {
+    const json &custom = c->args["formats"];
+    if (!custom.is_object()) return c->fail("invalid_args", "clipboard.write: formats must map types to base64 bytes");
+    for (auto &[name, encoded] : custom.items()) {
+      if (name.empty() || !encoded.is_string() || encoded.get<std::string>().size() > kClipLimit * 4 / 3 + 4) return c->fail("invalid_args", "clipboard.write: invalid or oversized format");
+      std::string value = encoded;
+      bool decoded = value.empty();
+      auto bytes = value.empty() ? std::vector<unsigned char>() : base64_decode(value, &decoded);
+      bool taken = name == "text/plain" ? p->hasText : p->raw.count(clip_target(name)) > 0;
+      if (!decoded || taken) return c->fail("invalid_args", "clipboard.write: invalid base64 or duplicate representation");
+      add(name, std::string(bytes.begin(), bytes.end()));
+    }
+  }
+  if (c->has("files")) {
+    if (!c->args["files"].is_array()) return c->fail("invalid_args", "clipboard.write: files must be absolute paths");
+    std::string list, gnome = "copy";
+    for (auto &path : c->args["files"]) {
+      gchar *uri = path.is_string() && g_path_is_absolute(path.get<std::string>().c_str()) ? g_filename_to_uri(path.get<std::string>().c_str(), nullptr, nullptr) : nullptr;
+      if (!uri) return c->fail("invalid_args", "clipboard.write: files must be absolute paths");
+      list += std::string(uri) + "\r\n";
+      gnome += std::string("\n") + uri;
+      g_free(uri);
+    }
+    if (!list.empty()) {
+      if (p->raw.count("text/uri-list")) return c->fail("invalid_args", "clipboard.write: duplicate file URL representation");
+      size += list.size();
+      p->raw["text/uri-list"] = list;
+      p->raw["x-special/gnome-copied-files"] = gnome;
+    }
+  }
+  if (size > kClipLimit || (p->raw.empty() && !p->hasText)) return c->fail("invalid_args", "clipboard.write: supply representations totaling at most 16 MiB");
+  double previous = g_clip_changes;
+  clip_set(p.release());
+  c->ok(json{{"changeCount", g_clip_changes}, {"previousChangeCount", previous}});
+}
+
+/// A target's bytes, as they are. false: the clipboard doesn't have it. Asked only of what's offered:
+/// some owners answer any target with what they hold.
+static bool read_raw(const std::string &target, std::string *out) {
+  if (!clip_targets().count(target)) return false;
+  GtkSelectionData *sel = gtk_clipboard_wait_for_contents(cb(), gdk_atom_intern(target.c_str(), FALSE));
+  if (!sel) return false;
+  gint length = 0;
+  const guchar *d = gtk_selection_data_get_data_with_length(sel, &length);
+  bool found = d && length >= 0 && gtk_selection_data_get_length(sel) >= 0;
+  if (found) out->assign((const char *)d, (size_t)length);
+  gtk_selection_data_free(sel);
+  return found;
+}
+
+static void clip_read(CallPtr c) {
+  double limit = c->has("maxBytes") && c->args["maxBytes"].is_number() ? c->num("maxBytes") : c->has("maxBytes") ? -1 : (double)kClipLimit;
+  if (!c->args.contains("formats") || !c->args["formats"].is_array() || c->args["formats"].size() > 128 || limit < 1 || limit > (double)kClipLimit || limit != (double)(long long)limit)
+    return c->fail("invalid_args", "clipboard.read: formats array and maxBytes between 1 and 16777216 required");
+  for (auto &name : c->args["formats"])
+    if (!name.is_string() || name.get<std::string>().empty()) return c->fail("invalid_args", "clipboard.read: formats must be nonempty strings");
+  double changes = g_clip_changes;
+  json out = json::object();
+  size_t size = 0;
+  for (auto &entry : c->args["formats"]) {
+    std::string name = entry, bytes;
+    if (out.contains(name)) continue;
+    bool found = false;
+    if (name == "text/plain") {
+      if (gchar *text = gtk_clipboard_wait_for_text(cb())) {
+        bytes = text;
+        found = true;
+        g_free(text);
+      }
+    } else if (name == "text/rtf") {
+      found = read_raw("text/rtf", &bytes) || read_raw("application/rtf", &bytes);
+    } else if (name == "image/png") {
+      found = read_raw("image/png", &bytes);
+      if (GdkPixbuf *image = found ? nullptr : gtk_clipboard_wait_for_image(cb())) { // another image type: converted, as on macOS
+        gchar *png = nullptr;
+        gsize length = 0;
+        if ((found = gdk_pixbuf_save_to_buffer(image, &png, &length, "png", nullptr, nullptr))) bytes.assign(png, length);
+        g_free(png);
+        g_object_unref(image);
+      }
+    } else {
+      found = read_raw(clip_target(name), &bytes);
+    }
+    if (bytes.size() > (size_t)limit - size) return c->fail("invalid_args", "clipboard.read: result exceeds maxBytes");
+    size += bytes.size();
+    out[name] = found ? json(base64_encode((const unsigned char *)bytes.data(), bytes.size())) : json(nullptr);
+  }
+  if (g_clip_changes != changes) return c->fail("unavailable", "clipboard changed during read; retry");
+  c->ok(json{{"changeCount", changes}, {"formats", out}});
+}
+
 static void register_clipboard() {
+  g_signal_connect(cb(), "owner-change", G_CALLBACK(on_clip_owner), nullptr);
+  reg("clipboard", "write", clip_write);
+  reg("clipboard", "read", clip_read);
   reg("clipboard", "readText", [](CallPtr c) {
     gchar *t = gtk_clipboard_wait_for_text(cb());
     if (!t) return c->ok(nullptr);
@@ -203,6 +353,7 @@ static void register_clipboard() {
   });
   reg("clipboard", "clear", [](CallPtr c) {
     // Take ownership, then release it: the selection has no owner → nothing to read.
+    g_clip_changes++;
     gtk_clipboard_set_text(cb(), "", 0);
     gtk_clipboard_clear(cb());
     c->ok();
@@ -210,8 +361,20 @@ static void register_clipboard() {
   reg("clipboard", "availableFormats", [](CallPtr c) {
     auto t = clip_targets();
     json out = json::array();
-    for (const char *f : {"files", "image/png", "text/html", "text/plain", "text/rtf"})
-      if (t.count(f)) out.push_back(f);
+    std::set<std::string> known = {"files", "image/png", "text/html", "text/plain", "text/rtf"};
+    // Everything else with a type's name is a custom format, as on macOS. Not what these stand for
+    // (each of the text and image conversions GTK offers), nor X11's own targets (TARGETS, UTF8_STRING…).
+    GtkTargetList *conversions = gtk_target_list_new(nullptr, 0);
+    gtk_target_list_add_image_targets(conversions, 0, TRUE);
+    for (auto &target : t) {
+      guint info;
+      if (known.count(target)) out.push_back(target);
+      else if (target == "image/tiff") out.push_back(target);
+      else if (target.find('/') != std::string::npos && target != "text/uri-list" && target != "application/rtf" && target != "x-special/gnome-copied-files" &&
+               target.rfind("text/plain;", 0) != 0 && !gtk_target_list_find(conversions, gdk_atom_intern(target.c_str(), FALSE), &info))
+        out.push_back(target);
+    }
+    gtk_target_list_unref(conversions);
     c->ok(out);
   });
   reg("clipboard", "has", [](CallPtr c) {
@@ -301,6 +464,95 @@ static void launch_uri(CallPtr c, const std::string &uri) {
   }, holder);
 }
 
+/// `list` as existing paths; false: it has failed `c`.
+static bool file_paths(const std::string &op, const json &list, std::vector<std::string> *out, const CallPtr &c) {
+  for (auto &f : list) {
+    std::string path = f.is_string() ? expand_home(f.get<std::string>()) : "";
+    if (path.empty() || !g_file_test(path.c_str(), G_FILE_TEST_EXISTS)) {
+      c->fail("invalid_args", op + ": no such file `" + (f.is_string() ? f.get<std::string>() : f.dump()) + "`");
+      return false;
+    }
+    out->push_back(path);
+  }
+  return true;
+}
+
+// Files dragged out of the page to a file manager or another app, as XDND offering their URIs. From a
+// dragstart (after preventDefault) or mousedown handler, while the button is still down. The source is the
+// window, not the web view: WebKit answers its own view's drags.
+struct DragOut {
+  CallPtr call;
+  std::vector<std::string> uris;
+  bool failed = false;
+  GtkWidget *source = nullptr;
+};
+static DragOut *g_drag_out = nullptr;
+
+static void on_drag_out_data(GtkWidget *, GdkDragContext *, GtkSelectionData *data, guint, guint, gpointer) {
+  std::vector<gchar *> uris;
+  for (auto &u : g_drag_out->uris) uris.push_back((gchar *)u.c_str());
+  uris.push_back(nullptr);
+  gtk_selection_data_set_uris(data, uris.data());
+}
+
+static gboolean on_drag_out_failed(GtkWidget *, GdkDragContext *, GtkDragResult, gpointer) {
+  g_drag_out->failed = true;
+  return FALSE;
+}
+
+static CallPtr drag_out_done(GtkWidget *source) {
+  CallPtr call = g_drag_out->call;
+  delete g_drag_out;
+  g_drag_out = nullptr;
+  g_signal_handlers_disconnect_by_func(source, (gpointer)on_drag_out_data, nullptr);
+  g_signal_handlers_disconnect_by_func(source, (gpointer)on_drag_out_failed, nullptr);
+  return call;
+}
+
+static void on_drag_out_end(GtkWidget *source, GdkDragContext *, gpointer) {
+  bool dropped = !g_drag_out->failed;
+  g_signal_handlers_disconnect_by_func(source, (gpointer)on_drag_out_end, nullptr);
+  drag_out_done(source)->ok(json{{"dropped", dropped}});
+}
+
+static void start_drag(CallPtr c) {
+  Window *w = find_window(resolve_window(*c));
+  GdkWindow *gw = w ? gtk_widget_get_window(w->window) : nullptr;
+  if (!gw) return c->fail("invalid_args", "shell.startDrag: no such window");
+  std::vector<std::string> files;
+  if (!file_paths("shell.startDrag", c->args.contains("files") && c->args["files"].is_array() ? c->args["files"] : json::array(), &files, c)) return;
+  if (files.empty()) return c->fail("invalid_args", "shell.startDrag: `files` is required");
+  if (g_drag_out) return c->fail("unavailable", "shell.startDrag: another drag is going on");
+  GdkDevice *pointer = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_window_get_display(gw)));
+  GdkModifierType state = (GdkModifierType)0;
+  gdk_device_get_state(pointer, gw, nullptr, &state);
+  if (!(state & GDK_BUTTON1_MASK)) return c->fail("not_dragging", "shell.startDrag: the mouse button isn't down — call it from a dragstart or mousedown handler");
+  auto *d = new DragOut{c};
+  for (auto &f : files) {
+    gchar *uri = g_filename_to_uri(f.c_str(), nullptr, nullptr);
+    d->uris.push_back(uri ? uri : "");
+    g_free(uri);
+  }
+  g_drag_out = d;
+  g_signal_connect(w->window, "drag-data-get", G_CALLBACK(on_drag_out_data), nullptr);
+  g_signal_connect(w->window, "drag-failed", G_CALLBACK(on_drag_out_failed), nullptr);
+  g_signal_connect(w->window, "drag-end", G_CALLBACK(on_drag_out_end), nullptr);
+  GtkTargetList *targets = gtk_target_list_new(nullptr, 0);
+  gtk_target_list_add_uri_targets(targets, 0);
+  GdkDragContext *context = gtk_drag_begin_with_coordinates(w->window, targets, GDK_ACTION_COPY, 1, nullptr, -1, -1);
+  gtk_target_list_unref(targets);
+  if (!context) { // the display wouldn't start one (Wayland wants the press's own event)
+    g_signal_handlers_disconnect_by_func(w->window, (gpointer)on_drag_out_end, nullptr);
+    drag_out_done(w->window)->fail("unavailable", "shell.startDrag: the display refused the drag");
+    return;
+  }
+  GdkPixbuf *icon = c->has("icon") ? gdk_pixbuf_new_from_file_at_size(expand_home(c->str("icon")).c_str(), 64, 64, nullptr) : nullptr;
+  if (icon) {
+    gtk_drag_set_icon_pixbuf(context, icon, 32, 32);
+    g_object_unref(icon);
+  } else gtk_drag_set_icon_name(context, "text-x-generic", 32, 32);
+}
+
 static void register_shell() {
   reg("shell", "openExternal", [](CallPtr c) {
     std::string url = c->str("url");
@@ -359,6 +611,34 @@ static void register_shell() {
     gdk_display_beep(gdk_display_get_default());
     c->ok();
   });
+  // GNOME's previewer (Sushi), the one Linux has a known way to ask. It shows one file: the first.
+  reg("shell", "previewFile", [](CallPtr c) {
+    json paths = !c->args.contains("paths") ? json::array() : c->args["paths"].is_string() ? json::array({c->args["paths"]}) : c->args["paths"];
+    if (!paths.is_array() || paths.empty()) return c->fail("invalid_args", "shell.previewFile: `paths` is required");
+    std::vector<std::string> files;
+    if (!file_paths("shell.previewFile", paths, &files, c)) return;
+    GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr);
+    if (!bus) return c->fail("unavailable", "shell.previewFile: no session bus");
+    gchar *uri = g_filename_to_uri(files[0].c_str(), nullptr, nullptr);
+    Window *w = find_window(resolve_window(*c));
+    GdkWindow *gw = w ? gtk_widget_get_window(w->window) : nullptr;
+    gint32 xid = gw && GDK_IS_X11_WINDOW(gw) ? (gint32)GDK_WINDOW_XID(gw) : 0;
+    g_dbus_connection_call(bus, "org.gnome.NautilusPreviewer", "/org/gnome/NautilusPreviewer", "org.gnome.NautilusPreviewer", "ShowFile",
+                           g_variant_new("(sib)", uri ? uri : "", xid, FALSE), nullptr, G_DBUS_CALL_FLAGS_NONE, 5000, nullptr,
+                           [](GObject *src, GAsyncResult *res, gpointer data) {
+                             auto *h = static_cast<CallPtr *>(data);
+                             GError *err = nullptr;
+                             GVariant *v = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
+                             if (v) {
+                               g_variant_unref(v);
+                               (*h)->ok();
+                             } else (*h)->fail("unavailable", "shell.previewFile: GNOME's previewer (org.gnome.NautilusPreviewer): " + gerror_message(err, "no reply"));
+                             delete h;
+                           }, new CallPtr(c));
+    g_free(uri);
+    g_object_unref(bus);
+  });
+  reg("shell", "startDrag", start_drag);
 }
 
 // ===========================================================================
@@ -563,7 +843,96 @@ static void get_battery(CallPtr c) {
   c->ok(json{{"percent", percent}, {"charging", charging || (ac && battery && !discharging)}, {"external", !battery || ac || !discharging}});
 }
 
+// Idle time: X11's XScreenSaver extension, dlopen()ed like the other optional libraries. Its struct is
+// spelled out so that building doesn't need another -dev package; it's the extension's ABI.
+struct XssInfo {
+  ::Window window;
+  int state, kind;
+  unsigned long til_or_since, idle, event_mask;
+};
+
+static void get_idle_time(CallPtr c) {
+  static XssInfo *(*alloc)();
+  static int (*query)(Display *, Drawable, XssInfo *);
+  static int (*has_extension)(Display *, int *, int *);
+  static bool tried = false;
+  if (!tried) {
+    tried = true;
+    if (void *h = dlopen("libXss.so.1", RTLD_NOW | RTLD_LOCAL)) {
+      alloc = reinterpret_cast<XssInfo *(*)()>(dlsym(h, "XScreenSaverAllocInfo"));
+      query = reinterpret_cast<int (*)(Display *, Drawable, XssInfo *)>(dlsym(h, "XScreenSaverQueryInfo"));
+      has_extension = reinterpret_cast<int (*)(Display *, int *, int *)>(dlsym(h, "XScreenSaverQueryExtension"));
+    }
+  }
+  GdkDisplay *display = gdk_display_get_default();
+  if (!GDK_IS_X11_DISPLAY(display)) return c->fail("unavailable", "power.getSystemIdleTime: Wayland doesn't tell applications");
+  if (!alloc || !query || !has_extension) return c->fail("unavailable", "power.getSystemIdleTime: libXss (libXss.so.1) is not installed");
+  Display *dpy = GDK_DISPLAY_XDISPLAY(display);
+  int event, error;
+  if (!has_extension(dpy, &event, &error)) return c->fail("unavailable", "power.getSystemIdleTime: the X server has no XScreenSaver extension");
+  XssInfo *info = alloc();
+  bool ok = info && query(dpy, DefaultRootWindow(dpy), info);
+  double seconds = ok ? (double)info->idle / 1000 : 0;
+  if (info) XFree(info);
+  if (!ok) return c->fail("unavailable", "power.getSystemIdleTime: the X server didn't answer");
+  c->ok(seconds);
+}
+
+// Thermal state from the kernel's trip points, the temperatures a zone's firmware or driver names
+// and acts at: an `active` trip turns a fan up (fair), a `passive` trip throttles the CPU (serious),
+// `hot` and `critical` are the last warnings before a forced shutdown (critical). Below them all:
+// nominal. A zone with no trips says nothing, and no zone with trips → the state isn't known.
+static const char *const kThermalDefault = "/sys/class/thermal";
+
+static std::string read_sys(const std::string &path) {
+  gchar *text = nullptr;
+  std::string out;
+  if (g_file_get_contents(path.c_str(), &text, nullptr, nullptr)) out = g_strstrip(text);
+  g_free(text);
+  return out;
+}
+
+static std::string thermal_state() {
+  const char *override = getenv("KITOP_THERMAL_DIR"); // the tests' zones: a container has what its host has
+  std::string root = override && *override ? override : kThermalDefault;
+  GDir *dir = g_dir_open(root.c_str(), 0, nullptr);
+  if (!dir) return "";
+  int worst = -1;
+  while (const char *name = g_dir_read_name(dir)) {
+    if (!g_str_has_prefix(name, "thermal_zone")) continue;
+    std::string zone = root + "/" + name, temp = read_sys(zone + "/temp");
+    if (temp.empty() || read_sys(zone + "/mode") == "disabled") continue; // a sensor that's off can't be read
+    long long now = atoll(temp.c_str());
+    for (int i = 0;; i++) {
+      std::string type = read_sys(zone + "/trip_point_" + std::to_string(i) + "_type"), at = read_sys(zone + "/trip_point_" + std::to_string(i) + "_temp");
+      if (type.empty() || at.empty()) break;
+      worst = std::max(worst, 0);
+      if (now < atoll(at.c_str())) continue;
+      worst = std::max(worst, type == "active" ? 1 : type == "passive" ? 2 : type == "hot" || type == "critical" ? 3 : 0);
+    }
+  }
+  g_dir_close(dir);
+  static const char *const names[] = {"nominal", "fair", "serious", "critical"};
+  return worst < 0 ? "" : names[worst];
+}
+
 static void register_power() {
+  // The kernel's thermal events need a netlink socket and a privilege: read it now and then.
+  static std::string last = thermal_state();
+  g_timeout_add_seconds(5, [](gpointer) -> gboolean {
+    std::string now = thermal_state();
+    if (now != last) {
+      last = now;
+      emit("thermalStateChanged");
+    }
+    return G_SOURCE_CONTINUE;
+  }, nullptr);
+  reg_many("power", {"getThermalState", "thermalState"}, [](CallPtr c) {
+    std::string state = thermal_state();
+    if (state.empty()) return c->fail("unavailable", "power.getThermalState: no thermal zone with trip points on this machine");
+    c->ok(json{{"state", state}});
+  });
+  reg("power", "getSystemIdleTime", get_idle_time);
   reg("power", "getBattery", get_battery);
   reg("power", "blockSleep", [](CallPtr c) {
     std::string type = c->str("type");

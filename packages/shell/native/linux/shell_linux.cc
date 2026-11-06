@@ -236,6 +236,12 @@ static gboolean on_delete(GtkWidget *, GdkEvent *, gpointer data) {
     emit("willClose", json{{"windowId", public_id(w->id)}});
     return TRUE; // refuse
   }
+  // The last window: its document stays until every quit guard has answered. (window.close
+  // destroys it: on_destroy asks.)
+  if (w && !w->closing && g_quit_on_last_window && g_order.size() == 1) {
+    quit_request("lastWindowClosed");
+    return TRUE;
+  }
   // quitOnLastWindowClosed: false — the last visible window hides instead (as on macOS): the app,
   // its page and its push connection live on; a notification click or a second launch shows it.
   // (window.close included: `closing` only bypasses the veto.)
@@ -264,7 +270,7 @@ static void on_destroy(GtkWidget *, gpointer data) {
   views_window_closed(id);
   emit_raw(json{{"type", "closed"}, {"window", id}});
   emit("closed", json{{"windowId", pub}});
-  if (g_order.empty() && g_quit_on_last_window) request_quit(); // like webview/webview on macOS: last window ends the loop
+  if (g_order.empty() && g_quit_on_last_window) quit_request("lastWindowClosed"); // like webview/webview on macOS: last window ends the loop
 }
 
 static gboolean on_focus(GtkWidget *, GdkEventFocus *ev, gpointer data) {
@@ -435,6 +441,7 @@ static int create_window(const json &o) {
   g_signal_connect(w->window, "configure-event", G_CALLBACK(on_configure), id);
   g_signal_connect(w->window, "window-state-event", G_CALLBACK(on_window_state), id);
   g_signal_connect(w->window, "notify::scale-factor", G_CALLBACK(on_scale), id);
+  apply_activation_policy(w);
   gtk_widget_realize(w->window); // geometry ops work before the first show
 
   // Hidden until DOMContentLoaded (or the timeout) to avoid a white flash. The
@@ -558,6 +565,7 @@ static GtkWidget *on_create(WebKitWebView *, WebKitNavigationAction *a, gpointer
 
 void page_committed(int native_id, const char *uri) {
   page_unloaded(native_id); // until the new document's bridge reports ready
+  quit_page_unloaded(native_id);
   auto it = g_pages.find(native_id);
   if (it != g_pages.end()) it->second.origin = origin_of(uri ? uri : "");
 }
@@ -622,6 +630,7 @@ WebKitWebView *make_webview(int native_id, bool debug, const std::string &extra_
 void detach_webview(int native_id) {
   auto it = g_pages.find(native_id);
   if (it == g_pages.end()) return;
+  quit_page_unloaded(native_id);
   if (it->second.wv) {
     web_control_detach(it->second.wv);
     WebKitUserContentManager *ucm = webkit_web_view_get_user_content_manager(it->second.wv);
@@ -646,7 +655,7 @@ WebKitWebView *webview_for(int native_id) {
 
 static gboolean on_signal(gpointer name) {
   emit_raw(json{{"type", "signal"}, {"signal", (const char *)name}});
-  request_quit();
+  quit_request("signal");
   return G_SOURCE_CONTINUE;
 }
 
@@ -749,6 +758,7 @@ void backend_init_services() {
   lx::register_web_downloads();
   lx::register_web_sessions();
   lx::register_optional();
+  lx::register_desktop();
 }
 
 } // namespace sd
@@ -812,7 +822,7 @@ SHELL_API int shell_run(void) {
 }
 
 SHELL_API int shell_quit(void) {
-  sd::backend_run_on_main([] { lx::request_quit(); });
+  sd::backend_run_on_main([] { lx::quit_request("api"); });
   return 0;
 }
 

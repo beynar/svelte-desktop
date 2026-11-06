@@ -165,7 +165,7 @@ await host.menu.popup({ id: 'note-actions', items: [{ id: 'rename', label: 'Rena
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `items` | `MenuItemSpec[]` | Required | Context menu contents. |
-| `id` | `string` | `'context'` | macOS lifecycle and `closePopup` identity. Ignored on Linux and Windows. |
+| `id` | `string` | `'context'` | macOS lifecycle and `closePopup` identity; `closePopup` identity on Linux. Ignored on Windows. |
 | `x` | `number` | Cursor | Horizontal position; supply together with `y`. |
 | `y` | `number` | Cursor | Vertical position. macOS and Windows use top-left screen coordinates (logical units); Linux uses coordinates in the caller's web view in CSS pixels. |
 
@@ -183,7 +183,7 @@ await host.menu.closePopup('note-actions');
 | --- | --- | --- | --- |
 | `id` | `string` | `'context'` | Menu lifecycle identity. An unknown identity has no effect. |
 
-Resolves `null`. macOS only.
+Resolves `null`. macOS and Linux.
 
 ### `setDockMenu(items, id?)`
 
@@ -296,7 +296,8 @@ Lifecycle identities default to `MenuSpec.name` for app menus, a submenu item's 
 | `getAppMenu` | ✓ | ✓ | ✓ |
 | `remove`, `addRecentDocument` | ✓ | ✓ | ✓ |
 | `popup` | ✓ | partial | partial |
-| `setDockMenu`, `getDockMenu`, `closePopup` | ✓ | — | — |
+| `setDockMenu`, `getDockMenu` | ✓ | — | — |
+| `closePopup` | ✓ | ✓ | — |
 | `update`, `get`, `items` | ✓ | partial | partial |
 | `init`, `dispose`, `on`, `once`, `onAction` | ✓ | ✓ | ✓ |
 | `onWillShow`, `onDidClose` | ✓ | — | — |

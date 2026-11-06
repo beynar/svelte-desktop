@@ -83,9 +83,9 @@ export type ProcessMetrics = {
 	 *  own executable again (a service, a job). child: another process it started (a sidecar…). */
 	type: 'main' | 'webview' | 'python' | 'helper' | 'child';
 	name: string;
-	/** The window whose page this content process draws (webview). */
+	/** The window whose page this content process draws (webview, macOS). */
 	windowId?: number;
-	/** Bytes. footprint: the memory macOS counts for it (Activity Monitor's Memory). */
+	/** Bytes. footprint: the memory macOS counts for it (Activity Monitor's Memory); on Linux, its private pages and swap. */
 	memory: { footprint: number; resident: number };
 	/** time: CPU seconds used so far. percent: of one core since the previous call (null the first time). */
 	cpu: { time: number; percent: number | null };
@@ -107,7 +107,7 @@ export type LoginItem = {
 
 export const app = {
 	/** Memory and CPU of the app's processes: the shell, each web view's content process, the
-	 *  Python process, services, jobs and sidecars (macOS). Call it twice for CPU percentages. */
+	 *  Python process, services, jobs and sidecars (macOS, Linux). Call it twice for CPU percentages. */
 	metrics: () => callPlatform<AppMetrics>('app', 'metrics'),
 	...appLifecycle,
 	whenReady: () => callPlatform<true>('app', 'whenReady'),
@@ -129,31 +129,32 @@ export const app = {
 	showAll: () => callPlatform<null>('app', 'showAll'),
 	addRecentDocument: (path: string) =>
 		callPlatform<null>('app', 'addRecentDocument', { path }),
-	/** macOS Dock tile badge text; null clears it. */
+	clearRecentDocuments: () => callPlatform<null>('app', 'clearRecentDocuments'),
+	/** macOS Dock tile badge text; null clears it. On Linux the launcher entry's count: false for anything but a number. */
 	setDockBadge: (text: string | null) =>
 		callPlatform<boolean>('app', 'setDockBadge', { text }),
 	getDockBadge: () => callPlatform<string | null>('app', 'getDockBadge'),
-	/** macOS Dock icon: an image path or native icon name; null restores the bundle's. */
+	/** macOS Dock icon, Linux windows' icon: an image path or native icon name; null restores the bundle's. */
 	setDockIcon: (icon: IconSource | null) => callPlatform<null>('app', 'setDockIcon', { icon }),
 	/** What setDockIcon set; null with the bundle's. */
 	getDockIcon: () => callPlatform<IconSource | null>('app', 'getDockIcon'),
-	/** Bounce the Dock icon (macOS). */
+	/** Bounce the Dock icon (macOS), flash the taskbar (Windows), the window's urgency hint (Linux). */
 	bounceDock: (type: DockBounceType) => callPlatform<boolean>('app', 'bounceDock', { type }),
 	/** Launch at login: whether it's on, and whether this launch came from it. */
 	getLoginItem: () => callPlatform<LoginItem>('app', 'getLoginItem'),
 	/** Turns launch at login on or off; resolves to the state after. Does nothing where it's not
 	 *  available (`vite dev`). */
 	setLoginItem: (enabled: boolean) => callPlatform<LoginItem>('app', 'setLoginItem', { enabled }),
-	/** macOS activation policy — 'accessory' hides the Dock icon. */
+	/** macOS activation policy — 'accessory' hides the Dock icon. Linux: skip-taskbar and skip-pager on the app's windows. */
 	setActivationPolicy: (policy: ActivationPolicy) =>
 		callPlatform<boolean>('app', 'setActivationPolicy', { policy }),
-	/** 'regular' on Linux and Windows, which have no other. */
+	/** 'regular' on Windows, which has no other. */
 	getActivationPolicy: () => callPlatform<ActivationPolicy>('app', 'getActivationPolicy'),
 	/** Acquire the single-instance lock; `acquired:false` means another
 	 *  instance holds it (second instances should quit). */
 	requestSingleInstanceLock: () =>
 		callPlatform<{ acquired: boolean }>('app', 'requestSingleInstanceLock'),
-	/** macOS Dock progress bar; `{status:'none'}` clears it. */
+	/** Dock or taskbar progress bar, the launcher entry's on Linux; `{status:'none'}` clears it. */
 	setDockProgress: (progress: DockProgress) =>
 		callPlatform<null>('app', 'setDockProgress', progress),
 	getDockProgress: () => callPlatform<DockProgress>('app', 'getDockProgress'),
@@ -785,7 +786,7 @@ export const dialog = {
 		callPlatform<{ canceled: boolean; paths: string[]; bookmarks?: string[] }>('dialog', 'showOpenDialog', options),
 	showSaveDialog: (options: SaveDialogOptions = {}) =>
 		callPlatform<{ canceled: boolean; path: string | null }>('dialog', 'showSaveDialog', options),
-	/** A route of the app in a sheet on the window (macOS): its page alone, shown once loaded.
+	/** A route of the app in a sheet on the window (macOS, Linux): its page alone, shown once loaded.
 	 *  Resolves with what that page passes to `dialog.close(result)`; undefined when canceled
 	 *  (Escape, ⌘.). Pass data to it in the route (`/sheets/new?folder=…`).
 	 *  `style`: 'sheet' (default) the system's sheet — on macOS 26 centered, the window dimmed;
@@ -925,7 +926,7 @@ export class SleepBlocker {
 
 export const power = {
 	getThermalState: () => callPlatform<{ state: ThermalState }>('power', 'getThermalState'),
-	/** Seconds since the last global input event. macOS only. */
+	/** Seconds since the last global input event. macOS, Windows, Linux on X11. */
 	getSystemIdleTime: () => callPlatform<number>('power', 'getSystemIdleTime'),
 	/** Battery snapshot — percent is null on battery-less machines. */
 	getBattery: () => callPlatform<BatteryInfo>('power', 'getBattery'),

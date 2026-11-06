@@ -8,7 +8,7 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 ## Everywhere
 
 - **Smaller builds need a canary Bun.** `build.trim` and `build.aot` are unavailable on stable Bun. See [Distribution](/shipping/distribution#macos).
-- **Ops vary by platform.** Many window and app ops are macOS-only and answer `unsupported` elsewhere. `host.capabilities.describe()` lists the operations registered in the running build; a registered operation can still reject because the OS, permission or runtime is unavailable.
+- **Ops vary by platform.** Many window and app ops are macOS-only, or macOS and Linux, and answer `unsupported` elsewhere. `host.capabilities.describe()` lists the operations registered in the running build; a registered operation can still reject because the OS, permission or runtime is unavailable.
 - **No screen reader has been run.** axe-core and real key presses check what the framework draws, on Linux only. See [Accessibility](/ui/accessibility).
 - **Self-update has platform and recovery gaps**: no delta patches on Windows or for AppImages, no recovery from an executable the OS can't launch at all. See [Self-update](/shipping/self-update#platform-support).
 
@@ -22,7 +22,17 @@ Desktop only: macOS, Windows, Linux. iOS can't run Bun, so mobile isn't a target
 | Registered web scripts and content rules | Supported | Supported | Unsupported |
 | Navigation policy | Supported | Supported | Supported |
 | Native download management | Supported | Supported, resume starts over | Supported |
-| File bookmarks | Supported | Unsupported | Unsupported |
+| File bookmarks | Supported | Supported, within a folder | Unsupported |
+| Cancellable quit | Supported | Supported | Unsupported |
+| Rich clipboard (`read`, `write`) | Supported | Supported | Unsupported |
+| Route dialogs (`dialog.sheet`) | Supported | Supported | Unsupported |
+| Process metrics | Supported | Supported, no window per process | Unsupported |
+| Dock or launcher badge and progress | Supported | Supported, a number and a fraction | Supported |
+| Global shortcuts and screen capture | Supported | On Wayland through the portal, run against a stand-in only | Supported |
+| Thermal state | Supported | Where the machine has trip points | Unsupported |
+| System idle time | Supported | X11 | Supported |
+| Quick Look | Supported | GNOME's previewer, run against a stand-in only | Unsupported |
+| Dragging files out of a page | Supported | X11 | Unsupported |
 | Native input policy | Supported | Supported | Unsupported |
 | Web-view printing and PDF export | Supported | Supported | Supported with a recent WebView2 runtime |
 
@@ -48,7 +58,20 @@ These are shell API limits. The page still has the web APIs its installed web en
 ## Linux
 
 - Tray hosts don't report icon positions, so tray-anchored popovers open at the pointer.
-- Global shortcuts and screen capture need X11; on Wayland they answer `unsupported`.
+- On Wayland, global shortcuts and screen capture go through the desktop portal (`GlobalShortcuts`, `Screenshot`). They've run in a real Wayland session on a headless compositor, against a stand-in that follows the portal's request and response protocol. **No real portal has been exercised.** See [shortcuts](/host/input/shortcuts#wayland) and [capture](/host/os/capture).
+- `shell.previewFile` needs GNOME's previewer (`org.gnome.NautilusPreviewer`), and has only run against a stand-in. `shell.startDrag` and the sheet's placement have only run on X11, under openbox. See [shell](/host/os/shell).
+- The quit reasons `logout`, `shutdown` and `system` don't occur: a session ending arrives as a signal, or not at all. A dock's badge is a number, its progress has no colors, and the icon set by `setDockIcon` is the windows', not the dock's own. The launcher's signal has been read on the bus; no real dock has shown it. See [host.app](/host/app/app).
+- A bookmark follows a rename within its folder, not a move to another one. See [files](/host/os/files#linux).
+- `app.metrics` can't say which window a web process draws: WebKitGTK doesn't expose it, so there's no `windowId`.
+- `power.getThermalState` rejects with `unavailable` on machines without thermal trip points, and it has run on files laid out like sysfs, in a container. `power.getSystemIdleTime` needs X11 and `libXss.so.1`. See [power](/host/app/power).
+- `host.system.getAccessibility` reports `differentiateWithoutColor` and `reduceTransparency` as `false`: Linux has no such settings.
+- Not available, each rejecting with `unsupported`:
+  - `app.hideOthers`: other applications' windows belong to the window manager, on X11 and Wayland.
+  - `menu.setDockMenu`, `getDockMenu`: docks build their menus from the `.desktop` file. The launcher signal's `quicklist` could carry one from a DBusMenu server, which isn't done.
+  - `shell.share`: Linux desktops have no system share menu.
+  - `secureStorage.authenticate`, `system.biometrics`: there's no desktop-wide way for an app to ask who the user is. polkit needs an action installed as root, and `fprintd` only knows fingerprints.
+  - `permissions.guide`, `guideState`, `cancelGuide`: there's no privacy panel to walk the user through. `host.permissions.guide()` falls back as on Windows.
+  - `notifications.simulateResponse`, `window.testScroll`: test-only hooks of the macOS build.
 - C/C++ plugins, source addons, Rust and Go plugins need a Linux host. See [Distribution](/shipping/distribution#linux).
 - Native inline notification replies are unavailable; reply buttons become plain actions. Scheduling catches up when the app restarts rather than delivering while it is closed.
 - The build makes an app folder and an AppImage, not deb, rpm or Flatpak packages. Self-update covers those two; an install this user can't write to, in `/opt` for instance, answers `not_writable`. See [Self-update](/shipping/self-update#linux).

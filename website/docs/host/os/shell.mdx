@@ -88,7 +88,7 @@ macOS only.
 
 ### `startDrag(options, windowId?)`
 
-Start a native copy drag from the page to Finder or another app.
+Start a native copy drag from the page to Finder, a file manager or another app.
 
 ```ts
 const { dropped } = await host.shell.startDrag({ files: [reportPath] });
@@ -97,13 +97,13 @@ const { dropped } = await host.shell.startDrag({ files: [reportPath] });
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `files` | `string[]` | Required | Nonempty list of existing file paths. |
-| `icon` | `string` | File icons | Path to a drag image. If it cannot be loaded, file icons are used. |
+| `icon` | `string` | File icons | Path to a drag image. If it cannot be loaded, file icons are used. On Linux, a generic file icon. |
 
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `windowId` | `number` | Optional target [window](/host/windows/windows); otherwise the calling or default window. |
 
-Call while the left mouse button is down: in `ondragstart` after `preventDefault()`, or in `onmousedown`. Resolves `{ dropped: boolean }` when the drag ends. Abandoning it resolves `false`. Rejects with `not_dragging` when the button is no longer down, or `invalid_args` for a missing window, missing files or an empty list.
+Call while the left mouse button is down: in `ondragstart` after `preventDefault()`, or in `onmousedown`. Resolves `{ dropped: boolean }` when the drag ends. Abandoning it resolves `false`. Rejects with `not_dragging` when the button is no longer down, or `invalid_args` for a missing window, missing files or an empty list. Linux also rejects with `unavailable` during another such drag, or when the display refuses one.
 
 ```svelte
 <div draggable="true" ondragstart={(event) => {
@@ -112,11 +112,11 @@ Call while the left mouse button is down: in `ondragstart` after `preventDefault
 }}>Report</div>
 ```
 
-macOS only. The call can come from server code, but still requires a target page and the active mouse gesture.
+The call can come from server code, but still requires a target page and the active mouse gesture. macOS and Linux. On Linux it has run as XDND to another program's real drop target on X11, not on Wayland, where GTK may refuse a drag without the press's own event.
 
 ### `previewFile(paths)`
 
-Open the system Quick Look preview panel.
+Open the system Quick Look preview panel, or GNOME's previewer on Linux.
 
 ```ts
 await host.shell.previewFile(['/Users/me/report.pdf', '/Users/me/chart.png']);
@@ -128,7 +128,7 @@ await host.shell.previewFile(['/Users/me/report.pdf', '/Users/me/chart.png']);
 
 Resolves `null` after showing the panel. Rejects with `invalid_args` for missing files or an empty list, and `unavailable` if no app delegate can control the panel.
 
-macOS only.
+On Linux it asks `org.gnome.NautilusPreviewer` over D-Bus, the service of GNOME's `gnome-sushi` package, and shows the first file only. Other desktops, or GNOME without that package, reject with `unavailable`: there's no standard for this. The call has run against a stand-in for the service, built from its real interface, not against the previewer itself.
 
 ## Platform support
 
@@ -136,7 +136,9 @@ macOS only.
 | --- | --- | --- | --- |
 | `openExternal` | ✓ | ✓ | ✓ |
 | `openPath`, `showItemInFolder`, `trashItem`, `beep` | ✓ | ✓ | ✓ |
-| `share`, `startDrag`, `previewFile` | ✓ | — | — |
+| `share` | ✓ | — | — |
+| `startDrag` | ✓ | partial (X11) | — |
+| `previewFile` | ✓ | partial (GNOME) | — |
 
 `facetime` and `maps` URLs are accepted only on macOS. Other schemes listed above work where the OS has a handler.
 

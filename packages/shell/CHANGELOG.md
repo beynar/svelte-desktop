@@ -77,6 +77,19 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 - The package is ready to publish: `files`, `exports` with `types` and `svelte` conditions, `engines`, `repository`, `publishConfig`, and `bun run check:package`, which fails if the package is incomplete. It stays `private` for now.
 - `kitop create` pins `@kitop/shell` to the version that ran it, and takes the required versions of SvelteKit, the adapter and Svelte from the package.
 - `kitop doctor` checks the installed versions of SvelteKit, the adapter and Svelte against the ones required.
+- Linux: the cancellable quit. `host.app.onQuitRequested` can veto a quit from the API, a signal, the menu or the last window closing; `onBeforeQuit` and `onWillQuit` are awaited, each within 10 seconds, with `quitCancelled` and `quitTimedOut`.
+- Linux: `app.metrics`, real numbers from `/proc` for the app and what it started. No `windowId`.
+- Linux: `addRecentDocument` and `clearRecentDocuments` through `GtkRecentManager`, and `showAll` for the app's own windows. `host.app.clearRecentDocuments` now exists on every OS.
+- Linux: `setDockBadge`, `getDockBadge`, `setDockProgress` and `getDockProgress` through the Unity launcher signal. A badge is a number.
+- Linux: `bounceDock` as the window's urgency hint, `setDockIcon`, `getDockIcon` and `setIcon` as the windows' icon, `setActivationPolicy('accessory')` as skip-taskbar and skip-pager.
+- Linux: `clipboard.read` and `clipboard.write`: HTML, RTF, images, files and custom types, published together.
+- Linux: `dialog.sheet` and `dialog.close`: a route of the app in a transient modal window.
+- Linux: `menu.closePopup`.
+- Linux: `files.createBookmark`, `openBookmark` and `releaseBookmark`: the path and the file's identity, `stale` when it was renamed or replaced.
+- Linux: `power.getSystemIdleTime` on X11, `power.getThermalState` and `thermalStateChanged` from the kernel's trip points, `unavailable` where a machine has none.
+- Linux: `shell.previewFile` through GNOME's previewer, `unavailable` without it. `shell.startDrag` as XDND.
+- Linux: on Wayland, `host.shortcuts` and `host.capture` go through the desktop portal instead of answering `unsupported`. Run against a stand-in for the portal only.
+- Linux: `getAccessibility` also reads GNOME's high-contrast switch and `GTK_THEME`.
 
 ### Fixed
 
