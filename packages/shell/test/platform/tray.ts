@@ -6,9 +6,9 @@ import type { Harness } from "../harness-worker.ts";
 const PNG_1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
 export default async (t: Harness) => {
-  // Keep the icon vocabulary in sync with the contract (index.ts imports the
-  // gpuix bus, so read the list from source instead of importing it).
-  const src = await Bun.file(new URL("../../../platform/src/index.ts", import.meta.url)).text();
+  // Keep the icon vocabulary in sync with the contract: kitop's own list, read from source (index.ts
+  // brings the page's bus with it).
+  const src = await Bun.file(new URL("../../src/platform/index.ts", import.meta.url)).text();
   const names = [...(src.match(/NATIVE_ICON_NAMES = \[([\s\S]*?)\] as const/)?.[1] ?? "").matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
 
   await t.call("tray", "remove");
