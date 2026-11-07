@@ -1,11 +1,6 @@
-# AGENTS.md
+# AGENTS.md: the GPUI project
 
-This repository holds two projects. Check which one a task is about.
-
-- **kitop** is a desktop app from a SvelteKit app, on the system's web view: `packages/shell`, `packages/push-worker`, `examples/`, `website/`. It doesn't use anything below, and has its own install in `packages/shell`. See `README.md` and `CLAUDE.md`.
-- **The GPUI project**, which the rest of this file describes: `app`, `documentation`, `packages/{gpuix,platform,svelte,tests,vite}`, and the root `package.json` and its workspaces.
-
-`experiments`, `spikes` and `results` are earlier work, kept for reference.
+An earlier project, kept for reference, in `experiments/gpui`: it isn't kitop, and kitop uses none of it. Paths below are relative to this folder, which has its own `package.json`, workspaces and `bun.lock`. Its documentation stays at the repository root, in `documentation` (`bun run dev` here serves it). `.agent` here is its work log. `results/` is what its probes write, and isn't kept in git.
 
 ## The GPUI project
 

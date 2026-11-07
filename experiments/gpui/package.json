@@ -1,5 +1,5 @@
 {
-	"name": "kitop",
+	"name": "svelte-desktop",
 	"private": true,
 	"type": "module",
 	"workspaces": [
@@ -11,17 +11,17 @@
 		"app"
 	],
 	"scripts": {
-		"dev": "cd documentation && blume dev",
-		"build": "cd documentation && blume build",
-		"doctor": "cd documentation && blume doctor",
+		"dev": "cd ../../documentation && blume dev",
+		"build": "cd ../../documentation && blume build",
+		"doctor": "cd ../../documentation && blume doctor",
 		"gen": "cd packages/svelte && bun build.ts",
 		"demo": "bun run gen && cd packages/tests && bun main-showcase.ts",
 		"test": "cd packages/platform && bun test src/native-api.test.ts && cd ../tests && bun conformance.ts && bun conformance-nkit.ts && bun kit-conformance.ts && bun conformance-qg.ts && bun smoke-pages.ts",
 		"test:unit": "bun test packages/tests/*.test.ts packages/platform packages/gpuix",
 		"bench": "cd packages/tests && bun bench.ts && bun mission-bridge.ts && bun mission-sqlite.ts",
 		"package": "cd app && bun run build",
-		"codegen": "cd experiments/native-codegen && bun codegen.ts",
-		"report": "cat documentation/recommendation.md"
+		"codegen": "cd ../native-codegen && bun codegen.ts",
+		"report": "cat ../../documentation/recommendation.md"
 	},
 	"devDependencies": {
 		"@types/bun": "latest",

@@ -57,21 +57,21 @@ To make your own app a desktop app too, follow [Convert a SvelteKit app](website
 | `examples/notes` | The app most tests run against |
 | `examples/dashboard`, `examples/panes` | Tabs, panes and a larger layout |
 | `examples/kit-conformance` | SvelteKit's features in the app, a closed bridge list, the build to distribute |
-| `website` | The documentation. Run it with `cd website && bun install && bun run dev` |
+| `website` | The documentation. Run it with `bun run docs` |
 
-kitop uses nothing else in this repository. `app`, `documentation` and `packages/{gpuix,platform,svelte,tests,vite}` are a separate project that renders Svelte through GPUI instead of a web view ([its notes](experiments/gpui-README.md)). `experiments`, `spikes` and `results` are earlier work, kept for reference.
+kitop uses nothing else in this repository. `experiments/gpui` is an earlier project that renders Svelte through GPUI instead of a web view ([its notes](experiments/gpui/README.md)), with its own `package.json`, and `documentation` is its documentation. The rest of `experiments` is earlier work too, kept for reference.
 
 ## Tests
 
 ```sh
+bun run test                # the unit tests, no window (packages/shell: bun test src)
 cd packages/shell
-bun test src                # unit tests, no window
 test/docker/run.sh platform # Linux native suites, in Docker
 test/docker/run.sh e2e      # Linux end to end, in Docker
 test/run-platform.sh        # macOS native suites: real windows
 ```
 
-`bun test` in `examples/*` opens real windows and takes the keyboard. `.github/workflows` shows what runs on each platform.
+`bun test` in `examples/*` opens real windows and takes the keyboard. `.github/workflows` shows what runs on each platform. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest, and [SECURITY.md](SECURITY.md) how to report a vulnerability.
 
 ## License
 

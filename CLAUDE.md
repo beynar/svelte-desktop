@@ -4,7 +4,11 @@ globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
 alwaysApply: false
 ---
 
-Default to using Bun instead of Node.js.
+## This repository
+
+kitop: `packages/shell` is the package (`@kitop/shell`), `examples/` its apps, `website/docs` its documentation, `.github/workflows` its CI. `AGENTS.md` has the layout and the commands. Each folder installs on its own; the root `package.json` has scripts and no workspaces. `experiments/gpui` is an earlier, separate project with its own `package.json`, and `documentation/` its docs: don't edit either.
+
+Default to using Bun instead of Node.js, except where the point is Node: a website built with kitop's plugin must also build and run on Node (`packages/shell/test/docker/init.sh`).
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
 - Use `bun test` instead of `jest` or `vitest`

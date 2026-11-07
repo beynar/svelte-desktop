@@ -1,0 +1,17 @@
+{
+	"name": "kitop",
+	"private": true,
+	"type": "module",
+	"description": "kitop: a desktop app from a SvelteKit app. The package is packages/shell, each folder installs on its own.",
+	"scripts": {
+		"setup": "cd packages/shell && bun install",
+		"test": "cd packages/shell && bun test src",
+		"test:linux": "sh packages/shell/test/docker/run.sh platform && sh packages/shell/test/docker/run.sh e2e",
+		"build": "cd packages/shell && bun pm pack --destination ../../dist",
+		"docs": "cd website && bun install && bun run dev",
+		"docs:build": "cd website && bun install && bun run build"
+	},
+	"devDependencies": {
+		"@types/bun": "^1.4.4"
+	}
+}
