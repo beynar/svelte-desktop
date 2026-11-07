@@ -119,6 +119,10 @@ jobs:
         with:
           name: kit-release
           path: kit-release
+      # The examples link the shell, whose own dependencies are in its folder.
+      - name: Install (the shell)
+        working-directory: packages/shell
+        run: bun install --frozen-lockfile
       - name: Install (examples/notes, no scripts)
         working-directory: examples/notes
         run: bun install --ignore-scripts

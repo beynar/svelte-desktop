@@ -7,7 +7,6 @@
 		"dev": "bunx --bun vite dev",
 		"build": "bunx --bun vite build",
 		"prepare": "svelte-kit sync || echo ''",
-		"postinstall": "ln -sfn ../../../../packages/shell node_modules/@kitop/shell-link && rm -rf node_modules/@kitop/shell && mv node_modules/@kitop/shell-link node_modules/@kitop/shell",
 		"test": "bun test --timeout 60000 tests/",
 		"test:dev": "DESKTOP_TEST_DEV=1 bun test --timeout 120000 tests/"
 	},
@@ -21,7 +20,7 @@
 		"vite": "^8.1.5"
 	},
 	"dependencies": {
-		"@kitop/shell": "file:../../packages/shell"
+		"@kitop/shell": "link:../../packages/shell"
 	},
 	"imports": {
 		"#lib": "./src/lib/index.js",
