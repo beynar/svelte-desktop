@@ -8,7 +8,7 @@ name: update-test
 on:
   workflow_dispatch:
   push:
-    branches: [main, bun-webview-shell]
+    branches: [main, bun-webview-shell, ci-try]
     paths:
       - .github/workflows/update-test.yml
       - packages/shell/test/update-real/**

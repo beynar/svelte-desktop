@@ -4,7 +4,7 @@ name: ci
 
 on:
   push:
-    branches: [main, bun-webview-shell]
+    branches: [main, bun-webview-shell, ci-try]
   pull_request:
   workflow_dispatch:
 
