@@ -3,18 +3,11 @@ node_modules/
 dist/
 .DS_Store
 *.log
-app/build/
-app/build-bin/
-app/gen-app/
-app/.svelte-native/
-packages/*/gen/
-packages/tests/bench/latest.json
-packages/tests/build/
 experiments/native-core/libnative_core.dylib
 experiments/native-core/target/
-packages/gpuix/native/target/
-packages/gpuix/native/sgfx.darwin-arm64.node
-!results/**/*.log
 .blume-verify/
 __pycache__/
 *.pyc
+# Local, or written by earlier work: not kept in git
+/results/
+/.shell.hutch-template.lock

@@ -1,0 +1,11 @@
+app/build/
+app/build-bin/
+app/gen-app/
+app/.svelte-native/
+packages/*/gen/
+packages/tests/bench/latest.json
+packages/tests/build/
+packages/gpuix/native/target/
+packages/gpuix/native/sgfx.darwin-arm64.node
+# What the probes write (packages/tests/mission-*.ts)
+/results/
