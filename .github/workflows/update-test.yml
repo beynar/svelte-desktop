@@ -20,6 +20,8 @@ on:
       - packages/shell/src/crash.ts
       - packages/shell/src/worker.ts
       - packages/shell/src/build/**
+      - packages/shell/src/adapter.js
+      - packages/shell/src/vite.ts
       - examples/notes/tests/update-real.test.ts
 
 concurrency:

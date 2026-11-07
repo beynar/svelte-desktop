@@ -123,8 +123,8 @@ describe("extraction", () => {
 			expect(await readdir(out)).toEqual(["Demo.app"]);
 			const exe = Bun.file(join(out, "Demo.app", "Contents", "MacOS", "Demo"));
 			expect(await exe.text()).toContain("2.0.0");
-			expect(((await exe.stat()).mode & 0o111) !== 0).toBe(true);
-			expect(await readlink(join(out, "Demo.app", "Contents", "Frameworks", "X.framework", "X"))).toBe("Versions/A/X");
+			if (process.platform !== "win32") expect(((await exe.stat()).mode & 0o111) !== 0).toBe(true); // no such bits there
+			expect(await readlink(join(out, "Demo.app", "Contents", "Frameworks", "X.framework", "X")).then((to) => to.replaceAll("\\", "/"))).toBe("Versions/A/X");
 		});
 	}
 

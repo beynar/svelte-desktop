@@ -196,9 +196,11 @@ describe("platform helpers", () => {
 		expect(platformKeyOf("linux", "ia32")).toBeNull();
 	});
 	test("default data dirs", () => {
-		expect(defaultDataDir("My App", "darwin", {}, "/Users/u")).toBe("/Users/u/Library/Application Support/My App/updates");
-		expect(defaultDataDir("My App", "linux", {}, "/home/u")).toBe("/home/u/.local/share/My App/updates");
-		expect(defaultDataDir("My App", "linux", { XDG_DATA_HOME: "/xdg" }, "/home/u")).toBe("/xdg/My App/updates");
+		// Another OS's paths, joined with this host's separator: only Windows' are asked for on Windows.
+		const posix = (p: string) => p.replaceAll("\\", "/");
+		expect(posix(defaultDataDir("My App", "darwin", {}, "/Users/u"))).toBe("/Users/u/Library/Application Support/My App/updates");
+		expect(posix(defaultDataDir("My App", "linux", {}, "/home/u"))).toBe("/home/u/.local/share/My App/updates");
+		expect(posix(defaultDataDir("My App", "linux", { XDG_DATA_HOME: "/xdg" }, "/home/u"))).toBe("/xdg/My App/updates");
 		expect(defaultDataDir("My App", "win32", { LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" })).toBe("C:\\Users\\u\\AppData\\Local\\My App\\updates");
 		expect(() => defaultDataDir("../x", "linux")).toThrow();
 	});

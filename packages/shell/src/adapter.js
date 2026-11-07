@@ -239,7 +239,7 @@ function write_stage(config, stage) {
 	const spec_map = {};
 	for (const [spec, abs] of Object.entries(resolved)) {
 		const target = staged.get(abs) ?? abs; // SERVER points at .svelte-kit/bun-tmp/server.js on disk
-		let rel = path.relative(adapter_dir, target);
+		let rel = path.relative(adapter_dir, target).replaceAll(path.sep, '/'); // an import, on Windows too
 		if (!rel.startsWith('.')) rel = `./${rel}`;
 		spec_map[spec] = rel;
 	}
@@ -254,7 +254,7 @@ function write_stage(config, stage) {
 		fs.writeFileSync(dest, source);
 	}
 
-	const entry_rel = path.relative(stage, staged.get(entry));
+	const entry_rel = path.relative(stage, staged.get(entry)).replaceAll(path.sep, '/');
 	fs.writeFileSync(path.join(stage, 'entry.js'), `import './${entry_rel}';\n`);
 
 	const { plugins, files: _f, ...rest } = config;

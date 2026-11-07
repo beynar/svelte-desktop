@@ -18,6 +18,8 @@ afterEach(async () => {
 });
 
 const isRoot = process.getuid?.() === 0;
+// The real helper here is /bin/sh, and these are Linux's layouts. Windows has its own: update-real.test.ts.
+const posix = process.platform !== "win32";
 const read = (p: string) => readFileSync(p, "utf8");
 
 /** A folder as the packager makes it. */
@@ -91,7 +93,7 @@ async function update(u: ReturnType<typeof createUpdater>, opts: { relaunch: boo
 	return { staged, handle, code: await handle.exited! };
 }
 
-describe("the app folder", () => {
+describe.if(posix)("the app folder", () => {
 	test("is replaced whole under its installed name; the old one is kept until the new one is healthy", async () => {
 		const s = await folderScenario();
 		expect(s.v1.install()).toEqual({ kind: "app-folder", target: s.folder, dir: s.parent, exe: join(s.folder, "myapp") });
@@ -202,7 +204,7 @@ describe("the app folder", () => {
 	});
 });
 
-describe("installs that can't be replaced", () => {
+describe.if(posix)("installs that can't be replaced", () => {
 	test("an executable outside an app folder is never replaced by a folder (the archive's shape on Linux)", async () => {
 		const s = await folderScenario();
 		// Copied out of the folder: no marker, and it has neighbours that aren't ours.
@@ -260,7 +262,7 @@ describe("installs that can't be replaced", () => {
 	});
 });
 
-describe("the AppImage", () => {
+describe.if(posix)("the AppImage", () => {
 	test("is replaced under its installed name, in one rename: the backup is the same file", async () => {
 		const s = await appImageScenario();
 		expect(s.v1.install()).toEqual({ kind: "appimage", target: s.image, dir: join(s.dir, "Apps") });
@@ -341,7 +343,7 @@ describe("the AppImage", () => {
 	});
 });
 
-describe("extraction", () => {
+describe.if(posix)("extraction", () => {
 	test("tar leaving at the end-of-archive marker, before the padding after it, isn't a failure", async () => {
 		const { dir } = await base("updater-extract-");
 		writeFileSync(join(dir, "file"), "content");
@@ -365,7 +367,7 @@ describe("extraction", () => {
 	});
 });
 
-describe("which artifact a running copy takes", () => {
+describe.if(posix)("which artifact a running copy takes", () => {
 	test("the kind it is, and nothing else", async () => {
 		const both = (f: any) => ({ "linux-arm64": { ...f, url: "folder.tar.zst" }, "appimage-arm64": f });
 		const image = await appImageScenario(both);

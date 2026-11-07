@@ -1,4 +1,5 @@
-# Windows build of examples/notes (cross-compiled on Linux: Bun --compile + shell.dll with
+# On a Windows host, what a developer there runs (job host), and the Windows build of examples/notes
+# (cross-compiled on Linux: Bun --compile + shell.dll with
 # llvm-mingw in Docker + NSIS), then its e2e on a real Windows runner (WebView2, WinRT
 # toasts, the COM toast activator, the shell's other services, web content control):
 # examples/notes/tests/windows.test.ts.

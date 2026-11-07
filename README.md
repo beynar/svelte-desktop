@@ -28,15 +28,15 @@ Early, and not yet used in production. `@kitop/shell` isn't on npm yet, and its 
 
 | | Web view | Output | Tested in CI |
 | --- | --- | --- | --- |
-| macOS | WKWebView | `.app`, zip, DMG | End to end on macOS 15 |
-| Linux | WebKitGTK | Folder, `.tar.gz`, AppImage | End to end in Docker, without a real display |
-| Windows | WebView2 | Folder, zip, NSIS installer | End to end on a Windows runner, x64 only |
+| macOS | WKWebView | `.app`, zip, DMG | macOS 15, arm64, in a runner's session: the unit tests, the native suites (one hot key check skipped), the built examples in real windows, a real update. Nothing that needs a person at the screen |
+| Linux | WebKitGTK | Folder, `.tar.gz`, AppImage | The unit tests on Ubuntu. Ubuntu 24.04 in Docker under Xvfb, x64: the native suites, the built examples, real updates, the packed tarball. No real display or desktop |
+| Windows | WebView2 | Folder, zip, NSIS installer | A Windows runner, x64: the app built on Linux and driven end to end, a real update, the unit tests (Linux's and macOS's updater tests skipped), and `kitop dev` and `kitop build`, website and app, with a `shell.dll` built on Linux. Not Docker Desktop, which building `shell.dll` on Windows takes |
 
 Signing with a real identity hasn't been run. See [what's limited on each platform](website/docs/shipping/limitations.mdx).
 
 ## Try it
 
-With [Bun](https://bun.sh) 1.4 or newer. On macOS you also need the Xcode command line tools.
+With [Bun](https://bun.sh) 1.4 or newer. On macOS you also need the Xcode command line tools. On Windows, [Docker Desktop in Linux containers mode](website/docs/shipping/distribution.mdx#windows).
 
 ```sh
 (cd packages/shell && bun install)
@@ -56,6 +56,7 @@ To make your own app a desktop app too, follow [Convert a SvelteKit app](website
 | `packages/push-worker` | The optional push notification service |
 | `examples/notes` | The app most tests run against |
 | `examples/dashboard`, `examples/panes` | Tabs, panes and a larger layout |
+| `examples/kit-conformance` | SvelteKit's features in the app, a closed bridge list, the build to distribute |
 | `website` | The documentation. Run it with `cd website && bun install && bun run dev` |
 
 kitop uses nothing else in this repository. `app`, `documentation` and `packages/{gpuix,platform,svelte,tests,vite}` are a separate project that renders Svelte through GPUI instead of a web view ([its notes](experiments/gpui-README.md)). `experiments`, `spikes` and `results` are earlier work, kept for reference.
@@ -65,7 +66,9 @@ kitop uses nothing else in this repository. `app`, `documentation` and `packages
 ```sh
 cd packages/shell
 bun test src                # unit tests, no window
+test/docker/run.sh platform # Linux native suites, in Docker
 test/docker/run.sh e2e      # Linux end to end, in Docker
+test/run-platform.sh        # macOS native suites: real windows
 ```
 
 `bun test` in `examples/*` opens real windows and takes the keyboard. `.github/workflows` shows what runs on each platform.

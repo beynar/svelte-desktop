@@ -52,9 +52,9 @@ test("tree patch: same/delta/new/removed files, dirs, symlinks, modes; tamper de
   expect(r.to).toBe("1.1.0");
   expect(Buffer.compare(readFileSync(join(out, "Contents/MacOS/App")), exe)).toBe(0);
   expect(readFileSync(join(out, "Contents/new.bin")).length).toBe(10_000);
-  expect(require("node:fs").readlinkSync(join(out, "Contents/link"))).toBe("MacOS/App");
+  expect(require("node:fs").readlinkSync(join(out, "Contents/link")).replaceAll("\\", "/")).toBe("MacOS/App");
   expect(require("node:fs").existsSync(join(out, "Contents/old.txt"))).toBe(false);
-  expect(require("node:fs").statSync(join(out, "Contents/MacOS/App")).mode & 0o777).toBe(0o755);
+  if (process.platform !== "win32") expect(require("node:fs").statSync(join(out, "Contents/MacOS/App")).mode & 0o777).toBe(0o755); // no such bits there
 
   writeFileSync(join(a, "Contents/MacOS/App"), rand(200_000, 99)); // installed copy differs
   expect(() => applyTreePatch(patch, a, join(root, "out2/App.app"))).toThrow(/does not match/);

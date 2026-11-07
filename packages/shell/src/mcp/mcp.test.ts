@@ -6,6 +6,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { connectToApp, MODERN_REVISION } from "./app.ts";
@@ -15,7 +16,7 @@ import type { McpAddress, McpIdentity } from "./files.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "sd-mcp-"));
 const envHome = { HOME: dir, USERPROFILE: dir, XDG_DATA_HOME: join(dir, "data"), APPDATA: join(dir, "roaming") };
-const here = (file: string) => new URL(file, import.meta.url).pathname;
+const here = (file: string) => fileURLToPath(new URL(file, import.meta.url));
 const identity: McpIdentity = { identifier: "dev.test.mcp", appName: "Test App", version: "1.0.0" };
 
 async function startApp(id: McpIdentity = identity) {
@@ -77,7 +78,8 @@ test("a modern client: the list from the file, the call in the running app", asy
   expect(textOf(await c.callTool({ name: "echo", arguments: { text: "héllo\nworld" } }))).toBe("héllo\nworld");
   const wrong = await c.callTool({ name: "echo", arguments: {} });
   expect(wrong.isError).toBe(true);
-  await expect(c.callTool({ name: "missing", arguments: {} })).rejects.toMatchObject({ code: -32602 });
+  // Not expect().rejects: on Windows it holds up the event loop this answer comes through, and never ends.
+  expect(await c.callTool({ name: "missing", arguments: {} }).catch((e: unknown) => e)).toMatchObject({ code: -32602 });
   await c.close();
 }, 20_000);
 
@@ -86,7 +88,8 @@ test("a legacy client: initialize, then the same tools", async () => {
   expect(c.getNegotiatedProtocolVersion()).not.toBe(MODERN_REVISION);
   expect(names((await c.listTools()).tools)).toEqual(["echo", "slow", "counts"]);
   expect(textOf(await c.callTool({ name: "echo", arguments: { text: "ok" } }))).toBe("ok");
-  await expect(c.callTool({ name: "missing", arguments: {} })).rejects.toMatchObject({ code: -32602 });
+  // Not expect().rejects: on Windows it holds up the event loop this answer comes through, and never ends.
+  expect(await c.callTool({ name: "missing", arguments: {} }).catch((e: unknown) => e)).toMatchObject({ code: -32602 });
   await c.close();
 }, 20_000);
 
@@ -97,7 +100,7 @@ test("a call canceled reaches the tool, in the app", async () => {
   const slow = c.callTool({ name: "slow", arguments: {} }, { signal: abort.signal });
   await Bun.sleep(150);
   abort.abort();
-  await expect(slow).rejects.toThrow();
+  expect(await slow.then(() => "answered", () => "rejected")).toBe("rejected");
   for (let i = 0; i < 40 && (await counts(c)).stopped === stopped; i++) await Bun.sleep(50);
   expect((await counts(c)).stopped).toBe(stopped + 1);
   await c.close();
@@ -315,19 +318,21 @@ test("host.mcp, in an app of its own: every client found, one at a time, and rem
 test("names and places", () => {
   expect(serverName("Svelte Notes")).toBe("svelte-notes");
   expect(serverName("---")).toBe("app");
-  expect(clientConfigPath("cursor", "linux", "/h")).toBe("/h/.cursor/mcp.json");
-  expect(clientConfigPath("claude-desktop", "darwin", "/h")).toBe("/h/Library/Application Support/Claude/claude_desktop_config.json");
-  expect(clientConfigPath("claude-desktop", "linux", "/h")).toBeNull();
-  expect(clientConfigPath("claude-code", "linux", "/h", {})).toBe("/h/.claude.json");
-  expect(clientConfigPath("claude-code", "linux", "/h", { CLAUDE_CONFIG_DIR: "/c" })).toBe("/c/.claude.json");
-  expect(clientConfigPath("codex", "linux", "/h", {})).toBe("/h/.codex/config.toml");
-  expect(clientConfigPath("codex", "linux", "/h", { CODEX_HOME: "/c" })).toBe("/c/config.toml");
+  // Another OS's paths, joined with this host's separator.
+  const at = (...args: Parameters<typeof clientConfigPath>) => clientConfigPath(...args)?.replaceAll("\\", "/") ?? null;
+  expect(at("cursor", "linux", "/h")).toBe("/h/.cursor/mcp.json");
+  expect(at("claude-desktop", "darwin", "/h")).toBe("/h/Library/Application Support/Claude/claude_desktop_config.json");
+  expect(at("claude-desktop", "linux", "/h")).toBeNull();
+  expect(at("claude-code", "linux", "/h", {})).toBe("/h/.claude.json");
+  expect(at("claude-code", "linux", "/h", { CLAUDE_CONFIG_DIR: "/c" })).toBe("/c/.claude.json");
+  expect(at("codex", "linux", "/h", {})).toBe("/h/.codex/config.toml");
+  expect(at("codex", "linux", "/h", { CODEX_HOME: "/c" })).toBe("/c/config.toml");
   expect(serverCommand(identity, "/$bunfs/root/app", "/Apps/N.app/Contents/MacOS/N")).toEqual({ command: "/Apps/N.app/Contents/MacOS/N", args: ["--mcp"] });
   for (const main of ["B:\\~BUN\\root\\app.exe", "B:/~BUN/root/app.exe"]) {
     expect(serverCommand(identity, main, "C:\\Apps\\N.exe")).toEqual({ command: "C:\\Apps\\N.exe", args: ["--mcp"] });
   }
   const dev = serverCommand(identity, "/x/vite.js", "/bin/bun");
   expect(dev.command).toBe("/bin/bun");
-  expect(dev.args[0]).toEndWith("/mcp/bridge.ts");
+  expect(dev.args[0]!.replaceAll("\\", "/")).toEndWith("/mcp/bridge.ts");
   expect(JSON.parse(dev.args[1]!)).toEqual(identity);
 });

@@ -11,7 +11,8 @@ const server = servePush({ port: 0, hostname: "127.0.0.1", db: join(dir, "push.s
 const base = `http://127.0.0.1:${server.port}`;
 afterAll(() => {
   server.stop(true);
-  rmSync(dir, { recursive: true, force: true });
+  // On Windows the open database holds its folder until the process ends.
+  if (process.platform !== "win32") rmSync(dir, { recursive: true, force: true });
 });
 
 const until = async (ok: () => boolean, ms = 5000) => {

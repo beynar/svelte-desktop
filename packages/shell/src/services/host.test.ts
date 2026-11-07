@@ -105,8 +105,11 @@ await Bun.write(${JSON.stringify(pidFile)}, String(child.pid));
 process.exit(0);`);
   const parent = Bun.spawn([process.execPath, runner], { env: { ...process.env }, stdout: 'ignore', stderr: 'inherit' });
   await parent.exited;
-  await until(() => existsSync(cleanup));
-  expect(await Bun.file(cleanup).text()).toBe('closed');
+  // Windows ends a process's children with it (Bun's job object), so nothing is left behind but nothing cleans up.
+  if (process.platform !== 'win32') {
+    await until(() => existsSync(cleanup));
+    expect(await Bun.file(cleanup).text()).toBe('closed');
+  }
   const pid = Number(await Bun.file(pidFile).text());
   await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } });
 });

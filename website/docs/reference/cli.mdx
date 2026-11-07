@@ -47,10 +47,12 @@ With no flag, these are the website: `vite dev` and `vite build`, with the `adap
 | | From macOS | From Linux | From Windows |
 | --- | --- | --- | --- |
 | `dev --mac`, `build --mac` | ✓ | — | — |
-| `dev --windows` | — | — | ✓ |
+| `dev --windows` | — | — | With Docker¹ |
 | `dev --linux` | — | ✓ | — |
-| `build --windows` | With Docker | With Docker | ✓ |
-| `build --linux` | With Docker | ✓ | With Docker |
+| `build --windows` | With Docker | With Docker | With Docker¹ |
+| `build --linux` | With Docker | ✓ | Not tried |
+
+¹ Docker Desktop in Linux containers mode, or a `shell.dll` from elsewhere. See [Distribution](/shipping/distribution#windows).
 
 `--release` is the build you distribute: nothing can drive it from outside, signed or not. It has no test channel, so `launch()` can't test it. See [Builds you distribute](/concepts/security#builds-you-distribute). With `vite build`, `KITOP_RELEASE=1` does the same.
 

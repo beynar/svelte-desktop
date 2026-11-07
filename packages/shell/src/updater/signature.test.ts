@@ -99,6 +99,6 @@ describe("a Windows update", () => {
 		mkdirSync(join(dir, "plugins/deep"), { recursive: true });
 		mkdirSync(join(dir, "addons"));
 		for (const f of ["App.exe", "shell.dll", "icon.png", "plugins/deep/a.DLL", "addons/b.node", "addons/readme.txt"]) writeFileSync(join(dir, f), "");
-		expect(codeFiles([join(dir, "App.exe"), join(dir, "shell.dll"), join(dir, "icon.png"), join(dir, "plugins"), join(dir, "addons")]).map((f) => f.slice(dir.length + 1)).sort()).toEqual(["App.exe", "addons/b.node", "plugins/deep/a.DLL", "shell.dll"]);
+		expect(codeFiles([join(dir, "App.exe"), join(dir, "shell.dll"), join(dir, "icon.png"), join(dir, "plugins"), join(dir, "addons")]).map((f) => f.slice(dir.length + 1).replaceAll("\\", "/")).sort()).toEqual(["App.exe", "addons/b.node", "plugins/deep/a.DLL", "shell.dll"]);
 	});
 });

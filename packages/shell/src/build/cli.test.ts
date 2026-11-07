@@ -61,7 +61,7 @@ describe("kitop doctor", () => {
     const r = run(dir, "doctor");
     expect(r.out).toContain("@sveltejs/adapter-bun missing");
     expect(r.code).toBe(1);
-  });
+  }, 60_000); // Docker can take its time to answer on Windows
 
   test("a config that doesn't load is a failed check", () => {
     const dir = project();

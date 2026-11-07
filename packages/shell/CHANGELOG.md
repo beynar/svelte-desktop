@@ -126,6 +126,9 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 
 ### Fixed
 
+- `kitop dev --windows` and `kitop build --windows` on a Windows machine: they looked for macOS's library, ran a shell script Windows can't run, and wrote imports with backslashes. They still need Docker Desktop in Linux containers mode, or a `shell.dll` from elsewhere, and `kitop doctor` says so.
+- `kitop create` on Windows named the project after its whole path.
+- On macOS, a canceled download that can't be resumed no longer leaves half a file behind.
 - A page with `events.emit` could read and write any file in the app's data folder, on Linux its web permissions too. It's now limited to the store, the window state and the saved tabs.
 - Without `events.emit`, `host.store` and `host.windowState` reject at once with `denied`, instead of timing out as if the server didn't answer.
 - A write the disk takes only part of no longer leaves a cut-off file (the store, the window state, the updater's state). What the native side saves on Windows and Linux reaches the disk before it replaces the old file.

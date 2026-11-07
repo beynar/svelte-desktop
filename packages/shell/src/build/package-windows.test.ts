@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { resolveConfig } from "../config.ts";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { authenticodeIntact, nsisScript, peFiles, signedWith, signWithCommand, toastActivatorClsid, verifyAuthenticode } from "./package-windows.ts";
@@ -25,17 +25,16 @@ test("toast activator CLSID: deterministic, matches notif::activator_clsid (nati
 test("signing with the app's own tool: each file, in place; a failure stops the build and says why", async () => {
   const dir = mkdtempSync(join(tmpdir(), "kitop-sign-"));
   try {
-    const tool = join(dir, "sign.sh");
-    writeFileSync(tool, '#!/bin/sh\n[ "$1" = "--ok" ] || { echo "no key here" >&2; exit 3; }\necho signed >> "$2"\n');
-    chmodSync(tool, 0o755);
+    const tool = join(dir, "sign.ts");
+    writeFileSync(tool, 'const [flag, file] = process.argv.slice(2);\nif (flag !== "--ok") { console.error("no key here"); process.exit(3); }\nrequire("node:fs").appendFileSync(file, "signed\\n");\n');
     const a = join(dir, "a b.exe");
     const b = join(dir, "b.dll");
     writeFileSync(a, "");
     writeFileSync(b, "");
-    await signWithCommand([a, b], [tool, "--ok", "{file}"]);
+    await signWithCommand([a, b], [process.execPath, tool, "--ok", "{file}"]);
     expect(readFileSync(a, "utf8")).toBe("signed\n");
     expect(readFileSync(b, "utf8")).toBe("signed\n");
-    await expect(signWithCommand([a], [tool, "--bad", "{file}"])).rejects.toThrow(/a b\.exe \(exit 3\):\nno key here/);
+    await expect(signWithCommand([a], [process.execPath, tool, "--bad", "{file}"])).rejects.toThrow(/a b\.exe \(exit 3\):\nno key here/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -60,7 +59,7 @@ test("everything in the folder that runs gets signed, at any depth", () => {
     mkdirSync(join(dir, "plugins"));
     mkdirSync(join(dir, "addons"));
     for (const f of ["App.exe", "shell.dll", "app.png", "plugins/a.dll", "addons/b.node", "tool.EXE"]) writeFileSync(join(dir, f), "");
-    expect(peFiles(dir).map((f) => f.slice(dir.length + 1)).sort()).toEqual(["App.exe", "addons/b.node", "plugins/a.dll", "shell.dll", "tool.EXE"].sort());
+    expect(peFiles(dir).map((f) => f.slice(dir.length + 1).replaceAll("\\", "/")).sort()).toEqual(["App.exe", "addons/b.node", "plugins/a.dll", "shell.dll", "tool.EXE"].sort());
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

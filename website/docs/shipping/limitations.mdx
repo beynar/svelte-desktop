@@ -84,6 +84,9 @@ These are shell API limits. The page still has the web APIs its installed web en
   - `window.setMovableByWindowBackground`, `isMovableByWindowBackground`: the page covers the whole window, so there's no background to drag. Use a drag region.
   - `window.invalidateShadow`: DWM keeps a shadow in step with the window by itself.
   - `window.setMaterialRegions`: a DWM backdrop fills the whole window. `--desktop-material` is ignored, and the page isn't affected. See [Windows materials](/ui/windows#windows-materials).
+- **Developing on Windows takes Docker Desktop in Linux containers mode, or a `shell.dll` from elsewhere.** There's no prebuilt `shell.dll` in the package, and its toolchain is a Linux image. `kitop doctor` and the error say so. CI runs `kitop dev` and `kitop build` on a Windows host with a `shell.dll` cross-built on Linux. Docker Desktop itself hasn't run: a runner can't have it. See [Distribution](/shipping/distribution#windows).
+- **`.desktop` route files and `routes.exclude` need symbolic links:** Developer Mode, or an administrator. Without them the build stops and says so. A project with neither needs no links. CI ran both as a plain user with Developer Mode off.
+- A service's cleanup doesn't run when the app's process dies without quitting: Windows ends its child processes with it. Nothing is left running.
 - The WebView2 runtime must be installed. The shell offers an Evergreen download link when it is missing; it does not bundle the runtime.
 - **Not seen on the runner:** it has no GPU, so DWM draws each backdrop as a flat color: Mica's and Acrylic's color were read through a transparent page, not their blur. Its Windows Server keeps the emoji panel's window cloaked: Win+period opens the system's input host, but no panel was on the screen. Older Windows' `unavailable` for backdrops hasn't run.
 - Rust and Go plugins need a Windows host. See [Distribution](/shipping/distribution#windows).

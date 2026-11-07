@@ -25,7 +25,7 @@ test("keygen -> pack -> make-manifest -> verify -> client check+download", async
 	const publicKey = kg.stdout;
 	expect(Buffer.from(publicKey, "base64").length).toBe(32);
 	expect((await Bun.file(join(root.dir, "key.pem")).text())).toStartWith("-----BEGIN PRIVATE KEY-----");
-	expect((await stat(join(root.dir, "key.pem"))).mode & 0o077).toBe(0);
+	if (process.platform !== "win32") expect((await stat(join(root.dir, "key.pem"))).mode & 0o077).toBe(0); // no such bits there
 	expect((await cli(["keygen", "--out", "key.pem"])).code).toBe(1); // refuses to overwrite
 
 	await writeFakeApp(join(root.dir, "dist"), "TestApp", "1.2.0", "/dev/null");
@@ -53,6 +53,7 @@ test("keygen -> pack -> make-manifest -> verify -> client check+download", async
 		"/beta/update.json": () => new Response(Bun.file(join(root.dir, "out", "update.json"))),
 		"/beta/TestApp-1.2.0-darwin-arm64.tar.zst": () => new Response(Bun.file(join(root.dir, "out", "TestApp-1.2.0-darwin-arm64.tar.zst"))),
 	});
+	if (process.platform === "win32") return host.stop(); // what follows is a Mac's update: /usr/bin/tar
 	const updater = createUpdater({
 		manifestUrl: `${host.base}/{channel}/update.json`,
 		publicKey: [other, publicKey],

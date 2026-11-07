@@ -21,7 +21,8 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 test('archive contents, permissions, rotations, OS reports, omissions and redaction', async () => {
   const path = await collectSupport(context);
-  expect(statSync(path).mode & 0o777).toBe(0o600);
+  // Windows has no such bits: the folder's ACL says who reads it.
+  if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
   const files = await new Bun.Archive(await Bun.file(path).bytes()).files();
   expect([...files.keys()].sort()).toEqual(['crashes/App-report.ips', 'crashes/previous-run.json', 'logs/app.log', 'logs/app.log.1', 'manifest.json', 'metadata.json']);
   const text = await files.get('logs/app.log')!.text();

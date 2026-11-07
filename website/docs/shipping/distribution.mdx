@@ -93,6 +93,8 @@ The tool has to be on the machine that builds. The build signs before it makes t
 sign: { windows: { certificateFile: 'cert.pfx', password: process.env.CERT_PASSWORD } }, // or $WINDOWS_CERT_PFX + $WINDOWS_CERT_PASSWORD
 ```
 
+**On a Windows machine,** the toolchain still runs in Docker, and it's a Linux image. So you need Docker Desktop in Linux containers mode. In Windows containers mode, or without Docker, `shell.dll` can't be built, so neither `kitop dev --windows` nor `kitop build --windows` works. The error and `kitop doctor` say so. A GitHub Windows runner is in that case: its Docker only has Windows containers. Build on Linux or macOS there, or set `KITOP_SHELL_DLL_X64` (or `KITOP_SHELL_DLL`) to a `shell.dll` built on another machine. CI builds and runs an app that way, on a Windows host. The installer then needs `makensis` on `PATH`, and C/C++ plugins and source addons are skipped with a warning.
+
 Rust and Go plugins are skipped when cross-building Windows from another OS; build on Windows if your app needs them. C/C++ plugins and source addons use the Docker toolchain.
 
 Every `.exe`, `.dll` and addon in the folder gets signed, and each one is verified right after with `osslsigncode verify`: a file that doesn't verify stops the build. `timestampUrl` defaults to `https://timestamp.sectigo.com`. Data lives in `%APPDATA%\<identifier>`, caches and logs in `%LOCALAPPDATA%`. `build.targetArch` is `x64` (default) or `arm64`.

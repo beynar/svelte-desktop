@@ -59,7 +59,7 @@ describe("writeRoutes", () => {
   test("holds exactly these links, and leaves alone what didn't change", () => {
     const dir = project(["x/+page.svelte", "x/+page.desktop.svelte", "y/+page.svelte"]);
     const out = join(dir, "out");
-    const link = (as: string, file: string) => [as, join(dir, file)] as const;
+    const link = (as: string, file: string) => [join(as), join(dir, file)] as const;
     writeRoutes(out, new Map([link("x/+page.svelte", "x/+page.svelte"), link("y/+page.svelte", "y/+page.svelte")]));
     expect(readlinkSync(join(out, "x/+page.svelte"))).toBe(join(dir, "x/+page.svelte"));
     const before = lstatSync(join(out, "y/+page.svelte"), { bigint: true }).ino;

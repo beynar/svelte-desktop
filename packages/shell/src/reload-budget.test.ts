@@ -26,7 +26,7 @@ test.skipIf(!cxx)("delays grow, stop at the limit, and start over once the crash
   const include = resolve(import.meta.dir, "../native/portable");
   const built = Bun.spawnSync([cxx!, "-std=c++17", `-I${include}`, join(dir, "main.cc"), "-o", join(dir, "main")], { stderr: "pipe" });
   expect(built.stderr.toString()).toBe("");
-  const lines = Bun.spawnSync([join(dir, "main")]).stdout.toString().trim().split("\n");
+  const lines = Bun.spawnSync([join(dir, "main")]).stdout.toString().trim().split(/\r?\n/);
 
   // Crashes at 0, 1, 2 reload; 3, 4 and 299 don't: three reloads are still within 5 minutes. At 301
   // only the one at 2 still counts, and from there the budget is used up again.

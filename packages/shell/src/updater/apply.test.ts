@@ -105,7 +105,10 @@ async function runUpdate(s: Awaited<ReturnType<typeof scenario>>, opts: { relaun
 	return { code, staged, handle };
 }
 
-describe("apply: bare executable + sibling files (Linux/Windows layout)", () => {
+// The helper here is /bin/sh, as on macOS and Linux. Windows runs its PowerShell one for real: update-real.test.ts.
+const sh = process.platform !== "win32";
+
+describe.if(sh)("apply: bare executable + sibling files (Linux/Windows layout)", () => {
 	test("waits for the PID, swaps, keeps .old, relaunches, then confirm() cleans up", async () => {
 		const s = await scenario("exe");
 		let sawOldWhileRunning = false;
@@ -213,7 +216,7 @@ describe("apply: bare executable + sibling files (Linux/Windows layout)", () => 
 	});
 });
 
-describe("apply: macOS .app bundle", () => {
+describe.if(sh)("apply: macOS .app bundle", () => {
 	test("swaps <App>.app -> <App>.app.old, relaunches, confirm() deletes .old", async () => {
 		const s = await scenario("app");
 		const app = join(s.installDir, "MyApp.app");
@@ -281,7 +284,7 @@ describe("helper scripts", () => {
 		expect(ps1.includes("O'Brien")).toBe(false);
 	});
 
-	test("sh helper quotes hostile paths safely", async () => {
+	test.if(sh)("sh helper quotes hostile paths safely", async () => {
 		const { dir, cleanup } = await tempDir("updater-quote-");
 		cleanups.push(cleanup);
 		const weird = join(dir, `it's $(touch pwned) "q" \`x\``);

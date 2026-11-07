@@ -9,7 +9,8 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { launch, type AppHandle } from "../../src/test.ts";
 
 const shellRoot = resolve(import.meta.dir, "../..");
-const T = process.platform === "win32" ? realpathSync(mkdtempSync(join(tmpdir(), "kh-"))) : "";
+// Not the runner's %TEMP%: it's C:\Users\RUNNER~1\…, a short name SvelteKit's manifest paths don't match.
+const T = process.platform === "win32" ? realpathSync.native(mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "kh-"))) : "";
 const project = join(T, "hello");
 const dll = process.env.WINDOWS_SHELL_DLL;
 
@@ -70,8 +71,7 @@ describe.if(process.platform === "win32" && !!process.env.CI)("on a Windows host
     expect(existsSync(join(project, "site/server"))).toBe(true);
     expect(existsSync(join(project, ".desktop/dist"))).toBe(false);
     expect(lstatSync(join(project, ".desktop/routes/where/+page.svelte")).isSymbolicLink()).toBe(true);
-    const grep = (word: string) => new Bun.Glob("**/*").scanSync({ cwd: join(project, "site"), onlyFiles: true });
-    const site = [...grep("")].map((f) => readFileSync(join(project, "site", f), "latin1")).join("\n");
+    const site = [...new Bun.Glob("**/*").scanSync({ cwd: join(project, "site"), onlyFiles: true })].map((f) => readFileSync(join(project, "site", f), "latin1")).join("\n");
     for (const marker of ["SIDE_DESKTOP_PAGE", "SIDE_ONLY_DESKTOP", "SIDE_DESKTOP_LOAD"]) expect(site).not.toContain(marker);
     expect(site).toContain("SIDE_WEB_ONLY");
   }, 300_000);
@@ -173,17 +173,15 @@ describe.if(process.platform === "win32" && !!process.env.CI)("on a Windows host
     const script = join(import.meta.dir, "plain-user.ps1");
     const bun = process.execPath;
     const kitop = join(project, "node_modules/@kitop/shell/bin/kitop.ts");
-    const asUser = (cwd: string) => run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Bun", bun, "-Dir", T, "-Cwd", cwd, "-Kitop", kitop], { cwd: T });
+    const asUser = (cwd: string) => run(["pwsh", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Bun", bun, "-Dir", T, "-Cwd", cwd, "-Kitop", kitop], { cwd: T });
     rmSync(join(project, ".desktop"), { recursive: true, force: true });
     const r = asUser(project);
-    console.log(r.out);
     expect(r.out).toContain("Developer Mode");
     expect(r.out).toContain("exit 1");
     for (const dir of ["where", "web-only", "only-desktop"]) rmSync(join(project, "src/routes", dir), { recursive: true, force: true });
     edit("vite.config.ts", (s) => s.replace("desktop({ routes: { exclude: ['/web-only'] } })", "desktop()"));
     rmSync(join(project, ".desktop"), { recursive: true, force: true });
     const plain = asUser(project);
-    console.log(plain.out);
     expect(plain.out).toContain("exit 0");
     expect(plain.out).not.toContain("Developer Mode");
   }, 300_000);

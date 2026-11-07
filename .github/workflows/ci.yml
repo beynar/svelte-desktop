@@ -52,7 +52,7 @@ jobs:
         run: packages/shell/test/docker/run.sh e2e
 
   macos-native:
-    # Every native suite, each in its own process and window, in the runner's logged-in session.
+    # Every native suite but Linux's, each in its own process and window, in the runner's logged-in session.
     runs-on: macos-15
     timeout-minutes: 45
     steps:
