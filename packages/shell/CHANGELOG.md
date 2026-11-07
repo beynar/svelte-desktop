@@ -54,6 +54,7 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 **The command.** `kitop doctor` exits with status 1 when a check fails. It used to exit 0 whatever it found, so a script that ran it for the report now has to accept that.
 
 ### Added
+- Every build writes `THIRD_PARTY_NOTICES.txt` into what it ships: the licenses of Bun, kitop, the native shell's libraries and every npm package with code in the app, read from each package at build time.
 - `kitop init` writes `bridge: { allow: [] }`, with what `host.store`, `host.windowState` and the rest need, and `notifications.*` when the pages use the web's `Notification` API.
 - `kitop doctor` checks that the project's own `sveltekit()` shows the options kitop reads (`api.options`).
 - Windows and Linux: `window.setParent`, `getParent`, `getChildren` and the `parentId` option, as owned and transient windows.

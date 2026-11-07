@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
 import { compileStaged, sizeFlags } from "./bun-compile.ts";
+import { writeNotices } from "./notices.ts";
 import { keepsTestChannel } from "./test-channel-policy.ts";
 import { appIcons } from "./icons.ts";
 import { buildLanguagePlugins } from "./native-langs.ts";
@@ -880,6 +881,7 @@ export async function packageWindows(c: ResolvedConfig, stage: string): Promise<
     if (!isPE(from)) warn(`sidecar "${name}": ${relative(c.root, from)} is not a Windows executable`);
     copyFileSync(from, join(appDir, name.toLowerCase().endsWith(".exe") ? name : `${name}.exe`));
   }
+  writeNotices(c, appDir, "windows", Object.keys(addons).length > 0);
   log(`${basename(appDir)}/  ${exe} ${mb(join(appDir, exe))}, shell.dll${plugin ? ", app-native.dll" : ""}${Object.keys(addons).length ? `, addons/${Object.keys(addons).join(",")}` : ""}`);
 
   // 4. Authenticode

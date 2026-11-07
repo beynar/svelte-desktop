@@ -23,6 +23,7 @@ import { basename, join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
 import { APP_FOLDER_MARKER } from "../updater/platform.ts";
 import { compileStaged, sizeFlags } from "./bun-compile.ts";
+import { writeNotices } from "./notices.ts";
 import { keepsTestChannel } from "./test-channel-policy.ts";
 import { appIcons } from "./icons.ts";
 import { buildLanguagePlugins } from "./native-langs.ts";
@@ -241,6 +242,7 @@ export async function packageLinux(c: ResolvedConfig, stage: string): Promise<Pa
     mkdirSync(join(app, "share", "mime", "packages"), { recursive: true });
     writeFileSync(join(app, "share", "mime", "packages", `${c.identifier}.xml`), sharedMimeInfo(declared));
   }
+  writeNotices(c, app, "linux", Object.keys(addons).length > 0);
   log(`${c.appName}/  executable ${mb(join(app, exe))} (linux-${arch})${plugin ? " + plugin" : ""}${Object.keys(addons).length ? ` + ${Object.keys(addons).length} addon(s)` : ""}`);
 
   // 3. archives

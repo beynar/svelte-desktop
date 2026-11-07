@@ -99,6 +99,11 @@ jobs:
       - name: Build notes (plugins in Swift, Rust, Go and Python included)
         working-directory: examples/notes
         run: bunx --bun vite build
+      - name: The licenses it ships
+        working-directory: examples/notes
+        run: |
+          notices="$(echo .desktop/dist/*.app)/Contents/Resources/THIRD_PARTY_NOTICES.txt"
+          for name in JavaScriptCore "@kitop/shell" "webview/webview" "svelte 5." "@modelcontextprotocol/server" zod; do grep -q "$name" "$notices" || { echo "no $name in $notices"; exit 1; }; done
       - name: The packaged app answers MCP, with no window
         working-directory: examples/notes
         run: bun test --timeout 60000 tests/mcp.test.ts tests/relaunch.test.ts

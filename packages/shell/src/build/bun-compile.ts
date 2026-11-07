@@ -6,6 +6,7 @@ import { $ } from "bun";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ResolvedConfig } from "../config.ts";
+import { metafileInputs, shippedModules } from "./notices.ts";
 
 const support = new Map<string, Promise<{ trim: boolean; aot: boolean }>>();
 
@@ -62,12 +63,15 @@ export function closeRuntimeSwitches(exe: string): void {
 /** `bun build --compile` of the staged entries. A target runtime that can't be trimmed (a cross
  *  build: Bun downloads that target's runtime, without the trim table) is built again without. */
 export async function compileStaged(bun: string, stage: string, out: string, flags: string[], warn: (m: string) => void, distributed: boolean): Promise<void> {
-  const run = (f: string[]) => $`${bun} build --compile ${f} ${join(stage, "desktop-main.js")} ${join(stage, "desktop-supervisor.js")} ${join(stage, "desktop-worker.js")} --outfile ${out}`.cwd(stage).nothrow().quiet();
+  // What it bundles, for the app's third-party notices (notices.ts).
+  const meta = join(stage, "compile-meta.json");
+  const run = (f: string[]) => $`${bun} build --compile ${f} --metafile=${meta} ${join(stage, "desktop-main.js")} ${join(stage, "desktop-supervisor.js")} ${join(stage, "desktop-worker.js")} --outfile ${out}`.cwd(stage).nothrow().quiet();
   let r = await run(flags);
   if (r.exitCode !== 0 && flags.includes("--trim") && /doesn't support --trim/.test(r.stderr.toString())) {
     warn("--trim: this target's Bun runtime can't be trimmed (cross build) — built without");
     r = await run(flags.filter((f) => f !== "--trim" && !f.startsWith("--trim-locales")));
   }
   if (r.exitCode !== 0) throw new Error(`bun build --compile failed:\n${r.stderr.toString()}${r.stdout.toString().slice(-4000)}`);
+  for (const input of metafileInputs(readFileSync(meta, "utf8"), stage)) shippedModules().add(input);
   if (distributed) closeRuntimeSwitches(out);
 }

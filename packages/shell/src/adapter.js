@@ -13,6 +13,7 @@
 // Do not set `kit.paths.origin`: the app is served on a loopback port of its own (app-port.ts).
 import fs from 'node:fs';
 import { keepsTestChannel } from './build/test-channel-policy.ts';
+import { metafileInputs, shippedModules } from './build/notices.ts';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig } from './config.ts';
@@ -93,8 +94,9 @@ async function bundle_processes(c, stage, kind) {
 				entry,
 				`import entry from ${JSON.stringify(path.join(src_dir, file))};\nimport { ${runner} } from ${JSON.stringify(path.join(shell_root, 'src', kind, 'child.ts'))};\n${runner}(entry);\n`
 			);
-			const r = await Bun.build({ entrypoints: [entry], outdir: out_dir, target: 'bun', naming: `${name}.js`, minify: true });
+			const r = await Bun.build({ entrypoints: [entry], outdir: out_dir, target: 'bun', naming: `${name}.js`, minify: true, metafile: true });
 			if (!r.success) throw new Error(`${singular} ${name}: ${r.logs.map(String).join('\n')}`);
+			for (const input of metafileInputs(r.metafile, process.cwd())) shippedModules().add(input);
 		}
 		lines.push(`globalThis[Symbol.for('kitop.${kind}.names')] = ${JSON.stringify(names)};`);
 	}

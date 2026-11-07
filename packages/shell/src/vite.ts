@@ -36,6 +36,7 @@ import { ICON_CANDIDATES, findIcon, loadConfig, sidecarEntries, usageDescription
 import { kitOptions, routesOverlay, type RoutesOptions } from "./routes-overlay.js";
 import desktopAdapter from "./adapter.js";
 import { writeHostTypes } from "./host/types-file.js";
+import { shippedModules } from "./build/notices.ts";
 
 export type { DesktopConfig } from "./config.ts";
 export { defineConfig } from "./config.ts";
@@ -91,7 +92,18 @@ export async function desktop(options: DesktopPluginOptions = {}): Promise<Plugi
   // In dev, the app's server runs in this process: the system's certificates and proxy for it too.
   if (process.env.NODE_ENV !== "production") (await import("./system-network.ts")).applySystemNetwork(config.network);
   writeHostTypes(config.root);
-  return [routesOverlay("desktop", options.routes), shellAdapter(config), hydrationMarker(config.osPermissions, { foreground: config.notifications?.foreground ?? true }, { server: config.push?.server ?? null }), pushServiceWorker(), oauthDev(config.appName), websocketDev(config), serverEntry(config, "websocket"), serverEntry(config, "mcp"), mcpDev(config), devPlugin(config, options)];
+  return [routesOverlay("desktop", options.routes), shellAdapter(config), notices(), hydrationMarker(config.osPermissions, { foreground: config.notifications?.foreground ?? true }, { server: config.push?.server ?? null }), pushServiceWorker(), oauthDev(config.appName), websocketDev(config), serverEntry(config, "websocket"), serverEntry(config, "mcp"), mcpDev(config), devPlugin(config, options)];
+}
+
+// What of node_modules the pages and the server bundle, for the app's THIRD_PARTY_NOTICES.txt.
+function notices(): Plugin {
+  return {
+    name: "kitop:notices",
+    apply: "build",
+    generateBundle(_options: unknown, bundle: Record<string, { type: string; moduleIds?: string[] }>) {
+      for (const chunk of Object.values(bundle)) for (const id of chunk.moduleIds ?? []) shippedModules().add(id);
+    },
+  };
 }
 
 // SvelteKit has no public "hydrated" signal; tests (and apps) need one. Wrap the

@@ -96,6 +96,12 @@ step "kitop doctor, then the desktop app: built and launched"
 bunx kitop doctor
 quiet bunx kitop build --linux
 grep -E "✓ /" "$T/out.log" | tail -1
+# What it ships of others, with their licenses: Bun's runtime, the pages' packages, the server's.
+notices=.desktop/dist/App/THIRD_PARTY_NOTICES.txt
+for name in "Bun 1.4.4, the runtime" JavaScriptCore "@kitop/shell 0.1.0" "nlohmann/json" "svelte 5." "@sveltejs/kit 3." "@neoconfetti/svelte" "devalue"; do
+  grep -q "$name" "$notices" || { echo "$notices doesn't name $name:"; grep -A1 -E '^=+$' "$notices" | grep -vE '^(=+|--)?$'; exit 1; }
+done
+echo "$notices: $(grep -A1 -E '^=+$' "$notices" | grep -vE '^(=+|--)?$' | sed 's/ (.*//' | tr '\n' ';')"
 cat > tests/converted.test.ts <<'TEST'
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { launch, type AppHandle } from '@kitop/shell/test';

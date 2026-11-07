@@ -400,6 +400,7 @@ async function packageMac(c: ResolvedConfig, stage: string): Promise<PackageResu
     await $`chmod 755 ${launcher}`;
   }
   await Bun.write(join(app, "Contents/PkgInfo"), "APPL????");
+  (await import("./notices.ts")).writeNotices(c, join(app, "Contents/Resources"), "macos", Object.keys(addons).length > 0);
   log(`${basename(app)}  executable ${mb(join(app, "Contents/MacOS", exe))} (${arches.join("+")})`);
 
   // 3. sign + notarize

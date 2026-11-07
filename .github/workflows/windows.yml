@@ -31,7 +31,9 @@ jobs:
           (cd examples/kit-conformance && bun install --frozen-lockfile)
       - name: Build the Windows app (shell.dll, addon and installer through the Docker toolchain)
         working-directory: examples/notes
-        run: KITOP_TARGET=windows bunx --bun vite build
+        run: |
+          KITOP_TARGET=windows bunx --bun vite build
+          for name in JavaScriptCore "WebView2 SDK" "Node-API headers" "svelte 5."; do grep -q "$name" ".desktop/dist/Svelte Notes-windows-x64/THIRD_PARTY_NOTICES.txt" || { echo "no $name in THIRD_PARTY_NOTICES.txt"; exit 1; }; done
       - name: A closed bridge list, then the build to distribute (--release, no list)
         working-directory: examples/kit-conformance
         run: |

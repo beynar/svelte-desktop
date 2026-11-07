@@ -120,6 +120,18 @@ GTK 3 and WebKitGTK 4.1 come from the system, like the system WebKit on macOS; l
 
 Distribute the `.tar.gz`, the `.AppImage` or both: each updates itself as long as the user can write to where it's installed, so unpack the directory under the home directory rather than `/opt`. See [Self-update](/shipping/self-update#linux). The build doesn't make deb, rpm or Flatpak packages.
 
+## Third-party notices
+
+Every build writes `THIRD_PARTY_NOTICES.txt` into what it ships: `Contents/Resources` in the `.app`, the app's folder on Windows and Linux, so the zip, the DMG, the installer, the AppImage and the update archives carry it. It holds the licenses of what's in the app and isn't yours:
+
+- **Bun**, the runtime in the executable: its license, and the libraries it links with theirs. JavaScriptCore is among them, under the LGPL 2, and Bun's text says where its source is.
+- **kitop**, and the libraries its native shell is compiled from: nlohmann/json everywhere, webview/webview on macOS, the WebView2 SDK headers on Windows, the Node-API headers with addons.
+- **Every npm package with code in the app**, yours and kitop's: the ones in the pages, found from Vite's build, and the ones in the server, found from what `bun build --compile` bundled. Each one's text is read from its own folder at build time: its `LICENSE`, `LICENCE` or `COPYING` file, or the license its `package.json` names when it has no file.
+
+The system's web view (WKWebView, WebKitGTK, WebView2) isn't in the app, so it isn't listed. Neither are your native plugins' own dependencies, sidecars, Python packages, or files you add yourself: add their notices to your app.
+
+Bun's text is the one of the Bun version kitop is tested with, 1.4.4. Built with another Bun, the file says so. Show the file somewhere a user can find it, such as an About window, if a license you ship asks for that.
+
 ## Signing options
 
 <TypeTable
