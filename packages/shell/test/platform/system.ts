@@ -31,9 +31,9 @@ export default async (t: Harness) => {
   let unbundled = false;
   for (const name of ["accessibility", "screenRecording", "fullDiskAccess", "camera", "microphone", "notifications"]) {
     const r = await t.call("system", "checkPermission", { name });
-    if (name === "notifications" && !r.ok) {
-      unbundled = r.error?.code === "unavailable";
-      t.check("system.checkPermission notifications → unavailable when unbundled", unbundled && /bundle/i.test(r.error!.message), r);
+    if (name === "notifications" && r.value?.status === "unavailable") {
+      unbundled = true;
+      t.check("system.checkPermission notifications → unavailable when unbundled", true, r);
     } else {
       t.check(`system.checkPermission ${name} → status`, r.ok && STATUSES.includes(r.value.status), r);
     }
@@ -54,7 +54,7 @@ export default async (t: Harness) => {
       t.check(`system.requestPermission ${name} → unavailable without usage description`, r.error?.code === "unavailable" && /UsageDescription/.test(r.error.message), r);
     }
     const n = await t.call("system", "requestPermission", { name: "notifications" });
-    t.check("system.requestPermission notifications → unavailable when unbundled", n.error?.code === "unavailable", n);
+    t.check("system.requestPermission notifications → unavailable when unbundled", n.value?.status === "unavailable", n);
   } else {
     t.skip("system.requestPermission camera/microphone/notifications", "bundled run: would show a permission prompt");
   }

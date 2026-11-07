@@ -12,9 +12,11 @@ export default async (t: Harness) => {
   t.check("our WKUIDelegate is installed on the window", (await wv(t, "_test", { action: "uiDelegate" })).value === "SDUIDelegate");
 
   // -- zoom
+  const width = await t.page<number>("return window.innerWidth");
   t.check("setZoom 1.5", (await wv(t, "setZoom", { zoom: 1.5 })).value?.zoom === 1.5);
   t.check("getZoom", (await wv(t, "getZoom")).value?.zoom === 1.5);
-  t.check("page sees the zoom (devicePixelRatio scales)", (await t.page<number>("return window.devicePixelRatio")) >= 1.5);
+  // Its layout, not devicePixelRatio: that's already 2 on a Retina screen and doesn't say anything.
+  t.check("page sees the zoom (fewer CSS pixels across)", Math.abs((await t.page<number>("return window.innerWidth")) - width / 1.5) <= 2, { width });
   t.check("setZoom bad → invalid_args", (await wv(t, "setZoom", { zoom: -1 })).error?.code === "invalid_args");
   await wv(t, "setZoom", { zoom: 1 });
 
@@ -52,7 +54,14 @@ export default async (t: Harness) => {
   const ce2 = await ctxEv2;
   t.check("contextMenu event on an input: editable", ce2?.editable === true && ce2.linkURL === undefined, ce2);
   // Real WebKit menus: in-process synthetic right-click (no Accessibility), tracking cancelled at once.
-  const rclick = (x: number, y: number) => wv(t, "_test", { action: "rightClick", x, y }).then((r) => r.value);
+  // WebKit may not be done with the last menu yet, which ignores the click: no menu comes of it, so again.
+  const rclick = async (x: number, y: number) => {
+    for (let i = 0; i < 5; i++) {
+      const menu = (await wv(t, "_test", { action: "rightClick", x, y })).value;
+      if (menu) return i ? { ...menu, attempts: i + 1 } : menu;
+    }
+    return null;
+  };
   await t.page(`document.getElementById('log').textContent = 'plain text'; return 1`);
   await wv(t, "setContextMenu", { mode: "none" });
   const r1 = await rclick(30, 60);
@@ -122,7 +131,8 @@ export default async (t: Harness) => {
   t.check("download with explicit path", (await fin4)?.path === target && existsSync(target));
   t.check("download bad URL → invalid_args", (await wv(t, "download", { url: "ftp://x/y" })).error?.code === "invalid_args");
   t.check("cancelDownload unknown → invalid_args", (await wv(t, "cancelDownload", { id: "nope" })).error?.code === "invalid_args");
-  t.check("listDownloads empty when idle", Array.isArray((await wv(t, "listDownloads")).value) && (await wv(t, "listDownloads")).value.length === 0);
+  const idle = (await wv(t, "listDownloads")).value;
+  t.check("listDownloads when idle: the ones that ended, none going", idle?.length > 0 && idle.every((d: any) => ["completed", "canceled", "interrupted"].includes(d.state)), idle);
   t.check("downloads produced only expected files", readdirSync(dir).sort().join(",") === "from-blob.txt,harness-download (1).txt,harness-download.txt,sub");
   const progress = t.waitEvent("downloadProgress", 6000), slowDone = t.waitEvent("downloadFinished", 8000);
   const slow = await wv(t, "download", { url: "/download.txt?slow" });
@@ -137,7 +147,7 @@ export default async (t: Harness) => {
   await t.sleep(300);
   t.check("cancelDownload", (await wv(t, "cancelDownload", { id: cancel.value?.id })).ok);
   const fl = await failed;
-  t.check("downloadFailed {canceled:true}, partial file removed", fl?.id === cancel.value?.id && fl.canceled === true && !existsSync(join(dir, "canceled.txt")), fl);
+  t.check("downloadFailed {canceled:true}: the partial file only stays to resume from", fl?.id === cancel.value?.id && fl.canceled === true && (fl.canResume || !existsSync(join(dir, "canceled.txt"))), fl);
   rmSync(join(dir, "harness-download (2).txt"), { force: true });
   await wv(t, "setDownloadDirectory", { path: null });
 

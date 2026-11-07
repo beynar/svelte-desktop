@@ -24,7 +24,7 @@ export default async (t: Harness) => {
   t.check("requestSingleInstanceLock acquired", lock.value?.acquired === true, lock);
   t.check("requestSingleInstanceLock idempotent", (await t.call("app", "requestSingleInstanceLock")).value?.acquired === true);
   const login = await t.call("app", "setLoginItem", { enabled: false });
-  t.check("setLoginItem unbundled → unavailable", login.error?.code === "unavailable", login);
+  t.check("setLoginItem unbundled: says it isn't available", login.value?.available === false && login.value.enabled === false, login);
   t.check("setName", (await t.call("app", "setName", { name: "Harness Renamed" })).ok && (await t.call("app", "getName")).value === "Harness Renamed");
   t.check("bounceDock", (await t.call("app", "bounceDock", { type: "informational" })).value === true);
   const page = await t.pageCall("app", "getInfo");

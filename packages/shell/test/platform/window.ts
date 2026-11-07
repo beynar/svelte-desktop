@@ -72,8 +72,8 @@ export default async (t: Harness) => {
   t.check("isOccluded is boolean", typeof (await t.call("window", "isOccluded")).value === "boolean");
   t.check("isHovered shape", typeof (await t.call("window", "isHovered")).value.hovered === "boolean");
   t.check("getCursorPoint", Number.isFinite((await t.call("window", "getCursorPoint")).value.x));
-  t.check("setFocusable → unsupported", (await t.call("window", "setFocusable", { enabled: false })).error?.code === "unsupported");
-  t.check("focus", (await t.call("window", "focus")).ok);
+  t.check("setFocusable off: focus refused", (await t.call("window", "setFocusable", { enabled: false })).ok && (await t.call("window", "focus")).error?.code === "unavailable");
+  t.check("setFocusable on: focus", (await t.call("window", "setFocusable", { enabled: true })).ok && (await t.call("window", "focus")).ok);
   t.check("hide/show", (await t.call("window", "hide")).ok && (await t.call("window", "show")).ok);
   t.check("unknown windowId → invalid_args", (await t.call("window", "getTitle", { windowId: 999 })).error?.code === "invalid_args");
 

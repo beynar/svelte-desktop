@@ -313,6 +313,8 @@ static void cancel_download(PlatformCall *c, BOOL pause) {
           d.store = captured ? store : nil;
           BOOL resumable = captured;
           d.state = pause ? (resumable ? @"paused" : @"interrupted") : @"canceled";
+          // Nothing will resume from it: no half a file left under the name the user would look for.
+          if (!pause && !resumable && path) [NSFileManager.defaultManager removeItemAtPath:path error:nil];
           d.error = captured ? nil : fileError ? fileError.localizedDescription : !resumeData.length ? @"WebKit supplied no resume data" : d.expected < 0 ? @"unknown-length transfers cannot safely resume" : nil;
           download_changed(d);
           platform_emit(@"downloadFailed", with_source(d, @{@"error": d.error ?: (pause ? @"paused" : @"canceled"), @"canceled": @YES, @"canResume": @(resumable)}));

@@ -45,7 +45,9 @@ export default async (t: Harness) => {
 
   // Real key press → shortcutPressed/Released (synthetic events need Accessibility).
   const ax = await t.call("system", "checkPermission", { name: "accessibility" });
-  if (ax.value?.status === "granted") {
+  // A runner says it may post events (Accessibility granted, CGPreflightPostEventAccess true), and the
+  // key never reaches the hot key: its virtual display has no real input behind it.
+  if (ax.value?.status === "granted" && !process.env.GITHUB_ACTIONS) {
     const pressed = t.waitEvent("shortcutPressed", 2000);
     const released = t.waitEvent("shortcutReleased", 2000);
     pressKey(0x50 /* kVK_F19 */, CGFlags.cmd | CGFlags.shift | CGFlags.ctrl | CGFlags.alt);
