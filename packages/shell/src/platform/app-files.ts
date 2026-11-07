@@ -14,6 +14,14 @@ type Reply = { nonce: string; ok: true; text: string | null } | { nonce: string;
 const isPage = typeof window !== 'undefined' && typeof document !== 'undefined';
 const validName = (name: string) => /^[A-Za-z0-9._-]+$/.test(name);
 
+// What a page may ask the server for: what the framework's page code uses. The folder also holds
+// what pages have no business with: on Linux the web permissions it reads back at every request,
+// so a script in a page with events.emit could grant itself the camera. Server code isn't limited.
+const pageMayUse = (op: Request['op'], name: unknown) =>
+	typeof name === 'string' &&
+	(name === 'kitop-store.json' || name === 'window-state.json' || /^tabs-[A-Za-z0-9._-]+\.json$/.test(name) ||
+		(op === 'read' && name === 'kitop-store.json.bak') || (op === 'write' && name === 'kitop-store.json.corrupt'));
+
 // Remembered: on Linux and Windows the last write comes after the native run loop has stopped, when
 // nothing answers a platform call any more.
 const dirPaths = new Map<AppDir, string>();
@@ -46,7 +54,9 @@ async function local(op: 'read' | 'write', dir: AppDir, name: string, text?: str
 		try {
 			const fd = fs.openSync(temp, 'w');
 			try {
-				fs.writeSync(fd, text ?? '');
+				// A full disk can take part of it and say so only in the count.
+				const bytes = new TextEncoder().encode(text ?? '');
+				for (let at = 0; at < bytes.length; ) at += fs.writeSync(fd, bytes, at);
 				fs.fsyncSync(fd);
 			} finally {
 				fs.closeSync(fd);
@@ -79,7 +89,12 @@ function viaServer(op: 'read' | 'write', dir: AppDir, name: string, text?: strin
 			done();
 			m.data.ok ? resolve(m.data.text) : reject(new Error(m.data.error));
 		});
-		const send = () => void callPlatform('events', 'emit', { channel: CHANNEL.request, data: request }).catch(() => {});
+		// Refused here, it won't change: at once, naming the rule to add, and not as a server that doesn't answer.
+		const send = () => void callPlatform('events', 'emit', { channel: CHANNEL.request, data: request }).catch((e) => {
+			if (e?.code !== 'denied') return;
+			done();
+			reject(e);
+		});
 		// The server may still be connecting (vite dev): ask again until it answers.
 		resend = setInterval(send, 500);
 		const timer = setTimeout(() => (done(), reject(new Error(`app file ${name}: no answer from the app server`))), 10_000);
@@ -112,6 +127,7 @@ export function serveAppFiles(): void {
 		let reply: Reply;
 		try {
 			if ((r.op !== 'read' && r.op !== 'write') || r.dir !== 'userData') throw new Error('invalid request');
+			if (!pageMayUse(r.op, r.name)) throw new Error(`app file ${r.name}: not one a page can ${r.op}. Do it in server code`);
 			reply = { nonce: r.nonce, ok: true, text: await local(r.op, r.dir, r.name, r.text) };
 		} catch (err) {
 			reply = { nonce: r.nonce, ok: false, error: (err as Error).message };

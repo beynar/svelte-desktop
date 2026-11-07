@@ -23,6 +23,7 @@ import { basename, join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
 import { APP_FOLDER_MARKER } from "../updater/platform.ts";
 import { compileStaged, sizeFlags } from "./bun-compile.ts";
+import { keepsTestChannel } from "./test-channel-policy.ts";
 import { appIcons } from "./icons.ts";
 import { buildLanguagePlugins } from "./native-langs.ts";
 import { pluginSources as sharedPluginSources } from "./native.ts";
@@ -120,7 +121,7 @@ async function compile(c: ResolvedConfig, stage: string, out: string, arch: Arch
   flags.push(...(await sizeFlags(c, bun, { aot: native, warn }))); // --aot can't cross-compile
   const rev = (await $`${bun} --revision`.text()).trim();
   log(`bun build --compile ${flags.join(" ")} (${rev})`);
-  await compileStaged(bun, stage, out, flags, warn);
+  await compileStaged(bun, stage, out, flags, warn, !keepsTestChannel(c));
 }
 
 const KNOWN_MIME: Record<string, string> = {

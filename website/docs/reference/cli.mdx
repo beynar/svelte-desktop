@@ -39,7 +39,7 @@ It ends by saying what to run next, and that `@sveltejs/adapter-bun` and `@types
 
 ```sh
 kitop dev [--mac | --windows | --linux] [vite options]
-kitop build [--mac] [--windows] [--linux] [vite options]
+kitop build [--mac] [--windows] [--linux] [--release] [vite options]
 ```
 
 With no flag, these are the website: `vite dev` and `vite build`, with the `adapter` given to `sveltekit()`. With a flag, they are the desktop app for that OS, and the project's adapter plays no part. With `desktop({ website: false })` the project is a desktop app only, and with no flag builds for the host.
@@ -51,6 +51,8 @@ With no flag, these are the website: `vite dev` and `vite build`, with the `adap
 | `dev --linux` | — | ✓ | — |
 | `build --windows` | With Docker | With Docker | ✓ |
 | `build --linux` | With Docker | ✓ | With Docker |
+
+`--release` is the build you distribute: nothing can drive it from outside, signed or not. It has no test channel, so `launch()` can't test it. See [Builds you distribute](/concepts/security#builds-you-distribute). With `vite build`, `KITOP_RELEASE=1` does the same.
 
 Several flags on `build` run one after the other, and stop at the first failure. `kitop` runs on Bun; a host that only has Node can build the website with `vite build`.
 

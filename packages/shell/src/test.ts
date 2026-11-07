@@ -177,7 +177,7 @@ export async function launch(options: LaunchOptions = {}): Promise<AppHandle> {
   if (!socket) {
     proc.kill();
     server.stop(true);
-    throw new Error(`launch: the app did not connect within ${timeout} ms. A build signed to be distributed has no test channel: build with KITOP_TEST_BUILD=1 to test it.\n${stdout.slice(-2000)}`);
+    throw new Error(`launch: the app did not connect within ${timeout} ms. A build made to be distributed (signed, or kitop build --release) has no test channel. To test a signed one, build it with KITOP_TEST_BUILD=1.\n${stdout.slice(-2000)}`);
   }
   // Not ready: it goes too, or the next launch takes it for the first instance and hands over to it.
   const failed = (e: Error) => {

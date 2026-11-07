@@ -92,8 +92,9 @@ try {
 ## Security
 
 - **Signed manifest.** The client verifies the ed25519 signature before reading any field, then checks the app identifier (`identifier`, stored as the manifest's `name`), the channel, and that the version is strictly newer (an old signed manifest can't downgrade anyone).
-- **The OS's signature too.** When the running app is signed, the update has to carry a valid signature from the same Apple team or Windows publisher, checked before anything is swapped. A stolen update key alone can't replace a signed app. An unsigned app has nothing to compare to.
-- **Expiry, if you want it.** `release merge --expires-in-days 90` (or `make-manifest`) signs a date after which clients refuse the manifest with `manifest_expired`, so nobody can hold an app back by replaying an old feed. The price: publish a fresh manifest before that date, or updates stop.
+- **The OS's signature too.** When the running app is signed, the update has to carry a valid signature from the same Apple team or Windows publisher, checked before anything is swapped: the whole bundle on macOS, every `.exe`, `.dll` and addon on Windows. If `codesign` or PowerShell can't answer, the update is refused. A stolen update key alone can't replace a signed app. An unsigned app has nothing to compare to.
+- **Over https.** The manifest, the archives and the patches have to be on `https`, redirects included. `http` is only accepted on a loopback address (`127.0.0.1`, `localhost`, `[::1]`), for a local feed or a test. Anything else fails with `manifest_invalid` or `download_failed`.
+- **Expiry: use it.** `release merge --expires-in-days 90` (or `make-manifest`) signs a date after which clients refuse the manifest with `manifest_expired`, so nobody can hold an app back by replaying an old feed. Without it, an old feed stays valid forever. The price: publish a fresh manifest before that date, or updates stop.
 - **Timeouts.** A check gives up after 30 s, and a download after 60 s without a byte. A slow connection is fine.
 - **Pinned artifacts.** Every archive's sha256 and size are in the signed manifest and checked while streaming. A compromised CDN can cause a failed update, not a malicious one.
 - **Key rotation.** Ship a release embedding `[oldKey, newKey]`, then sign with the new key, then drop the old one.

@@ -473,15 +473,8 @@ static void save_records() {
   json out = json::array();
   for (size_t i = 0; i < all.size() && i < 200; i++) out.push_back(notif::record_to_disk(*all[i])); // newest 200
   std::error_code ec;
-  auto path = std::filesystem::u8path(records_path()), tmp = path;
-  tmp += ".tmp";
-  std::filesystem::create_directories(path.parent_path(), ec);
-  {
-    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-    if (!f) return;
-    f << out.dump();
-  }
-  std::filesystem::rename(tmp, path, ec);
+  std::filesystem::create_directories(std::filesystem::u8path(records_path()).parent_path(), ec);
+  write_json_file(records_path(), out);
 }
 
 static void load_records() {

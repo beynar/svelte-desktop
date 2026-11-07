@@ -75,6 +75,10 @@ int platform_create_window(NSDictionary *opts);
 /// quitOnLastWindowClosed: false — show the (hidden) main window, or create it if it was closed. Native id or 0.
 int platform_show_main_window(void);
 NSString *_Nullable platform_app_origin(void);
+/// The first window's testChannel option (build/test-channel-policy.ts).
+void platform_set_test_channel(BOOL on);
+/// A build with the test channel, started with KITOP_TEST: the test channel's own ops.
+BOOL platform_test_channel(void);
 /// App identity from Info.plist, falling back to the shell options.
 NSString *platform_app_name(void);
 /// The shell's own English menu labels in the app's language for this user (platform_l10n.mm).

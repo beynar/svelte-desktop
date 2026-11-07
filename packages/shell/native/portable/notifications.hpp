@@ -14,9 +14,32 @@
 #include <map>
 #include <sstream>
 
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "core.hpp"
 
 namespace sd::notif {
+
+/// All of it on the disk once it returns true: renamed after that, a power cut can't leave an empty file.
+inline bool write_durably(const std::filesystem::path &p, const std::string &bytes) {
+#if defined(_WIN32)
+  FILE *f = _wfopen(p.c_str(), L"wb");
+#else
+  FILE *f = fopen(p.c_str(), "wb");
+#endif
+  if (!f) return false;
+  bool ok = fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size() && fflush(f) == 0;
+#if defined(_WIN32)
+  ok = ok && _commit(_fileno(f)) == 0;
+#else
+  ok = ok && fsync(fileno(f)) == 0;
+#endif
+  return fclose(f) == 0 && ok;
+}
 
 // ---- hooks the backend defines -------------------------------------------------
 /// The window that should run a response's default action: `preferred` (the window
@@ -288,12 +311,7 @@ struct Store {
     std::filesystem::create_directories(p.parent_path(), ec);
     auto tmp = p;
     tmp += ".tmp";
-    {
-      std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-      if (!f) return "cannot write " + tmp.string();
-      f << items.dump();
-      if (!f.flush()) return "cannot write " + tmp.string();
-    }
+    if (!write_durably(tmp, items.dump())) return "cannot write " + tmp.string();
     std::filesystem::rename(tmp, p, ec);
     if (ec) {
       std::filesystem::remove(tmp, ec);

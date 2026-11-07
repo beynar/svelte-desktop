@@ -131,6 +131,8 @@ export default async (t: Harness) => {
     [{ type: "ftp", host: "h", port: 1 }, "invalid_args"], [{ type: "http", host: "", port: 1 }, "invalid_args"], [{ type: "http", host: "h", port: 70000 }, "invalid_args"], [{ type: "http", host: "h", port: 1.5 }, "invalid_args"],
     [{ type: "socks", host: "h", port: 1, tls: true }, "invalid_args"], [{ type: "http", host: "h", port: 1, password: "p" }, "invalid_args"], [{ type: "http", host: "h", port: 1, username: 3 }, "invalid_args"],
     [{ type: "http", host: "h", port: 1, pac: "x" }, "unsupported"],
+    // Pasted into a URI: not another host than it says.
+    [{ type: "http", host: "a@evil.example", port: 1 }, "invalid_args"], [{ type: "http", host: "evil.example/x", port: 1 }, "invalid_args"], [{ type: "http", host: "a b", port: 1 }, "invalid_args"],
   ];
   for (const [p, code] of bad) t.check(`setProxy ${JSON.stringify(p)} → ${code}`, (await s("setProxy", { session: "one", proxy: p })).error?.code === code);
   t.check("setProxy: not an object → invalid_args", (await s("setProxy", { session: "one" })).error?.code === "invalid_args");

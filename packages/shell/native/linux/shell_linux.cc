@@ -176,6 +176,7 @@ std::string app_version() { return g_app_version.empty() ? "0.0.0" : g_app_versi
 void set_app_name_override(const std::string &n) { g_name_override = n; }
 void set_app_identifier_override(const std::string &i) { g_identifier_override = i; }
 
+bool g_test_channel = false;
 static bool g_quit_on_last_window = true; // desktop.config quitOnLastWindowClosed
 
 void request_quit() {
@@ -403,6 +404,7 @@ static int create_window(const json &o) {
   // Opening a document or a link from the desktop starts a new process: hand it to
   // the running instance (openUrls / openFiles there) and leave before any window.
   if (g_order.empty() && o.value("singleInstance", false) && !claim_single_instance()) _exit(0);
+  if (g_order.empty()) g_test_channel = o.value("testChannel", false);
   if (g_order.empty() && o.contains("quitOnLastWindowClosed")) g_quit_on_last_window = o.value("quitOnLastWindowClosed", true);
   if (g_order.empty()) set_protocol_schemes(o.contains("protocols") ? o["protocols"] : json());
   bool validSession = false;

@@ -395,7 +395,9 @@ static void set_proxy(CallPtr c) {
   std::string type = p.contains("type") && p["type"].is_string() ? p["type"].get<std::string>() : "";
   std::string host = p.contains("host") && p["host"].is_string() ? p["host"].get<std::string>() : "";
   double port = p.contains("port") && p["port"].is_number() ? p["port"].get<double>() : 0;
-  if ((type != "http" && type != "socks") || host.empty() || port != (int)port || port < 1 || port > 65535)
+  // It ends up in a URI: nothing but what a host is made of, or `a@b/` would be another host.
+  bool valid_host = !host.empty() && host.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:") == std::string::npos;
+  if ((type != "http" && type != "socks") || !valid_host || port != (int)port || port < 1 || port > 65535)
     return c->fail("invalid_args", "sessions.setProxy: type, host and port 1–65535 are required");
   for (const char *k : {"username", "password"})
     if (p.contains(k) && !p[k].is_string()) return c->fail("invalid_args", "Proxy credentials must be strings");

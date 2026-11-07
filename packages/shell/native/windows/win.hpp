@@ -71,6 +71,8 @@ std::string local_file(const std::string &name);
 json read_json_file(const std::string &path, const json &fallback);
 /// Whole or not at all: through a temporary file.
 void write_json_file(const std::string &path, const json &value);
+/// A build with the test channel (desktop.config, build/test-channel-policy.ts), started with KITOP_TEST.
+bool test_channel();
 /// "~/x" -> the user's folder.
 std::string expand_home(const std::string &path);
 

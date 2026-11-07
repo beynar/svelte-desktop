@@ -51,7 +51,7 @@ export interface SignConfig {
     certificateFile?: string;
     /** Certificate password. Default: $WINDOWS_CERT_PASSWORD. */
     password?: string;
-    /** RFC 3161 timestamp server. Default: http://timestamp.digicert.com */
+    /** RFC 3161 timestamp server. Default: https://timestamp.sectigo.com */
     timestampUrl?: string;
   };
 }

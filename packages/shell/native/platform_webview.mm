@@ -161,7 +161,7 @@ static NSString *print_view(SDWebViewState *s, BOOL silent, NSString *pdfPath, N
   NSDictionary *m = message.body;
   NSString *t = m[@"t"];
   if ([t isEqual:@"ready"]) {
-    if (getenv("KITOP_TEST")) self.permissionFrame = message.frameInfo;
+    if (platform_test_channel()) self.permissionFrame = message.frameInfo;
     NSString *app = platform_app_origin();
     if (app && [origin_string(message.frameInfo.securityOrigin) isEqualToString:app]) g_page_ready = YES;
   } else if ([t isEqual:@"print"]) {
@@ -932,7 +932,7 @@ void platform_register_webview(void) {
   platform_register_web_content();
   platform_register_web_policy();
   reg(@"_permissionPolicyForTesting", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
-    if (!getenv("KITOP_TEST")) return [c fail:@"denied" message:@"Only available to the test channel"];
+    if (!platform_test_channel()) return [c fail:@"denied" message:@"Only available to the test channel"];
     NSString *permission = [c string:@"permission"];
     if (!permission || ![@[@"camera", @"microphone", @"location", @"speech", @"screenRecording"] containsObject:permission])
       return [c fail:@"invalid_args" message:@"Expected a web permission"];
@@ -957,7 +957,7 @@ void platform_register_webview(void) {
   });
   // Test-channel-only crash injection. WebKit exposes no public termination API.
   reg(@"_terminateForTesting", ^(PlatformCall *c, SDWebViewState *s, WKWebView *wv) {
-    if (!getenv("KITOP_TEST")) return [c fail:@"denied" message:@"Only available to the test channel"];
+    if (!platform_test_channel()) return [c fail:@"denied" message:@"Only available to the test channel"];
     // A real crash exercises the public termination callback; graceful termination SPI can stall.
     SEL process = NSSelectorFromString(@"_webProcessIdentifier");
     if (![wv respondsToSelector:process]) return [c fail:@"unsupported" message:@"WebKit process identifier SPI unavailable"];

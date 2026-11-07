@@ -3,7 +3,7 @@ title: host.windowState
 description: Save and restore a window snapshot in the app's user data directory.
 ---
 
-`host.windowState` stores one window snapshot in `window-state.json` under `host.app.getPath('userData')`. Page code asks the app server to read and write it. All windows share this file, so saving from another window replaces the previous snapshot. From a page, a read or write fails after 10 seconds if the app server does not answer. In a plain browser tab, without the native layer, the snapshot is kept in `localStorage`.
+`host.windowState` stores one window snapshot in `window-state.json` under `host.app.getPath('userData')`. Page code asks the app server to read and write it. All windows share this file, so saving from another window replaces the previous snapshot. From a page, a read or write needs `events.emit` in [`bridge.allow`](/host#restricting-pages), rejects at once with `denied` without it, and fails after 10 seconds if the app server does not answer. In a plain browser tab, without the native layer, the snapshot is kept in `localStorage`.
 
 How-to: [Saving the frame](/ui/windows#saving-the-frame).
 

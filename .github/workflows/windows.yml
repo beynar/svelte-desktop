@@ -27,12 +27,32 @@ jobs:
         run: |
           (cd packages/shell && bun install --frozen-lockfile)
           (cd examples/notes && bun install --frozen-lockfile)
+          (cd examples/kit-conformance && bun install --frozen-lockfile)
       - name: Build the Windows app (shell.dll, addon and installer through the Docker toolchain)
         working-directory: examples/notes
         run: KITOP_TARGET=windows bunx --bun vite build
+      - name: A closed bridge list, then the build to distribute (--release, no list)
+        working-directory: examples/kit-conformance
+        run: |
+          KITOP_TARGET=windows bunx --bun vite build
+          mv ".desktop/dist/Kit Conformance-windows-x64" "$RUNNER_TEMP/kit-listed"
+          KIT_NO_LIST=1 bunx kitop build --windows --release
+          mv ".desktop/dist/Kit Conformance-windows-x64" "$RUNNER_TEMP/kit-release"
       - name: Unit tests (packagers)
         working-directory: packages/shell
+        env:
+          KITOP_SIGN_TEST: native/build/windows-x64/shell.dll
         run: bun test src/build/package-windows.test.ts src/build/package-linux.test.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kit-listed
+          path: ${{ runner.temp }}/kit-listed
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kit-release
+          path: ${{ runner.temp }}/kit-release
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: notes-windows-x64
@@ -61,9 +81,30 @@ jobs:
         with:
           name: notes-windows-x64-installer
           path: notes-installer
+      - uses: actions/download-artifact@v4
+        with:
+          name: kit-listed
+          path: kit-listed
+      - uses: actions/download-artifact@v4
+        with:
+          name: kit-release
+          path: kit-release
       - name: Install (examples/notes, no scripts)
         working-directory: examples/notes
         run: bun install --ignore-scripts
+      - name: Install (examples/kit-conformance, no scripts)
+        working-directory: examples/kit-conformance
+        run: bun install --ignore-scripts
+      - name: A closed bridge list
+        working-directory: examples/kit-conformance
+        env:
+          KIT_APP: ${{ github.workspace }}\kit-listed
+        run: bun test --timeout 120000 tests/bridge.test.ts
+      - name: The build to distribute (--release, no list)
+        working-directory: examples/kit-conformance
+        env:
+          KIT_APP: ${{ github.workspace }}\kit-release
+        run: bun test --timeout 120000 tests/release.test.ts
       - name: Session info
         shell: powershell
         run: |

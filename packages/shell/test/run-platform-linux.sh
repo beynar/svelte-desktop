@@ -14,13 +14,14 @@ for name in $SUITES; do
   [ "$name" = linux-keepalive ] && continue # below, with its own window options
   suite=test/platform/$name.ts
   # The test channel's ops and mock capture devices; linux-web-gate checks what happens without it.
-  channel=; case $name in linux-web-policy|linux-web-control) channel=KITOP_TEST=harness ;; esac
+  channel=; case $name in linux-web-policy|linux-web-control) channel='KITOP_TEST=harness HARNESS_WINDOW={"testChannel":true}' ;; esac
+  case $name in linux-web-gate) channel=KITOP_TEST=harness ;; esac
   # GTK's CUPS backend reads it once: its IPP server is in the suite.
   case $name in linux-web-print-cups) channel=CUPS_SERVER=127.0.0.1:8631 ;; esac
   # Schemes are declared with the first window. http and BAD are refused: they stay plain.
   case $name in linux-web-protocol) channel='HARNESS_WINDOW={"protocols":["asset","http","BAD"]}' ;; esac
   # What the machine's thermal zones would say: the suite writes them.
-  case $name in linux-thermal) channel=KITOP_THERMAL_DIR=/tmp/kitop-thermal ;; esac
+  case $name in linux-thermal) channel='KITOP_THERMAL_DIR=/tmp/kitop-thermal HARNESS_WINDOW={"testChannel":true}' ;; esac
   # A real Wayland session, on a headless compositor, with the suite's stand-in for the portal.
   case $name in linux-portal)
     channel="GDK_BACKEND=wayland WAYLAND_DISPLAY=kitop-wayland"

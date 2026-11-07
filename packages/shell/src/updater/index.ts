@@ -6,12 +6,12 @@ import { lstatSync } from "node:fs";
 import { chmod, lstat, mkdir, readdir, rename, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { extractArchive } from "./archive.ts";
-import { downloadVerified, hasVerifiedFile, type DownloadProgress } from "./download.ts";
+import { downloadVerified, hasVerifiedFile, requireSecure, type DownloadProgress } from "./download.ts";
 import { UpdateError } from "./errors.ts";
 import { helperCommand, psQuote, renderPs1Helper, renderShHelper, shQuote, windowsLauncher, type HelperPlan } from "./helper.ts";
 import { isSemver, parseSignedManifest, type Artifact, type PlatformKey, type UpdateManifest } from "./manifest.ts";
 import { APP_FOLDER_MARKER, defaultDataDir, isCompiledBinary, locateInstall, platformKeyOf, type InstallLocation } from "./platform.ts";
-import { verifyMacUpdate, verifyWindowsUpdate } from "./signature.ts";
+import { codeFiles, verifyMacUpdate, verifyWindowsUpdate } from "./signature.ts";
 import { readState, writeState, clearState, type Move, type UpdateState } from "./state.ts";
 
 export { UpdateError, type UpdateErrorCode } from "./errors.ts";
@@ -209,12 +209,14 @@ export function createUpdater(options: UpdaterOptions): Updater {
 
 	async function check(opts: { signal?: AbortSignal } = {}): Promise<UpdateInfo | null> {
 		const url = options.manifestUrl.replaceAll("{channel}", encodeURIComponent(channel));
+		requireSecure(new URL(url), "manifest_invalid", "the manifest");
 		// A server that accepts and never answers doesn't keep a check going forever.
 		const limit = AbortSignal.timeout(checkTimeoutMs);
 		let res: Response;
 		let text: string;
 		try {
 			res = await doFetch(url, { headers: { "cache-control": "no-cache" }, signal: opts.signal ? AbortSignal.any([opts.signal, limit]) : limit });
+			if (res.url) requireSecure(new URL(res.url), "manifest_invalid", "the manifest"); // a redirect
 			if (!res.ok) throw new UpdateError("manifest_fetch_failed", `cannot fetch ${url}: HTTP ${res.status}`);
 			text = await res.text();
 		} catch (err) {
@@ -246,13 +248,12 @@ export function createUpdater(options: UpdaterOptions): Updater {
 		if (!platformKey || !artifact) return null;
 
 		const resolved = new URL(artifact.url, url);
-		if (resolved.protocol !== "https:" && resolved.protocol !== "http:") {
-			throw new UpdateError("manifest_invalid", `artifact url must be http(s): ${resolved.href}`);
-		}
+		requireSecure(resolved, "manifest_invalid", "the artifact");
 		// Delta patches (signed with the manifest): pick the one from our version.
 		const patches = (manifest.patches as Record<string, Array<{ from: string; url: string; sha256: string; size: number }>> | undefined)?.[platformKey];
 		const p = Array.isArray(patches) ? patches.find((x) => x?.from === currentVersion && typeof x.url === "string" && /^[0-9a-f]{64}$/.test(x.sha256) && Number.isSafeInteger(x.size)) : undefined;
 		const patchUrl = p ? new URL(p.url, url) : null;
+		if (patchUrl) requireSecure(patchUrl, "manifest_invalid", "the patch");
 		return {
 			version: manifest.version,
 			currentVersion,
@@ -262,7 +263,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			mandatory: manifest.minimumVersion ? Bun.semver.order(currentVersion, manifest.minimumVersion) < 0 : false,
 			platformKey,
 			artifact: { ...artifact, url: resolved.href },
-			...(p && patchUrl && /^https?:$/.test(patchUrl.protocol) ? { patch: { ...p, url: patchUrl.href } } : {}),
+			...(p && patchUrl ? { patch: { ...p, url: patchUrl.href } } : {}),
 			manifest,
 		};
 	}
@@ -326,8 +327,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			if (process.platform === "darwin" && platform === "darwin") await verifyMacUpdate(loc.target, app);
 		}
 		if (loc.kind === "executable" && process.platform === "win32" && platform === "win32") {
-			const exe = moves.find((m) => m.dest === loc.target);
-			if (exe) await verifyWindowsUpdate(loc.target, exe.src);
+			await verifyWindowsUpdate(loc.target, codeFiles(moves.map((m) => m.src)));
 		}
 	}
 

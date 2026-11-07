@@ -16,6 +16,12 @@ afterAll(async () => {
 });
 
 describe("downloadVerified", () => {
+	test("a redirect to the clear is refused", async () => {
+		const sha = "0".repeat(64);
+		const redirected = Object.defineProperty(new Response("x"), "url", { value: "http://cdn.example.net/a.bin" });
+		await expect(downloadVerified("https://updates.example.com/a.bin", join(root.dir, "clear.bin"), { sha256: sha, size: 1 }, { fetch: (async () => redirected) as unknown as typeof fetch })).rejects.toMatchObject({ code: "download_failed" });
+	});
+
 	test("a connection that goes quiet fails instead of holding the download forever", async () => {
 		const sha256 = "0".repeat(64);
 		const quiet = serveStatic({ "/quiet": () => new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(10)); } }), { headers: { "content-type": "application/octet-stream" } }) });

@@ -6,7 +6,7 @@ set -e
 mkdir -p /work
 cd /src
 tar -cf - --exclude=node_modules --exclude=.desktop --exclude=.svelte-kit --exclude=native/build --exclude=test/docker/results \
-  packages/shell examples/notes examples/panes examples/dashboard | tar -xf - -C /work
+  packages/shell examples/notes examples/panes examples/dashboard examples/kit-conformance | tar -xf - -C /work
 (cd /work/packages/shell && bun install >/dev/null 2>&1)
 SESSION_SH=/work/packages/shell/test/docker/session.sh . /work/packages/shell/test/docker/session.sh
 
@@ -42,6 +42,14 @@ prepare dashboard
 bun test --timeout 60000 tests/tabs.test.ts -t 'popover route'
 A11Y_APP=dashboard A11Y_SPLIT=0 bun test --timeout 60000 /work/packages/shell/test/docker/a11y.test.ts
 A11Y_APP=dashboard A11Y_SPLIT=1 bun test --timeout 60000 /work/packages/shell/test/docker/a11y.test.ts
+
+# A closed bridge list, then the build to distribute: --release, no list.
+prepare kit-conformance
+bunx --bun vite build 2>&1 | grep -E " error|✓ /" | tail -1
+bun test --timeout 60000 tests/bridge.test.ts
+KIT_NO_LIST=1 bunx kitop build --linux --release 2>&1 | grep -E " error|✓ /" | tail -1
+grep -q 'testChannel: false' .desktop/stage/desktop-worker.js
+bun test --timeout 90000 tests/release.test.ts
 
 # Real updates of the Linux app folder and AppImage, and their rollback (about 2 minutes).
 sh /work/packages/shell/test/docker/update.sh

@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { sidecarEntries, type ResolvedConfig } from "../config.ts";
 import { compileStaged, sizeFlags } from "./bun-compile.ts";
+import { keepsTestChannel } from "./test-channel-policy.ts";
 import { appIcons } from "./icons.ts";
 import { buildLanguagePlugins } from "./native-langs.ts";
 import { pluginSources } from "./native.ts";
@@ -470,7 +471,7 @@ async function compileExe(c: ResolvedConfig, stage: string, out: string, arch: A
   }
   const rev = (await $`${bun} --revision`.text()).trim();
   log(`bun build --compile ${flags.filter((f) => !f.startsWith("--windows-") || f === "--windows-hide-console").join(" ")} (${rev})`);
-  await compileStaged(bun, stage, out, flags, warn);
+  await compileStaged(bun, stage, out, flags, warn, !keepsTestChannel(c));
 }
 
 function publisher(c: ResolvedConfig): string {
@@ -494,7 +495,7 @@ function signSetup(c: ResolvedConfig): SignSetup | null {
   if (!pfx) return null;
   const abs = resolve(c.root, pfx);
   if (!existsSync(abs)) throw new Error(`Windows signing certificate not found: ${abs}`);
-  return { pfx: abs, password: c.sign?.windows?.password ?? process.env.WINDOWS_CERT_PASSWORD ?? "", timestamp: c.sign?.windows?.timestampUrl ?? "http://timestamp.digicert.com" };
+  return { pfx: abs, password: c.sign?.windows?.password ?? process.env.WINDOWS_CERT_PASSWORD ?? "", timestamp: c.sign?.windows?.timestampUrl ?? "https://timestamp.sectigo.com" };
 }
 
 /** What signed the build, for its log. */
@@ -509,9 +510,37 @@ export async function signWithCommand(files: string[], command: string[]): Promi
   }
 }
 
+/** Whether what osslsigncode prints says the file itself is intact. It also fails a chain it doesn't
+ *  trust, which says nothing about the file, and a certificate of your own has one. */
+export function authenticodeIntact(out: string): boolean {
+  const digest = /Calculated message digest\s*:\s*\S+(.*)/.exec(out);
+  if (!digest || digest[1]!.includes("MISMATCH")) return false;
+  return /Signature verification: ok/.test(out) || /certificate verify error/.test(out);
+}
+
+/** The file carries a signature that matches it, or the build stops here and not on a user's machine. */
+export async function verifyAuthenticode(files: string[]): Promise<void> {
+  const host = await onPath("osslsigncode");
+  if (!host && !(await hasDocker())) return warn("Windows signatures not verified: osslsigncode isn't on PATH and there's no Docker for the toolchain");
+  for (const f of files) {
+    let ok: boolean, out: string;
+    if (host) {
+      const r = await $`osslsigncode verify -in ${f}`.nothrow().quiet();
+      ok = r.exitCode === 0;
+      out = r.stdout.toString() + r.stderr.toString();
+    } else {
+      ({ ok, out } = await inToolchain([[dirname(f), "/f"]], `osslsigncode verify -in /f/'${basename(f).replace(/'/g, `'\\''`)}'`));
+    }
+    if (!ok && !authenticodeIntact(out)) throw new Error(`${basename(f)} doesn't verify after signing:\n${out}`);
+  }
+}
+
 async function signFiles(files: string[], s: SignSetup, name: string): Promise<void> {
   if (!files.length) return;
-  if ("command" in s) return signWithCommand(files, s.command);
+  if ("command" in s) {
+    await signWithCommand(files, s.command);
+    return verifyAuthenticode(files);
+  }
   const host = await onPath("osslsigncode");
   if (!host && !(await hasDocker())) throw new Error("Windows signing needs osslsigncode (on PATH or in the Docker toolchain)");
   // In a private file: a command's arguments are visible to every process on the machine.
@@ -542,6 +571,15 @@ async function signFiles(files: string[], s: SignSetup, name: string): Promise<v
   } finally {
     rmSync(passDir, { recursive: true, force: true });
   }
+  await verifyAuthenticode(files);
+}
+
+/** What has to be signed: every .exe, .dll and addon in the folder. The updater checks each one. */
+export function peFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const path = join(dir, e.name);
+    return e.isDirectory() ? peFiles(path) : /\.(exe|dll|node)$/i.test(e.name) ? [path] : [];
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -820,9 +858,7 @@ export async function packageWindows(c: ResolvedConfig, stage: string): Promise<
   // 4. Authenticode
   const sign = signSetup(c);
   if (sign) {
-    const pes = [join(appDir, exe), join(appDir, "shell.dll"), ...(plugin ? [join(appDir, "app-native.dll")] : []),
-      ...Object.keys(addons).map((n) => join(appDir, "addons", `${n}.node`)),
-      ...readdirSync(appDir).filter((f) => f.endsWith(".exe") && f !== exe).map((f) => join(appDir, f))];
+    const pes = peFiles(appDir);
     await signFiles(pes, sign, c.appName);
     log(`authenticode: ${pes.length} files signed (${signedWith(sign)})`);
   } else {

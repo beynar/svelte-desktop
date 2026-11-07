@@ -745,8 +745,7 @@ static void send_scroll_step(NSWindow *w, NSPoint local, double dx, double dy, C
 }
 
 static void register_test_scroll(void) {
-  const char *test = getenv("KITOP_TEST");
-  if (!test || strncmp(test, "ws://127.0.0.1:", 15)) return;
+  if (!platform_test_channel() || strncmp(getenv("KITOP_TEST"), "ws://127.0.0.1:", 15)) return;
   platform_register(@"window", @"testScroll", ^(PlatformCall *c) {
     NSWindow *w = platform_window(platform_resolve_window(c));
     if (!w) return [c fail:@"invalid_args" message:@"window.testScroll: no such window"];

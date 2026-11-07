@@ -437,6 +437,7 @@ int shell_window_create(const char *opts_json) {
   // windows closed without going through performClose:.
   webview_sd_keep_running_without_windows(1);
   if (!g_main_opts) {
+    platform_set_test_channel([o[@"testChannel"] boolValue]);
     platform_web_content_set_schemes([o[@"protocols"] isKindOfClass:NSArray.class] ? o[@"protocols"] : @[]);
     g_main_opts = o;
     platform_app_observe_launch(); // AppKit finishes launching inside the first window's creation

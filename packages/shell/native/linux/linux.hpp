@@ -122,6 +122,7 @@ bool theme_app_dark();
 /// window.setTheme: GTK's settings and WebKit's prefers-color-scheme belong to the screen. (svc_misc.cc)
 void theme_window_changed(const std::string &theme);
 std::string app_name();
+extern bool g_test_channel; // the first window's option (build/test-channel-policy.ts)
 std::string app_identifier();
 std::string app_version();
 void set_app_name_override(const std::string &name);

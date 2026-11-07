@@ -72,19 +72,30 @@ try {
 By default a page can call no native operation, so a script injected into it (an XSS) can't read the keychain or open files. List what your pages use in `bridge.allow`, or make the call from server code, which is never restricted and is where sensitive work belongs. The list is enforced natively. A call it refuses rejects with `denied`, and the page's console names the rule to add:
 
 ```ts desktop.config.ts
-bridge: { allow: ['window.*', 'clipboard.readText', 'notifications.*', 'events.emit', 'app.getInfo', 'app.getPath'] },
+bridge: { allow: ['window.*', 'clipboard.readText', 'notifications.*', 'events.emit', 'app.getInfo'] },
 ```
 
 Rules are `service.op`, `service.*` or `*`, and apply to plugin commands too (`text.*`). Only calls the page makes are checked: events the native side pushes to the page (window events, broadcasts from the server) still arrive.
 
-The list is checked against every operation behind a `host` member, including ones you don't call directly. Several page features go through `events.emit`, so a list without it breaks them silently or with `denied`:
+The list is checked against every operation behind a `host` member, including ones you don't call directly. Several page features go through `events.emit`, so without it they reject at once with `denied`, and its message names the rule to add:
 
 - `host.broadcast`, and everything built on it: `host.jobs` (its first call asks the server for a snapshot), and the refresh of one window's state when another window changes it.
-- `host.store`, `host.windowState` and other app files: a page reads and writes them by asking the app server over `events.emit`. Without it they time out after ten seconds, and `host.windowState` also needs `app.getPath`.
+- `host.store`, `host.windowState` and the saved tabs of `<WindowTabs>`: a page reads and writes them by asking the app server over `events.emit`. `host.windowState` also needs the `window.*` operations it reads and applies.
 - `host.notifications`, which also asks the server over `events.emit`.
 - `host.app.info` (and `host.app.name`, `version`...) needs `app.getInfo`.
 
 `*` gives pages everything, and `kitop doctor` warns about it. Server code is unaffected, so the same members work from an endpoint or remote function.
+
+### What `events.emit` gives a page
+
+Listing `events.emit` gives a page, and so a script injected into it, two things:
+
+- **The store.** It can read and write `host.store`, the window state and the saved tabs. Those are the only files the server gives a page. It refuses the rest of the app's data folder, and the name of a file doesn't get around that.
+- **Messages to the server's listeners.** It can send anything on any channel, to every page and to the server. Every `host.onBroadcast` in your server code hears it, so treat that data as you would a request from the page. Other pages hear it too, so a page can pretend to be the server to them.
+
+The framework's own listeners answer on those channels. A page with `events.emit` can list every background job with its arguments, results and last log lines (`jobs:hello`) and cancel any of them (`jobs:cancel`). With `push.server`, it can register or unregister the app for push and read its target (`push:request`).
+
+Don't list it if your pages don't need any of this. Call those features from server code instead.
 
 ## Imports instead of the global
 

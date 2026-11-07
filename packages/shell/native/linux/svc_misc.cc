@@ -926,7 +926,7 @@ static std::string read_sys(const std::string &path) {
 }
 
 static std::string thermal_state() {
-  const char *override = getenv("KITOP_THERMAL_DIR"); // the tests' zones: a container has what its host has
+  const char *override = g_test_channel ? getenv("KITOP_THERMAL_DIR") : nullptr; // the tests' zones: a container has what its host has
   std::string root = override && *override ? override : kThermalDefault;
   GDir *dir = g_dir_open(root.c_str(), 0, nullptr);
   if (!dir) return "";

@@ -2,7 +2,7 @@
 // kitop CLI
 //   create   scaffold a new desktop app (SvelteKit + config + native plugin + tests)
 //   init     add desktop support to a SvelteKit project (config, vite plugin, scripts)
-//   dev, build   the website, or with --mac, --windows, --linux the desktop app
+//   dev, build   the website, or with --mac, --windows, --linux the desktop app (build --release: to distribute)
 //   doctor   check the toolchain, the project and signing/notarization setup
 //   keygen   create the ed25519 key pair for signed updates
 //   preflight <App.app>  check a bundle against Apple's notarization requirements
@@ -271,7 +271,7 @@ try {
   else if (cmd === "dev" || cmd === "build") {
     for (const run of viteRuns(cmd, rest)) {
       const vite = Bun.spawn(["bunx", "--bun", "vite", cmd, ...run.args], {
-        env: { ...process.env, ...(run.target ? { KITOP_TARGET: run.target } : {}) },
+        env: { ...process.env, ...(run.target ? { KITOP_TARGET: run.target } : {}), ...(run.release ? { KITOP_RELEASE: "1" } : {}) },
         stdio: ["inherit", "inherit", "inherit"],
       });
       for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => vite.kill(signal));

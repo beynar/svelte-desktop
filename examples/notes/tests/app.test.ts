@@ -115,6 +115,38 @@ test('host.store and host.windowState from the page: the app server owns the fil
 	await app.eval(`(async () => { host.store.delete('e2e'); await host.store.flush(); })()`);
 });
 
+test('host.store is what a page can ask for: not the other files in the folder', async () => {
+	const own = await app.platform<string>('app', 'getPath', { name: 'userData' });
+	// The real channel, as a script in the page would use it.
+	const ask = (request: object) =>
+		app.eval<{ ok: boolean; text?: string | null; error?: string }>(
+			`new Promise((resolve) => {
+				const nonce = Math.random().toString(36).slice(2);
+				const off = host.onBroadcast('appfile:reply', (m) => { if (m.nonce === nonce) { off(); resolve(m); } });
+				host.broadcast('appfile:request', { dir: 'userData', nonce, ...${JSON.stringify(request)} });
+			})`
+		);
+	await Bun.write(`${own}/web-permissions.json`, '{"kept":true}');
+	await Bun.write(`${own}/.crash-restarts`, 'kept');
+	for (const name of ['web-permissions.json', '.crash-restarts', 'scheduled-notifications.json', 'downloads.json', 'push.json', 'jobs.json', 'tabs-x.json.bak', 'window-state.json.bak']) {
+		for (const op of ['read', 'write']) {
+			const reply = await ask({ op, name, text: '{"https://evil.example\\ncamera":{"decision":"allow"}}' });
+			expect(reply.ok).toBe(false);
+			expect(reply.error).toContain('server code');
+		}
+	}
+	expect(await Bun.file(`${own}/web-permissions.json`).text()).toBe('{"kept":true}');
+	expect(await Bun.file(`${own}/.crash-restarts`).text()).toBe('kept');
+	// What the framework's page code uses goes through, the other way around stays closed.
+	await app.eval(`(async () => { await host.store.load(); host.store.set('asked', 1); await host.store.flush(); host.store.set('asked', 2); await host.store.flush(); })()`);
+	expect((await ask({ op: 'read', name: 'kitop-store.json' })).text).toContain('"asked": 2');
+	expect((await ask({ op: 'read', name: 'kitop-store.json.bak' })).text).toContain('"asked": 1');
+	expect((await ask({ op: 'write', name: 'kitop-store.json.bak', text: 'x' })).ok).toBe(false);
+	expect((await ask({ op: 'read', name: 'kitop-store.json.corrupt' })).ok).toBe(false);
+	expect((await ask({ op: 'write', name: 'tabs-app.json', text: '{}' })).ok).toBe(true);
+	await app.eval(`(async () => { host.store.delete('asked'); await host.store.flush(); })()`);
+});
+
 test('native Swift plugin', async () => {
 	expect(await app.platform<string>('greeter', 'hello', { name: 'test' })).toContain('from Swift');
 	expect(await app.platform<number>('greeter', 'add', { a: 1, b: 2 })).toBe(3);

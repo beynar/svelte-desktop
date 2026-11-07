@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { createUpdater, type UpdaterOptions } from "./index.ts";
 import { defaultDataDir, locateInstall, platformKeyOf } from "./platform.ts";
-import { writeState } from "./state.ts";
+import { closeSync, openSync, readFileSync, writeSync } from "node:fs";
+import { writeAll, writeState } from "./state.ts";
 import { makeKeys, signedManifest, tempDir } from "./test-utils.ts";
 import type { UpdateManifest } from "./manifest.ts";
 
@@ -35,7 +36,46 @@ async function setup(fields: Partial<UpdateManifest>, opts: Partial<UpdaterOptio
 	return { updater, keys, manifest, requested, dir, cleanup };
 }
 
+test("writeAll: a write the disk took only part of goes on until all of it is there", async () => {
+	const { dir, cleanup } = await tempDir();
+	const fd = openSync(join(dir, "s"), "w");
+	const short = ((f: number, bytes: Uint8Array, at = 0) => writeSync(f, bytes, at, Math.min(3, bytes.length - at))) as typeof writeSync;
+	writeAll(fd, "é".repeat(40), short);
+	closeSync(fd);
+	expect(readFileSync(join(dir, "s"), "utf8")).toBe("é".repeat(40));
+	await cleanup();
+});
+
 describe("check()", () => {
+	test("anything in the clear is refused, except on a loopback address", async () => {
+		const clear = await setup({}, { manifestUrl: "http://updates.example.com/update.json" });
+		await expect(clear.updater.check()).rejects.toMatchObject({ code: "manifest_invalid", message: expect.stringContaining("https") });
+		expect(clear.requested).toEqual([]); // before asking anyone
+		await clear.cleanup();
+		const artifact = await setup({ artifacts: { "darwin-arm64": art("http://cdn.example.net/a.tar.zst") } });
+		await expect(artifact.updater.check()).rejects.toMatchObject({ code: "manifest_invalid" });
+		await artifact.cleanup();
+		const patch = await setup({ patches: { "darwin-arm64": [{ from: "1.0.0", url: "http://cdn.example.net/p.sdpatch", sha256: "c".repeat(64), size: 1 }] } } as never);
+		await expect(patch.updater.check()).rejects.toMatchObject({ code: "manifest_invalid" });
+		await patch.cleanup();
+		for (const host of ["127.0.0.1:9", "localhost:9", "[::1]:9", "127.1.2.3:9"]) {
+			const local = await setup({ artifacts: { "darwin-arm64": art(`http://${host}/a.tar.zst`) } }, { manifestUrl: `http://${host}/update.json` });
+			expect((await local.updater.check())!.artifact.url).toBe(`http://${host}/a.tar.zst`);
+			await local.cleanup();
+		}
+		// "127.0.0.1.example.com" is not one.
+		const lookalike = await setup({}, { manifestUrl: "http://127.0.0.1.example.com/update.json" });
+		await expect(lookalike.updater.check()).rejects.toMatchObject({ code: "manifest_invalid" });
+		await lookalike.cleanup();
+	});
+
+	test("a redirect to the clear is refused too", async () => {
+		const redirected = Object.defineProperty(new Response("{}"), "url", { value: "http://updates.example.com/update.json" });
+		const { updater, cleanup } = await setup({}, { fetch: (async () => redirected) as unknown as typeof fetch });
+		await expect(updater.check()).rejects.toMatchObject({ code: "manifest_invalid" });
+		await cleanup();
+	});
+
 	test("a manifest past its expiry is refused, before it is one is fine", async () => {
 		const past = await setup({ expiresAt: new Date(Date.now() - 1000).toISOString() });
 		await expect(past.updater.check()).rejects.toMatchObject({ code: "manifest_expired" });

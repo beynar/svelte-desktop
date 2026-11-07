@@ -616,8 +616,7 @@ void register_web_policy() {
   });
   // What a request from the target's page would get, without one (the test channel only).
   reg("webview", "_permissionPolicyForTesting", [](CallPtr c) {
-    wchar_t flag[8];
-    if (!GetEnvironmentVariableW(L"KITOP_TEST", flag, 8)) return c->fail("denied", "Only available to the test channel");
+    if (!test_channel()) return c->fail("denied", "Only available to the test channel");
     std::string permission = c->str("permission");
     if (!known_permission(permission)) return c->fail("invalid_args", "Expected a web permission");
     View *v = view_for_call(c);

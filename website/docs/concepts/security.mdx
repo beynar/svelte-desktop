@@ -8,7 +8,8 @@ Your app is a local web server plus a window. Most of the protection is on by de
 ## What you should do
 
 - **Treat server code as fully privileged.** Remote functions, endpoints and hooks run with all of Bun's APIs and the whole `host` API. Nothing restricts them. Validate every argument as you would on a public server.
-- **Keep the page bridge narrow.** By default a page can call no native operation. [`bridge.allow`](/reference/config#bridge) lists the ones it may call (`window.*`, `clipboard.readText`, `*`), and each one you add is also open to a script injected into the page (an XSS), `*` above all. It's enforced natively. It does not limit server code, and it does not make a page's own JavaScript trustworthy: whatever your pages are allowed to do, a script injected into them can do too. Keep dependencies and rendered HTML (`{@html}`) under control.
+- **Keep the page bridge narrow.** By default a page can call no native operation. [`bridge.allow`](/reference/config#bridge) lists the ones it may call (`window.*`, `clipboard.readText`, `*`), and each one you add is also open to a script injected into the page (an XSS), `*` above all. It's enforced natively. It does not limit server code, and it does not make a page's own JavaScript trustworthy: whatever your pages are allowed to do, a script injected into them can do too. Keep dependencies and rendered HTML (`{@html}`) under control. [`events.emit`](/host#what-eventsemit-gives-a-page) is the one to read about before you list it.
+- **Build what you distribute with `kitop build --release`.** See [Builds you distribute](#builds-you-distribute).
 - **Don't load untrusted content into app pages.** Use a [web view](/ui/web-view) for third-party sites. The native bridge answers only the app's own origin, so external content can't call `host`.
 - **Check origins on servers you add.** A [sidecar](/native/sidecars) or other local server listening on `127.0.0.1` has no cookie gate; see [Other servers](/features/websockets#other-servers).
 
@@ -24,15 +25,23 @@ Behind the cookie like the app, and added by the shell: `/__desktop/page-crashed
 
 Not behind the cookie: immutable build assets, including prerendered pages, and the single-use callback URL of a system-browser [OAuth](/host/web/oauth) sign-in. Don't put secrets in prerendered pages.
 
+## Builds you distribute
+
+`launch()` drives a built app through a test channel: when the app is started with `KITOP_TEST`, it connects to that socket and runs any native call it's sent. A plain `kitop build` keeps the channel on an unsigned build, on any OS, because that's the build your tests run against.
+
+`kitop build --release` makes a build that nothing drives from outside, signed or not. It has no test channel, and the operations made for tests refuse. On Windows it ignores `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` and `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`. The Bun runtime inside it no longer obeys `BUN_BE_BUN`, `BUN_OPTIONS` or `BUN_INSPECT`, which would run code in the app or open a debugger on it. A build signed for distribution is treated the same way, unless `KITOP_TEST_BUILD=1` keeps the channel to test it.
+
+What's left belongs to the OS, not the app. `LD_PRELOAD` still works on Linux, which is why there's no app identity to protect there. A debugger or a program running as the same user can still do what that user can.
+
 ## Data on disk
 
-The store, the window state and the updater's state are written to a temporary file, flushed to the disk, then renamed, so a crash or a power cut leaves the previous version whole. The store also keeps the save before as `kitop-store.json.bak`, and goes back to it if the file turns out unreadable, which it keeps as `.corrupt`.
+The store, the window state and the updater's state are written to a temporary file, flushed to the disk, then renamed, so a crash or a power cut leaves the previous version whole. The same goes for what the native side keeps on Windows and Linux: web permissions, sessions, download history and scheduled notifications. The store also keeps the save before as `kitop-store.json.bak`, and goes back to it if the file turns out unreadable, which it keeps as `.corrupt`.
 
 ## What is not protected
 
 - **`vite dev` has no cookie gate.** The server is Vite's, on `localhost`; Vite's host checks apply, and WebSockets require a matching `Origin`. Anything on the machine that can reach that port can request your app. Don't develop against real credentials you wouldn't expose to local processes. The native bridge in dev is a separate WebSocket on `127.0.0.1` guarded by a random token.
 - **Other programs running as the same user.** They can read the app's data folder and, with the right permissions, drive the machine anyway. The gate keeps out other web pages and unrelated processes, not the user's own account. The [MCP](/features/mcp#security) channel has the same limit.
-- **Another server on `127.0.0.1`.** Cookies aren't tied to a port, and `SameSite` counts every port of a host as the same site. So whatever the web view requests from another local port carries the session cookie: a view navigated there, or an `<img>` in one of your pages. A process listening on that port could then call your server until the app quits. This takes a program already running on the machine, and it's the reason not to point a view at a local server you don't trust, and to set a Content-Security-Policy if your pages show content from others. On macOS and Windows, [`setNavigationPolicy`](/host/web/web-content#setnavigationpolicypolicy) can refuse those navigations.
+- **Another server on `127.0.0.1`.** Cookies aren't tied to a port, and `SameSite` counts every port of a host as the same site. So whatever the web view requests from another local port carries the session cookie: a view navigated there, or an `<img>` in one of your pages. A process listening on that port could then call your server until the app quits. This takes a program already running on the machine, and it's the reason not to point a view at a local server you don't trust, and to set a Content-Security-Policy if your pages show content from others. [`setNavigationPolicy`](/host/web/web-content#setnavigationpolicypolicy) can refuse those navigations, but not the requests of an `<img>` or a `fetch`.
 - **Your own server code.** See above.
 
 ## Related

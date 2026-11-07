@@ -50,12 +50,18 @@ export async function readState(path: string): Promise<UpdateState | null> {
 	}
 }
 
+/** A full disk can take part of it and say so only in the count. */
+export function writeAll(fd: number, text: string, write: typeof writeSync = writeSync): void {
+	const bytes = new TextEncoder().encode(text);
+	for (let at = 0; at < bytes.length; ) at += write(fd, bytes, at);
+}
+
 export async function writeState(path: string, state: UpdateState): Promise<void> {
 	const tmp = `${path}.tmp`;
 	// Durable: a power cut must not lose how many times a new version has failed to start.
 	const fd = openSync(tmp, "w");
 	try {
-		writeSync(fd, `${JSON.stringify(state, null, 2)}\n`);
+		writeAll(fd, `${JSON.stringify(state, null, 2)}\n`);
 		fsyncSync(fd);
 	} finally {
 		closeSync(fd);

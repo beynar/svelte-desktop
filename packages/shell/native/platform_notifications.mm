@@ -571,8 +571,7 @@ void platform_register_notifications(void) {
   // e2e tests (launch() sets KITOP_TEST): a user response to a delivered
   // notification, through the same path as a real one. `cold`: as if no page was loaded.
   // Same condition as the test channel (which already drives the app): ws://127.0.0.1:<port>.
-  const char *test = getenv("KITOP_TEST");
-  if (test && !strncmp(test, "ws://127.0.0.1:", 15))
+  if (platform_test_channel() && !strncmp(getenv("KITOP_TEST"), "ws://127.0.0.1:", 15))
     platform_register(@"notifications", @"simulateResponse", ^(PlatformCall *call) {
       if (!has_bundle()) return [call fail:@"unavailable" message:@"notifications.simulateResponse: needs a bundled app"];
       NSString *ident = [call string:@"id"] ?: @"";

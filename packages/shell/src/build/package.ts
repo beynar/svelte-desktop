@@ -8,6 +8,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { USAGE_KEYS, sidecarEntries, usageDescriptions, type ResolvedConfig } from "../config.ts";
 import { appIcons } from "./icons.ts";
 import { compileStaged, sizeFlags } from "./bun-compile.ts";
+import { keepsTestChannel } from "./test-channel-policy.ts";
 import { buildLanguagePlugins } from "./native-langs.ts";
 import { typeNativePlugins } from "./native-types.ts";
 import { bundlePython, machOFiles } from "./python.ts";
@@ -189,6 +190,12 @@ async function codesign(path: string, identity: string, opts: { runtime: boolean
   await $`codesign ${args} ${path}`.quiet();
 }
 
+/** The build stops here if what it just signed doesn't verify, and not on a user's machine. */
+export async function verifyCodesign(path: string): Promise<void> {
+  const r = await $`codesign --verify --deep --strict ${path}`.nothrow().quiet();
+  if (r.exitCode !== 0) throw new Error(`${basename(path)} doesn't verify after signing:\n${r.stderr.toString()}`);
+}
+
 async function signApp(app: string, exe: string, c: ResolvedConfig, work: string): Promise<"ad-hoc" | "identity"> {
   const identity = signIdentity(c);
   const runtime = c.sign?.hardenedRuntime ?? identity !== "-";
@@ -228,8 +235,35 @@ async function signApp(app: string, exe: string, c: ResolvedConfig, work: string
   ];
   for (const f of nested) await codesign(f, identity, { runtime });
   await codesign(app, identity, { runtime, entitlements: entFile });
-  await $`codesign --verify --deep --strict ${app}`.quiet();
+  await verifyCodesign(app);
   return identity === "-" ? "ad-hoc" : "identity";
+}
+
+export type NotaryRun = (argv: string[], timeoutMs: number) => Promise<string>;
+
+const notaryRun: NotaryRun = async (argv, timeoutMs) => {
+  const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "ignore", timeout: timeoutMs });
+  const [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  return out;
+};
+
+const NOTARY_WAIT = "30m"; // Apple usually takes minutes, and at times much longer
+const NOTARY_TIMEOUT_MS = 35 * 60_000; // the wait, and the upload before it
+const NOTARY_TRIES = 3;
+
+/** Apple's answer. A network failure or a wait that ran out has none, and is tried again. A refusal is an answer. */
+export async function notarySubmit(file: string, profile: string, exec: NotaryRun = notaryRun, pauseMs = 30_000): Promise<{ status?: string; id?: string }> {
+  const argv = ["xcrun", "notarytool", "submit", file, "--keychain-profile", profile, "--wait", "--timeout", NOTARY_WAIT, "--output-format", "json"];
+  for (let attempt = 1; ; attempt++) {
+    const out = await exec(argv, NOTARY_TIMEOUT_MS);
+    let res: { status?: string; id?: string } = {};
+    try {
+      res = JSON.parse(out || "{}");
+    } catch {}
+    if ((res.status && res.status !== "In Progress") || attempt === NOTARY_TRIES) return res;
+    log(`notarytool: no answer (try ${attempt} of ${NOTARY_TRIES}), trying again`);
+    await Bun.sleep(pauseMs);
+  }
 }
 
 async function notarize(path: string, profile: string) {
@@ -239,9 +273,8 @@ async function notarize(path: string, profile: string) {
     submit = `${path}.notarize.zip`;
     await $`ditto -c -k --keepParent ${path} ${submit}`.quiet();
   }
-  const out = await $`xcrun notarytool submit ${submit} --keychain-profile ${profile} --wait --output-format json`.nothrow().text();
+  const res = await notarySubmit(submit, profile);
   if (submit !== path) rmSync(submit, { force: true });
-  const res = JSON.parse(out || "{}");
   if (res.status !== "Accepted")
     throw new Error(`notarization ${res.status ?? "failed"} for ${basename(path)} (id ${res.id ?? "?"}): xcrun notarytool log ${res.id} --keychain-profile ${profile}`);
   await $`xcrun stapler staple ${path}`.quiet();
@@ -274,7 +307,7 @@ async function compile(c: ResolvedConfig, stage: string, out: string, arch: Arch
   if (arch !== hostArch) flags.push(`--target=bun-darwin-${arch}`);
   const rev = (await $`${bun} --revision`.text()).trim();
   log(`bun build --compile ${flags.join(" ")} (${rev}, ${arch})`);
-  await compileStaged(bun, stage, out, flags, (m) => console.log(`  \x1b[33m!\x1b[0m ${m}`));
+  await compileStaged(bun, stage, out, flags, (m) => console.log(`  \x1b[33m!\x1b[0m ${m}`), !keepsTestChannel(c));
 }
 
 // ---------------------------------------------------------------------------
@@ -400,7 +433,10 @@ async function packageMac(c: ResolvedConfig, stage: string): Promise<PackageResu
     await $`ln -s /Applications ${join(src, "Applications")}`; // drag-to-install
     await createDmg(c.appName, src, result.dmg);
     rmSync(src, { recursive: true, force: true });
-    if (signed === "identity") await codesign(result.dmg, signIdentity(c), { runtime: false });
+    if (signed === "identity") {
+      await codesign(result.dmg, signIdentity(c), { runtime: false });
+      await verifyCodesign(result.dmg);
+    }
     if (notarized && profile) await notarize(result.dmg, profile);
     log(`dmg  ${mb(result.dmg)}`);
   }

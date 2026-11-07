@@ -166,8 +166,8 @@ export NOTARY_PROFILE=notary
 VERSION=$(jq -r .version package.json)
 
 bunx kitop release fetch-previous https://updates.example.com/$APP_SLUG/$CHANNEL/update.json --platform darwin-arm64 --platform darwin-x64 --public-key "$(cat updater.key.pub)"
-bunx --bun vite build
-bunx kitop release merge .desktop/dist/release/update.unsigned.json --key updater.key --out update.json
+bunx kitop build --mac --release
+bunx kitop release merge .desktop/dist/release/update.unsigned.json --key updater.key --expires-in-days 90 --out update.json
 
 # R2 credentials for the aws CLI (the R2 API token from the setup)
 export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… AWS_DEFAULT_REGION=auto
@@ -266,6 +266,8 @@ Copy this file as is for a project at the repository root, using the default `.d
 The Windows job cross-builds C/C++ plugins and addons, but skips Rust and Go plugins. If the Windows app needs Rust or Go plugins, it needs a native Windows build job instead of this cross-build job. Swift and Objective-C plugins are macOS only. See [plugin platforms](/native/plugins/platforms).
 :::
 
+Every build is `kitop build --release`: [nothing can drive it from outside](/concepts/security#builds-you-distribute). Run your `launch()` tests on a plain `kitop build` before this. The manifest expires after 90 days (`--expires-in-days`), so [an old feed can't hold an app back](/shipping/self-update#security): publish a release, or re-run the publish job, more often than that, or installed apps stop updating.
+
 The first Windows run builds the Docker image of the toolchain, which takes a few minutes. The Linux upload step accepts either installer if the other is missing: to require `.AppImage` output, add a shell check after the build, since `appimagetool` failures are warnings in the packager. A release without the AppImage has no `appimage-<arch>` key, so AppImage installs don't see that update.
 
 <Expandable title="release.yml">
@@ -344,7 +346,7 @@ jobs:
           CODESIGN_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           NOTARY_PROFILE: notary
           RELEASE_CHANNEL: ${{ env.CHANNEL }}
-        run: bunx --bun vite build
+        run: bunx kitop build --mac --release
 
       - uses: actions/upload-artifact@v4
         with:
@@ -387,7 +389,7 @@ jobs:
       - name: Build
         env:
           RELEASE_CHANNEL: ${{ env.CHANNEL }}
-        run: bunx --bun vite build
+        run: bunx kitop build --linux --release
 
       - uses: actions/upload-artifact@v4
         with:
@@ -421,10 +423,9 @@ jobs:
 
       - name: Build
         env:
-          KITOP_TARGET: windows
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
           RELEASE_CHANNEL: ${{ env.CHANNEL }}
-        run: bunx --bun vite build
+        run: bunx kitop build --windows --release
 
       - uses: actions/upload-artifact@v4
         with:
@@ -463,7 +464,7 @@ jobs:
         env:
           UPDATE_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
         run: |
-          bunx kitop release merge dists/dist-*/release/update.unsigned.json --key-env UPDATE_PRIVATE_KEY --out update.json
+          bunx kitop release merge dists/dist-*/release/update.unsigned.json --key-env UPDATE_PRIVATE_KEY --expires-in-days 90 --out update.json
           bunx kitop release verify update.json --public-key "${{ vars.UPDATE_PUBLIC_KEY }}"
 
       - name: Upload the update archives

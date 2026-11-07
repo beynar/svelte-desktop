@@ -1,4 +1,5 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
+import '#lib/server/release-probe.ts';
 
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.hookRan = true;

@@ -74,7 +74,7 @@ Loads the file, updates `data` and `path`, sets `ready` and resolves the store i
 | `get`, `set`, `delete`, `clear` | ✓ | ✓ | ✓ |
 | `load`, `flush`, `init` | ✓ | ✓ | ✓ |
 
-Persistence uses Bun in the app server. Page requests time out after ten seconds if the app server does not answer. The underlying file helper uses `localStorage` in a browser page without a native backend; automatic store initialization still depends on backend readiness.
+Persistence uses Bun in the app server. Page requests need `events.emit` in [`bridge.allow`](/host#restricting-pages), reject at once with `denied` without it, and time out after ten seconds if the app server does not answer. The underlying file helper uses `localStorage` in a browser page without a native backend; automatic store initialization still depends on backend readiness.
 
 ## Example
 

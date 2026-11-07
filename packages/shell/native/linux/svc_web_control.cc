@@ -59,7 +59,7 @@ static json g_context_items_default = json::array();
 static int g_next_request = 1;
 
 static Control *control_of(WebKitWebView *wv) { return wv ? static_cast<Control *>(g_object_get_data(G_OBJECT(wv), "sd-control")) : nullptr; }
-static bool test_channel() { return getenv("KITOP_TEST") != nullptr; }
+static bool test_channel() { return g_test_channel && getenv("KITOP_TEST"); }
 static std::string next_request_id(const char *kind) { return std::string(kind) + "-" + std::to_string(g_next_request++); }
 
 static void run_after(guint ms, std::function<void()> fn) {

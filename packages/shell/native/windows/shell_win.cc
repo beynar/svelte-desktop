@@ -379,6 +379,14 @@ bool system_dark() {
 // ---------------------------------------------------------------------------
 // WebView2 runtime + environment (no WebView2Loader.dll)
 
+// A build that isn't for distribution (kitop build --release, a signed build): what a program
+// starting the app could use to borrow its identity only works in one that has the test channel.
+static bool g_test_channel = false;
+bool test_channel() {
+  wchar_t flag[8];
+  return g_test_channel && GetEnvironmentVariableW(L"KITOP_TEST", flag, 8);
+}
+
 struct Runtime {
   std::wstring dll;
   std::string version;
@@ -396,9 +404,9 @@ static std::wstring runtime_dll(const std::wstring &dir) {
 }
 
 static Runtime find_runtime() {
-  // Fixed-version runtime shipped with the app (WebView2 convention).
+  // A fixed-version runtime (WebView2 convention). Its DLL is loaded as is, so not in a distributed build.
   wchar_t fixed[MAX_PATH];
-  DWORD n = GetEnvironmentVariableW(L"WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", fixed, MAX_PATH);
+  DWORD n = g_test_channel ? GetEnvironmentVariableW(L"WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", fixed, MAX_PATH) : 0;
   if (n && n < MAX_PATH) {
     std::wstring dll = runtime_dll(fixed);
     if (GetFileAttributesW(dll.c_str()) != INVALID_FILE_ATTRIBUTES) return {dll, "fixed", 1};
@@ -432,7 +440,6 @@ std::string webview2_version() { return find_runtime().version; }
 
 static ICoreWebView2Environment *g_env = nullptr;
 static bool g_env_pending = false;
-static bool g_browser_arguments = false; // a build that isn't signed to be distributed
 static bool g_env_failed_shown = false;
 static std::vector<std::function<void(ICoreWebView2Environment *)>> g_env_waiters;
 
@@ -476,9 +483,10 @@ void write_json_file(const std::string &path, const json &value) {
   if (f == INVALID_HANDLE_VALUE) return;
   std::string bytes = value.dump();
   DWORD n = 0;
-  BOOL ok = WriteFile(f, bytes.data(), (DWORD)bytes.size(), &n, nullptr);
+  // On the disk before it takes the old file's place: a power cut leaves one or the other, whole.
+  BOOL ok = WriteFile(f, bytes.data(), (DWORD)bytes.size(), &n, nullptr) && FlushFileBuffers(f);
   CloseHandle(f);
-  if (ok && n == bytes.size()) MoveFileExW(tmp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING);
+  if (ok && n == bytes.size()) MoveFileExW(tmp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
   else DeleteFileW(tmp.c_str());
 }
 
@@ -636,7 +644,7 @@ void with_env(std::function<void(ICoreWebView2Environment *)> fn) {
   wchar_t arguments[4096] = L"";
   // WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is read by Microsoft's loader, which this file stands in for.
   // Not in a distributed build: a program starting the app with --remote-debugging-port would borrow its identity.
-  if (!g_browser_arguments || !GetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", arguments, 4096)) arguments[0] = 0;
+  if (!g_test_channel || !GetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", arguments, 4096)) arguments[0] = 0;
   HRESULT hr = environment_create(user_data_folder(), arguments, [](HRESULT hr, ICoreWebView2Environment *env) {
     g_env_pending = false;
     if (FAILED(hr) || !env) return env_failed(FAILED(hr) ? hr : E_FAIL);
@@ -1545,7 +1553,7 @@ static int create_window(const json &o) {
   // Opening a document or a link from Explorer starts a new process: hand it to the
   // running instance (openUrls / openFiles there) and leave before any window.
   if (g_order.empty() && jbool(o, "singleInstance", false) && !claim_single_instance()) ExitProcess(0);
-  if (g_order.empty()) g_browser_arguments = jbool(o, "testChannel", false);
+  if (g_order.empty()) g_test_channel = jbool(o, "testChannel", false);
   if (g_order.empty() && o.contains("quitOnLastWindowClosed")) g_quit_on_last_window = jbool(o, "quitOnLastWindowClosed", true);
   if (g_order.empty()) set_protocol_schemes(o.contains("protocols") ? o["protocols"] : json());
   std::string session;

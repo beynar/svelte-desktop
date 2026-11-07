@@ -1,5 +1,5 @@
 import { rename, rm, stat } from "node:fs/promises";
-import { UpdateError } from "./errors.ts";
+import { UpdateError, type UpdateErrorCode } from "./errors.ts";
 
 /** A connection that goes quiet fails the download instead of holding it forever. Slow is fine: any byte counts. */
 export const STALL_TIMEOUT_MS = 60_000;
@@ -20,6 +20,13 @@ export async function sha256File(path: string): Promise<string> {
 	const hasher = new Bun.CryptoHasher("sha256");
 	for await (const chunk of Bun.file(path).stream()) hasher.update(chunk);
 	return hasher.digest("hex");
+}
+
+/** https, or a loopback address (a local feed, a test). The signature says what an update is; in the clear, anyone on the way learns what's being installed, and can hold it back. */
+export function requireSecure(url: URL, code: UpdateErrorCode, what: string): void {
+	if (url.protocol === "https:") return;
+	if (url.protocol === "http:" && /^(127\.\d+\.\d+\.\d+|localhost|\[::1\])$/.test(url.hostname)) return;
+	throw new UpdateError(code, `${what} has to be on https: ${url.href}`);
 }
 
 /** True if `path` already holds exactly the expected bytes (resume-free cache hit). */
@@ -78,6 +85,15 @@ export async function downloadVerified(
 		if (opts.signal?.aborted) throw new UpdateError("aborted", "download aborted", { cause: err });
 		if (stalled) throw stalledError(err);
 		throw new UpdateError("download_failed", `download failed: ${(err as Error).message}`, { cause: err });
+	}
+	if (res.url) {
+		try {
+			requireSecure(new URL(res.url), "download_failed", "the download"); // a redirect
+		} catch (err) {
+			clearTimeout(timer);
+			await res.body?.cancel().catch(() => {});
+			throw err;
+		}
 	}
 	if (!res.ok || !res.body) {
 		clearTimeout(timer);

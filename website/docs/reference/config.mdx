@@ -195,6 +195,6 @@ Every field of `WindowAnimation` is optional. These defaults apply when animatio
     command: { type: "string[]", description: "Your signing tool, run once per file, which it signs in place. `{file}` is that file. Takes precedence over `certificateFile`." },
     certificateFile: { type: "string", default: "$WINDOWS_CERT_PFX", description: "PKCS#12 certificate path, relative to the project." },
     password: { type: "string", default: '$WINDOWS_CERT_PASSWORD, else ""' },
-    timestampUrl: { type: "string", default: '"http://timestamp.digicert.com"' },
+    timestampUrl: { type: "string", default: '"https://timestamp.sectigo.com"' },
   }}
 />

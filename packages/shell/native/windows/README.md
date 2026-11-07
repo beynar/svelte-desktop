@@ -110,7 +110,7 @@ Same ops, result shapes and events as macOS, so `src/platform` doesn't know the 
   storage is deleted. A later change waits for `BrowserProcessExited`, ends that process if it hasn't gone after five
   seconds (it once hadn't after 15 on the runner, reason unknown), and starts it again on the same folder.
   `setProxy` refuses while a view is open in the session, and on the default session. These arguments come from
-  the app's server code: `g_browser_arguments` still keeps `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` out of
+  the app's server code: `g_test_channel` still keeps `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` out of
   distributed builds. The host is checked, since it ends up on a command line.
 - `svc_web_sessions.cc`, schemes: `ICoreWebView2EnvironmentOptions4` on every environment, with an authority,
   not secure, any origin. `WebResourceRequested` with a deferral. A blocking `IStream` was tried and doesn't work:

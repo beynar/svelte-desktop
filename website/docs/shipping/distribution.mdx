@@ -3,7 +3,7 @@ title: Distribution
 description: Build, sign and package for macOS, Windows and Linux.
 ---
 
-`bunx --bun vite build` compiles the server into one executable and packages it for the target. Output goes to `.desktop/dist` (`build.outDir`). The target is the host OS unless `build.target` (`macos`, `linux` or `windows`) or `KITOP_TARGET` says otherwise; Linux and Windows can be built from macOS. The environment variables override the config. Building macOS requires macOS and its Apple toolchain.
+`bunx --bun vite build` compiles the server into one executable and packages it for the target. Use `kitop build --release` for what you hand out: it has no test channel, signed or not ([what that means](/concepts/security#builds-you-distribute)). Output goes to `.desktop/dist` (`build.outDir`). The target is the host OS unless `build.target` (`macos`, `linux` or `windows`) or `KITOP_TARGET` says otherwise; Linux and Windows can be built from macOS. The environment variables override the config. Building macOS requires macOS and its Apple toolchain.
 
 ```sh
 bunx --bun vite build                               # macOS, the host
@@ -21,7 +21,7 @@ KITOP_TARGET=windows KITOP_TARGET_ARCH=arm64 bunx --bun vite build
 ## macOS
 
 ```sh
-CODESIGN_IDENTITY="Developer ID Application: You (TEAMID)" NOTARY_PROFILE=notary bunx --bun vite build
+CODESIGN_IDENTITY="Developer ID Application: You (TEAMID)" NOTARY_PROFILE=notary bunx kitop build --mac --release
 ```
 
 | Output | |
@@ -95,7 +95,7 @@ sign: { windows: { certificateFile: 'cert.pfx', password: process.env.CERT_PASSW
 
 Rust and Go plugins are skipped when cross-building Windows from another OS; build on Windows if your app needs them. C/C++ plugins and source addons use the Docker toolchain.
 
-`timestampUrl` defaults to `http://timestamp.digicert.com`. Data lives in `%APPDATA%\<identifier>`, caches and logs in `%LOCALAPPDATA%`. `build.targetArch` is `x64` (default) or `arm64`.
+Every `.exe`, `.dll` and addon in the folder gets signed, and each one is verified right after with `osslsigncode verify`: a file that doesn't verify stops the build. `timestampUrl` defaults to `https://timestamp.sectigo.com`. Data lives in `%APPDATA%\<identifier>`, caches and logs in `%LOCALAPPDATA%`. `build.targetArch` is `x64` (default) or `arm64`.
 
 :::warning
 CI runs the app on a real Windows runner, which doesn't cover everything: validate the installer and app on a real Windows desktop. Unsigned Windows builds also trigger SmartScreen warnings. See [Limitations](/shipping/limitations).

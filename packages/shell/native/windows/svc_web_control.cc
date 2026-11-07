@@ -729,8 +729,7 @@ void register_web_control() {
     c->ok();
   });
   op("_terminateForTesting", [](CallPtr c, View *v, Control &) {
-    wchar_t flag[8];
-    if (!GetEnvironmentVariableW(L"KITOP_TEST", flag, 8)) return c->fail("denied", "Only available to the test channel");
+    if (!test_channel()) return c->fail("denied", "Only available to the test channel");
     // A real crash of its render process. It never answers.
     devtools(v, L"Page.crash", json::object(), [](bool) {});
     c->ok();

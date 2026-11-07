@@ -8,6 +8,8 @@ The first version made to be installed as a package.
 
 ### Breaking
 
+The updater refuses a manifest, archive or patch that isn't on `https`. `http` still works on a loopback address.
+
 Pages can't call native operations until you say so: without `bridge.allow`, the list is empty rather than everything. A refused call rejects with `denied`, and the console names the rule to add. `bridge: { allow: ['*'] }` brings back the old behavior. Server code isn't affected.
 
 `desktop()` no longer wraps SvelteKit's plugin: it goes next to it, `plugins: [sveltekit({ … }), desktop()]`, and SvelteKit's options stay in `sveltekit()`. A desktop-only app writes `desktop({ website: false })`, and what was the second argument of `desktop()` is now its only one.
@@ -124,6 +126,12 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 
 ### Fixed
 
+- A page with `events.emit` could read and write any file in the app's data folder, on Linux its web permissions too. It's now limited to the store, the window state and the saved tabs.
+- Without `events.emit`, `host.store` and `host.windowState` reject at once with `denied`, instead of timing out as if the server didn't answer.
+- A write the disk takes only part of no longer leaves a cut-off file (the store, the window state, the updater's state). What the native side saves on Windows and Linux reaches the disk before it replaces the old file.
+- Updater: on a signed app, `codesign` or PowerShell not answering refuses the update. On Windows every `.exe`, `.dll` and addon is checked and signed, not just some.
+- Linux: `sessions.setProxy` refuses a host that isn't one.
+- Windows signing timestamps over https by default. `notarytool` has a timeout and tries again when it gets no answer.
 - Windows: a double click on a drag region could do nothing: the first press started a move loop that swallowed the second.
 - A job keeps running no longer when its app dies without a word: it gets its `signal` aborted, then two seconds to leave.
 - A store or window-state write is on the disk when it returns, and the store comes back from its previous save if its file goes bad.

@@ -219,6 +219,10 @@ int shell_set_page_permissions(const char *json) {
   return 0;
 }
 
+static BOOL g_test_channel = NO;
+void platform_set_test_channel(BOOL on) { g_test_channel = on; }
+BOOL platform_test_channel(void) { return g_test_channel && getenv("KITOP_TEST"); }
+
 static BOOL origin_allowed(WKFrameInfo *frame) {
   if (!frame.isMainFrame) return NO;
   NSString *app = platform_app_origin();

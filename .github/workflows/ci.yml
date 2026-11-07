@@ -71,6 +71,7 @@ jobs:
           (cd packages/shell && bun install --frozen-lockfile)
           (cd examples/notes && bun install --frozen-lockfile)
           (cd examples/panes && bun install --frozen-lockfile)
+          (cd examples/kit-conformance && bun install --frozen-lockfile)
       - name: Build notes (plugins in Swift, Rust, Go and Python included)
         working-directory: examples/notes
         run: bunx --bun vite build
@@ -83,3 +84,13 @@ jobs:
       - name: Split panes
         working-directory: examples/panes
         run: bun test --timeout 60000 tests/panes.test.ts
+      - name: A closed bridge list
+        working-directory: examples/kit-conformance
+        run: |
+          bunx --bun vite build
+          bun test --timeout 120000 tests/bridge.test.ts
+      - name: The build to distribute (--release, no list)
+        working-directory: examples/kit-conformance
+        run: |
+          KIT_NO_LIST=1 bunx kitop build --mac --release
+          bun test --timeout 120000 tests/release.test.ts
