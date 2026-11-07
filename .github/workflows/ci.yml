@@ -51,6 +51,21 @@ jobs:
       - name: End to end
         run: packages/shell/test/docker/run.sh e2e
 
+  macos-native:
+    # Every native suite, each in its own process and window, in the runner's logged-in session.
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install
+        working-directory: packages/shell
+        run: bun install --frozen-lockfile
+      - name: Native platform suites
+        run: packages/shell/test/run-platform.sh
+
   macos:
     # The built app, in the runner's logged-in session. What needs the user at the screen
     # (a real permission prompt, the keychain) stays out.
@@ -78,6 +93,10 @@ jobs:
       - name: The packaged app answers MCP, with no window
         working-directory: examples/notes
         run: bun test --timeout 60000 tests/mcp.test.ts tests/relaunch.test.ts
+      - name: The built app in its real window
+        if: ${{ !cancelled() }}
+        working-directory: examples/notes
+        run: bun test --timeout 60000 tests/app.test.ts
       - name: Build panes
         working-directory: examples/panes
         run: bunx --bun vite build

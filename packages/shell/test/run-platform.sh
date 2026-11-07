@@ -4,8 +4,12 @@ cd "$(dirname "$0")/.."
 native/build-macos.sh >/dev/null || exit 1
 P=0; F=0; S=0
 for suite in test/platform/*.ts; do
-  case "$(basename "$suite")" in linux-*) continue ;; esac # Linux suites: test/run-platform-linux.sh (Docker)
-  out=$(bun test/harness.ts "$suite" 2>&1)
+  case "$(basename "$suite")" in
+    linux-*) continue ;; # Linux suites: test/run-platform-linux.sh (Docker)
+    _*) continue ;; # helpers of the Linux suites
+  esac
+  # No suite is worth a stuck runner. macOS has no timeout(1).
+  out=$(perl -e 'alarm shift; exec @ARGV' 180 bun test/harness.ts "$suite" 2>&1)
   sum=$(echo "$out" | grep '"summary"' | tail -1)
   p=$(echo "$sum" | sed -E 's/.*"passed":([0-9]+).*/\1/'); f=$(echo "$sum" | sed -E 's/.*"failed":([0-9]+).*/\1/'); s=$(echo "$sum" | sed -E 's/.*"skipped":([0-9]+).*/\1/')
   [ -z "$sum" ] && { f=1; p=0; s=0; echo "$out" | tail -5; }

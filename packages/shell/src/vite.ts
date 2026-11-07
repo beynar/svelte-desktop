@@ -452,7 +452,7 @@ function devPlugin(config: ResolvedConfig, options: DesktopPluginOptions): Plugi
     const { ensureLibshell } = await import("./build/package.ts");
     const { buildNativePlugin } = await import("./build/native.ts");
     const arch = process.arch === "arm64" ? "arm64" : "x64";
-    const lib = await ensureLibshell(arch);
+    const lib = process.platform === "win32" ? await (await import("./build/package-windows.ts")).ensureShellDll(arch) : await ensureLibshell(arch);
     const plugins: string[] = [];
     const outDir = join(config.root, ".desktop/dev/native");
     try {

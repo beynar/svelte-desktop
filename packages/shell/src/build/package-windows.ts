@@ -50,10 +50,34 @@ export function fileVersion(version: string): [number, number, number, number] {
 // ---------------------------------------------------------------------------
 // Toolchain (Docker image with llvm-mingw, WebView2 headers, NSIS, osslsigncode)
 
-let dockerOk: boolean | undefined;
+// The toolchain's image is a Linux one. Docker on Windows has to be running Linux containers for it:
+// Docker Desktop's mode, and the only one it can't have on a Windows runner.
+let dockerOS: string | null | undefined;
+async function runsContainersOf(): Promise<string | null> {
+  if (dockerOS === undefined) {
+    const r = await $`docker info --format {{.OSType}}`.nothrow().quiet();
+    dockerOS = r.exitCode === 0 ? r.text().trim() : null;
+  }
+  return dockerOS;
+}
 async function hasDocker(): Promise<boolean> {
-  if (dockerOk === undefined) dockerOk = (await $`docker info --format x`.nothrow().quiet()).exitCode === 0;
-  return dockerOk;
+  return (await runsContainersOf()) === "linux";
+}
+
+/** Why the toolchain can't run here, or nothing if it can. */
+export async function toolchainProblem(): Promise<string | undefined> {
+  const os = await runsContainersOf();
+  if (os === "linux") return undefined;
+  const toLinux = isWindowsHost ? "use Docker Desktop in Linux containers mode (its tray menu: Switch to Linux containers)" : "start Docker";
+  return os === "windows" ? `Docker is running Windows containers, and the toolchain is a Linux image: ${toLinux}` : `Docker isn't running: ${toLinux}`;
+}
+
+/** Where shell.dll comes from without Docker, or what stops it being built. */
+export async function shellDllProblem(arch: Arch): Promise<string | undefined> {
+  if (process.env[`KITOP_SHELL_DLL_${arch.toUpperCase()}`] ?? (arch === "x64" ? process.env.KITOP_SHELL_DLL : undefined)) return undefined;
+  if (existsSync(shellDllPath(arch))) return undefined;
+  const problem = await toolchainProblem();
+  return problem && `shell.dll (${arch}) isn't built, and it's only built in Docker. ${problem}, or set KITOP_SHELL_DLL_${arch.toUpperCase()} (KITOP_SHELL_DLL for x64) to a shell.dll built on another machine`;
 }
 
 async function ensureImage(): Promise<void> {
@@ -102,11 +126,14 @@ export async function ensureShellDll(arch: Arch): Promise<string> {
       warn(`shell.dll (${arch}) is older than native/windows sources and Docker is unavailable: using the stale build`);
       return dll;
     }
-    throw new Error(`shell.dll (${arch}) is not built and Docker is unavailable: run native/build-windows.sh ${arch} where Docker runs, or set KITOP_SHELL_DLL_${arch.toUpperCase()}`);
+    throw new Error((await shellDllProblem(arch))!);
   }
   log(`native: building shell.dll (${arch}, llvm-mingw in Docker)`);
-  const r = await $`${join(nativeRoot, "build-windows.sh")} ${arch}`.nothrow().quiet();
-  if (r.exitCode !== 0 || !existsSync(dll)) throw new Error(`native/build-windows.sh ${arch} failed:\n${r.stdout.toString()}${r.stderr.toString()}`);
+  // Docker itself, as native/build-windows.sh does: that script needs a POSIX shell, which Windows doesn't have.
+  const image = await $`docker build -q -t ${IMAGE} ${join(nativeRoot, "docker", "windows")}`.nothrow().quiet();
+  if (image.exitCode !== 0) throw new Error(`docker build ${IMAGE} failed:\n${image.stderr.toString()}`);
+  const r = await $`docker run --rm -v ${nativeRoot}:/src ${IMAGE} sh /src/docker/windows/build.sh ${arch}`.nothrow().quiet();
+  if (r.exitCode !== 0 || !existsSync(dll)) throw new Error(`building shell.dll (${arch}) failed:\n${r.stdout.toString()}${r.stderr.toString()}`);
   return dll;
 }
 

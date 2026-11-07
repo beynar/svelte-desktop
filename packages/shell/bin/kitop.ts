@@ -80,7 +80,7 @@ async function create(dir: string | undefined) {
   if (!dir) throw new Error("usage: kitop create <directory>");
   const target = resolve(dir);
   if (existsSync(target) && require("node:fs").readdirSync(target).length) throw new Error(`${target} is not empty`);
-  const name = target.split("/").pop()!.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+  const name = basename(target).toLowerCase().replace(/[^a-z0-9-]+/g, "-");
   const title = name.replace(/(^|-)(\w)/g, (_: string, s: string, c: string) => (s ? " " : "") + c.toUpperCase());
   const files: Record<string, string> = {
     "package.json": JSON.stringify(
@@ -151,6 +151,13 @@ async function doctor() {
     for (const [tool, why] of [["c++", "native plugins"], ["appimagetool", "AppImage"]] as const) (await has(tool)) ? ok(`${tool} (${why})`) : warn(`${tool} missing (${why})`);
   } else if (process.platform === "win32") {
     ok(`Windows ${process.arch}`);
+    // Without shell.dll there's no window: not with kitop dev --windows, not with kitop build --windows.
+    const windows = await import("../src/build/package-windows.ts");
+    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    const noDll = await windows.shellDllProblem(arch);
+    noDll ? bad(noDll) : ok(`shell.dll (${arch})`);
+    const noToolchain = await windows.toolchainProblem();
+    noToolchain ? warn(`no toolchain for native plugins, addons, and the installer without makensis. ${noToolchain}`) : ok("Docker running Linux containers (the toolchain)");
     for (const [tool, why] of [["makensis", "installer"], ["osslsigncode", "Authenticode"]] as const) (await has(tool)) ? ok(`${tool} (${why})`) : warn(`${tool} missing (${why})`);
   } else bad(`${process.platform} is not supported (macOS, Linux, Windows)`);
   for (const [tool, why] of [["cargo", "Rust plugins"], ["go", "Go plugins"], ["uv", "Python commands"]] as const) if (await has(tool)) ok(`${tool} (${why})`);

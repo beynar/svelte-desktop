@@ -64,6 +64,35 @@ jobs:
           path: examples/notes/.desktop/dist/*-setup.exe
           if-no-files-found: error
 
+  host:
+    # On a Windows machine, what a developer there runs: the unit tests, the website's dev and build,
+    # and the app's with the shell.dll the job above cross-compiled.
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/download-artifact@v4
+        with:
+          name: notes-windows-x64
+          path: notes-app
+      - name: Install
+        working-directory: packages/shell
+        run: bun install --frozen-lockfile
+      - name: Unit tests
+        if: ${{ !cancelled() }}
+        working-directory: packages/shell
+        run: bun test src
+      - name: On a Windows host
+        if: ${{ !cancelled() }}
+        working-directory: packages/shell
+        env:
+          WINDOWS_SHELL_DLL: ${{ github.workspace }}\notes-app\shell.dll
+        run: bun test --timeout 300000 test/windows-host
+
   test:
     needs: build
     runs-on: windows-latest
