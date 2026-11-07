@@ -35,3 +35,31 @@ test("responses without Secure cookies pass through untouched", () => {
   const res = new Response("x", { headers: { "set-cookie": "d=4; Path=/" } });
   expect(secureCookiesForLoopback(res)).toBe(res);
 });
+
+test("HTML pages say who may have the camera, from the handler and from routes; an app's own header stays", async () => {
+  const html = { "content-type": "text/html; charset=utf-8" };
+  const gate = startGate({
+    secret: "s",
+    handler: (req) => (new URL(req.url).pathname === "/own" ? new Response("x", { headers: { ...html, "permissions-policy": "camera=*" } }) : new URL(req.url).pathname === "/data" ? Response.json({}) : new Response("<p>page", { status: 201, headers: html })),
+    routes: {
+      "/prerendered": { GET: () => new Response("<p>prerendered", { headers: html }) },
+      "/app.js": { GET: () => new Response("1", { headers: { "content-type": "text/javascript" } }) },
+    },
+  });
+  try {
+    const auth = await fetch(`${gate.origin}/__desktop/auth?t=s`, { redirect: "manual" });
+    const cookie = auth.headers.get("set-cookie")!.split(";")[0]!;
+    const get = (path: string) => fetch(`${gate.origin}${path}`, { headers: { cookie } });
+    const page = await get("/");
+    expect(page.headers.get("permissions-policy")).toContain("camera=(self)");
+    expect([page.status, await page.text()]).toEqual([201, "<p>page"]);
+    const prerendered = await get("/prerendered");
+    expect(prerendered.headers.get("permissions-policy")).toContain("camera=(self)");
+    expect(await prerendered.text()).toBe("<p>prerendered");
+    expect((await get("/own")).headers.get("permissions-policy")).toBe("camera=*");
+    expect((await get("/data")).headers.has("permissions-policy")).toBe(false);
+    expect((await get("/app.js")).headers.has("permissions-policy")).toBe(false);
+  } finally {
+    gate.server.stop(true);
+  }
+});

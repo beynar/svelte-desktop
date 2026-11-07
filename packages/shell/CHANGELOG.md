@@ -131,6 +131,7 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 - A write the disk takes only part of no longer leaves a cut-off file (the store, the window state, the updater's state). What the native side saves on Windows and Linux reaches the disk before it replaces the old file.
 - Updater: on a signed app, `codesign` or PowerShell not answering refuses the update. On Windows every `.exe`, `.dll` and addon is checked and signed, not just some.
 - Linux: `sessions.setProxy` refuses a host that isn't one.
+- Windows: a page could hand its camera, microphone and location to a frame of another origin with `allow=`. HTML pages now carry a `Permissions-Policy` that keeps them to the app. A page's own header replaces it.
 - Windows signing timestamps over https by default. `notarytool` has a timeout and tries again when it gets no answer.
 - Windows: a double click on a drag region could do nothing: the first press started a move loop that swallowed the second.
 - A job keeps running no longer when its app dies without a word: it gets its `signal` aborted, then two seconds to leave.

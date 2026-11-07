@@ -60,8 +60,8 @@ test('a released build has no test channel, runs what it was given by no variabl
 	expect(probe.native.terminate).toBe('denied');
 	expect(probe.native.policy).toBe('denied');
 	expect(probe.alive).toBe(2);
-	expect(probe.native.testScroll).toBe(process.platform === 'darwin' ? 'unknown' : 'unsupported');
-	expect(probe.native.simulateResponse).toBe(process.platform === 'darwin' ? 'unknown' : 'unsupported');
+	expect(probe.native.testScroll).toBe('unsupported');
+	expect(probe.native.simulateResponse).toBe('unsupported');
 	if (process.platform === 'linux') expect(probe.page.devices).not.toContain('videoinput'); // no mock camera
 }, 60_000);
 

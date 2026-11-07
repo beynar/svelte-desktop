@@ -14,6 +14,32 @@ export const AUTH_PATH = "/__desktop/auth";
 /** Where native code sends a view whose web process died too often (native/portable/reload_budget.hpp). */
 export const PAGE_CRASHED_PATH = "/__desktop/page-crashed";
 
+// Chromium (Windows) lets a page hand its own permissions to a frame of another origin with
+// allow="camera", and asks about the page. A script injected into a page shouldn't be able to. A
+// response with its own header keeps it: that's how an app delegates. WebKit doesn't read this header.
+const PERMISSIONS_POLICY = "camera=(self), microphone=(self), geolocation=(self), display-capture=(self)";
+
+function withPermissionsPolicy(res: Response): Response {
+  if (!/^text\/html/i.test(res.headers.get("content-type") ?? "") || res.headers.has("permissions-policy")) return res;
+  const out = new Response(res.body, res);
+  out.headers.set("permissions-policy", PERMISSIONS_POLICY);
+  return out;
+}
+
+/** Prerendered pages are served from `routes`, before the gate's `fetch`. */
+function routesWithPolicy(routes: Record<string, any>): Record<string, any> {
+  const wrap = (handler: (...args: any[]) => any) => (...args: any[]) => {
+    const res = handler(...args);
+    return res instanceof Promise ? res.then(withPermissionsPolicy) : withPermissionsPolicy(res);
+  };
+  const route = (value: any) => {
+    if (typeof value === "function") return wrap(value);
+    if (!value || value.constructor !== Object) return value;
+    return Object.fromEntries(Object.entries(value).map(([method, handler]) => [method, typeof handler === "function" ? wrap(handler as () => any) : handler]));
+  };
+  return Object.fromEntries(Object.entries(routes).map(([path, value]) => [path, route(value)]));
+}
+
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 function pageCrashed(appName: string | undefined, to: string | null): Response {
@@ -77,7 +103,7 @@ export function startGate(o: GateOptions): { server: Server<any>; origin: string
     // Bun's default (10 s) cuts slow loads, remote functions and long polls; a
     // loopback-only server has no idle clients to shed.
     idleTimeout: 0,
-    routes: o.routes ?? {},
+    routes: routesWithPolicy(o.routes ?? {}),
     // Absent means no sockets; Bun's types only know the shape where it's there.
     ...((o.websocket ? { websocket: socketCallbacks() } : {}) as { websocket: ReturnType<typeof socketCallbacks> }),
     async fetch(req, srv): Promise<Response | undefined> {
@@ -123,7 +149,7 @@ export function startGate(o: GateOptions): { server: Server<any>; origin: string
       if (extra) return extra;
 
       req.headers.set(PROTOCOL_HEADER, "http");
-      const res = secureCookiesForLoopback(await o.handler(req, srv));
+      const res = withPermissionsPolicy(secureCookiesForLoopback(await o.handler(req, srv)));
       if (o.debug) console.log(`[shell] ${req.method} ${url.pathname}${url.search} → ${res.status}`);
       return res;
     },

@@ -40,6 +40,8 @@ Resolves `void`. Invalid timeouts reject with `invalid_args`. A thrown/rejected 
 | `windowId` | `number`, optional | Public window id, including the owner of an embedded view. |
 | `popoverId` | `string`, optional | Popover identifier. |
 
+Pages of the app are sent with `Permissions-Policy: camera=(self), microphone=(self), geolocation=(self), display-capture=(self)`, so a page can't hand these to a frame of another origin with `allow="camera"`, and neither can a script injected into it. To delegate, set your own header on that page, in a hook or with `setHeaders`: the shell leaves it alone. `vite dev` doesn't send the header. WebKit doesn't read it, so this holds on Windows. On Linux, see [platform support](#platform-support).
+
 Saved decisions take precedence over the handler. Without a saved decision or handler, the exact app origin is allowed and other origins are denied. A handler also answers for the app's own origin, so allow what your own pages use. Unusable origins and mismatched initiating-frame origins are denied.
 
 `allow` permits the web request to proceed to usage-string and OS consent checks; it does not grant an OS permission. `prompt` asks WebKit to prompt where its delegate supports that distinction. Older boolean location callbacks, speech and screen-capture callbacks cannot express a separate WebKit prompt. Location, speech and display-capture integration depends on WebKit SPI. Camera plus microphone requests check each permission; speech also checks microphone policy. See [OS permissions](/host/os/permissions) for app declarations and system grants.
@@ -199,7 +201,7 @@ What isn't available returns `unsupported`. These methods do not add WebUSB, HID
 
 On Linux:
 
-- `camera` and `microphone` come from `getUserMedia`, `screenRecording` from `getDisplayMedia` and `location` from `navigator.geolocation`; `speech` never asks. WebKitGTK's request names neither its origin nor its frame, so `origin` is the page's and `frame` is `null`. A frame can only ask if the page delegated with `allow=`.
+- `camera` and `microphone` come from `getUserMedia`, `screenRecording` from `getDisplayMedia` and `location` from `navigator.geolocation`; `speech` never asks. WebKitGTK's request names neither its origin nor its frame, so `origin` is the page's and `frame` is `null`. A frame can only ask if the page delegated with `allow=`, and WebKitGTK ignores `Permissions-Policy`, so a frame of another origin given `allow="camera"` gets what the page has. Don't write `allow=` on Linux for a frame you don't trust.
 - `prompt` shows the shell's own dialog: WebKitGTK has none.
 - `previousFailures` is `0` or `1`: WebKitGTK only says whether it is a retry.
 - With no handler, or on `'default'`, the page gets the server's own answer. WebKit's login box isn't used.

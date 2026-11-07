@@ -46,6 +46,13 @@ test('events.emit gives a page the store, and not the other files of the folder'
 	expect(await Bun.file(`${own}/web-permissions.json`).exists()).toBe(false);
 });
 
+test('pages say who may have the camera, prerendered ones too, and one with its own header keeps it', async () => {
+	const policy = (path: string) => app.eval<string | null>(`fetch('${path}').then((r) => r.headers.get('permissions-policy'))`);
+	expect(await policy('/')).toContain('camera=(self)');
+	expect(await policy('/prerendered')).toContain('camera=(self)');
+	expect(await policy('/widened')).toBe('camera=*');
+});
+
 // A frame of another origin in one of the app's pages, asking for the camera. macOS has no camera on
 // a runner and asks about the frame's own origin anyway (platform_web_policy.mm).
 const frames = process.platform === 'darwin' ? test.skip : test;
@@ -75,5 +82,11 @@ frames('a third-party frame and the camera', async () => {
 	inner.stop(true);
 	console.log(JSON.stringify({ platform: process.platform, own, undelegated, delegated, widened }));
 	expect(own).toBe('stream');
-	expect(undelegated).not.toBe('stream');
+	// Not handed over: the engines refuse it on their own.
+	expect(undelegated).toBe('NotAllowedError');
+	// Handed over with allow=: refused on Windows, by the gate's Permissions-Policy, unless the page
+	// widens it with its own. WebKitGTK doesn't read that header and doesn't say which frame asks: the
+	// frame gets what the page has (website/docs/host/web/web-policy.mdx).
+	expect(delegated).toBe(process.platform === 'win32' ? 'NotAllowedError' : 'stream');
+	expect(widened).toBe('stream');
 });

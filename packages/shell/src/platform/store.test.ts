@@ -42,6 +42,18 @@ test('what server code just set is written at quit, once nothing answers platfor
 	writeFileSync(join(dir, 'kitop-store.json'), '{"last": "cut off');
 	expect(await store.load()).toEqual({ last: 'before quit' });
 	expect(readFileSync(join(dir, 'kitop-store.json.corrupt'), 'utf8')).toBe('{"last": "cut off');
+
+	// A write the disk took only part of goes on until all of it is there.
+	const fs = process.getBuiltinModule('node:fs');
+	const real = fs.writeSync;
+	(fs as { writeSync: unknown }).writeSync = (fd: number, bytes: Uint8Array, at = 0) => real(fd, bytes, at, Math.min(7, bytes.length - at));
+	try {
+		store.set('long', 'é'.repeat(50));
+		await store.flush();
+	} finally {
+		(fs as { writeSync: unknown }).writeSync = real;
+	}
+	expect(JSON.parse(readFileSync(join(dir, 'kitop-store.json'), 'utf8')).long).toBe('é'.repeat(50));
 });
 
 test('a write that never finishes does not hold up the quit, and the rest of it still runs', async () => {
