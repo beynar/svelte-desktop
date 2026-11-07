@@ -1,6 +1,7 @@
 #!/bin/sh
 # The package as a consumer gets it: pack it, install the tarball, `kitop create` from that install,
-# install the tarball in the new project, then doctor, types, build, the built app, `vite dev`.
+# install the tarball in the new project, then doctor, types, build, the built app, `vite dev`. Then
+# `kitop init` on an app that exists (init.sh).
 # The examples link the shell, so they prove none of this: linked sources are not treated like a
 # package in node_modules, and they bring files the tarball may not have.
 # All of it outside the checkout, so nothing can resolve through the repo.
@@ -172,5 +173,9 @@ bun test --timeout 60000 tests/sides.test.ts
 rm -rf site
 bunx tsc --noEmit -p . 2>&1 | grep -E "^src/(routes/(where|only-desktop)|lib/side)" && { echo "types of the .desktop files don't resolve"; exit 1; }
 true
+
+# An app that exists already, converted with this tarball: its website on Node, its desktop app.
+cd /
+sh "$src/test/docker/init.sh" "$tgz"
 
 rm -rf "$T"

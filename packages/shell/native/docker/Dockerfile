@@ -2,7 +2,8 @@
 #   docker build -t kitop-linux packages/shell/native/docker
 # Provides: compilers + GTK/WebKitGTK/appindicator/libnotify/libsecret headers,
 # Xvfb + openbox (EWMH window manager) + dunst (notification daemon) + D-Bus +
-# gnome-keyring (headless tests), weston, x11-utils, xclip, libxss1, Bun, appimagetool.
+# gnome-keyring (headless tests), weston, x11-utils, xclip, libxss1, Bun, appimagetool, and in /opt/node
+# Node and sv.
 FROM ubuntu:24.04
 ARG TARGETARCH
 ARG BUN_VERSION=1.4.4
@@ -30,5 +31,14 @@ RUN set -e; case "$TARGETARCH" in arm64) A=aarch64 ;; *) A=x86_64 ;; esac; \
 # clipboard client that isn't this app (xclip), the XScreenSaver extension power.getSystemIdleTime dlopen()s.
 RUN apt-get update && apt-get install -y --no-install-recommends weston x11-utils xclip libxss1 \
     && rm -rf /var/lib/apt/lists/*
+# Tests only: Node, off the PATH so that nothing else runs on it by accident, for a website built and
+# served by Node (test/docker/init.sh), and SvelteKit's own `sv create` for the app it converts.
+ARG NODE_VERSION=24.21.0
+ARG SV_VERSION=1.3.0
+RUN set -e; case "$TARGETARCH" in arm64) A=arm64 ;; *) A=x64 ;; esac; \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${A}.tar.xz" | tar -xJ -C /opt; \
+    mv /opt/node-v${NODE_VERSION}-linux-${A} /opt/node; \
+    PATH=/opt/node/bin:$PATH npm install -g --no-fund --no-audit sv@${SV_VERSION}; \
+    /opt/node/bin/node --version
 ENV APPIMAGE_RUNTIME=/opt/appimage-runtime NO_AT_BRIDGE=1
 WORKDIR /work

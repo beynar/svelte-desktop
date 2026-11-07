@@ -7,6 +7,7 @@
 #   test/docker/run.sh e2e        the built examples driven by launch() (test/docker/e2e.sh)
 #   test/docker/run.sh update     real updates of the Linux app folder and AppImage (test/docker/update.sh)
 #   test/docker/run.sh pack       the packed tarball, installed in a new project (test/docker/pack.sh)
+#   test/docker/run.sh init       kitop init on an existing app, its website on Node (test/docker/init.sh)
 #   test/docker/run.sh shell      interactive shell in the image (repo at /src)
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
@@ -23,6 +24,7 @@ case "$cmd" in
   e2e) docker run --rm --init -v "$repo":/src:ro "$IMAGE" sh /src/packages/shell/test/docker/e2e.sh ;;
   update) docker run --rm --init -v "$repo":/src:ro "$IMAGE" sh /src/packages/shell/test/docker/update.sh ;;
   pack) docker run --rm --init -v "$repo":/src:ro "$IMAGE" sh /src/packages/shell/test/docker/pack.sh ;;
+  init) docker run --rm --init -v "$repo":/src:ro "$IMAGE" sh /src/packages/shell/test/docker/init.sh ;;
   shell) docker run --rm -it --init -v "$repo":/src:ro "$IMAGE" bash ;;
   *) echo "unknown command $cmd"; exit 2 ;;
 esac

@@ -140,7 +140,9 @@ That's a desktop app, and `bun run build` with no flag still builds your website
 
 ## Deploy the website
 
-Deploy it as you did. `kitop` needs Bun, so where your host runs Node, set its build command to `vite build`, which doesn't. `.desktop` and `desktop.config.ts` play no part in it, and nothing of the shell ships with the site.
+Deploy it as you did. `kitop` needs Bun, so where your host runs Node, set its build command to `vite build`, which doesn't. `.desktop` and `desktop.config.ts` play no part in it, and nothing of the shell ships with the site but its `host`, which says it isn't the desktop.
+
+CI does this to SvelteKit's demo app from `sv create`: it builds the website with `adapter-node` on Node and serves it with `node build`, before and after `kitop init`, and the pages are the same. It builds a static site with `adapter-static` on Node too.
 
 ## Use the desktop
 
