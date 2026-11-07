@@ -14,7 +14,7 @@ import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import shell from "../package.json";
-import { addDesktopPlugin, STARTER_TEST, stringifyLike } from "../src/build/init-edit.ts";
+import { addDesktopPlugin, bridgeRules, desktopConfig, STARTER_TEST, stringifyLike } from "../src/build/init-edit.ts";
 import { viteRuns } from "../src/build/targets.ts";
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -39,11 +39,9 @@ async function init() {
   const id = `com.example.${String(pkg.name ?? "app").toLowerCase().replace(/[^a-z0-9]+/g, "")}`;
 
   if (!existsSync(join(root, "desktop.config.ts"))) {
-    writeFileSync(
-      join(root, "desktop.config.ts"),
-      `import { defineConfig } from '@kitop/shell/config';\n\nexport default defineConfig({\n\tappName: ${JSON.stringify(name)},\n\tidentifier: ${JSON.stringify(id)},\n\twindow: { width: 1024, height: 720, autosaveName: 'main' }\n});\n`,
-    );
-    ok("desktop.config.ts");
+    const allow = existsSync(join(root, "src")) ? bridgeRules(join(root, "src")) : [];
+    writeFileSync(join(root, "desktop.config.ts"), desktopConfig(name, id, allow, shell.homepage));
+    ok(`desktop.config.ts, bridge.allow: ${allow.length ? allow.join(", ") : "pages call nothing native"}`);
   } else warn("desktop.config.ts exists — left as is");
 
   const viteConfig = ["vite.config.ts", "vite.config.js"].map((f) => join(root, f)).find(existsSync);

@@ -27,7 +27,7 @@ bunx kitop init
 
 Adds desktop support to the SvelteKit project in the current directory:
 
-- writes `desktop.config.ts` (left alone if it exists), with `appName` and `identifier` derived from `package.json`;
+- writes `desktop.config.ts` (left alone if it exists), with `appName` and `identifier` derived from `package.json`, and a commented `bridge: { allow: [] }`. A page that uses the web's `Notification` API gets `notifications.*`, which the app answers with system notifications;
 - adds `desktop()` next to `sveltekit()` in `vite.config.ts`, which keeps your options and your adapter;
 - sets the scripts `dev` (`kitop dev`), `build` (`kitop build`) and `test:desktop` (`bun test --timeout 30000 tests/`), replacing any existing values;
 - adds `.desktop` to `.gitignore`;

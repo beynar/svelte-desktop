@@ -65,7 +65,7 @@ The steps below make that change for you, then get the app running and built.
 
     It does five things:
 
-    - Writes `desktop.config.ts`, with your app's name.
+    - Writes `desktop.config.ts`, with your app's name and `bridge: { allow: [] }`: pages can't call native operations yet. Your pages don't call any, so nothing changes for them. If they use the web's `Notification` API, which the app shows as system notifications, it lists `notifications.*`.
     - Adds `desktop()` next to `sveltekit()` in `vite.config.ts`. Your options and your adapter don't move.
     - Sets the `dev` and `build` scripts to `kitop dev` and `kitop build`, and adds `test:desktop`, replacing any with those names.
     - Adds `.desktop` to `.gitignore`.
@@ -84,10 +84,11 @@ The steps below make that change for you, then get the app running and built.
       appName: 'My Site',
       identifier: 'com.acme.mysite', // not com.example: change it now
       window: { width: 1024, height: 720, autosaveName: 'main' },
+      bridge: { allow: [] },
     });
     ```
 
-    The identifier names your app to the OS and locates its data, so changing it later strands what users have saved. Use a domain you own. The [configuration page](/concepts/configuration) has the other options.
+    The identifier names your app to the OS and locates its data, so changing it later strands what users have saved. Use a domain you own. Leave `bridge` as it is for now: [Use the desktop](#use-the-desktop) says when it needs a line. The [configuration page](/concepts/configuration) has the other options.
   </Step>
 
   <Step title="Check your setup">
@@ -143,7 +144,23 @@ Deploy it as you did. `kitop` needs Bun, so where your host runs Node, set its b
 
 ## Use the desktop
 
-Nothing above required any new code. When you want more than a browser gives you, `host` is a global in page and server code, with no import. On the website, and in a plain browser tab, `host.available` is `false` and any `host` call rejects, so check it in code they share. Do the same around a component that needs the desktop, such as `<StatusItem>`:
+Nothing above required any new code. When you want more than a browser gives you, `host` is a global in page and server code, with no import. On the website, and in a plain browser tab, `host.available` is `false` and any `host` call rejects, so check it in code they share. Do the same around a component that needs the desktop, such as `<StatusItem>`.
+
+Before a page calls `host`, give it the rule in `bridge.allow`. Pages can call no native operation by default, so that a script injected into one can't reach the user's files or keychain. Server code needs no rule: a remote function or an endpoint can call `host` as it is. A call the list refuses rejects with `denied`, and the page's console names the rule to add.
+
+Some members need a rule you wouldn't guess from their name, because they ask the app's server through `events.emit`:
+
+| A page that uses | Needs |
+| --- | --- |
+| `host.store`, the saved tabs of `<WindowTabs>` | `events.emit` |
+| `host.windowState` | `events.emit` and `window.*` |
+| `host.broadcast`, `host.jobs`, `host.push` with `push.server` | `events.emit` |
+| `host.notifications`, the web's `Notification` | `notifications.*` |
+| `host.app.info`, `name`, `version` | `app.getInfo` |
+
+`events.emit` lets a page, and so a script injected into it, write the store and talk to every listener of the server: [Restricting pages](/host#restricting-pages) says what it gives. Leave it out if your pages can make those calls from server code instead.
+
+Here a page renames its window:
 
 ```svelte src/routes/+page.svelte
 <script lang="ts">
@@ -155,7 +172,7 @@ Nothing above required any new code. When you want more than a browser gives you
 <button onclick={rename}>Rename the window</button>
 ```
 
-A page can only make the native calls you list, so this one needs a line in `desktop.config.ts`. Server code needs none:
+It needs this line in `desktop.config.ts`:
 
 ```ts desktop.config.ts
 bridge: { allow: ['window.setTitle'] },

@@ -81,7 +81,7 @@ The list is checked against every operation behind a `host` member, including on
 
 - `host.broadcast`, and everything built on it: `host.jobs` (its first call asks the server for a snapshot), and the refresh of one window's state when another window changes it.
 - `host.store`, `host.windowState` and the saved tabs of `<WindowTabs>`: a page reads and writes them by asking the app server over `events.emit`. `host.windowState` also needs the `window.*` operations it reads and applies.
-- `host.notifications`, which also asks the server over `events.emit`.
+- `host.push` with `push.server` in the config, which asks the server over `events.emit`. `host.notifications` itself needs only `notifications.*`.
 - `host.app.info` (and `host.app.name`, `version`...) needs `app.getInfo`.
 
 `*` gives pages everything, and `kitop doctor` warns about it. Server code is unaffected, so the same members work from an endpoint or remote function.
