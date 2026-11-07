@@ -1,6 +1,6 @@
 // <WindowTabs split> in the built app: each tab in its own process, panes made and resized, tabs
 // moved between them without their page reloading, the layout back at the next launch.
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { launch, type AppHandle } from '@kitop/shell/test';
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -22,6 +22,32 @@ beforeAll(async () => {
 	await until(async () => (await panes()).length === 1 && (await items()).length === 1, 'one pane');
 }, 60_000);
 afterAll(() => app?.close());
+// WebKit refuses a page's 101st history call in 10 seconds: a SecurityError, goto() rejects and the
+// address stays. Nobody clicks that fast. These tests do, the faster the machine the sooner, so each
+// starts with room for its own calls in the window's page. No test here makes more than 40.
+beforeEach(() =>
+	until(
+		() =>
+			app.eval<boolean>(`(() => {
+				const g = globalThis;
+				if (!g.__historyCalls) {
+					g.__historyCalls = [];
+					for (const on of [History.prototype, history])
+						for (const m of ['pushState', 'replaceState']) {
+							const call = on[m];
+							on[m] = function (...args) {
+								g.__historyCalls.push(Date.now());
+								return call.apply(this, args);
+							};
+						}
+				}
+				g.__historyCalls = g.__historyCalls.filter((t) => Date.now() - t < 10000);
+				return g.__historyCalls.length <= 60;
+			})()`),
+		'room in the history limit',
+		11_000,
+	),
+);
 
 const items = () => app.eval<{ id: string; path?: string; title?: string }[]>(`window.__tabs.items.map((t) => ({ id: t.id, path: t.path, title: t.title }))`);
 const panes = () => app.eval<{ id: string; tabs: string[]; active: string; focused: boolean }[]>(`window.__tabs.panes.panes.map((p) => ({ id: p.id, tabs: [...p.tabs], active: p.active, focused: p.id === window.__tabs.panes.focusedId }))`);
