@@ -34,6 +34,15 @@ jobs:
       - name: Unit tests
         working-directory: packages/shell
         run: bun test src
+      # What kitop reads of SvelteKit isn't public: against its newest release in the peer range too,
+      # so a SvelteKit that changes it fails here on the next push, not in someone's app.
+      - name: SvelteKit's newest release
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: packages/shell
+        run: |
+          bun add -d "@sveltejs/kit@$(bun -p "require('./package.json').peerDependencies['@sveltejs/kit']")"
+          bun -p "'SvelteKit ' + require('@sveltejs/kit/package.json').version"
+          bun test src/kit-contract.test.ts
 
   linux:
     # Native suites and the built examples, in the image under a headless session.

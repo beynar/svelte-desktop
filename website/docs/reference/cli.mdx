@@ -64,7 +64,7 @@ Several flags on `build` run one after the other, and stop at the first failure.
 bunx kitop doctor
 ```
 
-Checks Bun (1.4 or newer, and whether its revision says canary), the host toolchain, the installed versions of `@sveltejs/kit`, `@sveltejs/adapter-bun` and `svelte` against what the package [requires](/reference/versioning#what-an-app-needs), the config and icon setting. It reports installed `cargo`, `go` and `uv` tools when found.
+Checks Bun (1.4 or newer, and whether its revision says canary), the host toolchain, the installed versions of `@sveltejs/kit`, `@sveltejs/adapter-bun` and `svelte` against what the package [requires](/reference/versioning#what-an-app-needs), that the project's own `sveltekit()` shows the options kitop reads (`api.options`, [not a public API](/reference/versioning#what-an-app-needs)), the config and icon setting. It reports installed `cargo`, `go` and `uv` tools when found.
 
 | Host | Toolchain checks |
 | --- | --- |

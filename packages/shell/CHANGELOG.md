@@ -54,6 +54,7 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 **The command.** `kitop doctor` exits with status 1 when a check fails. It used to exit 0 whatever it found, so a script that ran it for the report now has to accept that.
 
 ### Added
+- `kitop doctor` checks that the project's own `sveltekit()` shows the options kitop reads (`api.options`).
 - Windows and Linux: `window.setParent`, `getParent`, `getChildren` and the `parentId` option, as owned and transient windows.
 - Windows and Linux: `window.setAspectRatio`, `getAspectRatio`, `getLevel`, `setSimpleFullscreen`, `isSimpleFullscreen`, `setMovable`, `isMovable`, and the `aspectRatio`, `movable` and `focusable` options.
 - Windows: `window.setFocusable`, `isFocusable`, `setHasShadow`, `hasShadow`, `controlsArea` and `showCharacterPalette`.
@@ -126,6 +127,7 @@ The native headers are `kitop.h` for the C ABI, `KitopObjC.h` and `KitopObjC.m` 
 
 ### Fixed
 
+- A website whose SvelteKit doesn't show its options the way kitop reads them (`api.options`) stops with an error that names the SvelteKit version, as the desktop side does. It used to go on without them, and `.desktop` files and `routes.exclude` stopped applying without a word.
 - `kitop dev --windows` and `kitop build --windows` on a Windows machine: they looked for macOS's library, ran a shell script Windows can't run, and wrote imports with backslashes. They still need Docker Desktop in Linux containers mode, or a `shell.dll` from elsewhere, and `kitop doctor` says so.
 - `kitop create` on Windows named the project after its whole path.
 - On macOS, a canceled download that can't be resumed no longer leaves half a file behind.

@@ -4,7 +4,7 @@
 // so it gets a folder of them instead, `.desktop/routes`, through the options it shows its neighbors
 // (`api.options` on its setup plugin). Modules keep their real paths, so relative imports and hot
 // reload don't notice. A project using none of this keeps its own folder, untouched.
-import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { dirname, join, posix, relative, resolve } from "node:path";
 
 const VARIANT = /^(\+.+)\.desktop(\.[^.]+)$/;
@@ -103,9 +103,48 @@ export function writeRoutes(out, files) {
   if (existsSync(out)) prune(out);
 }
 
-async function flatPlugins(list) {
+export async function flatPlugins(list) {
   const value = await list;
   return Array.isArray(value) ? (await Promise.all(value.map(flatPlugins))).flat() : value ? [value] : [];
+}
+
+const SETUP = "vite-plugin-sveltekit-setup";
+const KIT_RANGE = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).peerDependencies["@sveltejs/kit"];
+
+/** The SvelteKit installed for `root`, wherever node_modules is above it. */
+export function kitVersion(root) {
+  for (let dir = resolve(root); ; dir = dirname(dir)) {
+    const manifest = join(dir, "node_modules", "@sveltejs", "kit", "package.json");
+    if (existsSync(manifest)) return JSON.parse(readFileSync(manifest, "utf8")).version;
+    if (dir === dirname(dir)) return undefined;
+  }
+}
+
+/**
+ * What's wrong with what kitop reads of SvelteKit's options, null when nothing. SvelteKit shows them to
+ * the plugins next to it on its setup plugin (`api.options`), and builds from that same object after
+ * the config hooks, so kitop changes routes, hooks and the adapter there. It isn't a public API.
+ */
+export function kitOptionsProblem(plugins) {
+  const setup = plugins.find((p) => p?.name === SETUP);
+  if (!setup) return `no ${SETUP} plugin`;
+  const kit = setup.api?.options;
+  if (!kit || typeof kit !== "object") return `${SETUP} has no api.options`;
+  if (typeof kit.files?.routes !== "string") return "api.options.files.routes isn't a path";
+  if (!["client", "server", "universal"].every((kind) => typeof kit.files.hooks?.[kind] === "string")) return "api.options.files.hooks isn't { client, server, universal }";
+  if (!Array.isArray(kit.moduleExtensions)) return "api.options.moduleExtensions isn't a list";
+  if (!kit.typescript || typeof kit.typescript !== "object") return "api.options.typescript isn't an object";
+  return null;
+}
+
+/** SvelteKit's options, from the plugins of the Vite config. Throws, naming the SvelteKit, when they aren't there. */
+export async function kitOptions(plugins, root) {
+  const all = await flatPlugins(plugins);
+  const problem = kitOptionsProblem(all);
+  if (!problem) return all.find((p) => p.name === SETUP).api.options;
+  const kit = `SvelteKit ${kitVersion(root) ?? "(not installed)"}`;
+  if (!all.some((p) => p?.name?.startsWith("vite-plugin-sveltekit"))) throw new Error(`kitop: desktop() goes next to SvelteKit's plugin, plugins: [sveltekit(), desktop()], and there's none here (${kit})`);
+  throw new Error(`kitop: ${kit} doesn't show its options the way kitop reads them: ${problem}. kitop supports @sveltejs/kit ${KIT_RANGE}`);
 }
 
 /** `hooks.server.desktop.ts` in the place of `hooks.server.ts`. The website never looks at it. */
@@ -128,10 +167,8 @@ export function routesOverlay(side, options = {}) {
       order: "pre",
       async handler(user) {
         const define = { "import.meta.env.KITOP_DESKTOP": JSON.stringify(side === "desktop") };
-        const setup = (await flatPlugins(user.plugins)).find((p) => p.name === "vite-plugin-sveltekit-setup");
-        const kit = setup?.api?.options;
-        if (!kit) return { define }; // no sveltekit() next to it: the adapter's plugin says so, for a target
         const root = resolve(user.root ?? process.cwd());
+        const kit = await kitOptions(user.plugins, root);
         // Relative still: SvelteKit makes these absolute later on.
         out = join(root, ".desktop", "routes");
         const given = resolve(root, kit.files.routes);

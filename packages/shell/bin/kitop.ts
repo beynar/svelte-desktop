@@ -168,6 +168,19 @@ async function doctor() {
     else if (!Bun.semver.satisfies(version, range)) bad(`${name} ${version} is not ${range} — bun add -d ${name}@${range}`);
     else ok(`${name} ${version}`);
   }
+  // kitop reads and changes SvelteKit's options where its plugin shows them, which isn't a public API:
+  // asked of this project's own sveltekit(), so a SvelteKit that changed it shows here.
+  const kitVersion = installedVersion("@sveltejs/kit");
+  if (kitVersion) {
+    try {
+      const { sveltekit } = await import(Bun.resolveSync("@sveltejs/kit/vite", root));
+      const { flatPlugins, kitOptionsProblem } = await import("../src/routes-overlay.js");
+      const problem = kitOptionsProblem(await flatPlugins(sveltekit()));
+      problem ? bad(`SvelteKit ${kitVersion} doesn't show its options the way kitop reads them: ${problem}. kitop supports ${peers["@sveltejs/kit"]}`) : ok("SvelteKit's options (api.options): what kitop reads is there");
+    } catch (err) {
+      bad(`SvelteKit ${kitVersion}: its Vite plugin doesn't load: ${(err as Error).message.split("\n")[0]}`);
+    }
+  }
   try {
     const { loadConfig } = await import("../src/config.ts");
     const c = await loadConfig(root);

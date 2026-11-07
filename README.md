@@ -24,7 +24,7 @@ Routes, load functions, remote functions, form actions, endpoints and hooks stay
 
 ## Status
 
-Early, and not yet used in production. `@kitop/shell` isn't on npm yet, and its API can still change.
+Early, and not yet used in production. `@kitop/shell` isn't on npm yet, and its API can still change. It needs SvelteKit 3 (`@sveltejs/kit` `^3.0.0-next.0`, CI on 3.1.1 and the newest 3.x) and Svelte 5: [what an app needs](website/docs/reference/versioning.mdx#what-an-app-needs).
 
 | | Web view | Output | Tested in CI |
 | --- | --- | --- | --- |

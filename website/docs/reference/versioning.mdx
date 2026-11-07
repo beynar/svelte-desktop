@@ -51,7 +51,7 @@ These are the package's `peerDependencies`. `kitop create` writes them, and `kit
 | Requirement | Version | |
 | --- | --- | --- |
 | [Bun](https://bun.sh) | `>=1.4.0` | The package only runs on Bun. CI runs 1.4.4 |
-| `@sveltejs/kit` | `^3.0.0-next.0` | SvelteKit 3, pre-releases included |
+| `@sveltejs/kit` | `^3.0.0-next.0` | SvelteKit 3, pre-releases included. CI runs 3.1.1, and the newest 3.x for the check below. SvelteKit 2 doesn't work |
 | `@sveltejs/adapter-bun` | `1.0.0-next.2` | A pre-release, pinned exactly. The build wraps this adapter, so this version and no other |
 | `svelte` | `^5.56.0` | |
 
@@ -62,6 +62,8 @@ bun add -d @sveltejs/adapter-bun@1.0.0-next.2
 ```
 
 Changing one of these is a breaking change, and the changelog says so.
+
+kitop also relies on something of SvelteKit that isn't public: the options its plugin shows the plugins next to it (`api.options` on `vite-plugin-sveltekit-setup`). kitop reads routes, hooks and the adapter there and changes them, for a desktop target and for `.desktop` files. A SvelteKit release could change that without a major version. If it does, `vite dev` and `vite build` stop with an error that names the SvelteKit version, on the website side as well as the desktop's, and `kitop doctor` checks it against your project's own `sveltekit()`. CI checks it against the newest SvelteKit 3 on every push.
 
 ## What's in the package
 

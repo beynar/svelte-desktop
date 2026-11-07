@@ -33,7 +33,7 @@ interface Plugin {
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { ICON_CANDIDATES, findIcon, loadConfig, sidecarEntries, usageDescriptions, type DesktopConfig, type ResolvedConfig } from "./config.ts";
-import { routesOverlay, type RoutesOptions } from "./routes-overlay.js";
+import { kitOptions, routesOverlay, type RoutesOptions } from "./routes-overlay.js";
 import desktopAdapter from "./adapter.js";
 import { writeHostTypes } from "./host/types-file.js";
 
@@ -65,11 +65,6 @@ export interface DesktopPluginOptions {
 }
 
 
-async function flatPlugins(list: unknown): Promise<Plugin[]> {
-  const value = await list;
-  return Array.isArray(value) ? (await Promise.all(value.map(flatPlugins))).flat() : value ? [value as Plugin] : [];
-}
-
 // For a desktop target the shell's adapter takes the place of the project's. SvelteKit shows its
 // options to the plugins next to it (`api.options` on its setup plugin), and reads the adapter from
 // there. Ahead of its own config hook, which reads it too.
@@ -80,9 +75,7 @@ function shellAdapter(config: ResolvedConfig): Plugin {
     config: {
       order: "pre",
       async handler(user: { plugins?: unknown }, _env: unknown) {
-        const setup = (await flatPlugins(user.plugins)).find((p) => p.name === "vite-plugin-sveltekit-setup");
-        const kit = (setup?.api as { options?: { adapter?: { name: string; vite?: { plugins?: unknown } } } } | undefined)?.options;
-        if (!kit) throw new Error("kitop: desktop() goes next to SvelteKit's plugin: plugins: [sveltekit(), desktop()]. If sveltekit() is there, this version of SvelteKit doesn't show its options (api.options).");
+        const kit = (await kitOptions(user.plugins, config.root)) as { adapter?: { name: string; vite?: { plugins?: unknown } } };
         // They came in with sveltekit(), before this: they stay, and may not suit a desktop build.
         if (kit.adapter?.vite?.plugins) console.warn(`kitop: ${kit.adapter.name} adds Vite plugins of its own, and they stay active in the desktop build`);
         kit.adapter = desktopAdapter(config) as never;
